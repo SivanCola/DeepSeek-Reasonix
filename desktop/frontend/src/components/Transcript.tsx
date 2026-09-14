@@ -15,6 +15,7 @@ import { addBreadcrumb } from "../lib/breadcrumbs";
 import { useT } from "../lib/i18n";
 import { InvocationMetadataContext } from "./Message";
 import { MarkdownImageTabContext } from "./MarkdownImageContext";
+import { ChatFileScopeProvider } from "./ChatFileLinkContext";
 import { ChatDetails, ChatNodeList, ChatRunning, type ChatActions } from "./ChatNodes";
 import { Welcome } from "./Welcome";
 import "./ChatTranscript.css";
@@ -200,6 +201,7 @@ function ChatSession(props: TranscriptProps & { sessionKey: string }) {
   }, [jumpState.status, jumpState.reason]);
   return <InvocationMetadataContext.Provider value={props.invocationMetadata ?? {}}>
     <MarkdownImageTabContext.Provider value={tabId ?? ""}>
+      <ChatFileScopeProvider scopeKey={source.sessionKey} tabId={tabId} hostId={props.hostId}>
       <section className="chat-transcript">
         <div className="chat-surface" inert={Boolean(activeDetails)}>
           <Suspense fallback={null}><ChatTurnNavigator source={source} scroll={scroll} mounts={mounts}
@@ -230,6 +232,7 @@ function ChatSession(props: TranscriptProps & { sessionKey: string }) {
         </div>
         {activeDetails && <ChatDetails key={activeDetails} source={source} nodeKey={activeDetails} loader={loader} onClose={closeDetails} onNavigate={setDetails} />}
       </section>
+      </ChatFileScopeProvider>
     </MarkdownImageTabContext.Provider>
   </InvocationMetadataContext.Provider>;
 }

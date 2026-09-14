@@ -2767,7 +2767,8 @@ export function useController() {
         runtimeEpochByTabRef.current.set(tabId, snapshot.identity.runtimeEpoch);
         dispatchTo(tabId, { type: "transcript_snapshot", snapshot });
       }, stillCurrent)) : false;
-      let projection = skipHistory || modern
+      const snapshotInstalled = modern && snapshotLoaded === true;
+      let projection = skipHistory || snapshotInstalled || !stillCurrent()
         ? undefined
         : await loadTimed("history", () =>
             // Resident LRU only when the caller keeps cache; reset/no-cache re-fetch.
@@ -2780,7 +2781,7 @@ export function useController() {
           );
 
       if (!stillCurrent()) return;
-      if (!skipHistory && (modern ? !snapshotLoaded : projection === undefined)) {
+      if (!skipHistory && !snapshotInstalled && projection === undefined) {
         const errText = t("history.failedLoadHistory");
         dispatchTo(tabId, { type: "hydrate_error", reason, error: errText });
         // Hydration failure is not turn completion; keep any raced Ask/approval blocked.
@@ -4518,7 +4519,6 @@ export function useController() {
   const rewindForTab = useCallback(async (sourceTabId: string, turn: number, scope: string): Promise<boolean> => {
     return (await rewindForTabDetailed(sourceTabId, turn, scope)).ok;
   }, [rewindForTabDetailed]);
-
   const forkTurnForTab = useCallback((sourceTabId: string, target: import("./forkTargets").ForkTargetView): Promise<boolean> =>
     settleForkTurnForTab(app, sourceTabId, target, {
       dispatch: (action) => dispatchTo(sourceTabId, action),

@@ -85,12 +85,25 @@ func (a *App) canonicalSessionQuery(tabID string) (*session.Query, session.Sessi
 	a.mu.RLock()
 	tab := a.tabByIDLocked(tabID)
 	var ctrl control.SessionAPI
+	var sessionID, sessionDir string
 	if tab != nil {
 		ctrl = tab.Ctrl
+		sessionID = tab.SessionID
+		sessionDir = tabSessionDir(tab)
 	}
 	a.mu.RUnlock()
 	if ctrl == nil {
-		return nil, session.SessionRef{}, fmt.Errorf("tab %q is not ready", tabID)
+		if tab == nil {
+			return nil, session.SessionRef{}, fmt.Errorf("tab %q is not ready", tabID)
+		}
+		if sessionID == "" {
+			return nil, session.SessionRef{}, errors.New("canonical session identity is unavailable")
+		}
+		service := a.desktopSessionService(sessionDir)
+		if service == nil || service.Query() == nil {
+			return nil, session.SessionRef{}, errors.New("canonical session history is unavailable")
+		}
+		return service.Query(), session.SessionRef{HostID: service.HostID(), SessionID: sessionID}, nil
 	}
 	identity, ok := ctrl.(control.IdentityLifecycle)
 	if !ok || !identity.UsesExclusiveSession() {

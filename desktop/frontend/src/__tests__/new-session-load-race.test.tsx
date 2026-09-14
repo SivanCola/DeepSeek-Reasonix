@@ -140,8 +140,7 @@ const appStubTable = {
       EffortForTab: async () => effort,
       BalanceForTab: async () => balance,
       JobsForTab: async () => jobs,
-      CheckpointsForTab: async () => checkpoints,
-      ForkTargetsForTab: async () => ({ targets: [], verifiable: false }),
+      CheckpointsForTab: async () => checkpoints, ForkTargetsForTab: async () => ({ targets: [], verifiable: false }),
       HistoryForTab: async () => staleHistory.promise,
       HistoryPageForTab: async () => {
         const messages = await staleHistory.promise;
@@ -354,8 +353,7 @@ desktopStub.replaceCommands({
   EffortForTab: async () => effort,
   BalanceForTab: async () => balance,
   JobsForTab: async () => jobs,
-  CheckpointsForTab: async () => checkpoints,
-  ForkTargetsForTab: async () => ({ targets: [], verifiable: false }),
+  CheckpointsForTab: async () => checkpoints, ForkTargetsForTab: async () => ({ targets: [], verifiable: false }),
   HistoryPageForTab: async () => {
     reusedHistoryCalls.push("history");
     return reusedHistoryCalls.length === 1 ? reusedOldHistory.promise : reusedEmptyPage;
@@ -414,8 +412,7 @@ desktopStub.replaceCommands({
   EffortForTab: async () => effort,
   BalanceForTab: async () => balance,
   JobsForTab: async () => jobs,
-  CheckpointsForTab: async () => checkpoints,
-  ForkTargetsForTab: async () => ({ targets: [], verifiable: false }),
+  CheckpointsForTab: async () => checkpoints, ForkTargetsForTab: async () => ({ targets: [], verifiable: false }),
   HistoryPageForTab: async (tabID: string) => {
     raceHistoryCalls.push(tabID);
     return reusedEmptyPage;
@@ -490,8 +487,7 @@ desktopStub.replaceCommands({
   EffortForTab: async () => effort,
   BalanceForTab: async () => balance,
   JobsForTab: async () => jobs,
-  CheckpointsForTab: async () => checkpoints,
-  ForkTargetsForTab: async () => ({ targets: [], verifiable: false }),
+  CheckpointsForTab: async () => checkpoints, ForkTargetsForTab: async () => ({ targets: [], verifiable: false }),
   HistoryForTab: async () => [],
   HistoryPageForTab: async () => ({ messages: [], startTurn: 0, endTurn: 0, totalTurns: 0, hasOlder: false }),
   HistoryCheckpointTurnsForTab: async () => [],
@@ -572,8 +568,7 @@ desktopStub.replaceCommands({
   EffortForTab: async () => effort,
   BalanceForTab: async () => balance,
   JobsForTab: async () => jobs,
-  CheckpointsForTab: async () => checkpoints,
-  ForkTargetsForTab: async () => ({ targets: [], verifiable: false }),
+  CheckpointsForTab: async () => checkpoints, ForkTargetsForTab: async () => ({ targets: [], verifiable: false }),
   HistoryCheckpointTurnsForTab: async () => [],
   HistoryForTab: legacyRead, HistoryPageForTab: legacyRead, HistorySliceForTab: legacyRead,
   ResumeSessionPageForTab: legacyRead, OpenChannelSessionPageForTab: legacyRead,
@@ -637,6 +632,17 @@ await act(async () => { await controller?.resumeSession("/sessions/fast.jsonl", 
 await act(async () => { slowModernGate.resolve(); await staleModern?.surfaceReady; await flushPromises(); });
 eq(sessionPipelineDiagnostics().resumeSwitch?.totalMs, modernPhases.totalMs, "stale modern adoption cannot overwrite committed diagnostics");
 eq(sessionPipelineDiagnostics().resumeHistory?.source, "transcript-snapshot", "modern race retains authoritative snapshot evidence");
+
+desktopStub.commands.TranscriptSnapshotForTab = async () => { throw new Error("configured model is unavailable before controller startup"); };
+desktopStub.commands.HistorySliceForTab = async (tabID: string, req: HistorySliceRequest) => { legacyReads++; return historySliceFromMessages(tabID, [{ role: "user", content: "recovered without controller" }], req); };
+await act(async () => {
+  await controller?.retrySessionHistory("tab-a");
+  await flushPromises();
+});
+ok(controller?.state.items.some((item) => item.kind === "user" && item.text === "recovered without controller") ?? false,
+  "failed modern snapshot falls back to controller-independent history");
+eq(legacyReads, 1, "snapshot failure performs one compatibility history read");
+eq(controller?.state.hydrateError, undefined, "successful history fallback clears the recovery error");
 await act(async () => { modernRoot.unmount(); });
 // ── session switch: one history commit, composer bound to the new runtime ────
 // The switch shows the restored transcript as soon as its page lands, but the
@@ -672,8 +678,7 @@ desktopStub.replaceCommands({
   EffortForTab: async () => effort,
   BalanceForTab: async () => balance,
   JobsForTab: async () => jobs,
-  CheckpointsForTab: async () => checkpoints,
-  ForkTargetsForTab: async () => ({ targets: [], verifiable: false }),
+  CheckpointsForTab: async () => checkpoints, ForkTargetsForTab: async () => ({ targets: [], verifiable: false }),
   HistoryPageForTab: async () => {
     switchHistoryPageCalls += 1;
     return switchPage("full-history-refetch");
@@ -759,8 +764,7 @@ await act(async () => {
     MetaForTab: async () => holdMeta ? oldMeta.promise : meta({ sessionPath: path }),
     ContextUsageForTab: async () => context, EffortForTab: async () => effort,
     BalanceForTab: async () => balance, JobsForTab: async () => jobs,
-    CheckpointsForTab: async () => checkpoints, HistoryCheckpointTurnsForTab: async () => [],
-    ForkTargetsForTab: async () => ({ targets: [], verifiable: false }),
+    CheckpointsForTab: async () => checkpoints, HistoryCheckpointTurnsForTab: async () => [], ForkTargetsForTab: async () => ({ targets: [], verifiable: false }),
     HistorySliceForTab: async (id: string, req: HistorySliceRequest) => historySliceFromMessages(id, [], req),
     ReplayPendingPrompts: async () => {}, ReplayPendingPromptsForTab: async () => {},
     ResumeSessionPageForTab: async (_id: string, target: string) => { path = target; return switchPage(target); },

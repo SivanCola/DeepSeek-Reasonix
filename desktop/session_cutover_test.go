@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"reasonix/internal/boot"
 	"reasonix/internal/control"
@@ -63,6 +65,94 @@ func TestDesktopHistorySliceUsesCanonicalDurableIndex(t *testing.T) {
 	appendSessionTestMessage(t, runtime, "history-next", provider.Message{ID: "history-next", Role: provider.RoleUser, Origin: provider.MessageOriginUser, Content: "new turn"})
 	if stale := app.HistoryContentForTab(tab.ID, assistant.Refs[0], 0); !stale.Stale {
 		t.Fatal("content ref from older durable snapshot must become stale after append")
+	}
+}
+
+func TestDesktopCanonicalHistoryRemainsReadableBeforeControllerReady(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := NewApp()
+	root := t.TempDir()
+	dir := desktopSessionDir(root)
+	service := app.desktopSessionService(dir)
+	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "canonical-cold-history"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendSessionTestMessage(t, runtime, "cold-history-user", provider.Message{
+		ID:      "cold-history-user",
+		Role:    provider.RoleUser,
+		Origin:  provider.MessageOriginUser,
+		Content: "history survives an unavailable configured model",
+	})
+	large := "large history survives too " + strings.Repeat("x", historyInlineRefThreshold+1024)
+	appendSessionTestMessage(t, runtime, "cold-history-assistant", provider.Message{
+		ID: "cold-history-assistant", Role: provider.RoleAssistant, Content: large,
+	})
+
+	tab := &WorkspaceTab{
+		ID:            "canonical-cold-history-tab",
+		Scope:         "project",
+		WorkspaceRoot: root,
+		SessionID:     runtime.Ref().SessionID,
+		Ready:         false,
+		Ctrl:          nil,
+	}
+	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
+	app.tabOrder = []string{tab.ID}
+	app.activeTabID = tab.ID
+
+	page := app.HistorySliceForTab(tab.ID, HistorySliceRequest{Turns: 12})
+	if page.Error != "" || page.Source != "canonical-index" {
+		t.Fatalf("cold canonical history page = source %q error %q", page.Source, page.Error)
+	}
+	if len(page.Entries) != 2 || page.Entries[0].Message.Content != "history survives an unavailable configured model" {
+		t.Fatalf("cold canonical history entries = %+v", page.Entries)
+	}
+	if len(page.Entries[1].Refs) != 1 {
+		t.Fatalf("cold canonical large history refs = %+v", page.Entries[1].Refs)
+	}
+	content := app.HistoryContentForTab(tab.ID, page.Entries[1].Refs[0], 0)
+	if content.Stale || !content.Done || content.Data != large {
+		t.Fatalf("cold canonical expanded history = stale:%v done:%v bytes:%d, want %d", content.Stale, content.Done, len(content.Data), len(large))
+	}
+
+	opened, err := app.SessionOpenForTab(tab.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opened.Ref != runtime.Ref() || len(opened.Recent.Entries) != 2 || opened.Recent.Entries[0].Preview != "history survives an unavailable configured model" {
+		t.Fatalf("cold canonical session open = %+v", opened)
+	}
+
+	canonical, err := app.SessionHistoryPageForTab(tab.ID, "", 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(canonical.Messages) != 2 || canonical.Messages[0].Preview != "history survives an unavailable configured model" {
+		t.Fatalf("cold canonical history records = %+v", canonical.Messages)
+	}
+	var search session.SearchHistoryPage
+	for deadline := time.Now().Add(5 * time.Second); search.Status != "ready"; time.Sleep(time.Millisecond) {
+		search, err = app.SearchSessionHistoryForTab(tab.ID, "unavailable configured model", "", 12)
+		if err != nil || (search.Status != "preparing" && search.Status != "ready") || time.Now().After(deadline) {
+			t.Fatalf("cold canonical search = %+v, %v", search, err)
+		}
+	}
+	if len(search.Hits) != 1 || search.Hits[0].MessageID != "cold-history-user" {
+		t.Fatalf("cold canonical search hits = %+v", search.Hits)
+	}
+	location, err := app.LocateSessionMessageForTab(tab.ID, "cold-history-assistant", canonical.SnapshotSequence)
+	if err != nil || location.Status != "ready" || location.MessageID != "cold-history-assistant" {
+		t.Fatalf("cold canonical location = %+v, %v", location, err)
+	}
+	ref := canonical.Messages[1].ContentRef
+	if ref == nil {
+		t.Fatal("cold canonical large message has no content ref")
+	}
+	chunk, err := app.SessionHistoryContentForTab(tab.ID, *ref, 0)
+	decoded, decodeErr := base64.StdEncoding.DecodeString(chunk.Data)
+	if err != nil || decodeErr != nil || !chunk.Done || !strings.Contains(string(decoded), large) {
+		t.Fatalf("cold canonical content = done:%v bytes:%d, errors:%v/%v", chunk.Done, len(decoded), err, decodeErr)
 	}
 }
 

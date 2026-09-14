@@ -124,19 +124,19 @@ agent:
 
 | Command | Result |
 | --- | --- |
-| `go test ./internal/session ./internal/control ./internal/serve ./internal/servecontract/... -count=1` | ok (session 65s, control 193s, serve 118s) |
+| `go test ./internal/session ./internal/control ./internal/serve ./internal/servecontract/... -count=1` | ok on the merged final tree |
 | `go test ./internal/session -run 'ForkTarget\|CreateFork\|ForkAvailability' -race -count=1` | ok |
 | `cd desktop && go test -race -run 'ForkTargets\|CreateFork\|ForkOperation\|ForkedSessionLocator' -count=1 .` | ok |
 | `go test ./... -run '^$' && go build ./internal/... ./cmd/...` | ok |
 | root and Desktop `golangci-lint run --timeout=5m ./...` | 0 issues |
-| `go run ./tools/repolint` | clean (1,231 baselined findings) |
+| `go run ./tools/repolint` | clean (1,230 baselined findings) |
 | `scripts/check-cache-impact.sh` | no cache-sensitive files changed |
-| `go run ./tools/desktopinventory -check` | current, 753 entries |
+| `go run ./tools/desktopinventory -check` | current, 761 entries |
 | `cd desktop && go test -run 'HostContract\|HostCommandOwners\|HostShellRemote' -count=1 .` | ok |
-| `cd desktop && go test -count=1 .` | ok (325s) |
+| `cd desktop && go test -count=1 .` | ok on the merged final tree |
 | `cd desktop/frontend && pnpm build` | ok, typecheck and bundle budgets included |
 | `tsx src/__tests__/turn-fork-transcript.test.tsx` | ok |
-| `node scripts/run-tests.mjs --keep-going` (frontend) | all 357 suites passed |
+| `node scripts/run-tests.mjs --keep-going` (frontend) | all 360 suites passed |
 | Locale parity across `en.ts` / `zh.ts` / `zh-TW.ts` | all 11 `chat.branch*` keys present in each |
 | `node bench/fork-targets.mjs` (Chromium, real Transcript) | PASS on the final tree |
 | `node bench/fork-targets-app.mjs` (built app, `/?mock=1`) | PASS on the final tree |

@@ -15,9 +15,16 @@ import { RichMarkdownLink } from "./githubLink";
 import { MarkdownTable } from "./MarkdownTable";
 import { MarkdownImage } from "./MarkdownImage";
 import { t } from "../lib/i18n";
-import { usePresentedFileLink } from "./PresentedFileLinkContext";
+import { useChatFileLink } from "./ChatFileLinkContext";
+import { ChatFileReferenceAnchor, ChatFileReferenceCode } from "./ChatFileLink";
+import { localPathFromHref } from "../lib/localFileUrl";
+import { looksLikeSvgDocument } from "../lib/svgDocument";
 
 const MermaidDiagram = lazy(() => import("./MermaidDiagram"));
+const MarkdownSvgBlock = lazy(() => import("./MarkdownSvgBlock"));
+
+/** Fences that may hold an SVG document; the body still has to prove it. */
+const SVG_FENCES = new Set(["svg", "xml", "html"]);
 
 function MarkdownCode({ value, language }: { value: string; language?: string }) {
   const [expanded, setExpanded] = useState(false);
@@ -120,17 +127,42 @@ export function createComponents(plainStatusBlocks: boolean): Components {
           );
         }
         if (!match && plainStatusBlocks) return <PlainMarkdownBlock text={text.replace(/\n$/, "")} />;
+        // An `svg` fence is always a candidate; `xml`, `html`, and a
+        // language-less fence are candidates only when the body starts like a
+        // single SVG document. The host's strict parse has the final word, and
+        // anything it refuses renders as the ordinary code block.
+        if (looksLikeSvgDocument(value) && (lang === undefined || SVG_FENCES.has(lang))) {
+          return (
+            <Suspense fallback={<MarkdownCode value={value} language={lang} />}>
+              <MarkdownSvgBlock value={value} />
+            </Suspense>
+          );
+        }
         return <MarkdownCode value={value} language={lang} />;
       }
       return <InlineMarkdownCode text={text}>{children}</InlineMarkdownCode>;
     },
-    a: ({ href, children }) => <RichMarkdownLink href={href}>{children}</RichMarkdownLink>,
+    a: (props) => <MarkdownFileLink href={props.href} scanned={(props as Record<string, unknown>)["data-scanned-path"] !== undefined}>{props.children}</MarkdownFileLink>,
     img: ({ src, alt, title }) => <MarkdownImage src={src} alt={alt} title={title} />,
   };
 }
 
+/**
+ * A local-path link is upgraded to a chat file reference when the host verified
+ * it. A path that was only *scanned* out of prose stays ordinary text until it
+ * is verified — a command, a URL path, or a directory that merely looks like a
+ * file must not become a link. Every other link keeps its existing behavior.
+ */
+function MarkdownFileLink({ href, scanned, children }: { href?: string; scanned: boolean; children: ReactNode }) {
+  const path = href ? localPathFromHref(href) : null;
+  const link = useChatFileLink(path ?? "");
+  if (path && link) return <ChatFileReferenceAnchor link={link} href={href!}>{children}</ChatFileReferenceAnchor>;
+  if (path && scanned) return <span className="md-rich-link__plain">{children}</span>;
+  return <RichMarkdownLink href={href}>{children}</RichMarkdownLink>;
+}
+
 function InlineMarkdownCode({ text, children }: { text: string; children: ReactNode }) {
-  const file = usePresentedFileLink(text);
+  const file = useChatFileLink(text);
   if (!file) return <code className="md-code">{children}</code>;
-  return <button type="button" className="md-code md-code--presented-file" title={file.path} onClick={file.open}>{children}</button>;
+  return <ChatFileReferenceCode link={file}>{children}</ChatFileReferenceCode>;
 }

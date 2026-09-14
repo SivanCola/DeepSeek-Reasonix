@@ -101,19 +101,19 @@
 
 | 命令 | 结果 |
 | --- | --- |
-| `go test ./internal/session ./internal/control ./internal/serve ./internal/servecontract/... -count=1` | ok（session 65s、control 193s、serve 118s） |
+| `go test ./internal/session ./internal/control ./internal/serve ./internal/servecontract/... -count=1` | 在合并后的最终工作树 ok |
 | `go test ./internal/session -run 'ForkTarget\|CreateFork\|ForkAvailability' -race -count=1` | ok |
 | `cd desktop && go test -race -run 'ForkTargets\|CreateFork\|ForkOperation\|ForkedSessionLocator' -count=1 .` | ok |
 | `go test ./... -run '^$' && go build ./internal/... ./cmd/...` | ok |
 | 根目录与 Desktop 的 `golangci-lint run --timeout=5m ./...` | 0 issues |
-| `go run ./tools/repolint` | clean（1,231 个基线 finding） |
+| `go run ./tools/repolint` | clean（1,230 个基线 finding） |
 | `scripts/check-cache-impact.sh` | 没有 cache-sensitive 文件变更 |
-| `go run ./tools/desktopinventory -check` | current，共 753 项 |
+| `go run ./tools/desktopinventory -check` | current，共 761 项 |
 | `cd desktop && go test -run 'HostContract\|HostCommandOwners\|HostShellRemote' -count=1 .` | ok |
-| `cd desktop && go test -count=1 .` | ok（325s） |
+| `cd desktop && go test -count=1 .` | 在合并后的最终工作树 ok |
 | `cd desktop/frontend && pnpm build` | ok，包含 typecheck 与 bundle budget |
 | `tsx src/__tests__/turn-fork-transcript.test.tsx` | ok |
-| `node scripts/run-tests.mjs --keep-going`（frontend） | 357 个 test suite 全部通过 |
+| `node scripts/run-tests.mjs --keep-going`（frontend） | 360 个 test suite 全部通过 |
 | `en.ts` / `zh.ts` / `zh-TW.ts` 之间的 locale 一致性 | 11 个 `chat.branch*` key 在三个文件中齐全 |
 | `node bench/fork-targets.mjs`（Chromium，真实 Transcript） | 在最终工作树 PASS |
 | `node bench/fork-targets-app.mjs`（已构建应用，`/?mock=1`） | 在最终工作树 PASS |
