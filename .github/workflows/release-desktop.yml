@@ -293,7 +293,8 @@ jobs:
           bash scripts/verify-embedded-docs.sh "$DOCS_BUILD_VERSION" "$DOCS_SOURCE_REVISION"
 
   build:
-    name: build (${{ matrix.name }})
+    # Recovery reads this exact per-platform, per-invocation name in attempt history.
+    name: build (${{ matrix.name }}, ${{ inputs.signing_preflight && 'preflight' || 'release' }})
     needs: [resolve, cache-guard, signing-contract]
     if: ${{ always() && !cancelled() && needs.resolve.result == 'success' && needs.cache-guard.result == 'success' && inputs.preflight_artifact_prefix == '' }}
     permissions:
@@ -528,6 +529,8 @@ jobs:
           name: unsigned-payload-${{ matrix.name }}
           path: desktop/build/windows/signing-payload
           if-no-files-found: error
+          # No receipt is allowed here only when prior submission never ran.
+          overwrite: true
           retention-days: 30
 
       - name: Submit Windows payload for Authenticode signing
@@ -636,6 +639,7 @@ jobs:
           name: unsigned-${{ matrix.name }}
           path: desktop/build/windows/installer-signing-bundle
           if-no-files-found: error
+          overwrite: true
           retention-days: 30
 
       - name: Submit installer for Authenticode signing

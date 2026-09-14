@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
-import { findReceipt, identity, identityDigest, inputDigest, receiptName, requireRecoverable, validateReceipt } from "./signpath-checkpoint.mjs";
+import { canReuseRequest, findReceipt, identity, identityDigest, inputDigest, receiptName, requireRecoverable, validateReceipt } from "./signpath-checkpoint.mjs";
 
 const env = {
   GITHUB_REPOSITORY: "example/project", GITHUB_RUN_ID: "123", GITHUB_RUN_ATTEMPT: "1",
@@ -22,7 +22,78 @@ test("an interrupted submission without a saved request cannot be blindly repeat
   assert.doesNotThrow(() => requireRecoverable(false, "1"));
   assert.doesNotThrow(() => requireRecoverable(true, "2"));
   assert.throws(() => requireRecoverable(false, "2"), /check SignPath request history/);
-  assert.throws(() => requireRecoverable(true, ""), /invalid workflow attempt/);
+  assert.throws(() => requireRecoverable(true, ""), /invalid or excessive workflow attempt/);
+});
+
+const payloadStep = "Submit Windows payload for Authenticode signing";
+const installerStep = "Submit installer for Authenticode signing";
+const completedStep = (name, conclusion) => ({ name, status: "completed", conclusion });
+const previousJob = steps => ({ name: "verify stable SignPath control plane / build (windows-amd64, preflight)",
+  status: "completed", conclusion: "failure", steps });
+function historyAPI(receipts, attempts, calls = []) {
+  return async url => {
+    calls.push(url);
+    const parsed = new URL(url);
+    if (parsed.pathname.endsWith("/artifacts")) {
+      const artifacts = receipts.filter(item => item.name === parsed.searchParams.get("name"));
+      return { ok: true, json: async () => ({ artifacts, total_count: artifacts.length }) };
+    }
+    const attempt = /\/attempts\/(\d+)\/jobs$/.exec(parsed.pathname)?.[1];
+    assert.ok(attempt, url);
+    const jobs = attempts[attempt];
+    if (!jobs) return { ok: false, status: 404 };
+    const page = Number(parsed.searchParams.get("page"));
+    return { ok: true, json: async () => ({ jobs: jobs.slice((page - 1) * 100, page * 100), total_count: jobs.length }) };
+  };
+}
+
+test("retry restores the signed payload and first-submits the installer skipped after a download failure", async () => {
+  const installer = identity({ ...env, SIGNPATH_CONFIGURATION: "windows-installer-v2" });
+  const calls = [];
+  const api = historyAPI([{ name: receiptName(expected), expired: false }], {
+    1: [previousJob([completedStep(payloadStep, "success"), completedStep(installerStep, "skipped")])],
+  }, calls);
+  assert.equal(await canReuseRequest(expected, "2", "test-only", api), true);
+  assert.equal(calls.length, 1, "known receipt does not need step history");
+  assert.equal(await canReuseRequest(installer, "2", "test-only", api), false, "allow the first installer submission");
+  assert.ok(calls.some(url => url.includes("/attempts/1/jobs")));
+});
+
+test("a pre-signing build or input-upload failure permits the previously skipped submission", async () => {
+  for (const steps of [
+    [completedStep("Build desktop", "failure"), completedStep(payloadStep, "skipped")],
+    [completedStep("Upload unsigned Windows payload for SignPath", "success"), completedStep(payloadStep, "skipped")],
+  ]) assert.equal(await canReuseRequest(expected, "2", "test-only", historyAPI([], { 1: [previousJob(steps)] })), false);
+});
+
+test("a missing receipt after any attempted submission remains blocked, even if later attempts skipped it", async () => {
+  for (const conclusion of ["success", "failure", "cancelled", null]) {
+    const api = historyAPI([], {
+      1: [previousJob([completedStep(payloadStep, conclusion)])],
+      2: [previousJob([completedStep(payloadStep, "skipped")])],
+    });
+    await assert.rejects(canReuseRequest(expected, "3", "test-only", api), /check SignPath request history/);
+  }
+});
+
+test("all attempt pages are read and unrelated platform/mode jobs cannot authorize resubmission", async () => {
+  const unrelated = Array.from({ length: 100 }, (_, index) => ({ name: `unrelated-${index}` }));
+  const target = previousJob([completedStep(payloadStep, "success")]);
+  const api = historyAPI([], { 1: [...unrelated, target] });
+  await assert.rejects(canReuseRequest(expected, "2", "test-only", api), /check SignPath request history/);
+  const skipped = previousJob([completedStep(payloadStep, "skipped")]);
+  const jobs = [skipped, { ...target, name: "build (windows-arm64, preflight)" }, { ...target, name: "build (windows-amd64, release)" }];
+  assert.equal(await canReuseRequest(expected, "3", "test-only", historyAPI([], { 1: jobs, 2: [] })), false);
+});
+
+test("unavailable, nonterminal or ambiguous step evidence fails closed", async () => {
+  const skipped = previousJob([completedStep(payloadStep, "skipped")]);
+  for (const jobs of [
+    [{ ...skipped, status: "in_progress" }], [skipped, skipped],
+    [{ ...skipped, steps: [] }], [{ ...skipped, steps: undefined }],
+    [{ ...skipped, steps: [completedStep(payloadStep, "skipped"), completedStep(payloadStep, "success")] }],
+  ]) await assert.rejects(canReuseRequest(expected, "2", "test-only", historyAPI([], { 1: jobs })));
+  await assert.rejects(canReuseRequest(expected, "2", "test-only", historyAPI([], {})), /HTTP 404/);
 });
 
 test("receipt resumes one request across attempts but rejects changed release identity or bytes", () => {
@@ -111,4 +182,10 @@ test("workflow persists receipts before approval and gates both quota-consuming 
   }
   assert.match(workflow, /scripts\/signpath-checkpoint\.mjs\n/);
   assert.match(workflow, /node release-control\/scripts\/signpath-checkpoint\.mjs/);
+  assert.ok(workflow.includes("name: build (${{ matrix.name }}, ${{ inputs.signing_preflight && 'preflight' || 'release' }})"));
+  for (const name of ["Upload unsigned Windows payload for SignPath", "Upload unsigned installer for SignPath"]) {
+    const step = workflow.split(`      - name: ${name}\n`)[1].split("      - name:")[0];
+    assert.match(step, /overwrite: true/);
+    assert.match(step, /checkpoint.outputs.exists == 'false'/);
+  }
 });
