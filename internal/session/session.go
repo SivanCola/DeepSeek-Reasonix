@@ -3,6 +3,7 @@ package session
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -40,6 +41,7 @@ type Session struct {
 	externalHistory   bool
 	catalogPreview    string
 	recentMessages    []provider.Message
+	durableRecent     []provider.Message
 	storageGeneration string
 	recovery          *recoveryStore
 	// coldHandle backs a read-only session, which has no binding because it
@@ -437,21 +439,58 @@ func (s *Session) DeriveMessages() []provider.Message {
 	return messages
 }
 
+func (s *Session) cacheWeight() int64 {
+	if s == nil {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	weight := int64(64 << 10)
+	for _, message := range s.projection.ModelMessages {
+		weight += int64(len(message.ID) + len(message.Content) + len(message.RawContent) + len(message.ProviderContent) + len(message.ReasoningContent) + len(message.ReasoningSignature) + len(message.Original))
+		for _, image := range message.Images {
+			weight += int64(len(image))
+		}
+		for _, call := range message.ToolCalls {
+			weight += int64(len(call.ID) + len(call.Name) + len(call.Arguments) + len(call.Diff))
+		}
+		for _, item := range message.ResponsesItems {
+			weight += int64(len(item))
+		}
+		for _, block := range message.ThinkingBlocks {
+			encoded, _ := json.Marshal(block)
+			weight += int64(len(encoded))
+		}
+	}
+	weight += int64(len(s.projection.PlanState) + len(s.projection.GoalState))
+	return weight
+}
+
 // RecentSnapshot returns the bounded chat baseline without consulting the
 // history locator or search index.
 func (s *Session) RecentSnapshot() RecentSnapshot {
 	if s == nil {
 		return RecentSnapshot{}
 	}
+	durable := uint64(0)
+	if s.binding != nil {
+		durable = s.binding.durableSequence()
+	}
 	s.mu.Lock()
+	messages := detachMessages(s.durableRecent)
+	sessionDir := ""
+	if s.binding != nil {
+		sessionDir = s.binding.dir
+	}
 	snapshot := RecentSnapshot{
 		Version: recoveryFormatVersion, SessionID: s.id, StorageGeneration: s.storageGeneration,
-		DurableSequence: s.next - 1, Messages: detachMessages(s.recentMessages),
-		Title: s.projection.Title, ModelRef: s.projection.ModelRef, ModelIdentity: s.projection.ModelIdentity,
+		DurableSequence: durable,
+		Title:           s.projection.Title, ModelRef: s.projection.ModelRef, ModelIdentity: s.projection.ModelIdentity,
+		TotalTurns: len(s.projection.Turns),
 	}
 	s.mu.Unlock()
-	if s.binding != nil {
-		snapshot.DurableSequence = s.binding.durableSequence()
+	if sessionDir != "" {
+		snapshot.Entries, _ = buildRecentEntries(context.Background(), sessionDir, messages, durable, snapshot.TotalTurns)
 	}
 	return snapshot
 }

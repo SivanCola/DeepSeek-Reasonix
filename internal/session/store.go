@@ -659,6 +659,7 @@ func bindSession(handle *Store, opts OpenOptions) (*Session, error) {
 	session.externalHistory = opts.ExternalHistory
 	session.catalogPreview = state.catalogPreview
 	session.recentMessages = detachMessages(state.recentMessages)
+	session.durableRecent = detachMessages(state.recentMessages)
 	session.storageGeneration = handle.identity.Generation
 	session.recovery = handle.recovery
 	binding.metadataSource = session.metadataForDurable
@@ -735,6 +736,9 @@ func (s *Session) recoveryPublished(durable uint64) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if durable+1 == s.next {
+		s.durableRecent = detachMessages(s.recentMessages)
+	}
 	cut := 0
 	for cut < len(s.commits) && s.commits[cut].LastSequence() <= durable {
 		delete(s.operations, s.commits[cut].OperationID)

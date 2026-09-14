@@ -514,9 +514,9 @@ func TestServiceImportValidatesSelfContainedContentAndPublishesAtomically(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	page, err := target.Query().HistoryPage(t.Context(), ref, "", 10)
-	if err != nil || len(page.Messages) != 1 || page.Messages[0].ContentRef == nil {
-		t.Fatalf("imported history = %+v, %v", page, err)
+	page := historyPageReady(t, target.Query(), ref, "", 10)
+	if len(page.Messages) != 1 || page.Messages[0].ContentRef == nil {
+		t.Fatalf("imported history = %+v", page)
 	}
 	if _, err := target.Import(t.Context(), bundle); !errors.Is(err, ErrSessionExists) {
 		t.Fatalf("duplicate import = %v", err)

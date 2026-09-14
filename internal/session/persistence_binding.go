@@ -524,9 +524,13 @@ func (b *PersistenceBinding) Close(ctx context.Context) error {
 	b.closeOnce.Do(func() {
 		b.mu.Lock()
 		b.accepting = false
+		needsFlush := len(b.queue) > 0 || b.uncertain != nil
 		b.notifySpaceLocked()
 		b.mu.Unlock()
-		_, flushErr := b.Flush(context.Background())
+		var flushErr error
+		if needsFlush {
+			_, flushErr = b.Flush(context.Background())
+		}
 		b.drainMu.Lock()
 		defer b.drainMu.Unlock()
 		b.mu.Lock()

@@ -168,7 +168,7 @@ func TestServerAdvertisesImmutableSessionIdentityOnlyForExclusiveV3(t *testing.T
 	ctrl := control.New(control.Options{SessionService: service, ExclusiveSession: true})
 	defer ctrl.Close()
 	srv := New(ctrl, NewBroadcaster(), config.ServeConfig{})
-	if !slices.Contains(srv.capabilities(), capabilitySessionIdentityV1) || !slices.Contains(srv.capabilities(), capabilitySessionContentV1) || !slices.Contains(srv.capabilities(), capabilityGoalLifecycleV2) {
+	if !slices.Contains(srv.capabilities(), capabilitySessionIdentityV1) || !slices.Contains(srv.capabilities(), capabilitySessionContentV1) || !slices.Contains(srv.capabilities(), capabilitySessionReadV2) || !slices.Contains(srv.capabilities(), capabilityGoalLifecycleV2) {
 		t.Fatalf("exclusive v3 capabilities = %v", srv.capabilities())
 	}
 }

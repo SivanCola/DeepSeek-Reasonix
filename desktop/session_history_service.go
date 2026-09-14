@@ -33,12 +33,30 @@ func (a *App) SessionHistoryPageForTab(tabID, cursor string, limit int) (session
 	return query.HistoryPage(context.Background(), ref, cursor, limit)
 }
 
+// SessionOpenForTab returns the bounded recent baseline and independent
+// preparation states without consulting either SQLite projection.
+func (a *App) SessionOpenForTab(tabID string) (session.SessionOpenView, error) {
+	query, ref, err := a.canonicalSessionQuery(tabID)
+	if err != nil {
+		return session.SessionOpenView{}, err
+	}
+	return query.OpenSession(context.Background(), ref)
+}
+
 func (a *App) SearchSessionHistoryForTab(tabID, textQuery, cursor string, limit int) (session.SearchHistoryPage, error) {
 	query, ref, err := a.canonicalSessionQuery(tabID)
 	if err != nil {
 		return session.SearchHistoryPage{}, err
 	}
 	return query.SearchHistory(context.Background(), ref, textQuery, cursor, limit)
+}
+
+func (a *App) LocateSessionMessageForTab(tabID, messageID string, snapshot uint64) (session.MessageLocation, error) {
+	query, ref, err := a.canonicalSessionQuery(tabID)
+	if err != nil {
+		return session.MessageLocation{}, err
+	}
+	return query.LocateMessage(context.Background(), ref, messageID, snapshot)
 }
 
 // SessionHistoryContentForTab reads the next bounded chunk only after Query

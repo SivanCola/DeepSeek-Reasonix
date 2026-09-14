@@ -6041,6 +6041,40 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/session_history_service.go",
+      "name": "LocateSessionMessageForTab",
+      "owner": "App.LocateSessionMessageForTab",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "integer"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "session.MessageLocation"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID",
+          "messageID",
+          "snapshot"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.LocateSessionMessageForTab"
+      },
+      "sources": [
+        "desktop/session_history_service.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/inbox_target.go",
       "name": "LookupInboxFollowupForTarget",
       "owner": "App.LookupInboxFollowupForTarget",
@@ -8546,6 +8580,40 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/remote_transcript_api.go",
+      "name": "RemoteLocateSessionMessageForTab",
+      "owner": "App.RemoteLocateSessionMessageForTab",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "integer"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "session.MessageLocation"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID",
+          "messageID",
+          "snapshot"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.RemoteLocateSessionMessageForTab"
+      },
+      "sources": [
+        "desktop/remote_transcript_api.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/remote_listing.go",
       "name": "RemoteProjectSessions",
       "owner": "App.RemoteProjectSessions",
@@ -8742,6 +8810,32 @@
         ],
         "kind": "owner-inputs",
         "resolver": "App.RemoteSessionHistoryPageForTab"
+      },
+      "sources": [
+        "desktop/remote_transcript_api.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/remote_transcript_api.go",
+      "name": "RemoteSessionOpenForTab",
+      "owner": "App.RemoteSessionOpenForTab",
+      "params": [
+        {
+          "kind": "string"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "session.SessionOpenView"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.RemoteSessionOpenForTab"
       },
       "sources": [
         "desktop/remote_transcript_api.go"
@@ -11986,6 +12080,32 @@
         ],
         "kind": "owner-inputs",
         "resolver": "App.SessionHistoryPageForTab"
+      },
+      "sources": [
+        "desktop/session_history_service.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/session_history_service.go",
+      "name": "SessionOpenForTab",
+      "owner": "App.SessionOpenForTab",
+      "params": [
+        {
+          "kind": "string"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "session.SessionOpenView"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.SessionOpenForTab"
       },
       "sources": [
         "desktop/session_history_service.go"
@@ -16684,7 +16804,7 @@
     "topic:activation",
     "updater:progress"
   ],
-  "protocolVersion": 6,
+  "protocolVersion": 7,
   "types": {
     "agent.ToolRecoveryStatistics": {
       "fields": [
@@ -35894,6 +36014,30 @@
           }
         },
         {
+          "name": "coverageSequence",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "status",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "totalTurns",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "generation",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
           "name": "nextCursor",
           "optional": true,
           "type": {
@@ -35904,6 +36048,63 @@
           "name": "hasMore",
           "type": {
             "kind": "boolean"
+          }
+        }
+      ]
+    },
+    "session.MessageLocation": {
+      "fields": [
+        {
+          "name": "status",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "messageId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "snapshotSequence",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "coverageSequence",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "generation",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "position",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "visibleTurn",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "cursor",
+          "optional": true,
+          "type": {
+            "kind": "string"
           }
         }
       ]
@@ -35948,6 +36149,12 @@
           }
         },
         {
+          "name": "visibleTurn",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
           "name": "inline",
           "optional": true,
           "type": {
@@ -35963,6 +36170,71 @@
               "ref": "sessioncontent.Ref"
             },
             "kind": "nullable"
+          }
+        }
+      ]
+    },
+    "session.RecentSnapshot": {
+      "fields": [
+        {
+          "name": "version",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "sessionId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "storageGeneration",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "durableSequence",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "totalTurns",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "entries",
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "session.PersistentMessage"
+            },
+            "kind": "array"
+          }
+        },
+        {
+          "name": "title",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "modelRef",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "modelIdentity",
+          "optional": true,
+          "type": {
+            "kind": "string"
           }
         }
       ]
@@ -36020,6 +36292,18 @@
           }
         },
         {
+          "name": "coverageSequence",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "status",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
           "name": "nextCursor",
           "optional": true,
           "type": {
@@ -36030,6 +36314,89 @@
           "name": "hasMore",
           "type": {
             "kind": "boolean"
+          }
+        }
+      ]
+    },
+    "session.SessionOpenView": {
+      "fields": [
+        {
+          "name": "session",
+          "type": {
+            "kind": "object",
+            "ref": "session.SessionRef"
+          }
+        },
+        {
+          "name": "storageGeneration",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "snapshotSequence",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "acceptedSequence",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "durableSequence",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "recent",
+          "type": {
+            "kind": "object",
+            "ref": "session.RecentSnapshot"
+          }
+        },
+        {
+          "name": "recovery",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "history",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "search",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "canExecute",
+          "type": {
+            "kind": "boolean"
+          }
+        }
+      ]
+    },
+    "session.SessionRef": {
+      "fields": [
+        {
+          "name": "hostId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "sessionId",
+          "type": {
+            "kind": "string"
           }
         }
       ]

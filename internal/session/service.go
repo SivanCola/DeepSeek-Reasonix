@@ -413,6 +413,13 @@ type Service struct {
 	bindings   map[*Runtime]int
 	retiring   map[*Runtime]chan struct{}
 	retireIdle map[*Runtime]bool
+	idleTimers map[*Runtime]*time.Timer
+	idleWeight map[*Runtime]int64
+	idleOrder  map[*Runtime]uint64
+	idleUsed   int64
+	idleClock  uint64
+	idleBudget int64
+	idleTTL    time.Duration
 	query      *Query
 	revision   atomic.Uint64
 }
@@ -619,6 +626,9 @@ func (s *Service) closeOwned(ctx context.Context, runtime *Runtime, instance str
 		return ErrSessionNotRunning
 	}
 	s.mu.Lock()
+	if timer := s.idleTimers[runtime]; timer != nil {
+		s.removeIdleCacheLocked(runtime, true)
+	}
 	if s.bindings[runtime] != 0 {
 		s.mu.Unlock()
 		return ErrRuntimeBound
@@ -645,6 +655,7 @@ func (s *Service) closeOwned(ctx context.Context, runtime *Runtime, instance str
 	if !errors.Is(err, ErrRuntimeBusy) && s.active[runtime.ref] == runtime {
 		delete(s.active, runtime.ref)
 		delete(s.retireIdle, runtime)
+		s.removeIdleCacheLocked(runtime, true)
 		s.closed[runtime.ref] = err
 		s.revision.Add(1)
 	}
@@ -663,6 +674,9 @@ func (s *Service) Detach(runtime *Runtime) bool {
 	defer s.mu.Unlock()
 	if s.active[runtime.ref] != runtime {
 		return false
+	}
+	if timer := s.idleTimers[runtime]; timer != nil {
+		s.removeIdleCacheLocked(runtime, true)
 	}
 	delete(s.active, runtime.ref)
 	s.revision.Add(1)

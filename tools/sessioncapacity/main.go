@@ -200,10 +200,25 @@ func run(ctx context.Context, cfg config) (result report, err error) {
 	result.ColdOpenPeakHeapBytes = peaks.nextStage().heap
 
 	indexStarted := time.Now()
-	page, err := second.Query().HistoryPage(ctx, ref, "", 100)
-	if err != nil {
-		_ = binding.Release(context.Background())
-		return report{}, err
+	var page session.MessageHistoryPage
+	for {
+		page, err = second.Query().HistoryPage(ctx, ref, "", 100)
+		if err != nil {
+			_ = binding.Release(context.Background())
+			return report{}, err
+		}
+		if page.Status == "ready" {
+			break
+		}
+		if page.Status != "preparing" {
+			_ = binding.Release(context.Background())
+			return report{}, fmt.Errorf("capacity: history locator status %q", page.Status)
+		}
+		select {
+		case <-ctx.Done():
+			return report{}, ctx.Err()
+		case <-time.After(5 * time.Millisecond):
+		}
 	}
 	result.HistoryIndexBuildMS = time.Since(indexStarted).Milliseconds()
 	if len(page.Messages) == 0 && cfg.HistoryMessages > 0 {

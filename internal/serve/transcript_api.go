@@ -18,9 +18,28 @@ func (s *Server) registerTranscriptRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /transcript/page", s.transcriptSnapshot)
 	mux.HandleFunc("GET /transcript/content", s.transcriptContent)
 	mux.HandleFunc("GET /transcript/replay", s.transcriptReplay)
+	mux.HandleFunc("GET /session/open", s.sessionOpen)
 	mux.HandleFunc("GET /session-history/page", s.sessionHistoryPage)
 	mux.HandleFunc("GET /session-history/search", s.sessionHistorySearch)
+	mux.HandleFunc("GET /session-history/locate", s.sessionHistoryLocate)
 	mux.HandleFunc("GET /session-history/content", s.sessionHistoryContent)
+}
+
+func (s *Server) sessionOpen(w http.ResponseWriter, r *http.Request) {
+	s.bindMu.Lock()
+	defer s.bindMu.Unlock()
+	query, ref, ok := s.canonicalSessionQuery(w, r)
+	if !ok {
+		return
+	}
+	view, err := query.OpenSession(r.Context(), ref)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(view)
 }
 
 type sessionHistoryContentRequest struct {
@@ -131,6 +150,30 @@ func (s *Server) sessionHistorySearch(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(page)
+}
+
+func (s *Server) sessionHistoryLocate(w http.ResponseWriter, r *http.Request) {
+	s.bindMu.Lock()
+	defer s.bindMu.Unlock()
+	query, ref, ok := s.canonicalSessionQuery(w, r)
+	if !ok {
+		return
+	}
+	var snapshot uint64
+	if raw := r.URL.Query().Get("snapshot"); raw != "" {
+		if _, err := fmt.Sscan(raw, &snapshot); err != nil {
+			http.Error(w, "invalid history snapshot", http.StatusBadRequest)
+			return
+		}
+	}
+	location, err := query.LocateMessage(r.Context(), ref, r.URL.Query().Get("messageId"), snapshot)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(location)
 }
 
 // transcriptRead binds each read to the selected controller. A file mirror

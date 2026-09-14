@@ -4,10 +4,12 @@ import { mockProviderTemplate, mockPreset, mockBundlePreset, mockKimiAPIModels, 
 import type {
   CancelReceipt,
   DesktopCommandName,
+  MessageLocation,
   MessageHistoryPage,
   Ref as SessionContentRef,
   SearchHistoryPage,
   SessionHistoryContentChunk,
+	SessionOpenView,
 } from "../generated/desktopContract.generated";
 import type { InvocationRequest } from "./invocationDisplay";
 import type { FollowupBindings } from "./pendingFollowup";
@@ -364,11 +366,15 @@ export interface AppBindings extends ToolRecoveryBindings, ModelSettingsBindings
   HistorySliceForTab(tabID: string, req: HistorySliceRequest): Promise<HistorySlice>;
   HistoryContentForTab(tabID: string, ref: HistoryContentRef, chunkIndex: number): Promise<HistoryContentChunk>;
   SessionHistoryPageForTab(tabID: string, cursor: string, limit: number): Promise<MessageHistoryPage>;
+  SessionOpenForTab(tabID: string): Promise<SessionOpenView>;
   SessionHistoryContentForTab(tabID: string, ref: SessionContentRef, offset: number): Promise<SessionHistoryContentChunk>;
+  RemoteSessionOpenForTab(tabID: string): Promise<SessionOpenView>;
   RemoteSessionHistoryPageForTab(tabID: string, cursor: string, limit: number): Promise<MessageHistoryPage>;
   RemoteSessionHistoryContentForTab(tabID: string, ref: SessionContentRef, offset: number): Promise<SessionHistoryContentChunk>;
   SearchSessionHistoryForTab(tabID: string, textQuery: string, cursor: string, limit: number): Promise<SearchHistoryPage>;
   RemoteSearchSessionHistoryForTab(tabID: string, textQuery: string, cursor: string, limit: number): Promise<SearchHistoryPage>;
+  LocateSessionMessageForTab(tabID: string, messageID: string, snapshot: number): Promise<MessageLocation>;
+  RemoteLocateSessionMessageForTab(tabID: string, messageID: string, snapshot: number): Promise<MessageLocation>;
   HistoryCheckpointTurnsForTab(tabID: string): Promise<number[]>;
   Checkpoints(): Promise<CheckpointMeta[]>;
   CheckpointsForTab(tabID: string): Promise<CheckpointMeta[]>;
@@ -3260,22 +3266,34 @@ function makeMockApp(): AppBindings {
           return out;
         },
         async SessionHistoryPageForTab(): Promise<MessageHistoryPage> {
-          return { messages: [], snapshotSequence: 0, hasMore: false };
+          return { messages: [], snapshotSequence: 0, coverageSequence: 0, status: "preparing", totalTurns: 0, generation: "", hasMore: false };
+        },
+        async SessionOpenForTab(): Promise<SessionOpenView> {
+          return { session: { hostId: "local", sessionId: "mock" }, storageGeneration: "mock", snapshotSequence: 0, acceptedSequence: 0, durableSequence: 0, recent: { version: 1, sessionId: "mock", storageGeneration: "mock", durableSequence: 0, totalTurns: 0, entries: [] }, recovery: "ready", history: "preparing", search: "preparing", canExecute: true };
         },
         async SessionHistoryContentForTab(_tabID: string, ref: SessionContentRef, offset: number): Promise<SessionHistoryContentChunk> {
           return { data: "", nextOffset: Math.min(offset, ref.bytes), done: offset >= ref.bytes };
         },
         async RemoteSessionHistoryPageForTab(): Promise<MessageHistoryPage> {
-          return { messages: [], snapshotSequence: 0, hasMore: false };
+          return { messages: [], snapshotSequence: 0, coverageSequence: 0, status: "preparing", totalTurns: 0, generation: "", hasMore: false };
+        },
+        async RemoteSessionOpenForTab(): Promise<SessionOpenView> {
+          return { session: { hostId: "remote", sessionId: "mock" }, storageGeneration: "mock", snapshotSequence: 0, acceptedSequence: 0, durableSequence: 0, recent: { version: 1, sessionId: "mock", storageGeneration: "mock", durableSequence: 0, totalTurns: 0, entries: [] }, recovery: "ready", history: "preparing", search: "preparing", canExecute: true };
         },
         async RemoteSessionHistoryContentForTab(_tabID: string, ref: SessionContentRef, offset: number): Promise<SessionHistoryContentChunk> {
           return { data: "", nextOffset: Math.min(offset, ref.bytes), done: offset >= ref.bytes };
         },
         async SearchSessionHistoryForTab(): Promise<SearchHistoryPage> {
-          return { hits: [], snapshotSequence: 0, hasMore: false };
+          return { hits: [], snapshotSequence: 0, coverageSequence: 0, status: "preparing", hasMore: false };
         },
         async RemoteSearchSessionHistoryForTab(): Promise<SearchHistoryPage> {
-          return { hits: [], snapshotSequence: 0, hasMore: false };
+          return { hits: [], snapshotSequence: 0, coverageSequence: 0, status: "preparing", hasMore: false };
+        },
+        async LocateSessionMessageForTab(_tabID: string, messageID: string): Promise<MessageLocation> {
+          return { status: "not_found", messageId: messageID, snapshotSequence: 0, coverageSequence: 0 };
+        },
+        async RemoteLocateSessionMessageForTab(_tabID: string, messageID: string): Promise<MessageLocation> {
+          return { status: "not_found", messageId: messageID, snapshotSequence: 0, coverageSequence: 0 };
         },
     async ListSessions() {
       return sessions.map((s) => ({ ...s }));

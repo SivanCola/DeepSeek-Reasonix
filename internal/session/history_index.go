@@ -3,7 +3,6 @@ package session
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -39,6 +38,7 @@ type PersistentMessage struct {
 	Role          string              `json:"role"`
 	Preview       string              `json:"preview,omitempty"`
 	EventSequence uint64              `json:"eventSequence"`
+	VisibleTurn   int                 `json:"visibleTurn"`
 	Inline        json.RawMessage     `json:"inline,omitempty"`
 	ContentRef    *sessioncontent.Ref `json:"contentRef,omitempty"`
 }
@@ -46,8 +46,25 @@ type PersistentMessage struct {
 type MessageHistoryPage struct {
 	Messages         []PersistentMessage `json:"messages"`
 	SnapshotSequence uint64              `json:"snapshotSequence"`
+	CoverageSequence uint64              `json:"coverageSequence"`
+	Status           string              `json:"status"`
+	TotalTurns       int                 `json:"totalTurns"`
+	Generation       string              `json:"generation"`
 	NextCursor       string              `json:"nextCursor,omitempty"`
 	HasMore          bool                `json:"hasMore"`
+}
+
+// MessageLocation converts a stable message identity into a cursor for a
+// fixed locator snapshot. It contains no message body.
+type MessageLocation struct {
+	Status           string `json:"status"`
+	MessageID        string `json:"messageId,omitempty"`
+	SnapshotSequence uint64 `json:"snapshotSequence"`
+	CoverageSequence uint64 `json:"coverageSequence"`
+	Generation       string `json:"generation,omitempty"`
+	Position         int64  `json:"position,omitempty"`
+	VisibleTurn      int    `json:"visibleTurn,omitempty"`
+	Cursor           string `json:"cursor,omitempty"`
 }
 
 // HistoryPosition is the bounded display metadata for one message in a fixed
@@ -74,6 +91,7 @@ type historyCursor struct {
 	SnapshotSequence uint64 `json:"snapshotSequence"`
 	BeforePosition   int64  `json:"beforePosition"`
 	Projection       int    `json:"projection"`
+	Generation       string `json:"generation"`
 }
 
 type historyBuildState struct {
@@ -88,6 +106,11 @@ type historyBuildState struct {
 	events       [][]any
 	contentRefs  [][]any
 	messages     [][]any
+}
+
+type historyPreparation struct {
+	done chan struct{}
+	err  error
 }
 
 type historyBuildStatements struct {
@@ -127,7 +150,7 @@ func (s *historyBuildStatements) close() {
 }
 
 func historyIndexPath(root, sessionID string) string {
-	return filepath.Join(root, ".query-cache", filepath.Base(sessionID), "history-v1.sqlite")
+	return filepath.Join(root, ".query-cache", filepath.Base(sessionID), "history-locator-v1.sqlite")
 }
 
 var historyMigrations = []projectiondb.Migration{{Version: 1, Apply: func(ctx context.Context, tx *sql.Tx) error {
@@ -175,6 +198,8 @@ type SearchHistoryHit struct {
 type SearchHistoryPage struct {
 	Hits             []SearchHistoryHit `json:"hits"`
 	SnapshotSequence uint64             `json:"snapshotSequence"`
+	CoverageSequence uint64             `json:"coverageSequence"`
+	Status           string             `json:"status"`
 	NextCursor       string             `json:"nextCursor,omitempty"`
 	HasMore          bool               `json:"hasMore"`
 }
@@ -186,6 +211,7 @@ type searchHistoryCursor struct {
 	BeforePosition   int64  `json:"beforePosition"`
 	Projection       int    `json:"projection"`
 	QueryDigest      string `json:"queryDigest"`
+	Generation       string `json:"generation"`
 }
 
 func (q *Query) HistoryPage(ctx context.Context, ref SessionRef, cursor string, limit int) (MessageHistoryPage, error) {
@@ -204,21 +230,34 @@ func (q *Query) HistoryPage(ctx context.Context, ref SessionRef, cursor string, 
 	}
 	limit = min(limit, HistoryPageMaxLimit)
 	path := historyIndexPath(filesystem.Root, ref.SessionID)
-	q.rebuildMu.Lock()
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		preparation := q.prepareHistoryLocator(filesystem, ref.SessionID, path)
+		select {
+		case <-preparation.done:
+			if preparation.err != nil {
+				return MessageHistoryPage{Status: "failed"}, preparation.err
+			}
+		default:
+			return MessageHistoryPage{Messages: []PersistentMessage{}, Status: "preparing"}, nil
+		}
+	}
+	lock := q.projectionLock("history", ref.SessionID)
+	lock.Lock()
 	err := ensureHistoryIndex(ctx, filesystem, ref.SessionID, path)
-	q.rebuildMu.Unlock()
+	lock.Unlock()
 	if err != nil {
 		return MessageHistoryPage{}, err
 	}
-	handle, err := projectiondb.Open(ctx, projectiondb.OpenOptions{Path: path, Migrations: historyMigrations, RequireDisk: true, MaxOpenConns: 1, QuickCheck: true})
+	handle, err := projectiondb.Open(ctx, projectiondb.OpenOptions{Path: path, Migrations: historyMigrations, RequireDisk: true, MaxOpenConns: 1})
 	if err != nil {
 		return MessageHistoryPage{}, err
 	}
 	defer handle.DB.Close()
-	var snapshot uint64
-	if err := scanMetadataUint(handle.DB.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='durable_sequence'`), &snapshot); err != nil {
+	metadata, err := readHistoryIndexMetadata(ctx, handle.DB)
+	if err != nil {
 		return MessageHistoryPage{}, err
 	}
+	snapshot := metadata.durableSequence
 	// Empty cursor means the newest page. Subsequent cursors move toward older
 	// positions while the snapshot sequence remains fixed.
 	before := int64(^uint64(0) >> 1)
@@ -227,8 +266,8 @@ func (q *Query) HistoryPage(ctx context.Context, ref SessionRef, cursor string, 
 		if err != nil {
 			return MessageHistoryPage{}, err
 		}
-		if parsed.SessionID != ref.SessionID || parsed.StorageRevision != StorageRevision || parsed.Projection != historyIndexVersion || parsed.SnapshotSequence > snapshot {
-			return MessageHistoryPage{}, errors.New("session: history cursor no longer matches this snapshot")
+		if parsed.SessionID != ref.SessionID || parsed.StorageRevision != StorageRevision || parsed.Projection != historyIndexVersion || parsed.SnapshotSequence > snapshot || parsed.Generation != metadata.generation {
+			return MessageHistoryPage{Messages: []PersistentMessage{}, Status: "stale_cursor", CoverageSequence: metadata.durableSequence, Generation: metadata.generation}, nil
 		}
 		snapshot = parsed.SnapshotSequence
 		if parsed.BeforePosition <= 0 {
@@ -236,19 +275,23 @@ func (q *Query) HistoryPage(ctx context.Context, ref SessionRef, cursor string, 
 		}
 		before = parsed.BeforePosition
 	}
-	rows, err := handle.DB.QueryContext(ctx, `SELECT message_id,position,version,role,preview,event_sequence,inline,content_digest,content_bytes,content_index_digest FROM messages WHERE position<? AND event_sequence<=? AND (valid_to=0 OR valid_to>?) ORDER BY position DESC LIMIT ?`, before, snapshot, snapshot, limit+1)
+	page := MessageHistoryPage{Messages: []PersistentMessage{}, SnapshotSequence: snapshot, CoverageSequence: metadata.durableSequence, Status: "ready", Generation: metadata.generation}
+	if err := handle.DB.QueryRowContext(ctx, `SELECT COALESCE(MAX(visible_turn),0) FROM messages WHERE event_sequence<=? AND (valid_to=0 OR valid_to>?)`, snapshot, snapshot).Scan(&page.TotalTurns); err != nil {
+		return MessageHistoryPage{}, err
+	}
+	rows, err := handle.DB.QueryContext(ctx, `SELECT message_id,position,version,role,preview,event_sequence,visible_turn,inline,content_digest,content_bytes,content_index_digest FROM messages WHERE position<? AND event_sequence<=? AND (valid_to=0 OR valid_to>?) ORDER BY position DESC LIMIT ?`, before, snapshot, snapshot, limit+1)
 	if err != nil {
 		return MessageHistoryPage{}, err
 	}
 	defer rows.Close()
-	page := MessageHistoryPage{Messages: []PersistentMessage{}, SnapshotSequence: snapshot}
 	encodedBytes := 0
+	storageGeneration := q.storageGeneration(ref.SessionID)
 	for rows.Next() {
 		var message PersistentMessage
 		var inline []byte
 		var digest, indexDigest string
 		var contentBytes int64
-		if err := rows.Scan(&message.MessageID, &message.Position, &message.Version, &message.Role, &message.Preview, &message.EventSequence, &inline, &digest, &contentBytes, &indexDigest); err != nil {
+		if err := rows.Scan(&message.MessageID, &message.Position, &message.Version, &message.Role, &message.Preview, &message.EventSequence, &message.VisibleTurn, &inline, &digest, &contentBytes, &indexDigest); err != nil {
 			return MessageHistoryPage{}, err
 		}
 		if len(page.Messages) == limit {
@@ -257,7 +300,17 @@ func (q *Query) HistoryPage(ctx context.Context, ref SessionRef, cursor string, 
 		}
 		message.Inline = append(json.RawMessage(nil), inline...)
 		if digest != "" {
-			message.ContentRef = &sessioncontent.Ref{Digest: digest, Bytes: contentBytes, IndexDigest: indexDigest, IntegrityBlock: sessioncontent.IntegrityBlockBytes, MediaType: "application/json"}
+			contentRef := sessioncontent.Ref{Digest: digest, Bytes: contentBytes, IndexDigest: indexDigest, IntegrityBlock: sessioncontent.IntegrityBlockBytes, MediaType: "application/json"}
+			if contentBytes <= recentInlineBytes && encodedBytes+int(contentBytes) <= HistoryPageMaxBytes {
+				body, readErr := contentStoreForSessionDir(filepath.Join(filesystem.Root, ref.SessionID)).ReadRange(ctx, contentRef, 0, contentBytes)
+				if readErr != nil {
+					return MessageHistoryPage{}, readErr
+				}
+				message.Inline = json.RawMessage(body)
+			} else {
+				message.ContentRef = &contentRef
+				q.authorizeContentForGeneration(ref.SessionID, storageGeneration, digest, contentBytes, indexDigest)
+			}
 		}
 		encoded, _ := json.Marshal(message)
 		if len(page.Messages) > 0 && encodedBytes+len(encoded) > HistoryPageMaxBytes {
@@ -272,13 +325,98 @@ func (q *Query) HistoryPage(ctx context.Context, ref SessionRef, cursor string, 
 	}
 	if page.HasMore && len(page.Messages) > 0 {
 		oldest := page.Messages[len(page.Messages)-1]
-		page.NextCursor, err = encodeHistoryCursor(historyCursor{SessionID: ref.SessionID, StorageRevision: StorageRevision, SnapshotSequence: snapshot, BeforePosition: oldest.Position, Projection: historyIndexVersion})
+		page.NextCursor, err = encodeHistoryCursor(historyCursor{SessionID: ref.SessionID, StorageRevision: StorageRevision, SnapshotSequence: snapshot, BeforePosition: oldest.Position, Projection: historyIndexVersion, Generation: metadata.generation})
 		if err != nil {
 			return MessageHistoryPage{}, err
 		}
 	}
 	slices.Reverse(page.Messages)
 	return page, nil
+}
+
+// LocateMessage resolves a search hit or durable message id without scanning
+// message bodies. A zero snapshot selects the locator's latest covered cut.
+func (q *Query) LocateMessage(ctx context.Context, ref SessionRef, messageID string, snapshot uint64) (MessageLocation, error) {
+	if q == nil {
+		return MessageLocation{}, errors.New("session: nil query")
+	}
+	if err := ref.validate(q.hostID); err != nil {
+		return MessageLocation{}, err
+	}
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return MessageLocation{}, errors.New("session: message id is required")
+	}
+	filesystem, ok := q.persistence.(*FilesystemPersistence)
+	if !ok {
+		return MessageLocation{}, errors.New("session: history locator requires filesystem persistence")
+	}
+	path := historyIndexPath(filesystem.Root, ref.SessionID)
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		q.prepareHistoryLocator(filesystem, ref.SessionID, path)
+		return MessageLocation{Status: "preparing", MessageID: messageID}, nil
+	}
+	lock := q.projectionLock("history", ref.SessionID)
+	lock.Lock()
+	err := ensureHistoryIndex(ctx, filesystem, ref.SessionID, path)
+	lock.Unlock()
+	if err != nil {
+		return MessageLocation{}, err
+	}
+	handle, err := projectiondb.Open(ctx, projectiondb.OpenOptions{Path: path, Migrations: historyMigrations, RequireDisk: true, MaxOpenConns: 1})
+	if err != nil {
+		return MessageLocation{}, err
+	}
+	defer handle.DB.Close()
+	metadata, err := readHistoryIndexMetadata(ctx, handle.DB)
+	if err != nil {
+		return MessageLocation{}, err
+	}
+	if snapshot == 0 {
+		snapshot = metadata.durableSequence
+	}
+	location := MessageLocation{Status: "ready", MessageID: messageID, SnapshotSequence: snapshot, CoverageSequence: metadata.durableSequence, Generation: metadata.generation}
+	if snapshot > metadata.durableSequence {
+		location.Status = "preparing"
+		return location, nil
+	}
+	err = handle.DB.QueryRowContext(ctx, `SELECT position,visible_turn FROM messages WHERE message_id=? AND event_sequence<=? AND (valid_to=0 OR valid_to>?) ORDER BY version DESC LIMIT 1`, messageID, snapshot, snapshot).Scan(&location.Position, &location.VisibleTurn)
+	if errors.Is(err, sql.ErrNoRows) {
+		location.Status = "not_found"
+		return location, nil
+	}
+	if err != nil {
+		return MessageLocation{}, err
+	}
+	location.Cursor, err = encodeHistoryCursor(historyCursor{SessionID: ref.SessionID, StorageRevision: StorageRevision, SnapshotSequence: snapshot, BeforePosition: location.Position + 1, Projection: historyIndexVersion, Generation: metadata.generation})
+	return location, err
+}
+
+func (q *Query) prepareHistoryLocator(filesystem *FilesystemPersistence, sessionID, path string) *historyPreparation {
+	q.historyMu.Lock()
+	if current := q.historyBuilds[sessionID]; current != nil {
+		q.historyMu.Unlock()
+		return current
+	}
+	preparation := &historyPreparation{done: make(chan struct{})}
+	q.historyBuilds[sessionID] = preparation
+	q.historyMu.Unlock()
+	go func() {
+		select {
+		case q.rebuildSlot <- struct{}{}:
+			defer func() { <-q.rebuildSlot }()
+		case <-q.rebuildCtx.Done():
+			preparation.err = q.rebuildCtx.Err()
+			close(preparation.done)
+			return
+		}
+		lock := q.projectionLock("history", sessionID)
+		lock.Lock()
+		preparation.err = ensureHistoryIndex(q.rebuildCtx, filesystem, sessionID, path)
+		lock.Unlock()
+		close(preparation.done)
+	}()
+	return preparation
 }
 
 // HistoryShape returns the ordering and visible-turn boundaries for the
@@ -289,7 +427,7 @@ func (q *Query) HistoryShape(ctx context.Context, ref SessionRef) (HistoryShape,
 		return HistoryShape{}, err
 	}
 	_ = filesystem
-	handle, err := projectiondb.Open(ctx, projectiondb.OpenOptions{Path: path, Migrations: historyMigrations, RequireDisk: true, MaxOpenConns: 1, QuickCheck: true})
+	handle, err := projectiondb.Open(ctx, projectiondb.OpenOptions{Path: path, Migrations: historyMigrations, RequireDisk: true, MaxOpenConns: 1})
 	if err != nil {
 		return HistoryShape{}, err
 	}
@@ -330,7 +468,7 @@ func (q *Query) HistoryWindow(ctx context.Context, ref SessionRef, snapshot uint
 	if start < 0 || end < start {
 		return nil, errors.New("session: invalid history window")
 	}
-	handle, err := projectiondb.Open(ctx, projectiondb.OpenOptions{Path: path, Migrations: historyMigrations, RequireDisk: true, MaxOpenConns: 1, QuickCheck: true})
+	handle, err := projectiondb.Open(ctx, projectiondb.OpenOptions{Path: path, Migrations: historyMigrations, RequireDisk: true, MaxOpenConns: 1})
 	if err != nil {
 		return nil, err
 	}
@@ -393,9 +531,10 @@ func (q *Query) prepareHistoryIndex(ctx context.Context, ref SessionRef) (*Files
 		return nil, "", errors.New("session: history index requires filesystem persistence")
 	}
 	path := historyIndexPath(filesystem.Root, ref.SessionID)
-	q.rebuildMu.Lock()
+	lock := q.projectionLock("history", ref.SessionID)
+	lock.Lock()
 	err := ensureHistoryIndex(ctx, filesystem, ref.SessionID, path)
-	q.rebuildMu.Unlock()
+	lock.Unlock()
 	if err != nil {
 		return nil, "", err
 	}
@@ -403,6 +542,9 @@ func (q *Query) prepareHistoryIndex(ctx context.Context, ref SessionRef) (*Files
 }
 
 func (q *Query) ReadContent(ctx context.Context, ref SessionRef, contentRef sessioncontent.Ref, offset, length int64) ([]byte, error) {
+	if q == nil {
+		return nil, errors.New("session: nil query")
+	}
 	if err := ref.validate(q.hostID); err != nil {
 		return nil, err
 	}
@@ -410,111 +552,13 @@ func (q *Query) ReadContent(ctx context.Context, ref SessionRef, contentRef sess
 	if !ok {
 		return nil, errors.New("session: content reads require filesystem persistence")
 	}
-	path := historyIndexPath(filesystem.Root, ref.SessionID)
-	q.rebuildMu.Lock()
-	err := ensureHistoryIndex(ctx, filesystem, ref.SessionID, path)
-	q.rebuildMu.Unlock()
-	if err != nil {
-		return nil, err
+	if offset < 0 || length < 0 || length > 1<<20 || offset > contentRef.Bytes || length > contentRef.Bytes-offset {
+		return nil, errors.New("session: invalid or oversized content range")
 	}
-	handle, err := projectiondb.Open(ctx, projectiondb.OpenOptions{Path: path, Migrations: historyMigrations, RequireDisk: true, MaxOpenConns: 1, QuickCheck: true})
-	if err != nil {
-		return nil, err
-	}
-	defer handle.DB.Close()
-	var allowed int
-	if err := handle.DB.QueryRowContext(ctx, `SELECT 1 FROM content_refs WHERE digest=? AND bytes=? AND index_digest=?`, contentRef.Digest, contentRef.Bytes, contentRef.IndexDigest).Scan(&allowed); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, errors.New("session: content reference is not authorized for this session")
-		}
-		return nil, err
+	if !q.contentAuthorized(ref.SessionID, contentRef.Digest, contentRef.Bytes, contentRef.IndexDigest) {
+		return nil, errors.New("session: content reference is not authorized for this session")
 	}
 	return contentStoreForSessionDir(filepath.Join(filesystem.Root, ref.SessionID)).ReadRange(ctx, contentRef, offset, length)
-}
-
-// SearchHistory searches the rebuildable disk projection at a fixed durable
-// snapshot. Results move newest-to-oldest and never return full message bodies.
-func (q *Query) SearchHistory(ctx context.Context, ref SessionRef, textQuery, cursor string, limit int) (SearchHistoryPage, error) {
-	if q == nil {
-		return SearchHistoryPage{}, errors.New("session: nil query")
-	}
-	if err := ref.validate(q.hostID); err != nil {
-		return SearchHistoryPage{}, err
-	}
-	textQuery = strings.TrimSpace(textQuery)
-	if textQuery == "" {
-		return SearchHistoryPage{}, errors.New("session: history search query is required")
-	}
-	if limit <= 0 {
-		limit = 50
-	}
-	limit = min(limit, 200)
-	filesystem, ok := q.persistence.(*FilesystemPersistence)
-	if !ok {
-		return SearchHistoryPage{}, errors.New("session: history search requires filesystem persistence")
-	}
-	path := historyIndexPath(filesystem.Root, ref.SessionID)
-	q.rebuildMu.Lock()
-	err := ensureHistoryIndex(ctx, filesystem, ref.SessionID, path)
-	q.rebuildMu.Unlock()
-	if err != nil {
-		return SearchHistoryPage{}, err
-	}
-	handle, err := projectiondb.Open(ctx, projectiondb.OpenOptions{Path: path, Migrations: historyMigrations, RequireDisk: true, MaxOpenConns: 1, QuickCheck: true})
-	if err != nil {
-		return SearchHistoryPage{}, err
-	}
-	defer handle.DB.Close()
-	var snapshot uint64
-	if err := scanMetadataUint(handle.DB.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='durable_sequence'`), &snapshot); err != nil {
-		return SearchHistoryPage{}, err
-	}
-	before := int64(^uint64(0) >> 1)
-	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(textQuery)))
-	if cursor != "" {
-		parsed, err := decodeSearchHistoryCursor(cursor)
-		if err != nil {
-			return SearchHistoryPage{}, err
-		}
-		if parsed.SessionID != ref.SessionID || parsed.StorageRevision != StorageRevision || parsed.Projection != historyIndexVersion || parsed.QueryDigest != digest || parsed.SnapshotSequence > snapshot || parsed.BeforePosition <= 0 {
-			return SearchHistoryPage{}, errors.New("session: history search cursor no longer matches this snapshot")
-		}
-		snapshot, before = parsed.SnapshotSequence, parsed.BeforePosition
-	}
-	pattern := "%" + escapeHistoryLike(textQuery) + "%"
-	rows, err := handle.DB.QueryContext(ctx, `SELECT message_id,position,role,preview,event_sequence FROM messages WHERE position<? AND event_sequence<=? AND (valid_to=0 OR valid_to>?) AND (search_text LIKE ? ESCAPE '\' OR COALESCE(json_extract(inline,'$.content'),'') LIKE ? ESCAPE '\' OR COALESCE(json_extract(inline,'$.raw_content'),'') LIKE ? ESCAPE '\' OR COALESCE(json_extract(inline,'$.reasoning_content'),'') LIKE ? ESCAPE '\') ORDER BY position DESC LIMIT ?`, before, snapshot, snapshot, pattern, pattern, pattern, pattern, limit+1)
-	if err != nil {
-		return SearchHistoryPage{}, err
-	}
-	defer rows.Close()
-	page := SearchHistoryPage{Hits: []SearchHistoryHit{}, SnapshotSequence: snapshot}
-	for rows.Next() {
-		var hit SearchHistoryHit
-		if err := rows.Scan(&hit.MessageID, &hit.Position, &hit.Role, &hit.Preview, &hit.EventSequence); err != nil {
-			return SearchHistoryPage{}, err
-		}
-		if len(page.Hits) == limit {
-			page.HasMore = true
-			break
-		}
-		page.Hits = append(page.Hits, hit)
-	}
-	if err := rows.Err(); err != nil {
-		return SearchHistoryPage{}, err
-	}
-	if page.HasMore && len(page.Hits) > 0 {
-		page.NextCursor, err = encodeSearchHistoryCursor(searchHistoryCursor{SessionID: ref.SessionID, StorageRevision: StorageRevision, SnapshotSequence: snapshot, BeforePosition: page.Hits[len(page.Hits)-1].Position, Projection: historyIndexVersion, QueryDigest: digest})
-		if err != nil {
-			return SearchHistoryPage{}, err
-		}
-	}
-	return page, nil
-}
-
-func escapeHistoryLike(value string) string {
-	value = strings.ReplaceAll(value, `\`, `\\`)
-	value = strings.ReplaceAll(value, `%`, `\%`)
-	return strings.ReplaceAll(value, `_`, `\_`)
 }
 
 func ensureHistoryIndex(ctx context.Context, persistence *FilesystemPersistence, sessionID, path string) error {
@@ -523,23 +567,205 @@ func ensureHistoryIndex(ctx context.Context, persistence *FilesystemPersistence,
 	if err != nil {
 		return err
 	}
-	if historyIndexCurrent(ctx, path, sessionID, revision) {
+	if historyIndexCurrent(ctx, dir, path, sessionID, revision) {
 		return nil
+	}
+	if updated, err := incrementHistoryIndex(ctx, dir, path, sessionID, revision); updated || err != nil {
+		return err
 	}
 	return rebuildHistoryIndex(ctx, dir, path, sessionID, revision)
 }
 
-func historyIndexCurrent(ctx context.Context, path, sessionID string, revision logRevision) bool {
+type historyIndexMetadata struct {
+	sessionID       string
+	logSize         int64
+	storageRevision int
+	projection      int
+	durableSequence uint64
+	viewSequence    uint64
+	generation      string
+}
+
+func readHistoryIndexMetadata(ctx context.Context, db *sql.DB) (historyIndexMetadata, error) {
+	values := map[string]string{}
+	rows, err := db.QueryContext(ctx, `SELECT key,value FROM metadata WHERE key IN ('session_id','log_size','storage_revision','projection_version','durable_sequence','history_view_sequence','generation')`)
+	if err != nil {
+		return historyIndexMetadata{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			return historyIndexMetadata{}, err
+		}
+		values[key] = value
+	}
+	if err := rows.Err(); err != nil {
+		return historyIndexMetadata{}, err
+	}
+	metadata := historyIndexMetadata{sessionID: values["session_id"], generation: values["generation"]}
+	if _, err := fmt.Sscan(values["log_size"], &metadata.logSize); err != nil {
+		return historyIndexMetadata{}, err
+	}
+	if _, err := fmt.Sscan(values["storage_revision"], &metadata.storageRevision); err != nil {
+		return historyIndexMetadata{}, err
+	}
+	if _, err := fmt.Sscan(values["projection_version"], &metadata.projection); err != nil {
+		return historyIndexMetadata{}, err
+	}
+	if _, err := fmt.Sscan(values["durable_sequence"], &metadata.durableSequence); err != nil {
+		return historyIndexMetadata{}, err
+	}
+	if values["history_view_sequence"] != "" {
+		if _, err := fmt.Sscan(values["history_view_sequence"], &metadata.viewSequence); err != nil {
+			return historyIndexMetadata{}, err
+		}
+	}
+	return metadata, nil
+}
+
+// incrementHistoryIndex advances only the complete transactions appended after
+// the published coverage watermark. It returns updated=false when the existing
+// file cannot be trusted as a base and must be rebuilt atomically.
+func incrementHistoryIndex(ctx context.Context, dir, path, sessionID string, revision logRevision) (updated bool, result error) {
+	if _, err := os.Stat(path); err != nil {
+		return false, nil
+	}
+	handle, err := projectiondb.Open(ctx, projectiondb.OpenOptions{Path: path, Migrations: historyMigrations, RequireDisk: true, MaxOpenConns: 1})
+	if err != nil {
+		return false, nil
+	}
+	defer handle.DB.Close()
+	metadata, err := readHistoryIndexMetadata(ctx, handle.DB)
+	if err != nil || metadata.sessionID != sessionID || metadata.storageRevision != StorageRevision || metadata.projection != historyIndexVersion || metadata.logSize < 0 || metadata.logSize > revision.Size {
+		return false, nil
+	}
+	if metadata.logSize == revision.Size {
+		return true, nil
+	}
+
+	manifest, err := readManifest(filepath.Join(dir, "manifest.json"))
+	if err != nil || manifest.Codec != Codec {
+		return false, nil
+	}
+	log, err := os.Open(logPathForManifest(dir, manifest))
+	if err != nil {
+		return false, err
+	}
+	defer log.Close()
+
+	state := historyBuildState{positions: map[string]int64{}, turns: map[string]int{}, versions: map[string]int{}}
+	rows, err := handle.DB.QueryContext(ctx, `SELECT message_id,position,visible_turn,version FROM messages WHERE current=1`)
+	if err != nil {
+		return false, nil
+	}
+	for rows.Next() {
+		var id string
+		var position int64
+		var visibleTurn, version int
+		if err := rows.Scan(&id, &position, &visibleTurn, &version); err != nil {
+			_ = rows.Close()
+			return false, nil
+		}
+		state.positions[id], state.turns[id], state.versions[id] = position, visibleTurn, version
+		state.nextPosition = max(state.nextPosition, position)
+		state.visibleTurn = max(state.visibleTurn, visibleTurn)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return false, nil
+	}
+
+	tx, err := handle.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	state.tx = tx
+	state.statements, err = prepareHistoryBuildStatements(ctx, tx)
+	if err != nil {
+		_ = tx.Rollback()
+		return false, err
+	}
+	defer func() {
+		state.statements.close()
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	content := contentStoreForSessionDir(dir)
+	durable := metadata.durableSequence
+	durableEnd := metadata.logSize
+	viewSequence := metadata.viewSequence
+	var buildErr error
+	err = scanV4CommitFileRefs(ctx, log, metadata.logSize, metadata.durableSequence+1, content, nil, func(_ int64, commit Commit) bool {
+		state.transactions = append(state.transactions, []any{commit.ID, commit.FirstSequence, commit.LastSequence(), commit.OperationID, commit.OperationHash, commit.TurnID, commit.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")})
+		for _, event := range commit.Events {
+			if event.Kind == "history/replace" {
+				viewSequence = event.Sequence
+			}
+			digest := ""
+			var contentBytes int64
+			if event.PayloadRef != nil {
+				digest, contentBytes = event.PayloadRef.Digest, event.PayloadRef.Bytes
+				if err := insertContentRef(ctx, &state, *event.PayloadRef); err != nil {
+					buildErr = err
+					return false
+				}
+			}
+			state.events = append(state.events, []any{event.Sequence, commit.ID, event.ID, event.Kind, digest, contentBytes})
+			if err := indexMessageEvent(ctx, content, &state, event); err != nil {
+				buildErr = err
+				return false
+			}
+			durable = event.Sequence
+		}
+		durableEnd, _ = log.Seek(0, 1)
+		return true
+	})
+	if err != nil || buildErr != nil {
+		return false, errors.Join(err, buildErr)
+	}
+	if durableEnd == metadata.logSize {
+		// An incomplete physical tail remains unpublished. A writer will preserve
+		// and repair it before the next append.
+		return true, nil
+	}
+	if err := flushHistoryBuildRows(ctx, tx, &state); err != nil {
+		return false, err
+	}
+	generation, err := historyProjectionGeneration(dir, viewSequence)
+	if err != nil {
+		return false, err
+	}
+	values := map[string]string{
+		"log_size": fmt.Sprint(durableEnd), "log_mtime_ns": fmt.Sprint(revision.ModTimeNS),
+		"durable_sequence": fmt.Sprint(durable), "history_view_sequence": fmt.Sprint(viewSequence), "generation": generation,
+	}
+	for key, value := range values {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value); err != nil {
+			return false, err
+		}
+	}
+	state.statements.close()
+	state.statements = nil
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	tx = nil
+	_, _ = handle.DB.ExecContext(ctx, `PRAGMA shrink_memory`)
+	return true, nil
+}
+
+func historyIndexCurrent(ctx context.Context, dir, path, sessionID string, revision logRevision) bool {
 	if _, err := os.Stat(path); err != nil {
 		return false
 	}
-	handle, err := projectiondb.Open(ctx, projectiondb.OpenOptions{Path: path, Migrations: historyMigrations, RequireDisk: true, MaxOpenConns: 1, QuickCheck: true})
+	handle, err := projectiondb.Open(ctx, projectiondb.OpenOptions{Path: path, Migrations: historyMigrations, RequireDisk: true, MaxOpenConns: 1})
 	if err != nil {
 		return false
 	}
 	defer handle.DB.Close()
 	values := map[string]string{}
-	rows, err := handle.DB.QueryContext(ctx, `SELECT key,value FROM metadata WHERE key IN ('session_id','log_size','log_mtime_ns','storage_revision','projection_version')`)
+	rows, err := handle.DB.QueryContext(ctx, `SELECT key,value FROM metadata WHERE key IN ('session_id','log_size','log_mtime_ns','storage_revision','projection_version','generation')`)
 	if err != nil {
 		return false
 	}
@@ -551,7 +777,27 @@ func historyIndexCurrent(ctx context.Context, path, sessionID string, revision l
 		}
 		values[key] = value
 	}
+	manifest, err := readStoredManifest(filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		return false
+	}
+	identity, err := readStorageIdentity(dir, manifest)
+	if err != nil || !strings.HasPrefix(values["generation"], identity.Generation+":") {
+		return false
+	}
 	return values["session_id"] == sessionID && values["log_size"] == fmt.Sprint(revision.Size) && values["log_mtime_ns"] == fmt.Sprint(revision.ModTimeNS) && values["storage_revision"] == fmt.Sprint(StorageRevision) && values["projection_version"] == fmt.Sprint(historyIndexVersion)
+}
+
+func historyProjectionGeneration(dir string, viewSequence uint64) (string, error) {
+	manifest, err := readStoredManifest(filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		return "", err
+	}
+	identity, err := readStorageIdentity(dir, manifest)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s:%d", identity.Generation, viewSequence), nil
 }
 
 func rebuildHistoryIndex(ctx context.Context, dir, path, sessionID string, revision logRevision) error {
@@ -606,6 +852,7 @@ func rebuildHistoryIndex(ctx context.Context, dir, path, sessionID string, revis
 			return err
 		}
 		var durable uint64
+		var viewSequence uint64
 		var buildErr error
 		chunkEvents := 0
 		var chunkBytes int64
@@ -630,6 +877,9 @@ func rebuildHistoryIndex(ctx context.Context, dir, path, sessionID string, revis
 		err = scanV4CommitFileRefs(ctx, log, 0, 1, content, nil, func(_ int64, commit Commit) bool {
 			state.transactions = append(state.transactions, []any{commit.ID, commit.FirstSequence, commit.LastSequence(), commit.OperationID, commit.OperationHash, commit.TurnID, commit.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")})
 			for _, event := range commit.Events {
+				if event.Kind == "history/replace" {
+					viewSequence = event.Sequence
+				}
 				digest := ""
 				var bytes int64
 				if event.PayloadRef != nil {
@@ -668,7 +918,11 @@ func rebuildHistoryIndex(ctx context.Context, dir, path, sessionID string, revis
 		if err := flushHistoryBuildRows(ctx, tx, &state); err != nil {
 			return err
 		}
-		metadata := map[string]string{"session_id": sessionID, "log_size": fmt.Sprint(revision.Size), "log_mtime_ns": fmt.Sprint(revision.ModTimeNS), "storage_revision": fmt.Sprint(StorageRevision), "projection_version": fmt.Sprint(historyIndexVersion), "durable_sequence": fmt.Sprint(durable)}
+		generation, err := historyProjectionGeneration(dir, viewSequence)
+		if err != nil {
+			return err
+		}
+		metadata := map[string]string{"session_id": sessionID, "log_size": fmt.Sprint(revision.Size), "log_mtime_ns": fmt.Sprint(revision.ModTimeNS), "storage_revision": fmt.Sprint(StorageRevision), "projection_version": fmt.Sprint(historyIndexVersion), "durable_sequence": fmt.Sprint(durable), "history_view_sequence": fmt.Sprint(viewSequence), "generation": generation}
 		for key, value := range metadata {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES(?,?)`, key, value); err != nil {
 				return err
@@ -827,22 +1081,14 @@ func indexOneMessage(ctx context.Context, content *sessioncontent.Store, state *
 	if err != nil {
 		return err
 	}
-	var inline []byte
-	var ref sessioncontent.Ref
-	searchText := ""
-	if len(body) > v4InlinePayloadBytes {
-		ref, err = content.Put(ctx, bytes.NewReader(body), sessioncontent.Metadata{MediaType: "application/json"})
-		if err != nil {
-			return err
-		}
-		if err := insertContentRef(ctx, state, ref); err != nil {
-			return err
-		}
-		searchText = messageSearchText(message)
-	} else {
-		inline = body
+	ref, err := content.Put(ctx, bytes.NewReader(body), sessioncontent.Metadata{MediaType: "application/json"})
+	if err != nil {
+		return err
 	}
-	state.messages = append(state.messages, []any{id, version, position, sequence, 0, string(message.Role), messagePreview(message), inline, ref.Digest, ref.Bytes, ref.IndexDigest, 1, searchText, visibleTurn})
+	if err := insertContentRef(ctx, state, ref); err != nil {
+		return err
+	}
+	state.messages = append(state.messages, []any{id, version, position, sequence, 0, string(message.Role), messagePreview(message), nil, ref.Digest, ref.Bytes, ref.IndexDigest, 1, "", visibleTurn})
 	return nil
 }
 

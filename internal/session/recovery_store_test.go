@@ -8,7 +8,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	bolt "go.etcd.io/bbolt"
 	"reasonix/internal/provider"
 )
 
@@ -68,7 +70,7 @@ func TestRecoveryCheckpointRestoresTailAndIdempotencyWithoutPrefixReplay(t *test
 		t.Fatal("provider-visible model projection changed across checkpoint recovery")
 	}
 	recent := reopened.RecentSnapshot()
-	if recent.StorageGeneration == "" || recent.DurableSequence != reopened.EventSequence() || len(recent.Messages) == 0 || len(recent.Messages) > RecentMessageLimit {
+	if recent.StorageGeneration == "" || recent.DurableSequence != reopened.EventSequence() || len(recent.Entries) == 0 || len(recent.Entries) > RecentMessageLimit {
 		t.Fatalf("recent snapshot = %+v", recent)
 	}
 
@@ -85,6 +87,29 @@ func TestRecoveryCheckpointRestoresTailAndIdempotencyWithoutPrefixReplay(t *test
 	conflictPayload, _ := json.Marshal(map[string]any{"message": provider.Message{ID: "conflict", Role: provider.RoleUser, Content: "different"}})
 	if _, err := reopened.Append(t.Context(), Batch{OperationID: "operation-" + string(rune(0x100)), Events: []Event{{Kind: "message/complete", Payload: conflictPayload}}}); err == nil {
 		t.Fatal("same operation key with different content unexpectedly succeeded")
+	}
+}
+
+func TestRecentEntriesKeepAbsoluteVisibleTurns(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "session")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	messages := []provider.Message{
+		{ID: "eight", Role: provider.RoleUser, Content: "eight"},
+		{ID: "assistant", Role: provider.RoleAssistant, Content: "answer"},
+		{ID: "nine", Role: provider.RoleUser, Content: "nine"},
+		{ID: "ten", Role: provider.RoleUser, Content: "ten"},
+	}
+	entries, err := buildRecentEntries(t.Context(), dir, messages, 10, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{8, 8, 9, 10}
+	for index := range entries {
+		if entries[index].VisibleTurn != want[index] {
+			t.Fatalf("entry %d visible turn=%d, want %d", index, entries[index].VisibleTurn, want[index])
+		}
 	}
 }
 
@@ -128,6 +153,54 @@ func TestRecoveryCheckpointReplaysOnlyDurableTail(t *testing.T) {
 	}
 	if got := third.DeriveMessages(); len(got) != 2 || got[0].Content != "first" || got[1].Content != "second" {
 		t.Fatalf("tail projection = %#v", got)
+	}
+}
+
+func TestRecoveryCheckpointFallsBackToPreviousGeneration(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "sessions-v4")
+	dir := filepath.Join(root, "previous")
+	store, err := CreateWithOptions(dir, "previous", OpenOptions{ExternalHistory: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendRecoveryTestMessage(t, store, "one", "first")
+	if _, err := store.Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	appendRecoveryTestMessage(t, store, "two", "second")
+	if _, err := store.Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(recoveryCacheDir(dir), recoveryDBName)
+	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(recoveryCheckpointBucket).Put(recoveryCurrentKey, []byte("damaged"))
+	}); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var stats RecoveryOpenStats
+	reopened, err := OpenWithOptions(dir, "previous", OpenOptions{ExternalHistory: true, ObserveRecovery: func(got RecoveryOpenStats) { stats = got }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close(context.Background())
+	if !stats.UsedCheckpoint {
+		t.Fatalf("fallback recovery stats = %+v", stats)
+	}
+	if got := reopened.DeriveMessages(); len(got) != 2 || got[0].ID != "one" || got[1].ID != "two" {
+		t.Fatalf("fallback messages = %+v", got)
 	}
 }
 

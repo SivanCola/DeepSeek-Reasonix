@@ -1,10 +1,13 @@
 package session
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,8 +17,10 @@ import (
 	"github.com/klauspost/compress/zstd"
 	bolt "go.etcd.io/bbolt"
 
+	"reasonix/internal/agent"
 	"reasonix/internal/fileutil"
 	"reasonix/internal/provider"
+	"reasonix/internal/sessioncontent"
 )
 
 const recoveryProjectionVersion = 1
@@ -25,6 +30,8 @@ const (
 	recoveryDBName        = "recovery-v1.bolt"
 	storageIdentityName   = "storage.identity.json"
 	RecentMessageLimit    = 100
+	recentInlineBytes     = 32 << 10
+	recentResponseBytes   = 512 << 10
 	recentSnapshotName    = "recent-v1.json"
 )
 
@@ -48,21 +55,23 @@ type RecoveryOpenStats struct {
 // RecentSnapshot is the bounded, read-only baseline used before history or
 // search projections are available.
 type RecentSnapshot struct {
-	Version           int                `json:"version"`
-	SessionID         string             `json:"sessionId"`
-	StorageGeneration string             `json:"storageGeneration"`
-	DurableSequence   uint64             `json:"durableSequence"`
-	Messages          []provider.Message `json:"messages"`
-	Title             string             `json:"title,omitempty"`
-	ModelRef          string             `json:"modelRef,omitempty"`
-	ModelIdentity     string             `json:"modelIdentity,omitempty"`
+	Version           int                 `json:"version"`
+	SessionID         string              `json:"sessionId"`
+	StorageGeneration string              `json:"storageGeneration"`
+	DurableSequence   uint64              `json:"durableSequence"`
+	TotalTurns        int                 `json:"totalTurns"`
+	Entries           []PersistentMessage `json:"entries"`
+	Title             string              `json:"title,omitempty"`
+	ModelRef          string              `json:"modelRef,omitempty"`
+	ModelIdentity     string              `json:"modelIdentity,omitempty"`
 }
 
 type storageIdentity struct {
-	Version    int       `json:"version"`
-	SessionID  string    `json:"sessionId"`
-	Generation string    `json:"generation"`
-	CreatedAt  time.Time `json:"createdAt"`
+	Version         int       `json:"version"`
+	SessionID       string    `json:"sessionId"`
+	Generation      string    `json:"generation"`
+	LogPrefixDigest string    `json:"logPrefixDigest,omitempty"`
+	CreatedAt       time.Time `json:"createdAt"`
 }
 
 type recoveryCheckpoint struct {
@@ -115,10 +124,11 @@ func (o recoveryOperation) record() operationRecord {
 }
 
 type recoveryStore struct {
-	db       *bolt.DB
-	path     string
-	recent   string
-	identity storageIdentity
+	db         *bolt.DB
+	path       string
+	recent     string
+	sessionDir string
+	identity   storageIdentity
 }
 
 func recoveryCacheDir(sessionDir string) string {
@@ -127,19 +137,79 @@ func recoveryCacheDir(sessionDir string) string {
 
 func ensureStorageIdentity(sessionDir string, manifest Manifest) (storageIdentity, error) {
 	path := filepath.Join(sessionDir, storageIdentityName)
+	prefix, prefixErr := storageLogPrefix(sessionDir, manifest)
+	if prefixErr != nil && !os.IsNotExist(prefixErr) {
+		return storageIdentity{}, prefixErr
+	}
 	if data, err := os.ReadFile(path); err == nil {
 		var identity storageIdentity
 		if json.Unmarshal(data, &identity) == nil && identity.Version == recoveryFormatVersion && identity.SessionID == manifest.SessionID && strings.TrimSpace(identity.Generation) != "" {
-			return identity, nil
+			if identity.LogPrefixDigest == "" && prefix != "" {
+				identity.LogPrefixDigest = prefix
+				encoded, marshalErr := json.Marshal(identity)
+				if marshalErr != nil {
+					return storageIdentity{}, marshalErr
+				}
+				if writeErr := fileutil.AtomicWriteFileStrict(path, append(encoded, '\n'), 0o600); writeErr != nil {
+					return storageIdentity{}, writeErr
+				}
+				return identity, nil
+			}
+			if prefix == "" || identity.LogPrefixDigest == prefix {
+				return identity, nil
+			}
 		}
 	}
-	identity := storageIdentity{Version: recoveryFormatVersion, SessionID: manifest.SessionID, Generation: randomID(), CreatedAt: time.Now().UTC()}
+	identity := storageIdentity{Version: recoveryFormatVersion, SessionID: manifest.SessionID, Generation: randomID(), LogPrefixDigest: prefix, CreatedAt: time.Now().UTC()}
 	data, err := json.Marshal(identity)
 	if err != nil {
 		return storageIdentity{}, err
 	}
 	if err := fileutil.AtomicWriteFileStrict(path, append(data, '\n'), 0o600); err != nil {
 		return storageIdentity{}, err
+	}
+	return identity, nil
+}
+
+func storageLogPrefix(sessionDir string, manifest Manifest) (string, error) {
+	file, err := os.Open(logPathForManifest(sessionDir, manifest))
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	// The framed transaction header makes the first 64 bytes immutable after
+	// the first commit. Hashing a larger short-file prefix would change merely
+	// because a normal append extended a log shorter than that prefix.
+	buffer := make([]byte, 64)
+	n, err := file.Read(buffer)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", err
+	}
+	if n == 0 {
+		return "", nil
+	}
+	digest := sha256.Sum256(buffer[:n])
+	return fmt.Sprintf("%x", digest[:]), nil
+}
+
+func readStorageIdentity(sessionDir string, manifest Manifest) (storageIdentity, error) {
+	data, err := os.ReadFile(filepath.Join(sessionDir, storageIdentityName))
+	if err != nil {
+		return storageIdentity{}, err
+	}
+	var identity storageIdentity
+	if err := json.Unmarshal(data, &identity); err != nil {
+		return storageIdentity{}, err
+	}
+	if identity.Version != recoveryFormatVersion || identity.SessionID != manifest.SessionID || strings.TrimSpace(identity.Generation) == "" {
+		return storageIdentity{}, ErrStaleGeneration
+	}
+	prefix, err := storageLogPrefix(sessionDir, manifest)
+	if err != nil && !os.IsNotExist(err) {
+		return storageIdentity{}, err
+	}
+	if identity.LogPrefixDigest != "" && prefix != identity.LogPrefixDigest {
+		return storageIdentity{}, ErrStaleGeneration
 	}
 	return identity, nil
 }
@@ -154,7 +224,7 @@ func openRecoveryStore(sessionDir string, identity storageIdentity) (*recoverySt
 	if err != nil {
 		return nil, err
 	}
-	store := &recoveryStore{db: db, path: path, recent: filepath.Join(dir, recentSnapshotName), identity: identity}
+	store := &recoveryStore{db: db, path: path, recent: filepath.Join(dir, recentSnapshotName), sessionDir: sessionDir, identity: identity}
 	err = db.Update(func(tx *bolt.Tx) error {
 		meta, err := tx.CreateBucketIfNotExists(recoveryMetaBucket)
 		if err != nil {
@@ -239,27 +309,40 @@ func decodeRecoveryValue(data []byte, value any) error {
 	return json.Unmarshal(raw, value)
 }
 
-func (s *recoveryStore) loadCheckpoint() (recoveryCheckpoint, error) {
+func (s *recoveryStore) loadCheckpoints() ([]recoveryCheckpoint, error) {
 	if s == nil || s.db == nil {
-		return recoveryCheckpoint{}, os.ErrNotExist
+		return nil, os.ErrNotExist
 	}
-	var encoded []byte
+	var encoded [][]byte
 	err := s.db.View(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket(recoveryCheckpointBucket)
-		if bucket == nil || bucket.Get(recoveryCurrentKey) == nil {
+		if bucket == nil {
 			return os.ErrNotExist
 		}
-		encoded = append(encoded, bucket.Get(recoveryCurrentKey)...)
+		for _, key := range [][]byte{recoveryCurrentKey, recoveryPreviousKey} {
+			if value := bucket.Get(key); value != nil {
+				encoded = append(encoded, append([]byte(nil), value...))
+			}
+		}
+		if len(encoded) == 0 {
+			return os.ErrNotExist
+		}
 		return nil
 	})
 	if err != nil {
-		return recoveryCheckpoint{}, err
+		return nil, err
 	}
-	var checkpoint recoveryCheckpoint
-	if err := decodeRecoveryValue(encoded, &checkpoint); err != nil {
-		return recoveryCheckpoint{}, err
+	checkpoints := make([]recoveryCheckpoint, 0, len(encoded))
+	for _, value := range encoded {
+		var checkpoint recoveryCheckpoint
+		if decodeRecoveryValue(value, &checkpoint) == nil {
+			checkpoints = append(checkpoints, checkpoint)
+		}
 	}
-	return checkpoint, nil
+	if len(checkpoints) == 0 {
+		return nil, ErrDamagedStore
+	}
+	return checkpoints, nil
 }
 
 func (s *recoveryStore) lookupOperation(operationID string) (operationRecord, bool, error) {
@@ -291,6 +374,26 @@ func (s *recoveryStore) publish(ctx context.Context, checkpoint recoveryCheckpoi
 	}
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if s.identity.LogPrefixDigest == "" {
+		manifest, err := readStoredManifest(filepath.Join(s.sessionDir, "manifest.json"))
+		if err != nil {
+			return err
+		}
+		prefix, err := storageLogPrefix(s.sessionDir, manifest)
+		if err != nil {
+			return err
+		}
+		if prefix != "" {
+			s.identity.LogPrefixDigest = prefix
+			encodedIdentity, err := json.Marshal(s.identity)
+			if err != nil {
+				return err
+			}
+			if err := fileutil.AtomicWriteFileStrict(filepath.Join(s.sessionDir, storageIdentityName), append(encodedIdentity, '\n'), 0o600); err != nil {
+				return err
+			}
+		}
 	}
 	checkpoint.Version = recoveryFormatVersion
 	checkpoint.StorageGeneration = s.identity.Generation
@@ -336,8 +439,13 @@ func (s *recoveryStore) publish(ctx context.Context, checkpoint recoveryCheckpoi
 	recent := RecentSnapshot{
 		Version: recoveryFormatVersion, SessionID: checkpoint.SessionID,
 		StorageGeneration: checkpoint.StorageGeneration, DurableSequence: checkpoint.DurableSequence,
-		Messages: detachMessages(checkpoint.RecentMessages), Title: checkpoint.Projection.Title,
+		Title:    checkpoint.Projection.Title,
 		ModelRef: checkpoint.Projection.ModelRef, ModelIdentity: checkpoint.Projection.ModelIdentity,
+		TotalTurns: len(checkpoint.Projection.Turns),
+	}
+	recent.Entries, err = buildRecentEntries(ctx, s.sessionDir, checkpoint.RecentMessages, checkpoint.DurableSequence, recent.TotalTurns)
+	if err != nil {
+		return err
 	}
 	data, err := json.Marshal(recent)
 	if err != nil {
@@ -358,10 +466,98 @@ func readRecentSnapshot(sessionDir string, identity storageIdentity) (RecentSnap
 	if snapshot.Version != recoveryFormatVersion || snapshot.SessionID != identity.SessionID || snapshot.StorageGeneration != identity.Generation {
 		return RecentSnapshot{}, ErrStaleGeneration
 	}
-	if len(snapshot.Messages) > RecentMessageLimit {
+	if len(snapshot.Entries) > RecentMessageLimit {
 		return RecentSnapshot{}, ErrDamagedStore
 	}
 	return snapshot, nil
+}
+
+// buildRecentEntries produces the bounded public baseline. Large canonical
+// messages are stored once in ContentStore and represented by a preview plus a
+// range-readable reference, so recent-v1.json cannot grow with tool output.
+func buildRecentEntries(ctx context.Context, sessionDir string, messages []provider.Message, sequence uint64, totalTurns int) ([]PersistentMessage, error) {
+	if len(messages) > RecentMessageLimit {
+		messages = messages[len(messages)-RecentMessageLimit:]
+	}
+	entries := make([]PersistentMessage, 0, len(messages))
+	content := contentStoreForSessionDir(sessionDir)
+	inlineBytes := 0
+	visibleTurn := totalTurns
+	for _, message := range messages {
+		if agent.IsUserAuthoredTurnMessage(message) {
+			visibleTurn--
+		}
+	}
+	visibleTurn = max(visibleTurn, 0)
+	for position, message := range messages {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if agent.IsUserAuthoredTurnMessage(message) {
+			visibleTurn++
+		}
+		body, err := json.Marshal(message)
+		if err != nil {
+			return nil, err
+		}
+		entry := PersistentMessage{
+			MessageID: message.ID, Position: int64(position + 1), Version: 1,
+			Role: string(message.Role), Preview: messagePreview(message),
+			EventSequence: sequence, VisibleTurn: visibleTurn,
+		}
+		if len(body) <= recentInlineBytes && inlineBytes+len(body) <= recentResponseBytes {
+			entry.Inline = body
+			inlineBytes += len(body)
+		} else {
+			ref, err := content.Put(ctx, bytes.NewReader(body), sessioncontent.Metadata{MediaType: "application/json"})
+			if err != nil {
+				return nil, err
+			}
+			entry.ContentRef = &ref
+			previewBody, err := recentDisplayMessage(message)
+			if err != nil {
+				return nil, err
+			}
+			if inlineBytes+len(previewBody) <= recentResponseBytes {
+				entry.Inline = previewBody
+				inlineBytes += len(previewBody)
+			}
+		}
+		entries = append(entries, entry)
+	}
+	return entries, nil
+}
+
+func recentDisplayMessage(message provider.Message) (json.RawMessage, error) {
+	preview := detachMessages([]provider.Message{message})[0]
+	preview.Content = messagePreview(message)
+	preview.RawContent = ""
+	preview.ProviderContent = ""
+	preview.Images = nil
+	preview.ResponsesItems = nil
+	preview.ThinkingBlocks = nil
+	if runes := []rune(preview.ReasoningContent); len(runes) > 4096 {
+		preview.ReasoningContent = string(runes[:4096])
+	}
+	for i := range preview.ToolCalls {
+		if runes := []rune(preview.ToolCalls[i].Arguments); len(runes) > 2048 {
+			preview.ToolCalls[i].Arguments = string(runes[:2048])
+		}
+	}
+	body, err := json.Marshal(preview)
+	if err != nil {
+		return nil, err
+	}
+	if len(body) <= recentInlineBytes {
+		return body, nil
+	}
+	// Preserve the fields required to place the row even when optional display
+	// metadata alone exceeds the per-message preview budget.
+	return json.Marshal(provider.Message{
+		ID: preview.ID, Role: preview.Role, Content: preview.Content,
+		ToolCallID: preview.ToolCallID, Name: preview.Name,
+		CreatedAt: preview.CreatedAt, WorkDurationMs: preview.WorkDurationMs,
+	})
 }
 
 func checkpointFromStartup(manifest Manifest, identity storageIdentity, state *startupSessionState) recoveryCheckpoint {
@@ -390,8 +586,21 @@ func checkpointFromStartup(manifest Manifest, identity storageIdentity, state *s
 
 func loadRecoveryStartupState(ctx context.Context, dir string, file *os.File, info os.FileInfo, recovery *recoveryStore, identity storageIdentity) (*startupSessionState, int64, bool, RecoveryOpenStats, bool) {
 	stats := RecoveryOpenStats{LogBytesTotal: info.Size()}
-	checkpoint, err := recovery.loadCheckpoint()
-	if err != nil || checkpoint.Version != recoveryFormatVersion || checkpoint.ProjectionVersion != recoveryProjectionVersion ||
+	checkpoints, err := recovery.loadCheckpoints()
+	if err != nil {
+		return nil, 0, false, stats, false
+	}
+	for _, checkpoint := range checkpoints {
+		if state, end, torn, attempt, ok := tryRecoveryCheckpoint(ctx, dir, file, info, identity, checkpoint); ok {
+			return state, end, torn, attempt, true
+		}
+	}
+	return nil, 0, false, stats, false
+}
+
+func tryRecoveryCheckpoint(ctx context.Context, dir string, file *os.File, info os.FileInfo, identity storageIdentity, checkpoint recoveryCheckpoint) (*startupSessionState, int64, bool, RecoveryOpenStats, bool) {
+	stats := RecoveryOpenStats{LogBytesTotal: info.Size()}
+	if checkpoint.Version != recoveryFormatVersion || checkpoint.ProjectionVersion != recoveryProjectionVersion ||
 		checkpoint.SessionID != identity.SessionID || checkpoint.StorageGeneration != identity.Generation ||
 		checkpoint.StorageRevision != StorageRevision || checkpoint.LogOffset < 0 || checkpoint.LogOffset > info.Size() ||
 		checkpoint.Projection.CommittedSequence != checkpoint.DurableSequence {
@@ -428,7 +637,7 @@ func loadRecoveryStartupState(ctx context.Context, dir string, file *os.File, in
 	}
 	var projectionErr error
 	content := contentStoreForSessionDir(dir)
-	err = scanV4CommitFile(ctx, file, checkpoint.LogOffset, checkpoint.DurableSequence+1, content, nil, func(offset int64, commit Commit) bool {
+	err := scanV4CommitFile(ctx, file, checkpoint.LogOffset, checkpoint.DurableSequence+1, content, nil, func(offset int64, commit Commit) bool {
 		if err := applyProjectionCommit(&state.projection, commit); err != nil {
 			projectionErr = err
 			return false

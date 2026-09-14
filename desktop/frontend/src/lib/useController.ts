@@ -38,6 +38,13 @@ import { getTranscriptStore } from "./transcriptStore";
 import { snapshotRecords, transcriptPageState, transcriptSnapshotState } from "./transcriptSnapshotState";
 import { resolveSnapshotItems, resolveSnapshotTool, StaleCut, TranscriptSnapshotClient } from "./transcriptSnapshotClient";
 import type { TranscriptSnapshot } from "./transcriptProtocol";
+
+// Protocol 7 hosts expose the bounded recent/history reader. Keep the older
+// transcript snapshot client only for hosts that have not upgraded yet; its
+// exclusive-session implementation materializes the complete conversation.
+function usesLegacyTranscriptSnapshots(): boolean {
+  return typeof app.SessionOpenForTab !== "function" && typeof app.TranscriptSnapshotForTab === "function";
+}
 import { recordFrontendDiagnostic } from "./frontendDiagnosticBridge";
 import { uiPerfTracker } from "./uiPerf";
 import { getLocale, t } from "./i18n";
@@ -2712,7 +2719,7 @@ export function useController() {
       const skipHistory = Boolean(
         (options.skipHistory ||
         (options.preserveCachedHistory && !resetSurface && hasReusableCachedTranscript(statesRef.current.get(tabId), sessionPath, sessionRevision, sessionDigest))) &&
-        (typeof app.TranscriptSnapshotForTab !== "function" || snapshotClient.installed(tabId)),
+        (!usesLegacyTranscriptSnapshots() || snapshotClient.installed(tabId)),
       );
       const deferResetUntilHistory = Boolean(surfacePolicy === "preserve-current" && (options.deferResetUntilHistory ?? true) && resetSurface && !skipHistory);
       // Request seq alone cannot stop clear→mode-switch races: a load started
@@ -2753,7 +2760,7 @@ export function useController() {
       };
 
       const historyStartedAt = Date.now();
-      const modern = !skipHistory && typeof app.TranscriptSnapshotForTab === "function";
+      const modern = !skipHistory && usesLegacyTranscriptSnapshots();
       const snapshotLoaded = modern ? await loadTimed("transcript snapshot", () => snapshotClient.load(tabId, (snapshot) => {
         runtimeEpochByTabRef.current.set(tabId, snapshot.identity.runtimeEpoch);
         dispatchTo(tabId, { type: "transcript_snapshot", snapshot });
@@ -2921,7 +2928,7 @@ export function useController() {
   const resetTurnEventProjection = useCallback(async (tabId: string, replay: TurnEventReplayView): Promise<boolean> => {
     const state = statesRef.current.get(tabId);
     if (!state) return false;
-    if (typeof app.TranscriptSnapshotForTab === "function") {
+    if (usesLegacyTranscriptSnapshots()) {
       const path = state.meta?.sessionPath;
       return snapshotClient.load(tabId, (snapshot) => {
         runtimeEpochByTabRef.current.set(tabId, snapshot.identity.runtimeEpoch);
@@ -3477,7 +3484,7 @@ export function useController() {
     const offRebuilt = onRuntimeRebuilt((rebuiltTabId, runtimeEpoch) => {
       if (rebuiltTabId) {
         snapshotClient.release(rebuiltTabId);
-        if (typeof app.TranscriptSnapshotForTab === "function") turnEventProjector.beginSnapshot(rebuiltTabId);
+        if (usesLegacyTranscriptSnapshots()) turnEventProjector.beginSnapshot(rebuiltTabId);
         invalidateSharedQuery("MetaForTab", [rebuiltTabId]);
         if (runtimeEpoch) runtimeEpochByTabRef.current.set(rebuiltTabId, runtimeEpoch);
         dispatchTo(rebuiltTabId, { type: "controller_rebuilt" });
@@ -3487,7 +3494,7 @@ export function useController() {
         }
         for (const id of Array.from(statesRef.current.keys())) {
           snapshotClient.release(id);
-          if (typeof app.TranscriptSnapshotForTab === "function") turnEventProjector.beginSnapshot(id);
+          if (usesLegacyTranscriptSnapshots()) turnEventProjector.beginSnapshot(id);
           invalidateSharedQuery("MetaForTab", [id]);
           dispatchTo(id, { type: "controller_rebuilt" });
         }
@@ -4101,7 +4108,7 @@ export function useController() {
     }
     invalidateCache();
     if (tabId) {
-      if (typeof app.TranscriptSnapshotForTab === "function") {
+      if (usesLegacyTranscriptSnapshots()) {
         ensureTranscriptSubscription(tabId);
         try {
           if (!(await snapshotClient.load(tabId, (snapshot) => dispatchTo(tabId, { type: "transcript_snapshot", snapshot }),
@@ -4148,7 +4155,7 @@ export function useController() {
       // Meta first so reset preserves the replacement identity.
       dispatchTo(tabId, { type: "optimistic_meta", meta: nextMeta });
       dispatchTo(tabId, { type: "reset" });
-      if (typeof app.TranscriptSnapshotForTab === "function") {
+      if (usesLegacyTranscriptSnapshots()) {
         ensureTranscriptSubscription(tabId);
         const seq = sessionLoadSeq.current.get(tabId);
         try {
@@ -4216,7 +4223,7 @@ export function useController() {
       let phases: HistorySwitchPhases | undefined;
       const resumeStartedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
       try {
-        if (typeof app.TranscriptSnapshotForTab === "function" && app.ResumeTranscriptSessionForTab) {
+        if (app.ResumeTranscriptSessionForTab) {
           phases = await app.ResumeTranscriptSessionForTab(targetTabId, path) || undefined;
         } else page = tabId
           ? await app.ResumeSessionPageForTab(tabId, path, HISTORY_PAGE_TURNS)
@@ -4226,7 +4233,7 @@ export function useController() {
         return failSessionNavigation(navigationSeq, targetTabId);
       }
       if (!navigationCompletionCurrent(navigationSeq, "session.resume", targetTabId) || !sessionLoadCurrent(targetTabId, seq)) return terminal("superseded");
-      if (typeof app.TranscriptSnapshotForTab === "function") {
+      if (usesLegacyTranscriptSnapshots()) {
         ensureTranscriptSubscription(targetTabId);
         const snapshotStartedAt = performance.now();
         if (!(await snapshotClient.load(targetTabId, (snapshot) => {
@@ -4234,6 +4241,17 @@ export function useController() {
           noteResumeHistoryPage({ messages: snapshotRecords(snapshot).map((record) => record.message), switch: phases }, performance.now() - resumeStartedAt, performance.now() - snapshotStartedAt);
         },
           () => isNavigationIntentCurrent(navigationSeq) && sessionLoadCurrent(targetTabId, seq)))) return terminal("superseded");
+      } else if (typeof app.SessionOpenForTab === "function") {
+        ensureTranscriptSubscription(targetTabId);
+        const projection = await getTranscriptStore().loadLatest(targetTabId, path, { turns: HISTORY_PAGE_TURNS, preferResident: false });
+        if (!projection || !isNavigationIntentCurrent(navigationSeq) || !sessionLoadCurrent(targetTabId, seq)) return terminal("superseded");
+        dispatchTo(targetTabId, { type: "reset" });
+        dispatchTo(targetTabId, {
+          type: "history_replace", items: projection.items, startTurn: projection.startTurn,
+          totalTurns: projection.totalTurns, hasOlder: projection.hasOlder,
+          revision: projection.revisionKnown ? projection.revision : undefined,
+          digest: projection.digest || undefined,
+        });
       } else if (page) {
         noteResumeHistoryPage(page, performance.now() - resumeStartedAt);
         dispatchTo(targetTabId, { type: "reset" });
@@ -4268,7 +4286,7 @@ export function useController() {
       let phases: HistorySwitchPhases | undefined;
       const resumeStartedAt = performance.now();
       try {
-        if (typeof app.TranscriptSnapshotForTab === "function" && app.OpenChannelTranscriptSessionForTab) {
+        if (app.OpenChannelTranscriptSessionForTab) {
           phases = await app.OpenChannelTranscriptSessionForTab(tabId, path) || undefined;
         } else page = await app.OpenChannelSessionPageForTab(tabId, path, HISTORY_PAGE_TURNS);
       } catch {
@@ -4276,7 +4294,7 @@ export function useController() {
         return failSessionNavigation(navigationSeq, tabId);
       }
       if (!navigationCompletionCurrent(navigationSeq, "session.channel", tabId) || !sessionLoadCurrent(tabId, seq)) return terminal("superseded");
-      if (typeof app.TranscriptSnapshotForTab === "function") {
+      if (usesLegacyTranscriptSnapshots()) {
         ensureTranscriptSubscription(tabId);
         const snapshotStartedAt = performance.now();
         if (!(await snapshotClient.load(tabId, (snapshot) => {
@@ -4284,6 +4302,17 @@ export function useController() {
           noteResumeHistoryPage({ messages: snapshotRecords(snapshot).map((record) => record.message), switch: phases }, performance.now() - resumeStartedAt, performance.now() - snapshotStartedAt);
         },
           () => isNavigationIntentCurrent(navigationSeq) && sessionLoadCurrent(tabId, seq)))) return terminal("superseded");
+      } else if (typeof app.SessionOpenForTab === "function") {
+        ensureTranscriptSubscription(tabId);
+        const projection = await getTranscriptStore().loadLatest(tabId, path, { turns: HISTORY_PAGE_TURNS, preferResident: false });
+        if (!projection || !isNavigationIntentCurrent(navigationSeq) || !sessionLoadCurrent(tabId, seq)) return terminal("superseded");
+        dispatchTo(tabId, { type: "reset" });
+        dispatchTo(tabId, {
+          type: "history_replace", items: projection.items, startTurn: projection.startTurn,
+          totalTurns: projection.totalTurns, hasOlder: projection.hasOlder,
+          revision: projection.revisionKnown ? projection.revision : undefined,
+          digest: projection.digest || undefined,
+        });
       } else if (page) {
         noteResumeHistoryPage(page, performance.now() - resumeStartedAt);
         dispatchTo(tabId, { type: "reset" });

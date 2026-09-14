@@ -22,6 +22,8 @@ export interface HistoryContentRef {
   revision: number;
   revKnown?: boolean;
   digest: string;
+  /** Canonical v4 content identity. Present on the unified locator protocol. */
+  canonicalRef?: { digest: string; bytes: number; mediaType?: string; name?: string; indexDigest?: string; integrityBlockBytes?: number };
 }
 
 export interface HistoryEntry {

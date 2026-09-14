@@ -30,6 +30,10 @@ func cleanupGoalDriverController(t *testing.T, c *Controller) {
 			runtimeRetired := true
 			if exclusive && service != nil && runtime != nil {
 				current, ok := service.Runtime(runtime.Ref())
+				if settled && !c.Running() && ok && current == runtime {
+					_ = service.Close(context.Background(), runtime.Ref())
+					current, ok = service.Runtime(runtime.Ref())
+				}
 				runtimeRetired = !ok || current != runtime
 			}
 			if settled && !c.Running() && runtimeRetired {

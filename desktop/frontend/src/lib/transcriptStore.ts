@@ -36,6 +36,7 @@ import { noteHistoryPage, registerTranscriptCacheDiagnostics } from "./sessionDi
 import { TranscriptMarkdownCache, type ParsedMarkdownValue } from "./transcriptMarkdownCache";
 export type { ParsedMarkdownValue } from "./transcriptMarkdownCache";
 import { historySearchAndAnswer } from "./searchTranscript";
+import type { MessageHistoryPage, PersistentMessage } from "../generated/desktopContract.generated";
 import { fileDiffFromWire, summarizeFileDiff } from "./tools";
 import {
   historyToolError,
@@ -347,6 +348,15 @@ function convertRecord(
 function applyResolvedField(rec: TranscriptRecord, ref: HistoryContentRef, data: string): boolean {
   const m = rec.message;
   switch (ref.field) {
+    case "canonicalMessage": {
+      const bytes = Uint8Array.from(data, character => character.charCodeAt(0));
+      const decoded = canonicalMessage(
+        { messageId: rec.entryId, position: rec.turn, version: 1, role: m.role, eventSequence: 0, visibleTurn: rec.turn },
+        JSON.parse(new TextDecoder().decode(bytes)),
+      );
+      rec.message = { ...m, ...decoded };
+      return true;
+    }
     case "content": rec.message = { ...m, content: data }; return true;
     case "reasoning": rec.message = { ...m, reasoning: data }; return true;
     case "submitText": rec.message = { ...m, submitText: data }; return true;
@@ -371,6 +381,20 @@ function applyResolvedField(rec: TranscriptRecord, ref: HistoryContentRef, data:
     }
     default:
       return false;
+  }
+}
+
+function resolvedHistoryField(message: HistoryMessage, field: string): string | undefined {
+  switch (field) {
+    case "content": return message.content;
+    case "reasoning": return message.reasoning;
+    case "submitText": return message.submitText;
+    case "detail": return message.detail;
+    case "code": return message.code;
+    case "summary": return message.summary;
+    case "archive": return message.archive;
+    case "toolResultError": return message.toolResultError;
+    default: return message.content;
   }
 }
 
@@ -830,6 +854,20 @@ export class TranscriptStore {
         const projection = await this.loadLatest(tabId, sessionPath, options);
         return projection ? { ...projection, kind: "reload", prependItems: [], removeIds: [] } : undefined;
       }
+      if (slice.source === "locator-reset") {
+        this.replaceRecords(session, asArray<HistoryEntry>(slice.entries));
+        session.nextCursor = slice.nextCursor ?? "";
+        session.hasOlder = Boolean(slice.hasOlder);
+        session.totalTurns = slice.totalTurns ?? 0;
+        session.startTurn = slice.startTurn ?? 0;
+        session.endTurn = slice.endTurn ?? 0;
+        session.revision = slice.revision ?? 0;
+        session.revisionKnown = sliceRevisionKnown(slice);
+        session.digest = slice.digest ?? "";
+        this.enforceBudgets();
+        if (this.sessions.get(key) !== session) return undefined;
+        return { ...this.projectionOf(session), kind: "reload", prependItems: [], removeIds: [] };
+      }
       if (!this.sameFingerprint(session, slice)) {
         // A backend that raced a rewrite may return a fresh page instead of a
         // stale marker. Never prepend rows from a different canonical state.
@@ -889,7 +927,7 @@ export class TranscriptStore {
 
   hasContentReference(tabId: string, entryId: string, field: string): boolean {
     entryId = resolveTranscriptEntryAlias(this.sessions.values(), tabId, entryId);
-    return Boolean(this.sessionForEntry(tabId, entryId)?.byId.get(entryId)?.refs.some(ref => ref.field === field));
+    return Boolean(this.sessionForEntry(tabId, entryId)?.byId.get(entryId)?.refs.some(ref => ref.field === field || ref.field === "canonicalMessage"));
   }
 
   /** Detached legacy tool reads use the exact call reference, not a field-only
@@ -901,11 +939,21 @@ export class TranscriptStore {
     const entryId = [...session.contributions].find(([, items]) => items.some(candidate => candidate.id === item.id))?.[0];
     const record = entryId && session.byId.get(entryId);
     if (!record) return undefined;
-    const calls = record.message.toolCalls ?? [];
-    const callIndex = calls.findIndex((call, index) => itemIdForToolCall(call.id, `he:${record.entryId}:tc${index}`) === item.id);
-    const call = calls[callIndex];
+    let calls = record.message.toolCalls ?? [];
+    let callIndex = calls.findIndex((call, index) => itemIdForToolCall(call.id, `he:${record.entryId}:tc${index}`) === item.id);
+    let call = calls[callIndex];
     const resultId = session.matchTables.get(record.entryId)?.get(callIndex);
-    const result = resultId ? session.byId.get(resultId) : record.message.role === "tool" ? record : undefined;
+    let result = resultId ? session.byId.get(resultId) : record.message.role === "tool" ? record : undefined;
+    if (record.refs.some(ref => ref.field === "canonicalMessage")) {
+      await this.requestFullContent(tabId, record.entryId, "content");
+      calls = record.message.toolCalls ?? [];
+      callIndex = calls.findIndex((candidate, index) => itemIdForToolCall(candidate.id, `he:${record.entryId}:tc${index}`) === item.id);
+      call = calls[callIndex];
+      result = resultId ? session.byId.get(resultId) : record.message.role === "tool" ? record : undefined;
+    }
+    if (result?.refs.some(ref => ref.field === "canonicalMessage")) {
+      await this.requestFullContent(tabId, result.entryId, "content");
+    }
     const generation = session.generation;
     const refs = [
       ...record.refs.filter(ref => call && ref.toolCallId === call.id && (ref.field === "toolArguments" || ref.field === "toolDiff")),
@@ -938,7 +986,7 @@ export class TranscriptStore {
     const rec = session?.byId.get(entryId);
     if (!session || !rec) return undefined;
     if (rec.resolved?.[field]) return rec.resolved[field];
-    const ref = rec.refs.find((candidate) => candidate.field === field);
+    const ref = rec.refs.find((candidate) => candidate.field === field || candidate.field === "canonicalMessage");
     if (!ref) return undefined;
     const pendingKey = `${entryId}${field}`;
     // Dedupe only within the same generation: a request started before a
@@ -964,10 +1012,12 @@ export class TranscriptStore {
       const previousBytes = rec.bytes;
       rec.bytes = recordBytes(rec.message);
       session.bodyBytes += rec.bytes - previousBytes;
-      rec.resolved = { ...rec.resolved, [field]: data };
+      const resolvedValue = ref.field === "canonicalMessage" ? resolvedHistoryField(rec.message, field) : data;
+      if (resolvedValue === undefined) return undefined;
+      rec.resolved = { ...rec.resolved, [field]: resolvedValue };
       this.reconvertAndNotify(session, rec);
       this.enforceBudgets();
-      return data;
+      return resolvedValue;
     })();
     const entry = { generation, promise: request };
     const release = () => {
@@ -1036,6 +1086,194 @@ export class TranscriptStore {
   }
 }
 
+function asWireObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function canonicalMessage(message: PersistentMessage, body: unknown): HistoryMessage {
+  const raw = asWireObject(body);
+  const decisionReceipt = asWireObject(raw.decision_receipt);
+  if (Object.keys(decisionReceipt).length > 0) {
+    return {
+      role: "notice",
+      messageId: String(raw.id ?? message.messageId),
+      content: "",
+      code: "decision_receipt",
+      level: "info",
+      decisionReceipt: decisionReceipt as unknown as HistoryMessage["decisionReceipt"],
+    };
+  }
+  const readPause = asWireObject(raw.read_pause);
+  if (Boolean(raw.local_only) && Object.keys(readPause).length > 0) {
+    return {
+      role: "notice",
+      messageId: String(raw.id ?? message.messageId),
+      content: "",
+      code: "incomplete_read",
+      level: "info",
+      readPause: readPause as unknown as HistoryMessage["readPause"],
+    };
+  }
+  const readiness = asWireObject(raw.final_readiness_recovery);
+  if (Boolean(raw.local_only) && readiness.pending === true) {
+    return {
+      role: "notice",
+      messageId: String(raw.id ?? message.messageId),
+      content: "Final checks are still required before this task is complete.",
+      code: "historical_checks",
+      level: "info",
+      readiness: { missing: Array.isArray(readiness.missing) ? readiness.missing.map(String) : undefined },
+    };
+  }
+  const protocolRecovery = asWireObject(raw.protocol_recovery);
+  if (Boolean(raw.local_only) && protocolRecovery.state === "pending" && typeof protocolRecovery.id === "string") {
+    return {
+      role: "notice",
+      messageId: String(raw.id ?? message.messageId),
+      content: "",
+      code: "protocol_recovery",
+      level: "info",
+      pending: true,
+      protocolRecovery: { id: protocolRecovery.id },
+    };
+  }
+  const toolCalls = (Array.isArray(raw.tool_calls) ? raw.tool_calls as Record<string, unknown>[] : []).map(call => ({
+    id: String(call.id ?? ""),
+    name: String(call.name ?? ""),
+    arguments: String(call.arguments ?? ""),
+    resolvedName: typeof call.resolved_name === "string" ? call.resolved_name : undefined,
+    capabilityId: typeof call.capability_id === "string" ? call.capability_id : undefined,
+    resolvedReadOnly: typeof call.resolved_read_only === "boolean" ? call.resolved_read_only : undefined,
+    diff: typeof call.diff === "string" ? call.diff : undefined,
+    added: typeof call.added === "number" ? call.added : undefined,
+    removed: typeof call.removed === "number" ? call.removed : undefined,
+  }));
+  const presented = asWireObject(raw.presented_files);
+  return {
+    role: Boolean(raw.local_only) ? "assistant" : String(raw.role ?? message.role),
+    messageId: String(raw.id ?? message.messageId),
+    content: String(raw.content ?? raw.raw_content ?? message.preview ?? ""),
+    reasoning: typeof raw.reasoning_content === "string" ? raw.reasoning_content : undefined,
+    createdAt: typeof raw.createdAt === "number" ? raw.createdAt : undefined,
+    workDurationMs: typeof raw.workDurationMs === "number" ? raw.workDurationMs : undefined,
+    toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+    toolCallId: typeof raw.tool_call_id === "string" ? raw.tool_call_id : undefined,
+    toolName: typeof raw.name === "string" ? raw.name : undefined,
+    memoryCitations: Array.isArray(raw.memoryCitations) ? raw.memoryCitations as MemoryCitation[] : undefined,
+    serverSearch: Array.isArray(raw.server_search) ? raw.server_search as HistoryMessage["serverSearch"] : undefined,
+    execution: Object.keys(asWireObject(raw.tool_execution)).length > 0 ? raw.tool_execution as HistoryMessage["execution"] : undefined,
+    presentedFiles: Array.isArray(presented.files) ? presented.files as HistoryMessage["presentedFiles"] : undefined,
+    readCompletion: Object.keys(asWireObject(raw.read_completion)).length > 0 ? raw.read_completion as HistoryMessage["readCompletion"] : undefined,
+  };
+}
+
+function decodeBase64Bytes(data: string): Uint8Array {
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+async function canonicalHistoryPageForTab(tabId: string, cursor: string, limit: number): Promise<MessageHistoryPage> {
+  try {
+    return await app.SessionHistoryPageForTab(tabId, cursor, limit);
+  } catch (localError) {
+    try {
+      return await app.RemoteSessionHistoryPageForTab(tabId, cursor, limit);
+    } catch {
+      throw localError;
+    }
+  }
+}
+
+async function canonicalSessionOpenForTab(tabId: string) {
+  try {
+    return await app.SessionOpenForTab(tabId);
+  } catch (localError) {
+    try {
+      return await app.RemoteSessionOpenForTab(tabId);
+    } catch {
+      throw localError;
+    }
+  }
+}
+
+const LOCATOR_RESET_CURSOR = "reasonix:locator:newest";
+
+function canonicalEntries(messages: PersistentMessage[], snapshotSequence: number): HistoryEntry[] {
+  const entries: HistoryEntry[] = [];
+  for (const persistent of messages) {
+    const body = persistent.inline;
+    const entryId = `m:${persistent.messageId}`;
+    entries.push({
+      entryId,
+      turn: persistent.visibleTurn ?? 0,
+      order: persistent.position,
+      message: canonicalMessage(persistent, body),
+      refs: persistent.contentRef ? [{
+        entryId,
+        field: "canonicalMessage",
+        size: persistent.contentRef.bytes,
+        chunks: Math.max(1, Math.ceil(persistent.contentRef.bytes / (1 << 20))),
+        revision: snapshotSequence,
+        revKnown: true,
+        digest: persistent.contentRef.digest,
+        canonicalRef: persistent.contentRef,
+      }] : [],
+    });
+  }
+  return entries;
+}
+
+async function canonicalHistorySlice(tabId: string, req: HistorySliceRequest): Promise<HistorySlice> {
+  const cursor = req.cursor ?? "";
+  const limit = Math.min(500, Math.max(1, req.entries ?? 100));
+  if (cursor === "") {
+    const view = await canonicalSessionOpenForTab(tabId);
+    const recent = asArray<PersistentMessage>(view.recent.entries);
+    if (view.storageGeneration || recent.length > 0) {
+      const entries = canonicalEntries(recent, view.snapshotSequence);
+      const turns = entries.map(entry => entry.turn).filter(turn => turn > 0);
+      const startTurn = turns.length > 0 ? Math.min(...turns) : 0;
+      const hasOlder = recent.length >= 100 && startTurn > 1;
+      return {
+        entries,
+        nextCursor: hasOlder ? LOCATOR_RESET_CURSOR : "",
+        hasOlder,
+        totalTurns: view.recent.totalTurns > 0 ? view.recent.totalTurns : (turns.length > 0 ? Math.max(...turns) : 0),
+        startTurn,
+        endTurn: turns.length > 0 ? Math.max(...turns) : 0,
+        stale: false,
+        revision: view.snapshotSequence,
+        revisionKnown: true,
+        digest: view.storageGeneration ?? view.recent.storageGeneration,
+        source: "recent",
+      };
+    }
+  }
+  const resetToLocator = cursor === LOCATOR_RESET_CURSOR;
+  const page = await canonicalHistoryPageForTab(tabId, resetToLocator ? "" : cursor, limit);
+  if (page.status === "stale_cursor") {
+    return { entries: [], nextCursor: "", hasOlder: false, totalTurns: 0, startTurn: 0, endTurn: 0, stale: true, revision: 0 };
+  }
+  if (page.status && page.status !== "ready") throw new Error(`Session history is ${page.status}`);
+  const entries = canonicalEntries(asArray<PersistentMessage>(page.messages), page.snapshotSequence);
+  const turns = entries.map(entry => entry.turn).filter(turn => turn > 0);
+  return {
+    entries,
+    nextCursor: page.nextCursor ?? "",
+    hasOlder: page.hasMore,
+    totalTurns: page.totalTurns ?? (turns.length > 0 ? Math.max(...turns) : 0),
+    startTurn: turns.length > 0 ? Math.min(...turns) : 0,
+    endTurn: turns.length > 0 ? Math.max(...turns) : 0,
+    stale: false,
+    revision: page.snapshotSequence,
+    revisionKnown: true,
+    digest: page.generation,
+    source: resetToLocator ? "locator-reset" : "locator",
+  };
+}
+
 // Bridge-backed singleton: resolves the host bindings at call time through
 // the app proxy, so test/dev mocks install whenever they appear.
 let singleton: TranscriptStore | undefined;
@@ -1043,8 +1281,25 @@ let singleton: TranscriptStore | undefined;
 export function getTranscriptStore(): TranscriptStore {
   if (!singleton) {
     singleton = new TranscriptStore({
-      HistorySliceForTab: (tabID, req) => app.HistorySliceForTab(tabID, req),
-      HistoryContentForTab: (tabID, ref, chunkIndex) => app.HistoryContentForTab(tabID, ref, chunkIndex),
+      HistorySliceForTab: (tabID, req) => canonicalHistorySlice(tabID, req),
+      HistoryContentForTab: async (tabID, ref, chunkIndex) => {
+        if (!ref.canonicalRef) return app.HistoryContentForTab(tabID, ref, chunkIndex);
+        const offset = chunkIndex * (1 << 20);
+        let chunk;
+        try {
+          chunk = await app.SessionHistoryContentForTab(tabID, ref.canonicalRef, offset);
+        } catch (localError) {
+          try {
+            chunk = await app.RemoteSessionHistoryContentForTab(tabID, ref.canonicalRef, offset);
+          } catch {
+            throw localError;
+          }
+        }
+        const bytes = decodeBase64Bytes(chunk.data ?? "");
+        let data = "";
+        for (let start = 0; start < bytes.length; start += 0x8000) data += String.fromCharCode(...bytes.subarray(start, start + 0x8000));
+        return { entryId: ref.entryId, field: ref.field, chunk: chunkIndex, chunks: ref.chunks, data, done: chunk.done, stale: false };
+      },
     });
   }
   return singleton;
