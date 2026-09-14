@@ -159,9 +159,25 @@ test("browser matrix preserves five entry points and fails closed through deskto
   assert.equal(run({ CHANGES_RESULT: "success", SHOULD_RUN: "false", PREPARE_RESULT: "success", GROUP_RESULT: "skipped" }), 0);
 });
 
-test("Windows desktop Go runs once without verbose JSON cache overhead", () => {
+test("Windows desktop Go partitions tests without verbose JSON cache overhead", () => {
   const windowsGo = job(ci, "desktop-windows-go");
-  assert.equal(windowsGo.match(/go test \.\/\.\.\./g)?.length, 1);
+  const suite = shellStep(windowsGo, "test (Windows desktop and update helper)");
+  const commands = [...suite.matchAll(/go test -(skip|run) '([^']+)' \.\/\.\.\./g)];
+  assert.equal(commands.length, 3);
+  assert.equal(suite.match(/^\s*go test /gm)?.length, commands.length);
+  // Include non-test entry points and every possible first suffix character.
+  // The complement group must retain names outside the two selected ranges.
+  const names = ["Example", "ExampleSession", "FuzzSession", "Test"];
+  for (let code = 0; code <= 127; code++) names.push(`Test${String.fromCharCode(code)}Session`);
+  names.push("Test会话", "TestΩSession");
+  for (const name of names) {
+    const owners = commands.filter(([, mode, pattern]) => {
+      const matches = new RegExp(pattern).test(name);
+      return mode === "skip" ? !matches : matches;
+    });
+    assert.equal(owners.length, 1, `${name} must run in exactly one group`);
+  }
+  assert.doesNotMatch(suite, /go test[^\n]*-timeout/);
   assert.doesNotMatch(windowsGo, /go test -json/);
   assert.doesNotMatch(windowsGo, /go-test-timing/);
   assert.doesNotMatch(windowsGo, /go test -run ['"]?\^\$/);
