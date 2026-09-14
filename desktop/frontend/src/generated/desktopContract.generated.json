@@ -7067,6 +7067,32 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/chat_file_reference.go",
+      "name": "OpenReferencePathForTab",
+      "owner": "App.OpenReferencePathForTab",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        }
+      ],
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID",
+          "path"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.OpenReferencePathForTab"
+      },
+      "sources": [
+        "desktop/chat_file_reference.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/remote_projects.go",
       "name": "OpenRemoteProjectTab",
       "owner": "App.OpenRemoteProjectTab",
@@ -8064,6 +8090,64 @@
       },
       "sources": [
         "desktop/app.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/chat_file_reference.go",
+      "name": "ReadReferenceFileForTab",
+      "owner": "App.ReadReferenceFileForTab",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.FilePreview"
+      },
+      "scope": {
+        "inputs": [
+          "tabID",
+          "path"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.ReadReferenceFileForTab"
+      },
+      "sources": [
+        "desktop/chat_file_reference.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/chat_file_reference.go",
+      "name": "ReadReferenceFileSourceForTab",
+      "owner": "App.ReadReferenceFileSourceForTab",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.FilePreview"
+      },
+      "scope": {
+        "inputs": [
+          "tabID",
+          "path"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.ReadReferenceFileSourceForTab"
+      },
+      "sources": [
+        "desktop/chat_file_reference.go"
       ]
     },
     {
@@ -9942,6 +10026,43 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/chat_file_reference.go",
+      "name": "ResolveChatFileReferencesForTab",
+      "owner": "App.ResolveChatFileReferencesForTab",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "elem": {
+            "kind": "object",
+            "ref": "main.ChatFileReferenceRequest"
+          },
+          "kind": "array"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.ChatFileReferenceResult"
+      },
+      "scope": {
+        "inputs": [
+          "tabID",
+          "turnKey",
+          "candidates"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.ResolveChatFileReferencesForTab"
+      },
+      "sources": [
+        "desktop/chat_file_reference.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/markdown_image_resolver.go",
       "name": "ResolveMarkdownImageForTab",
       "owner": "App.ResolveMarkdownImageForTab",
@@ -10243,6 +10364,35 @@
       },
       "sources": [
         "desktop/decision_runtime_api.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/chat_file_reference.go",
+      "name": "ResolveReferencePathForTab",
+      "owner": "App.ResolveReferencePathForTab",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        }
+      ],
+      "result": {
+        "kind": "string"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID",
+          "path"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.ResolveReferencePathForTab"
+      },
+      "sources": [
+        "desktop/chat_file_reference.go"
       ]
     },
     {
@@ -10943,6 +11093,32 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/chat_file_reference.go",
+      "name": "RevealReferencePathForTab",
+      "owner": "App.RevealReferencePathForTab",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        }
+      ],
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID",
+          "path"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.RevealReferencePathForTab"
+      },
+      "sources": [
+        "desktop/chat_file_reference.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/app.go",
       "name": "RevealWorkspacePathForTab",
       "owner": "App.RevealWorkspacePathForTab",
@@ -11202,6 +11378,31 @@
       },
       "sources": [
         "desktop/rebuild_runtime.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/markdown_svg_sanitize.go",
+      "name": "SanitizeMarkdownSVG",
+      "owner": "App.SanitizeMarkdownSVG",
+      "params": [
+        {
+          "kind": "string"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.MarkdownSVGView"
+      },
+      "scope": {
+        "inputs": [
+          "content"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.SanitizeMarkdownSVG"
+      },
+      "sources": [
+        "desktop/markdown_svg_sanitize.go"
       ]
     },
     {
@@ -11632,6 +11833,35 @@
       },
       "sources": [
         "desktop/settings_app.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/chat_file_reference.go",
+      "name": "SaveReferencePathAsForTab",
+      "owner": "App.SaveReferencePathAsForTab",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        }
+      ],
+      "result": {
+        "kind": "string"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID",
+          "path"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.SaveReferencePathAsForTab"
+      },
+      "sources": [
+        "desktop/chat_file_reference.go"
       ]
     },
     {
@@ -23024,6 +23254,94 @@
         }
       ]
     },
+    "main.ChatFileReference": {
+      "fields": [
+        {
+          "name": "key",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "path",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "status",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "displayPath",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "kind",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "actions",
+          "type": {
+            "elem": {
+              "kind": "string"
+            },
+            "kind": "array"
+          }
+        },
+        {
+          "name": "reason",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
+    "main.ChatFileReferenceRequest": {
+      "fields": [
+        {
+          "name": "key",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "path",
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
+    "main.ChatFileReferenceResult": {
+      "fields": [
+        {
+          "name": "turnKey",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "references",
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "main.ChatFileReference"
+            },
+            "kind": "array"
+          }
+        }
+      ]
+    },
     "main.CheckpointMeta": {
       "fields": [
         {
@@ -26489,6 +26807,30 @@
         },
         {
           "name": "errorCode",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
+    "main.MarkdownSVGView": {
+      "fields": [
+        {
+          "name": "ok",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "svg",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "reason",
           "optional": true,
           "type": {
             "kind": "string"

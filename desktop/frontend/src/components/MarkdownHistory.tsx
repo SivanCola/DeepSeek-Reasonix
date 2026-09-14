@@ -4,6 +4,7 @@ import { estimateHastBytes, markdownContentRevision, type MarkdownBlock, type Ma
 import { getMarkdownWorkerClient } from "../lib/markdownWorkerClient";
 import { getTranscriptStore } from "../lib/transcriptStore";
 import { createComponents } from "./markdownComponents";
+import { useChatFileCandidateReport } from "./ChatFileLinkContext";
 import { MarkdownSourceTable } from "./MarkdownTable";
 import "katex/dist/katex.min.css";
 import "./harness-chat/MarkdownText.css";
@@ -56,6 +57,9 @@ const MarkdownHistory = memo(function MarkdownHistory({ text, streaming = false,
     return () => { cancelled = true; request.cancel(); };
   }, [cacheKey, cached, onError, onParsed, revision, streaming, text, visible]);
   const result = cached?.blocks ? cached : parsed && (parsed.text === text || text.startsWith(parsed.text)) ? parsed.result : undefined;
+  // Only blocks the parser has already committed are reported, so a streaming
+  // answer never asks the host about a half-written path.
+  useChatFileCandidateReport(result?.blocks, revision);
   const nodes = useMemo(() => result?.blocks.map(block => <Block key={block.key} block={block} components={components} />), [result, components]);
   const pending = !cached?.blocks && parsed && text.startsWith(parsed.text) ? text.slice(parsed.text.length) : "";
   return <div ref={root} className="md" data-markdown-blocks={result?.blocks.length}>

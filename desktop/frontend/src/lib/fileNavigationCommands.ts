@@ -90,6 +90,9 @@ async function openBrowserPreview(ref: FileResourceRef): Promise<FileNavigationO
   if (ref.hostId !== "local") {
     return { status: "failed", error: new Error("Remote file browser preview is unavailable; save a copy to this device first") };
   }
+  if (ref.source === "reference") {
+    return { status: "failed", error: new Error("Answer references do not expose a browser preview") };
+  }
   const operation = fileNavigationOwner().beginOperation({
     sessionTabId: ref.tabId,
     dockTabId: revealBrowserDock(),
@@ -151,23 +154,25 @@ export async function performResourceAction(ref: FileResourceRef, action: FileAc
         return openBrowserPreview(ref);
       case "open-native":
         if (ref.hostId !== "local") return { status: "failed", error: new Error("This remote host does not expose a desktop opener") };
-        await (ref.source === "presented"
-          ? app.OpenPresentedPathForTab(ref.tabId, ref.toolCallId, ref.path)
-          : app.OpenWorkspacePathForTab(ref.tabId, ref.path));
+        if (ref.source === "reference") await app.OpenReferencePathForTab(ref.tabId, ref.path);
+        else if (ref.source === "presented") await app.OpenPresentedPathForTab(ref.tabId, ref.toolCallId, ref.path);
+        else await app.OpenWorkspacePathForTab(ref.tabId, ref.path);
         return { status: "opened", resource: resourceOf(ref) };
       case "reveal-native":
         if (ref.hostId !== "local") return { status: "failed", error: new Error("This remote host does not expose a desktop file manager") };
-        await (ref.source === "presented"
-          ? app.RevealPresentedPathForTab(ref.tabId, ref.toolCallId, ref.path)
-          : app.RevealWorkspacePathForTab(ref.tabId, ref.path));
+        if (ref.source === "reference") await app.RevealReferencePathForTab(ref.tabId, ref.path);
+        else if (ref.source === "presented") await app.RevealPresentedPathForTab(ref.tabId, ref.toolCallId, ref.path);
+        else await app.RevealWorkspacePathForTab(ref.tabId, ref.path);
         return { status: "opened", resource: resourceOf(ref) };
       case "save-copy":
         // The dialog completes against the path captured here; a later navigation
         // only takes away the right to report this receipt, never the write.
         if (ref.hostId !== "local") {
+          if (ref.source === "reference") return { status: "failed", error: new Error("This remote host does not expose a file transfer for an answer reference") };
           if (ref.source === "presented") await app.SaveRemotePresentedFileAs(ref.tabId, ref.hostId, ref.toolCallId, ref.path);
           else await app.SaveRemoteFileAs(ref.hostId, await resolveFileResourcePath(ref));
-        } else if (ref.source === "presented") await app.SavePresentedPathAsForTab(ref.tabId, ref.toolCallId, ref.path);
+        } else if (ref.source === "reference") await app.SaveReferencePathAsForTab(ref.tabId, ref.path);
+        else if (ref.source === "presented") await app.SavePresentedPathAsForTab(ref.tabId, ref.toolCallId, ref.path);
         else await app.SaveWorkspacePathAsForTab(ref.tabId, ref.path);
         return { status: "opened", resource: resourceOf(ref) };
     }

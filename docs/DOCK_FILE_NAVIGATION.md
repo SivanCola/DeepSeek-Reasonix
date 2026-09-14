@@ -10,7 +10,7 @@ longer start a render loop. Read this before changing
 Opening a file is a command, not a render.
 
 ```
-file row / markdown link / file tree / preview control
+file row / markdown link / verified answer reference / file tree / preview control
   → bound open command (FileNavigationOwner)
   → resolve the resource and re-check the command is still current
   → pick the target dock and preview position
@@ -24,9 +24,11 @@ file row / markdown link / file tree / preview control
   host + session tab + canonical path (`FileResourceRef`,
   `ResolvedFileResource`). `preview`, `source` and `reveal-tree` are parameters,
   so switching them reuses the same preview tab.
-- **Access context travels with the command.** A workspace reference carries no
-  presented tool scope, so reopening a path from another entry point reads it
-  under that command's credentials, never an earlier presentation's.
+- **Access context travels with the command.** Workspace, presented and
+  host-verified answer references keep distinct readers. Reopening a path from
+  another entry point uses that command's credentials, never an earlier
+  presentation's. An answer reference is resolved and authorized again by the
+  host for every read or direct action.
 - **Records are keyed by dock tab.** A record holds the dock
   instance identity, its lifecycle generation, the entries with their access
   contexts, the last navigation intent, a display revision, a content revision
@@ -40,7 +42,7 @@ file row / markdown link / file tree / preview control
 | Harness design | Reasonix implementation |
 | --- | --- |
 | Command-driven navigation: opening is an event, rendering reads the result | `FileNavigationOwner` (`lib/fileNavigationOwner.ts`) commits records; `WorkspaceDockRegion` no longer builds a request during render; `useFileNavigationRecord` (`app-shell/useFileNavigation.ts`) only reads |
-| Stable resource identity: the file and its access scope, not an object reference | `FileResourceRef` / `FileAccessContext` / `ResolvedFileResource` (`lib/fileResource.ts`); identity is host + session + canonical path, access context is source + session + tool call |
+| Stable resource identity: the file and its access scope, not an object reference | `FileResourceRef` / `FileAccessContext` / `ResolvedFileResource` (`lib/fileResource.ts`); the backend-resolved `identityPath` collapses relative/absolute aliases while access context keeps workspace, presented, and verified-reference readers distinct |
 | Separate navigation parameters from identity | `FileNavigationParams` — `action` (`preview`/`source`/`reveal-tree`) and `view` (`files`/`changed`) never change what the resource is |
 | Independent navigation instance per dock | One `FileNavigationOwner` per running app instance (`useFileNavigationRuntime`), one record per dock tab, `generation` per lifecycle |
 | Command results are reported, not thrown | `FileNavigationOutcome` — `opened` / `cancelled` (superseded, closed, disposed) / `failed`; a cancelled command shows no error |
@@ -82,9 +84,11 @@ provider request byte changes, so prompt caching is unaffected.
 | --- | --- |
 | Navigation instance | `file-navigation-owner.test.ts` |
 | Command ordering and cancellation | `file-navigation-races.test.ts` |
+| Verified answer-reference reader and source toggle | `workspace-reference-reader.test.tsx` |
 | Dock chain (local and remote) | `dock-file-navigation.test.tsx` |
 | Preview tabs, cap, source mode, reveal, generations | `file-navigation-dock.test.tsx` |
 | Render-loop defect, StrictMode, re-renders, remount | `file-navigation-lifecycle.test.tsx` |
 | Remote reads, save isolation, disconnect | `remote-file-navigation-races.test.tsx` |
 | Dock request delivery | `dock-navigation.test.ts`, `dock-view-requests.test.tsx` |
 | Real DOM and Electron | `bench/dock-file-navigation.mjs` (`test:app-browser`, `test:dock-electron`) |
+| Answer-reference click into the running owner | `bench/chat-file-reference.mjs` (`test:chat-file-browser`) |

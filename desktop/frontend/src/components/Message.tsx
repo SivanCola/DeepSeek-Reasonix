@@ -14,7 +14,8 @@ import { InvocationBadge } from "./InvocationBadge";
 import { CodeViewer } from "./CodeViewer";
 import { formatSelectionLabels, languageFor, parseSelectedTextContext, stripSelectionLabels } from "../lib/selectedTextContext";
 import type { PresentedFileView } from "../lib/chatViewSource";
-import { PresentedFileLinkProvider } from "./PresentedFileLinkContext";
+import type { TurnFileView } from "../lib/turnFiles";
+import { ChatFileTurnProvider } from "./ChatFileLinkContext";
 
 const MemoryCitations = lazy(() => import("./MemoryCitations").then((module) => ({ default: module.MemoryCitations })));
 const SearchSourcesPanel = lazy(() => import("./SearchSourcesPanel").then((module) => ({ default: module.SearchSourcesPanel }))); type AssistantItem = Extract<Item, { kind: "assistant" }>;
@@ -399,16 +400,20 @@ export function UserMessage({
   );
 }
 
-export const AssistantMessage = memo(function AssistantMessage({ item, presentedFiles = [], tabId, hostId }: { item: AssistantItem; presentedFiles?: readonly PresentedFileView[]; tabId?: string; hostId?: string }) {
+export const AssistantMessage = memo(function AssistantMessage({ item, presentedFiles = [], modifiedFiles = [], turnKey, factsVersion = 0, tabId, hostId }: {
+  item: AssistantItem; presentedFiles?: readonly PresentedFileView[]; modifiedFiles?: readonly TurnFileView[];
+  turnKey?: string; factsVersion?: number; tabId?: string; hostId?: string;
+}) {
   const hasText = item.streaming || item.text.trim() !== "";
   const hasFootnotes = Boolean(item.searchSources?.length);
+  const body = <Markdown text={item.text} streaming={item.streaming} cacheKey={item.id} wasStreamed={item.wasStreamed} />;
   return (
     <div className="msg msg--assistant" data-history-restore={item.id.startsWith("h") ? "" : undefined} data-entrance={item.id}>
       {(hasText || hasFootnotes) && (
         <div className="msg__body" data-transcript-selectable="message">
-          {hasText && <PresentedFileLinkProvider files={presentedFiles} tabId={tabId} hostId={hostId}>
-            <Markdown text={item.text} streaming={item.streaming} cacheKey={item.id} wasStreamed={item.wasStreamed} />
-          </PresentedFileLinkProvider>}
+          {hasText && (turnKey
+            ? <ChatFileTurnProvider turnKey={turnKey} factsVersion={factsVersion} presentedFiles={presentedFiles} modifiedFiles={modifiedFiles} tabId={tabId} hostId={hostId}>{body}</ChatFileTurnProvider>
+            : body)}
           <Suspense fallback={null}><SearchSourcesPanel sources={item.searchSources} /></Suspense>
         </div>
       )}

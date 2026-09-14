@@ -2123,6 +2123,14 @@
     },
     {
       "kind": "command",
+      "name": "OpenReferencePathForTab",
+      "detail": "(tabID string, path string) error",
+      "location": "desktop/chat_file_reference.go:217",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
       "name": "OpenRemoteProjectTab",
       "detail": "(hostID string, workspace string, opts RemoteTabOpenOptions) (TabMeta, error)",
       "location": "desktop/remote_projects.go:317",
@@ -2422,6 +2430,22 @@
       "name": "ReadPresentedTextPageForTab",
       "detail": "(tabID string, toolCallID string, path string, offset int64, expectedVersion string) (PresentedTextPage, error)",
       "location": "desktop/app.go:10488",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
+      "name": "ReadReferenceFileForTab",
+      "detail": "(tabID string, path string) FilePreview",
+      "location": "desktop/chat_file_reference.go:191",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
+      "name": "ReadReferenceFileSourceForTab",
+      "detail": "(tabID string, path string) FilePreview",
+      "location": "desktop/chat_file_reference.go:199",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -3011,9 +3035,17 @@
     },
     {
       "kind": "command",
+      "name": "ResolveChatFileReferencesForTab",
+      "detail": "(tabID string, turnKey string, candidates []ChatFileReferenceRequest) ChatFileReferenceResult",
+      "location": "desktop/chat_file_reference.go:51",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
       "name": "ResolveMarkdownImageForTab",
       "detail": "(tabID string, source string) MarkdownImageView",
-      "location": "desktop/markdown_image_resolver.go:29",
+      "location": "desktop/markdown_image_resolver.go:28",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -3078,6 +3110,14 @@
       "name": "ResolveRecoveryTabForTurn",
       "detail": "(tabID string, turnID string, runtimeEpoch string, id string, action string, feedback string) error",
       "location": "desktop/decision_runtime_api.go:97",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
+      "name": "ResolveReferencePathForTab",
+      "detail": "(tabID string, path string) (string, error)",
+      "location": "desktop/chat_file_reference.go:209",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -3283,6 +3323,14 @@
     },
     {
       "kind": "command",
+      "name": "RevealReferencePathForTab",
+      "detail": "(tabID string, path string) error",
+      "location": "desktop/chat_file_reference.go:225",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
       "name": "RevealWorkspacePathForTab",
       "detail": "(tabID string, rel string) error",
       "location": "desktop/app.go:10676",
@@ -3358,6 +3406,14 @@
       "name": "RuntimeDoctor",
       "detail": "() RuntimeDoctorReport",
       "location": "desktop/rebuild_runtime.go:69",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
+      "name": "SanitizeMarkdownSVG",
+      "detail": "(content string) MarkdownSVGView",
+      "location": "desktop/markdown_svg_sanitize.go:47",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -3478,6 +3534,14 @@
       "name": "SaveProviderWithKey",
       "detail": "(p ProviderView, key string) (string, error)",
       "location": "desktop/settings_app.go:2607",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
+      "name": "SaveReferencePathAsForTab",
+      "detail": "(tabID string, path string) (string, error)",
+      "location": "desktop/chat_file_reference.go:233",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },

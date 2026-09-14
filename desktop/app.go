@@ -10426,13 +10426,13 @@ func (a *App) presentedPathForTab(tabID, toolCallID, requested string) (string, 
 	if err != nil {
 		return "", err
 	}
-	if !presentedReadPolicyAllows(root, resolved) {
+	if !readPolicyAllowsPath(root, resolved) {
 		return "", os.ErrPermission
 	}
 	return resolved, nil
 }
 
-func presentedReadPolicyAllows(workspaceRoot, resolved string) bool {
+func readPolicyAllowsPath(workspaceRoot, resolved string) bool {
 	cfg, err := config.LoadForRootWithoutCredentialsReadOnly(workspaceRoot)
 	if err != nil {
 		return false

@@ -53,7 +53,8 @@
     "test:app-browser": "PLAYWRIGHT_BROWSERS_PATH=.pw-browsers node bench/app-browser.mjs && node bench/dock-view-state.mjs && node bench/dock-file-navigation.mjs && node bench/runtime-state.mjs",
     "test:app-memory": "PLAYWRIGHT_BROWSERS_PATH=.pw-browsers node bench/app-memory.mjs",
     "check:app-layers": "node scripts/check-app-entry-contract.mjs && node scripts/check-app-layers.test.mjs && node scripts/check-app-layers.mjs && node scripts/check-desktop-host-boundary.mjs",
-    "test:chat": "pnpm test:transcript"
+    "test:chat": "pnpm test:transcript",
+    "test:chat-file-browser": "PLAYWRIGHT_BROWSERS_PATH=.pw-browsers node bench/chat-file-reference.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/ext-apps": "1.7.5",

@@ -7,6 +7,7 @@ import {
   resolveKeyedResourceRequest,
 } from "../lib/keyedResource";
 import type { FilePreview } from "../lib/types";
+import type { FileResourceSource } from "../lib/fileResource";
 
 export type WorkspaceFilePreviewInput = Readonly<{
   /** The dock is on screen; a hidden dock reads nothing. */
@@ -15,6 +16,8 @@ export type WorkspaceFilePreviewInput = Readonly<{
   selectedPath: string | null;
   /** Presented tool call of the selected entry; a workspace entry passes none. */
   presentedToolCallId?: string;
+  /** Selects the host reader that revalidates this entry's access. */
+  accessSource: FileResourceSource;
   /** The selected entry renders as source. */
   source: boolean;
   /** Dock lifecycle generation; a new one re-reads the selection. */
@@ -33,7 +36,7 @@ export type WorkspaceFilePreviewInput = Readonly<{
  * an unchanged set of inputs never restarts a read that is still valid.
  */
 export function useWorkspaceFilePreview(input: WorkspaceFilePreviewInput) {
-  const { contentRevision, generation, open, presentedToolCallId, selectedPath, source, workspaceScopeKey, workspaceTabId } = input;
+  const { accessSource, contentRevision, generation, open, presentedToolCallId, selectedPath, source, workspaceScopeKey, workspaceTabId } = input;
   const [resource, setResource] = useState(() => emptyKeyedResource<FilePreview>());
   const [stale, setStale] = useState(false);
   // A read that lands after this dock is gone must not be committed: nothing
@@ -50,7 +53,7 @@ export function useWorkspaceFilePreview(input: WorkspaceFilePreviewInput) {
   scopeRef.current = workspaceScopeKey;
   generationRef.current = generation;
   const previewKey = selectedPath
-    ? `${workspaceScopeKey}\u0000preview\u0000${source ? "source" : "preview"}\u0000${presentedToolCallId ?? ""}\u0000${selectedPath}`
+    ? `${workspaceScopeKey}\u0000preview\u0000${source ? "source" : "preview"}\u0000${accessSource}\u0000${presentedToolCallId ?? ""}\u0000${selectedPath}`
     : null;
   const preview = previewKey && resource.key === previewKey ? resource.data : null;
   const loading = previewKey != null && resource.key === previewKey && resource.status === "refreshing";
@@ -62,7 +65,7 @@ export function useWorkspaceFilePreview(input: WorkspaceFilePreviewInput) {
     const requestId = ++requestIdRef.current;
     const requestPath = selectedPath;
     const requestGeneration = generation;
-    const requestKey = `${workspaceScopeKey}\u0000preview\u0000${source ? "source" : "preview"}\u0000${presentedToolCallId ?? ""}\u0000${requestPath}`;
+    const requestKey = `${workspaceScopeKey}\u0000preview\u0000${source ? "source" : "preview"}\u0000${accessSource}\u0000${presentedToolCallId ?? ""}\u0000${requestPath}`;
     // Dock instance, session scope, resource identity and operation revision
     // must all still match before a result may be committed for this read.
     const current = () =>
@@ -71,7 +74,11 @@ export function useWorkspaceFilePreview(input: WorkspaceFilePreviewInput) {
       && scopeRef.current === workspaceScopeKey
       && generationRef.current === requestGeneration;
     setResource((state) => beginKeyedResourceRequest(state, requestKey, requestId, contentRevision));
-    const read = presentedToolCallId
+    const read = accessSource === "reference"
+      ? source
+        ? app.ReadReferenceFileSourceForTab(workspaceTabId, requestPath)
+        : app.ReadReferenceFileForTab(workspaceTabId, requestPath)
+      : presentedToolCallId
       ? source
         ? app.ReadPresentedFileSourceForTab(workspaceTabId, presentedToolCallId, requestPath)
         : app.ReadPresentedFileForTab(workspaceTabId, presentedToolCallId, requestPath)
@@ -85,7 +92,7 @@ export function useWorkspaceFilePreview(input: WorkspaceFilePreviewInput) {
           setResource((state) => rejectKeyedResourceRequest(state, requestKey, requestId, String((reason as Error)?.message ?? reason)));
         }
       });
-  }, [contentRevision, generation, presentedToolCallId, selectedPath, source, workspaceScopeKey, workspaceTabId]);
+  }, [accessSource, contentRevision, generation, presentedToolCallId, selectedPath, source, workspaceScopeKey, workspaceTabId]);
 
   // The read starts once per set of read inputs. A StrictMode mount replay, an
   // effect reconnect or a re-render reconnect calls the effect again with the

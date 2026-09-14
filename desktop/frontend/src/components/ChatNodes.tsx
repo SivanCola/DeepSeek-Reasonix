@@ -164,7 +164,13 @@ function ChatUser({ node, loader }: { node: Extract<ChatNode, { kind: "user" }>;
 function ChatAnswer({ node, loader, source, tabId, hostId }: { node: Extract<ChatNode, { kind: "assistant" }>; loader: ChatContentLoader; source: ChatSource; tabId?: string; hostId?: string }) {
   const tail = useChatNode(source, `${node.turnKey}:tail`);
   const presentedFiles = tail?.kind === "tail" ? tail.presentedFiles : [];
-  return <><AssistantMessage item={node.item} presentedFiles={presentedFiles} tabId={tabId} hostId={hostId} /><BodyLoadError item={node.item} loader={loader} /></>;
+  const modifiedFiles = tail?.kind === "tail" ? tail.modifiedFiles : [];
+  // A turn's file facts are the answers the host can already give without
+  // reading the answer text; when they grow, earlier reference failures are
+  // worth asking about again.
+  const factsVersion = presentedFiles.length + modifiedFiles.length;
+  return <><AssistantMessage item={node.item} presentedFiles={presentedFiles} modifiedFiles={modifiedFiles}
+    turnKey={node.turnKey} factsVersion={factsVersion} tabId={tabId} hostId={hostId} /><BodyLoadError item={node.item} loader={loader} /></>;
 }
 
 function ChatReasoning({ node, loader, source, scroll }: { node: Extract<ChatNode, { kind: "reasoning" }>; loader: ChatContentLoader; source: ChatSource; scroll: ChatScrollController }) {

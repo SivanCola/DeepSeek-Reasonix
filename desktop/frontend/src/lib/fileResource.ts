@@ -1,14 +1,18 @@
 import { app } from "./bridge";
+import { pathExtension } from "./filePaths";
 
-/** Where a file reference came from: an agent presentation or the workspace itself. */
-export type FileResourceSource = "presented" | "workspace";
+/** Where a file reference came from: an agent presentation, the workspace, or verified answer text. */
+export type FileResourceSource = "presented" | "workspace" | "reference";
 
 type ResourceBase = { hostId: string; tabId: string; path: string };
 
 /** What a caller knows about a file: host, session, path, origin and tool call. */
 export type FileResourceRef =
   | (ResourceBase & { source: "presented"; toolCallId: string })
-  | (ResourceBase & { source: "workspace"; toolCallId?: string });
+  | (ResourceBase & { source: "workspace"; toolCallId?: string })
+  // An answer-named path has no standing authorization. Every read and action
+  // goes through the reference endpoints, which resolve it again for this tab.
+  | (ResourceBase & { source: "reference" });
 
 /**
  * The credentials a single read must present. Captured from the command that
@@ -37,9 +41,8 @@ export type ResolvedFileResource = Readonly<{
 }>;
 
 export function fileAccessContext(ref: FileResourceRef): FileAccessContext {
-  return ref.source === "presented"
-    ? { source: "presented", tabId: ref.tabId, toolCallId: ref.toolCallId }
-    : { source: "workspace", tabId: ref.tabId };
+  if (ref.source === "presented") return { source: "presented", tabId: ref.tabId, toolCallId: ref.toolCallId };
+  return { source: ref.source, tabId: ref.tabId };
 }
 
 export const sameAccessContext = (left: FileAccessContext, right: FileAccessContext): boolean =>
@@ -66,18 +69,21 @@ export async function resolveFileResource(ref: FileResourceRef): Promise<Resolve
 /** Absolute path for copy-to-clipboard and save-a-copy, where display needs one. */
 export function resolveFileResourcePath(ref: FileResourceRef): Promise<string> {
   if (ref.hostId !== "local") {
+    if (ref.source === "reference") return Promise.resolve(ref.path);
     return ref.source === "presented"
       ? app.ResolveRemotePresentedPathForTab(ref.tabId, ref.hostId, ref.toolCallId, ref.path)
       : app.ResolveRemoteWorkspacePathForTab(ref.tabId, ref.hostId, ref.toolCallId ?? "", ref.path);
   }
+  if (ref.source === "reference") return app.ResolveReferencePathForTab(ref.tabId, ref.path);
   return ref.source === "presented"
     ? app.ResolvePresentedPathForTab(ref.tabId, ref.toolCallId, ref.path)
     : app.ResolveWorkspacePathForTab(ref.tabId, ref.path);
 }
 
-const extension = (path: string) => path.replaceAll("\\", "/").split("/").pop()?.split(".").pop()?.toLowerCase() ?? "";
 const MEDIA = new Set(["html", "htm", "pdf", "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg", "mp3", "wav", "ogg", "m4a", "aac", "mp4", "webm", "mov", "m4v", "ogv"]);
-const BINARY = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg", "pdf", "mp3", "wav", "ogg", "m4a", "aac", "flac", "mp4", "webm", "mov", "m4v", "ogv", "zip", "tar", "gz", "7z", "rar", "doc", "docx", "xls", "xlsx", "ppt", "pptx"]);
+// SVG is an image to the previewer and a document to the editor, so both views
+// are legitimate.
+const BINARY = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "pdf", "mp3", "wav", "ogg", "m4a", "aac", "flac", "mp4", "webm", "mov", "m4v", "ogv", "zip", "tar", "gz", "7z", "rar", "doc", "docx", "xls", "xlsx", "ppt", "pptx"]);
 
 export interface FileResourceCapabilities {
   preview: boolean;
@@ -96,10 +102,26 @@ export type FileResourceIdentity = Readonly<{ hostId: string; path: string }>;
 export const fileResourceIdentity = (resource: FileResourceIdentity): FileResourceIdentity =>
   ({ hostId: resource.hostId, path: resource.path });
 
+/** Maps the host's verified action list onto the menu capability shape. */
+export function capabilityActions(actions: readonly string[]): FileResourceCapabilities {
+  const has = (action: string) => actions.includes(action);
+  return {
+    preview: has("preview"),
+    source: has("source"),
+    browser: has("browser"),
+    revealTree: has("reveal-tree"),
+    copyPath: has("copy-path"),
+    openNative: has("open-native"),
+    revealNative: has("reveal-native"),
+    saveCopy: has("save-copy"),
+  };
+}
+
 /** The host still revalidates every action; this snapshot only controls honest UI affordances. */
-export function fileResourceCapabilities(resource: FileResourceIdentity): FileResourceCapabilities {
+export function fileResourceCapabilities(resource: FileResourceIdentity, verified?: readonly string[]): FileResourceCapabilities {
+  if (verified) return capabilityActions(verified);
   const remote = resource.hostId !== "local";
-  const ext = extension(resource.path);
+  const ext = pathExtension(resource.path);
   return {
     preview: true,
     source: !BINARY.has(ext),

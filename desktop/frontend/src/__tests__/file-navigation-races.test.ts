@@ -128,5 +128,28 @@ for (const [action, message] of [
   assert.equal(outcome.status, "failed");
   assert.equal((outcome as { error: Error }).error.message, message);
 }
+
+// Answer-named references join the same owner, but preserve their dedicated
+// host revalidation path for navigation and every direct action.
+const referenceCalls: string[] = [];
+Object.assign(stub.commands, {
+  ResolveReferencePathForTab: async (_tab: string, path: string) => {
+    referenceCalls.push(`resolve:${path}`);
+    return `/repo/${path}`;
+  },
+  OpenReferencePathForTab: async (_tab: string, path: string) => { referenceCalls.push(`open:${path}`); },
+  RevealReferencePathForTab: async (_tab: string, path: string) => { referenceCalls.push(`reveal:${path}`); },
+  SaveReferencePathAsForTab: async (_tab: string, path: string) => { referenceCalls.push(`save:${path}`); return `/copy/${path}`; },
+});
+const reference = { hostId: "local", tabId: "session", source: "reference" as const, path: "answer.md" };
+const referenceOpen = await performResourceAction(reference, "preview");
+assert.equal(referenceOpen.status, "opened");
+assert.equal(referenceOpen.status === "opened" ? referenceOpen.resource.identityPath : "", "/repo/answer.md");
+const referenceSnapshot = owner.getSnapshot(fileNavigationKey({ sessionTabId: "session", dockTabId: fileDockTabId }));
+assert.equal(referenceSnapshot?.selected?.resource.access.source, "reference");
+for (const action of ["open-native", "reveal-native", "save-copy"] as const) {
+  assert.equal((await performResourceAction(reference, action)).status, "opened");
+}
+assert.deepEqual(referenceCalls, ["resolve:answer.md", "open:answer.md", "reveal:answer.md", "save:answer.md"]);
 stub.uninstall(); dom.window.close();
 console.log("PASS navigation ordering, cancellation, failed outcomes and browser resource cleanup");

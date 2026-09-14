@@ -4,7 +4,7 @@
     "commented-code": 0,
     "complexity": 1883,
     "essay": 1929,
-    "file-size": 100018,
+    "file-size": 100031,
     "function-size": 8063,
     "layering": 1,
     "marker": 0,
@@ -129,13 +129,13 @@
       "file-size": 277
     },
     "desktop/frontend/src/components/WorkspacePanel.tsx": {
-      "file-size": 1577
+      "file-size": 1595
     },
     "desktop/frontend/src/custom/features/heartbeat/HeartbeatPanel.tsx": {
       "file-size": 177
     },
     "desktop/frontend/src/lib/bridge.ts": {
-      "file-size": 4936
+      "file-size": 4976
     },
     "desktop/frontend/src/lib/crash.ts": {
       "file-size": 98

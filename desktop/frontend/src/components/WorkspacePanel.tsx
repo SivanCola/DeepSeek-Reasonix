@@ -353,6 +353,7 @@ export function WorkspacePanel({
   const selectedPresentedToolCallId = selectedEntry?.resource.access.source === "presented"
     ? selectedEntry.resource.access.toolCallId
     : undefined;
+  const selectedIsReference = selectedEntry?.resource.access.source === "reference";
   const sourceOverride = selectedEntry?.source ?? false;
   const {
     previewKey, preview, loadingPreview, previewErr, presentedFileStale,
@@ -360,6 +361,7 @@ export function WorkspacePanel({
   } = useWorkspaceFilePreview({
     open,
     selectedPath,
+    accessSource: selectedEntry?.resource.access.source ?? "workspace",
     presentedToolCallId: selectedPresentedToolCallId,
     source: sourceOverride,
     generation: selectedGeneration,
@@ -669,7 +671,7 @@ export function WorkspacePanel({
     const dirs = isAbsoluteDisplayPath(path) ? [] : parentDirs(path);
     updateOpenDirs((prev) => new Set([...Array.from(prev), ...dirs]));
     dirs.forEach((dir) => void loadDir(dir));
-    if (navigationIntent.resource.access.source === "presented" && isAbsoluteDisplayPath(path)) setScopedFilePaths([path]);
+    if (navigationIntent.resource.access.source !== "workspace" && isAbsoluteDisplayPath(path)) setScopedFilePaths([path]);
   }, [loadDir, navigationIntent, open, panelWidth, treeVisible, treeWidth, treeWidthMode, updateOpenDirs]);
   useEffect(() => {
     previewVisibleAtLastApplyRef.current = previewShown;
@@ -1603,8 +1605,10 @@ export function WorkspacePanel({
 
   const isMarkdown = selectedPath?.toLowerCase().endsWith(".md") ?? false;
   const isCSV = selectedPath ? /\.(?:csv|tsv)$/i.test(selectedPath) : false;
+  // Host-verifiable text references may switch between their rendered and
+  // source forms. SVG is text even though its preview is an image.
   const canTogglePresentedSource = Boolean(
-    selectedPath && selectedPresentedToolCallId && /\.(?:html?|md|markdown|csv|tsv)$/i.test(selectedPath),
+    selectedPath && (selectedPresentedToolCallId || selectedIsReference) && /\.(?:html?|md|markdown|csv|tsv|svg)$/i.test(selectedPath),
   );
   const renderedAsMarkdown = isMarkdown && !sourceOverride;
   const renderedAsCSV = isCSV && !sourceOverride;

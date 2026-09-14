@@ -9,7 +9,7 @@
 打开文件是一条命令，不是一次渲染。
 
 ```
-文件行 / Markdown 链接 / 文件树 / 预览操作
+文件行 / Markdown 链接 / 宿主验证的回答引用 / 文件树 / 预览操作
   → 已绑定运行实例的打开命令（FileNavigationOwner）
   → 解析资源并校验该命令是否仍然有效
   → 确定目标 Dock 与预览位置
@@ -22,9 +22,10 @@
 - **资源身份与导航参数分离。** 身份是主机 + 会话标签 + 规范路径
   （`FileResourceRef`、`ResolvedFileResource`）；`preview`、`source`、
   `reveal-tree` 只是参数，切换它们复用同一个预览标签。
-- **访问凭据随命令传递。** workspace 来源的引用不携带 presented 工具范围，
-  因此从另一个入口重新打开同一路径时，只会使用本次命令的凭据，不会沿用
-  此前 presented 请求的权限。
+- **访问凭据随命令传递。** workspace、presented 与宿主验证的回答引用使用
+  不同读取入口。从另一个入口重新打开同一路径时，只使用本次命令的凭据，
+  不沿用此前 presented 请求的权限；回答引用的每次读取与直接操作都会由宿主
+  重新解析和授权。
 - **记录按 Dock 标签索引。** 记录包含 Dock 实例身份、生命周期代数、
   带访问上下文的条目、最后一次导航意图、显示修订、内容修订与生命周期信号。
 - **只有显式命令推进修订。** 等价命令会保持条目对象与条目列表完全一致，
@@ -35,7 +36,7 @@
 | Harness 设计 | Reasonix 实现 |
 | --- | --- |
 | 命令驱动导航：打开由事件触发，渲染只读取结果 | `FileNavigationOwner`（`lib/fileNavigationOwner.ts`）提交记录；`WorkspaceDockRegion` 不再在渲染中构造请求；`useFileNavigationRecord`（`app-shell/useFileNavigation.ts`）只读取 |
-| 稳定资源身份：按文件与访问范围识别，不按对象引用 | `FileResourceRef` / `FileAccessContext` / `ResolvedFileResource`（`lib/fileResource.ts`）；身份为主机 + 会话 + 规范路径，访问上下文为来源 + 会话 + 工具调用 |
+| 稳定资源身份：按文件与访问范围识别，不按对象引用 | `FileResourceRef` / `FileAccessContext` / `ResolvedFileResource`（`lib/fileResource.ts`）；后端解析的 `identityPath` 合并相对/绝对路径别名，访问上下文区分 workspace、presented 与验证引用读取 |
 | 导航参数与身份分离 | `FileNavigationParams`——`action`（`preview`/`source`/`reveal-tree`）与 `view`（`files`/`changed`）不改变资源本身 |
 | 每个 Dock 独立导航实例 | 每个运行实例一个 `FileNavigationOwner`（`useFileNavigationRuntime`），每个 Dock 标签一条记录，每次生命周期一个 `generation` |
 | 命令结果上报而非抛出 | `FileNavigationOutcome`——`opened` / `cancelled`（superseded、closed、disposed）/ `failed`；取消不显示错误 |
@@ -74,9 +75,11 @@ provider 请求字节，对提示缓存无影响。
 | --- | --- |
 | 导航实例 | `file-navigation-owner.test.ts` |
 | 命令顺序与取消 | `file-navigation-races.test.ts` |
+| 验证回答引用的读取与源码切换 | `workspace-reference-reader.test.tsx` |
 | 真实 Dock 链路（本地与远程） | `dock-file-navigation.test.tsx` |
 | 预览标签、上限、源码模式、定位、代数 | `file-navigation-dock.test.tsx` |
 | 渲染循环缺陷、StrictMode、重渲染、重挂载 | `file-navigation-lifecycle.test.tsx` |
 | 远程读取、保存隔离、断连 | `remote-file-navigation-races.test.tsx` |
 | Dock 请求投递 | `dock-navigation.test.ts`、`dock-view-requests.test.tsx` |
 | 真实 DOM 与 Electron | `bench/dock-file-navigation.mjs`（`test:app-browser`、`test:dock-electron`） |
+| 回答引用点击进入运行实例 Owner | `bench/chat-file-reference.mjs`（`test:chat-file-browser`） |
