@@ -20,10 +20,12 @@ file row / markdown link / verified answer reference / file tree / preview contr
 
 - **A render never navigates.** Panels read `owner.getSnapshot(key)` through
   `useSyncExternalStore`; nothing is published while React renders.
-- **Resource identity and navigation parameters are separate.** Identity is
-  host + session tab + canonical path (`FileResourceRef`,
-  `ResolvedFileResource`). `preview`, `source` and `reveal-tree` are parameters,
-  so switching them reuses the same preview tab.
+- **Resource identity, access context and navigation parameters are separate.**
+  Preview identity is resource space + backend-canonical path. Session tab,
+  source and optional `toolCallId` belong to `FileAccessContext`; `preview`,
+  `source` and `reveal-tree` are parameters. Switching a parameter reuses the
+  preview tab, while switching sessions can rebind its access without changing
+  which file it represents.
 - **Access context travels with the command.** Workspace, presented and
   host-verified answer references keep distinct readers. Reopening a path from
   another entry point uses that command's credentials, never an earlier
@@ -42,7 +44,7 @@ file row / markdown link / verified answer reference / file tree / preview contr
 | Harness design | Reasonix implementation |
 | --- | --- |
 | Command-driven navigation: opening is an event, rendering reads the result | `FileNavigationOwner` (`lib/fileNavigationOwner.ts`) commits records; `WorkspaceDockRegion` no longer builds a request during render; `useFileNavigationRecord` (`app-shell/useFileNavigation.ts`) only reads |
-| Stable resource identity: the file and its access scope, not an object reference | `FileResourceRef` / `FileAccessContext` / `ResolvedFileResource` (`lib/fileResource.ts`); the backend-resolved `identityPath` collapses relative/absolute aliases while access context keeps workspace, presented, and verified-reference readers distinct |
+| Stable resource identity: a canonical file coordinate, not an object reference | `FileResourceRef` / `FileAccessContext` / `ResolvedFileResource` (`lib/fileResource.ts`); backend-resolved `identityPath` collapses relative/absolute aliases, while access context separately keeps workspace, presented and verified-reference readers distinct |
 | Separate navigation parameters from identity | `FileNavigationParams` — `action` (`preview`/`source`/`reveal-tree`) and `view` (`files`/`changed`) never change what the resource is |
 | Independent navigation instance per dock | One `FileNavigationOwner` per running app instance (`useFileNavigationRuntime`), one record per dock tab, `generation` per lifecycle |
 | Command results are reported, not thrown | `FileNavigationOutcome` — `opened` / `cancelled` (superseded, closed, disposed) / `failed`; a cancelled command shows no error |

@@ -19,9 +19,10 @@
 
 - **渲染不执行导航。** 面板通过 `useSyncExternalStore` 读取
   `owner.getSnapshot(key)`，React 渲染期间不发布任何请求。
-- **资源身份与导航参数分离。** 身份是主机 + 会话标签 + 规范路径
-  （`FileResourceRef`、`ResolvedFileResource`）；`preview`、`source`、
-  `reveal-tree` 只是参数，切换它们复用同一个预览标签。
+- **资源身份、访问上下文与导航参数分离。** 预览身份由资源空间 + 后端规范路径
+  决定；会话标签、来源和可选 `toolCallId` 属于 `FileAccessContext`；
+  `preview`、`source`、`reveal-tree` 只是参数。切换参数复用同一个预览标签，
+  切换会话则可在不改变文件身份的情况下重绑定访问权限。
 - **访问凭据随命令传递。** workspace、presented 与宿主验证的回答引用使用
   不同读取入口。从另一个入口重新打开同一路径时，只使用本次命令的凭据，
   不沿用此前 presented 请求的权限；回答引用的每次读取与直接操作都会由宿主
@@ -36,7 +37,7 @@
 | Harness 设计 | Reasonix 实现 |
 | --- | --- |
 | 命令驱动导航：打开由事件触发，渲染只读取结果 | `FileNavigationOwner`（`lib/fileNavigationOwner.ts`）提交记录；`WorkspaceDockRegion` 不再在渲染中构造请求；`useFileNavigationRecord`（`app-shell/useFileNavigation.ts`）只读取 |
-| 稳定资源身份：按文件与访问范围识别，不按对象引用 | `FileResourceRef` / `FileAccessContext` / `ResolvedFileResource`（`lib/fileResource.ts`）；后端解析的 `identityPath` 合并相对/绝对路径别名，访问上下文区分 workspace、presented 与验证引用读取 |
+| 稳定资源身份：按文件规范坐标识别，不按对象引用 | `FileResourceRef` / `FileAccessContext` / `ResolvedFileResource`（`lib/fileResource.ts`）；后端解析的 `identityPath` 合并相对/绝对路径别名，访问上下文另行区分 workspace、presented 与验证引用读取 |
 | 导航参数与身份分离 | `FileNavigationParams`——`action`（`preview`/`source`/`reveal-tree`）与 `view`（`files`/`changed`）不改变资源本身 |
 | 每个 Dock 独立导航实例 | 每个运行实例一个 `FileNavigationOwner`（`useFileNavigationRuntime`），每个 Dock 标签一条记录，每次生命周期一个 `generation` |
 | 命令结果上报而非抛出 | `FileNavigationOutcome`——`opened` / `cancelled`（superseded、closed、disposed）/ `failed`；取消不显示错误 |
