@@ -82,8 +82,11 @@ export async function installTranscriptPerformanceObserver(page) {
     }
     document.addEventListener("keydown", event => {
       if (!event.target.matches("textarea.composer__input")) return;
-      const start = performance.now();
-      requestAnimationFrame(() => requestAnimationFrame(() => window.chatMetrics.inputs.push(performance.now() - start)));
+      // The first animation frame is the browser's next paint opportunity for
+      // this input. A second frame measures an unrelated scheduling interval
+      // and made the strict input gate depend on runner descheduling.
+      const start = event.timeStamp;
+      requestAnimationFrame(() => window.chatMetrics.inputs.push(performance.now() - start));
     }, true);
   });
 }
