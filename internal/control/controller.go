@@ -180,6 +180,7 @@ type Controller struct {
 	startedOnce                       bool          // guards the one-shot SessionStart hook on first turn
 	closeOnce                         sync.Once     // makes close idempotent under racing teardown paths
 	closeFinalizeOnce                 sync.Once     // releases persistence/resources only after the terminal boundary
+	closeFinalized                    chan struct{} // closes after every controller-owned resource has been released
 	closeFireSessionEnd               bool
 	closeJobsMode                     closeJobsMode
 	onRemember                        func(rule string) RememberResult // set via Options; invoked when user picks "always allow"
@@ -820,6 +821,7 @@ func New(opts Options) *Controller {
 		goalDriverControl:                 goalDriverControl{ctx: goalDriverCtx, cancel: goalDriverCancel},
 		approval:                          newApprovalManager(opts.Policy, ToolApprovalAsk, opts.ApprovalTimeout),
 		turns:                             turnLoop{phase: session.RuntimeIdle},
+		closeFinalized:                    make(chan struct{}),
 	}
 	c.initializeOwnedResources(opts)
 	return c
@@ -5165,6 +5167,9 @@ func (c *Controller) close(fireSessionEnd bool, jobsMode closeJobsMode) {
 // session binding earlier makes the final TurnDone impossible to accept.
 func (c *Controller) finalizeControllerClose() {
 	c.closeFinalizeOnce.Do(func() {
+		if c.closeFinalized != nil {
+			defer close(c.closeFinalized)
+		}
 		c.mu.Lock()
 		started := c.startedOnce
 		fireSessionEnd := c.closeFireSessionEnd

@@ -2,11 +2,8 @@ package control
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
-
-	"reasonix/internal/session"
 )
 
 func newOwnedTestController(t testing.TB, options Options) *Controller {
@@ -17,17 +14,15 @@ func newOwnedTestController(t testing.TB, options Options) *Controller {
 		if options.SessionService == nil {
 			return
 		}
-		deadline := time.Now().Add(5 * time.Second)
-		for time.Now().Before(deadline) {
-			if !controller.Running() {
-				err := options.SessionService.CloseAll(context.Background())
-				if !errors.Is(err, session.ErrRuntimeBusy) && !errors.Is(err, session.ErrRuntimeBound) {
-					return
-				}
-			}
-			time.Sleep(time.Millisecond)
+		select {
+		case <-controller.closeFinalized:
+			// Close an idle retained runtime when this is the final owner. A
+			// runtime still bound by another controller belongs to that
+			// controller's cleanup instead.
+			_ = options.SessionService.CloseAll(context.Background())
+		case <-time.After(5 * time.Second):
+			t.Error("controller resources did not settle after close")
 		}
-		t.Error("controller foreground or unbound runtime did not settle after close")
 	})
 	return controller
 }

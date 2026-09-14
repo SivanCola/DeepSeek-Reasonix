@@ -170,12 +170,10 @@ func TestDuplicateStopAndConcurrentFinish(t *testing.T) {
 	<-started
 	var wg sync.WaitGroup
 	for range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			c.CancelSession()
 			c.Cancel()
-		}()
+		})
 	}
 	wg.Wait()
 	waitIdleAdmission(t, c)
@@ -272,7 +270,9 @@ func TestTimeoutRecoveryDropsLateEventsFromNewTurn(t *testing.T) {
 	c.testCancelGrace = 10 * time.Millisecond
 	started := make(chan struct{})
 	hold := make(chan struct{})
+	exited := make(chan struct{})
 	c.runGuarded(func(ctx context.Context) error {
+		defer close(exited)
 		close(started)
 		<-ctx.Done()
 		<-hold
@@ -298,6 +298,11 @@ func TestTimeoutRecoveryDropsLateEventsFromNewTurn(t *testing.T) {
 		t.Fatalf("admission during recovery = %v, want blocked", got)
 	}
 	close(hold)
+	select {
+	case <-exited:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed-out turn did not exit after release")
+	}
 }
 
 func TestOldControllerUnbindDoesNotClearNewGeneration(t *testing.T) {
