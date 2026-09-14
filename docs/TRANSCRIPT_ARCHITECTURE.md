@@ -27,7 +27,15 @@ Markdown source → shared worker → stable prefix blocks + mutable streaming t
 
 ## Product behavior
 
-The column is at most 800 px wide, with 24 px horizontal padding (16 px in narrow chat containers). Existing typography/themes apply. Native selection and scrollbars are used. Each explicit older-history action requests one page; pages accumulate. Navigation lists loaded user turns only.
+The column is at most 800 px wide, with 24 px horizontal padding (16 px in narrow chat containers). Existing typography/themes apply. Native selection and scrollbars are used. Each explicit older-history action requests one page; pages accumulate. Navigation lists every turn of the conversation, not only the loaded ones.
+
+## Turn outline and cross-page navigation
+
+The rail reads a complete turn index bound to the installed snapshot, supplied by the same `internal/transcript` projection that pages the body and shared by local and remote sessions through `GET /transcript/outline`. A turn keeps its stable record identity across snapshots, so loading an earlier page never renumbers the rail or drops a mark. Entries carry a bounded prompt preview (50 grapheme clusters) and answer preview (120) built from display bodies only: reasoning, tool output, submitted text and injected context are never part of an entry. Preview memory is accounted for in the existing snapshot cache budget, and the index is built once per frozen cut.
+
+Selecting a turn whose body is not loaded starts a jump transaction. It leaves tail following immediately, then reuses the ordinary older-history paging one page at a time, waiting for the progressive mount to advance between pages, and only moves the viewport once the target node is really mounted. An explicit cancel, reader intent (wheel, touch, reading keys, pointer, return-to-bottom), a newer target, or a session/snapshot replacement all end the pending transaction; a page already in flight may finish but cannot take scroll control back. Staleness is reported rather than silently answered against a newer revision.
+
+Compatibility is additive. A client without the capability keeps the loaded-turn rail and does not claim complete navigation; the remote token `transcript-outline-v1` is advertised by the handshake, and an unsupported route answers 404/405/501 rather than an empty page. No persisted format, provider message, tool schema or prompt-cache byte changes.
 
 | Capability | Result |
 | --- | --- |

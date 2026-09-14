@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"reasonix/internal/servecontract"
 	"reasonix/internal/session"
 	"reasonix/internal/sessioncontent"
 	"reasonix/internal/transcript"
@@ -41,6 +42,63 @@ func TestRemoteTranscriptNegotiatesOldServeWithoutMutation(t *testing.T) {
 				t.Fatal("capability probe changed the connection")
 			}
 		})
+	}
+}
+
+// A Serve that does not advertise the outline capability must never be probed:
+// the client keeps its loaded-turn rail instead of spending a round trip.
+func TestRemoteTranscriptOutlineRequiresAdvertisedCapability(t *testing.T) {
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("<html>old Serve index</html>"))
+	}))
+	defer server.Close()
+	app, tab := remoteTranscriptFixture(server)
+
+	page, err := app.RemoteTranscriptOutlineForTab(tab.id, transcript.OutlineRequest{SnapshotID: "cut"})
+	if err == nil || page.SnapshotID != "" {
+		t.Fatalf("unadvertised outline = %+v, %v", page, err)
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("an unadvertised capability issued %d requests", requests.Load())
+	}
+
+	// An advertised capability that answers with something other than protocol
+	// data is a real error, not a silent downgrade to "unsupported".
+	tab.capabilities = map[string]bool{servecontract.TranscriptOutlineV1: true}
+	if _, err := app.RemoteTranscriptOutlineForTab(tab.id, transcript.OutlineRequest{SnapshotID: "cut"}); err == nil {
+		t.Fatal("an HTML homepage response was accepted as an outline")
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("advertised capability issued %d requests, want 1", requests.Load())
+	}
+}
+
+func TestRemoteTranscriptOutlineReadsAdvertisedEndpoint(t *testing.T) {
+	want := transcript.OutlinePage{
+		Boundary: transcript.Boundary{ProtocolVersion: transcript.ProtocolVersion, SnapshotID: "cut"},
+		Entries:  []transcript.OutlineEntry{{ID: "m:2", MessageID: "2", Turn: 2, Order: 4, Prompt: "second", Answer: "answer"}},
+		Total:    2, NextOffset: 2, Done: true,
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/transcript/outline" || r.URL.Query().Get("session") != "/session.jsonl" {
+			t.Errorf("unexpected request %s", r.URL.String())
+		}
+		var request transcript.OutlineRequest
+		if err := json.Unmarshal([]byte(r.URL.Query().Get("request")), &request); err != nil || request.SnapshotID != "cut" {
+			t.Errorf("request = %+v, %v", request, err)
+		}
+		_ = json.NewEncoder(w).Encode(want)
+	}))
+	defer server.Close()
+	app, tab := remoteTranscriptFixture(server)
+	tab.capabilities = map[string]bool{servecontract.TranscriptOutlineV1: true}
+
+	page, err := app.RemoteTranscriptOutlineForTab(tab.id, transcript.OutlineRequest{SnapshotID: "cut"})
+	if err != nil || page.Total != 2 || len(page.Entries) != 1 || page.Entries[0].ID != "m:2" {
+		t.Fatalf("outline = %+v, %v", page, err)
 	}
 }
 

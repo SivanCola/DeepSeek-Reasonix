@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"reasonix/internal/control"
+	"reasonix/internal/servecontract"
 	"reasonix/internal/session"
 	"reasonix/internal/sessioncontent"
 	"reasonix/internal/transcript"
@@ -106,6 +107,27 @@ func (a *App) RemoteTranscriptPageForTab(tabID string, req transcript.PageReques
 		err = control.ErrTranscriptProjectionUnavailable
 	}
 	return snap, err
+}
+
+// RemoteTranscriptOutlineForTab reads the turn index a Serve advertises through
+// the transcript-outline capability. An absent token means the route is not
+// served at all, so the client keeps its loaded-turn rail instead of spending a
+// round trip to learn that. Errors from an advertised capability are reported
+// rather than downgraded to "unsupported".
+func (a *App) RemoteTranscriptOutlineForTab(tabID string, req transcript.OutlineRequest) (transcript.OutlinePage, error) {
+	a.remoteTabMu.Lock()
+	tab := a.remoteTabs[tabID]
+	advertised := tab != nil && tab.capabilities[servecontract.TranscriptOutlineV1]
+	a.remoteTabMu.Unlock()
+	if !advertised {
+		return transcript.OutlinePage{}, control.ErrTranscriptProjectionUnavailable
+	}
+	var page transcript.OutlinePage
+	supported, err := a.remoteTranscriptRead(tabID, "/transcript/outline", req, &page)
+	if err == nil && !supported {
+		err = control.ErrTranscriptProjectionUnavailable
+	}
+	return page, err
 }
 
 func (a *App) RemoteTranscriptContentForTab(tabID string, req transcript.ContentRequest) (transcript.ContentChunk, error) {

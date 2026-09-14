@@ -123,6 +123,7 @@ export function ChatPaneRegion(props: ChatPaneRegionProps) {
                 hydrating={transcript.transcriptHydrating || (transitioning && !transcript.navigationDataReady)}
                 hasOlderHistory={!transitioning && state.historyHasOlder && !rewind.stateActive}
                 historyStartTurn={state.historyStartTurn}
+                totalTurns={state.historyTotalTurns}
                 loadingOlderHistory={state.historyOlderLoading}
                 olderHistoryError={state.historyOlderError}
                 onLoadOlderHistory={commands.onLoadOlderHistory}

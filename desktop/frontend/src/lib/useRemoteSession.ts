@@ -4,10 +4,11 @@ import { useT } from "./i18n";
 import { createLegacyRemotePolicyNoticeTracker } from "./legacyRemotePolicyNotice";
 import { app, onRemoteTabEvent, onRemoteTabState } from "./bridge";
 import type { CancelOutcome } from "./inboxCancel";
-import { historyMessagesToItems, initialState, reducer, type ControllerLiveStore, type State } from "./useController";
+import { historyMessagesToItems, initialState, reducer, STALE_HISTORY_ERROR, type ControllerLiveStore, type HistoryLoadOutcome, type HistoryLoadTrigger, type State } from "./useController";
 import { TurnEventProjector } from "./turnEventProjection";
 import { rebaseSnapshotContentPatches, resolveSnapshotItems, resolveSnapshotTool, StaleCut, TranscriptSnapshotClient } from "./transcriptSnapshotClient";
 import { getTranscriptStore } from "./transcriptStore";
+import { getTranscriptOutlineStore, remoteOutlineRead } from "./transcriptOutlineStore";
 import { isAuthoritativeRemoteStatus, remoteCheckpoints, remoteComposerState, remoteGoalRuntime, remoteGoalView, remoteStatusToAction, type RemoteStatus } from "./remoteStatus";
 import type { CollaborationMode, CommandInfo, EffortInfo, GoalLifecycleView, GoalRuntime, GoalStatus, HistoryMessage, QualityFloor, RemoteTabStateValue, TabMeta, ToolApprovalMode, WireEvent } from "./types";
 import type { RemoteAskAnswer } from "./remoteTypes";
@@ -28,7 +29,7 @@ export interface RemoteSessionApi {
   liveStore: ControllerLiveStore;
   hydrated: boolean;
   syncMode?: "snapshot" | "legacy";
-  loadOlderHistory?: () => Promise<boolean>;
+  loadOlderHistory?: (targetTurn?: number, trigger?: HistoryLoadTrigger) => Promise<HistoryLoadOutcome>;
   running: boolean;
   /** The serve's label for the active model, for the composer capsule. */
   modelLabel: string;
@@ -124,7 +125,7 @@ export function useRemoteSession(tabId: string | undefined, initial?: RemoteTabS
   const [promptError, setPromptError] = useState("");
   const [hydrated, setHydrated] = useState(false);
   const [syncMode, setSyncMode] = useState<"snapshot" | "legacy">("legacy");
-  const olderRef = useRef<(() => Promise<boolean>) | undefined>(undefined);
+  const olderRef = useRef<((trigger?: HistoryLoadTrigger) => Promise<HistoryLoadOutcome>) | undefined>(undefined);
   const transcriptRef = useRef(transcript);
   const setTranscript = useCallback((update: State | ((state: State) => State)) => {
     const next = typeof update === "function" ? update(transcriptRef.current) : update;
@@ -204,6 +205,8 @@ export function useRemoteSession(tabId: string | undefined, initial?: RemoteTabS
     let modern = false;
     let supportsModern: boolean | undefined;
     let negotiating = typeof app.RemoteTranscriptSnapshotForTab === "function";
+    const outlineStore = getTranscriptOutlineStore();
+    const loadModernRef: { current?: () => Promise<boolean> } = {};
     const projector = new TurnEventProjector({ replay: (id, after, identity) => {
       if (!identity || !app.RemoteTranscriptReplayForTab) throw new Error("remote transcript replay unavailable");
       return app.RemoteTranscriptReplayForTab(id, { identity, after });
@@ -217,7 +220,19 @@ export function useRemoteSession(tabId: string | undefined, initial?: RemoteTabS
       },
       page: (id, request) => app.RemoteTranscriptPageForTab!(id, request),
       content: (id, request) => app.RemoteTranscriptContentForTab!(id, request),
-    }, projector);
+    }, projector, undefined, (id, snapshotId, change) => {
+      // The remote outline is capability-negotiated; a Serve that does not
+      // advertise it keeps the loaded-turn rail rather than failing.
+      if (change === "loading") { outlineStore.invalidate(id); return; }
+      if (change === "released" || !snapshotId) { outlineStore.release(id); return; }
+      // A retry after a recycled cut re-installs the snapshot; only that
+      // explicit request may replace the body the reader is looking at.
+      outlineStore.register(id, remoteOutlineRead, async () => {
+        const load = loadModernRef.current;
+        if (!load || !(await load())) throw new Error("remote transcript snapshot refresh was superseded");
+      });
+      void outlineStore.sync(id, snapshotId);
+    });
     projector.bind((event) => {
       snapshots.observeEvent(tabId, event);
       setTranscript((current) => reducer(current, { type: "event", e: event, remote: true }));
@@ -227,6 +242,7 @@ export function useRemoteSession(tabId: string | undefined, initial?: RemoteTabS
       return snapshots.load(tabId, (snapshot) => setTranscript((current) => reducer(current, { type: "transcript_snapshot", snapshot, remote: true })),
         () => !cancelled && generation === connectionGeneration);
     };
+    loadModernRef.current = loadModern;
     projector.bindReset(async () => loadModern());
     const offContent = getTranscriptStore().registerContentResolver(tabId, async (entryId, field) => {
       try {
@@ -240,16 +256,24 @@ export function useRemoteSession(tabId: string | undefined, initial?: RemoteTabS
         throw error;
       }
     }, () => modern);
-    olderRef.current = async () => {
-      if (!modern || transcriptRef.current.historyOlderLoading) return false;
+    olderRef.current = async (trigger?: HistoryLoadTrigger): Promise<HistoryLoadOutcome> => {
+      if (!modern || transcriptRef.current.historyOlderLoading) return "empty";
       setTranscript((current) => reducer(current, { type: "history_older_start" }));
       try {
         const result = await snapshots.older(tabId, (snapshot) => setTranscript((current) => reducer(current, { type: "transcript_page", snapshot })));
-        if (result === "stale") return loadModern();
-        return result === "loaded";
+        if (result === "stale") {
+          // Same boundary as the local controller: a navigation jump reports a
+          // recycled cut instead of silently replacing the body.
+          if (trigger === "question-jump") {
+            setTranscript((current) => reducer(current, { type: "history_older_error", error: STALE_HISTORY_ERROR }));
+            return "stale";
+          }
+          return (await loadModern()) ? "loaded" : "empty";
+        }
+        return result === "loaded" ? "loaded" : "empty";
       } catch (error) {
         if (!cancelled) setTranscript((current) => reducer(current, { type: "history_older_error", error: String(error) }));
-        return false;
+        return "empty";
       }
     };
     // Reconcile durable history after a turn settles without advancing
@@ -759,7 +783,7 @@ export function useRemoteSession(tabId: string | undefined, initial?: RemoteTabS
   }, []);
 
   return {
-    state, error, transcript, liveStore, hydrated, syncMode, loadOlderHistory: () => olderRef.current?.() ?? Promise.resolve(false), running: transcript.running, modelLabel, commands,
+    state, error, transcript, liveStore, hydrated, syncMode, loadOlderHistory: (_targetTurn?: number, trigger?: HistoryLoadTrigger) => olderRef.current?.(trigger) ?? Promise.resolve("empty"), running: transcript.running, modelLabel, commands,
     composerProfile, goalRuntime, goalView, effort, surfaceGeneration, promptError, submit, runManagementCommand, compact, cancelTurn,
     approve, resolvePlanDecision, answer, clearExtensionForm, rewind, setModel, setEffort, setQualityFloor, pauseGoal, resumeGoal, editGoal, steer, cancelJob,
     drainApprovals, retryHydration,

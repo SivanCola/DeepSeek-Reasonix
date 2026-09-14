@@ -26,7 +26,20 @@ export class ChatScrollController {
   private transaction = 0;
   private listeners = new Set<() => void>();
   private snapshot = { following: true, activeKey: "" };
+  // Reader intent is reported on its own channel: a pending navigation must be
+  // able to yield to a wheel tick without publishing a React-visible snapshot
+  // for every event of the gesture.
+  private readerListeners = new Set<() => void>();
+  private readerEpoch = 0;
   constructor(readonly sessionKey: string) {}
+  subscribeReaderIntent = (listener: () => void): (() => void) => {
+    this.readerListeners.add(listener);
+    return () => { this.readerListeners.delete(listener); };
+  };
+  private noteReaderIntent() {
+    this.readerEpoch++;
+    for (const listener of [...this.readerListeners]) listener();
+  }
   getSnapshot = () => this.snapshot;
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   private publish() {
@@ -132,7 +145,10 @@ export class ChatScrollController {
     // Same lifetime policy as inactive view caches; contains identities, never message bodies.
     if (positions.size > 100) positions.delete(positions.keys().next().value!);
   }
-  toBottom = () => { this.userScrollUntil = 0; this.following = true; this.anchor = undefined; this.layout(); };
+  toBottom = () => { this.userScrollUntil = 0; this.following = true; this.anchor = undefined; this.noteReaderIntent(); this.layout(); };
+  /** Leave tail following without reporting reader intent: a navigation jump is
+   * programmatic, so it must not cancel itself. */
+  stopFollowing = () => { this.following = false; this.capture(); this.save(); this.publish(); };
   jump = (key: string) => {
     const el = this.element;
     const row = this.rows().find(row => row.dataset.chatAnchorKey === key);
@@ -142,8 +158,8 @@ export class ChatScrollController {
     this.capture(); this.save(); this.publish();
   };
   beforeChange = () => { if (!this.following) this.capture(); };
-  private onRead = () => { this.userScrollUntil = performance.now() + 1000; this.following = false; this.capture(); this.save(); this.publish(); };
-  private onWheel = (event: WheelEvent) => { this.userScrollUntil = performance.now() + 1000; if (event.deltaY < 0) this.onRead(); };
+  private onRead = () => { this.userScrollUntil = performance.now() + 1000; this.following = false; this.capture(); this.save(); this.publish(); this.noteReaderIntent(); };
+  private onWheel = (event: WheelEvent) => { this.userScrollUntil = performance.now() + 1000; this.noteReaderIntent(); if (event.deltaY < 0) this.onRead(); };
   private onKey = (event: KeyboardEvent) => { if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) this.onRead(); };
   private onPointer = (event: PointerEvent) => {
     const el = this.element;
@@ -178,6 +194,7 @@ export class ChatScrollController {
     cancelAnimationFrame(this.frame); this.frame = 0;
     cancelAnimationFrame(this.layoutFrame); this.layoutFrame = 0;
     this.writer.attach(null, ++generation);
-    this.element = undefined; this.content = undefined; this.opened = false; this.listeners.clear();
+    this.element = undefined; this.content = undefined; this.opened = false;
+    this.listeners.clear(); this.readerListeners.clear();
   }
 }

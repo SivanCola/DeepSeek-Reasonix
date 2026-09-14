@@ -76,6 +76,7 @@ export function RemoteSessionSurface({ tab, session, surfaceCommitToken, onSurfa
         running={session.transcript.running}
         hasOlderHistory={session.transcript.historyHasOlder}
         historyStartTurn={session.transcript.historyStartTurn}
+        totalTurns={session.transcript.historyTotalTurns}
         loadingOlderHistory={session.transcript.historyOlderLoading}
         olderHistoryError={session.transcript.historyOlderError}
         onLoadOlderHistory={session.loadOlderHistory}
