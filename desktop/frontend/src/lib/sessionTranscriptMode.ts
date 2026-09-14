@@ -24,8 +24,8 @@ export function historyRevisionIsOlder(current: number | undefined, incoming: nu
 export function historyReplaceAction(projection: TranscriptProjection) {
   return {
     type: "history_replace" as const, items: projection.items,
-    startTurn: projection.startTurn, totalTurns: projection.totalTurns,
-    hasOlder: projection.hasOlder,
+    startTurn: projection.startTurn, endTurn: projection.endTurn, totalTurns: projection.totalTurns,
+    hasOlder: projection.hasOlder, hasNewer: projection.hasNewer,
     revision: projection.revisionKnown ? projection.revision : undefined,
     digest: projection.digest || undefined,
   };

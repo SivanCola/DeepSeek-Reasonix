@@ -54,6 +54,8 @@ export interface MarkdownBlock {
    * serializing either tree. The value is opaque: never interpret it.
    */
   fingerprint: number;
+  /** Parsed HAST element count used to bound progressive DOM publication. */
+  elementCount?: number;
 }
 
 export interface MarkdownParseResult {
@@ -305,8 +307,22 @@ export function fingerprintBlocks(blocks: UnfingerprintedBlock[]): MarkdownBlock
     for (const child of block.children) hash = hashValue(hash, child, 0);
     if (block.virtualTable) hash = hashValue(hash, block.virtualTable, 0);
     (block as MarkdownBlock).fingerprint = hash;
+    (block as MarkdownBlock).elementCount = countHastElements(block.children);
   }
   return blocks as MarkdownBlock[];
+}
+
+function countHastElements(children: HastRootContent[]): number {
+  let count = 0;
+  const visitChildren = (nodes: HastRootContent[]): void => {
+    for (const node of nodes) {
+      if (node.type !== "element") continue;
+      count += 1;
+      visitChildren(node.children as HastRootContent[]);
+    }
+  };
+  visitChildren(children);
+  return count;
 }
 
 /** Parse once and derive both the render tree and copy projection. */

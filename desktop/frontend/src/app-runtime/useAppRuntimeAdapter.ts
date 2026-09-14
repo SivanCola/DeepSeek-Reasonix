@@ -61,6 +61,7 @@ export function useAppRuntimeAdapter() {
       purgeTrashedSession: controller.purgeTrashedSession,
       renameSession: controller.renameSession,
       loadOlderHistory: controller.loadOlderHistory,
+      loadNewerHistory: controller.loadNewerHistory,
       retrySessionHistory: controller.retrySessionHistory,
       rewindForTab: controller.rewindForTab,
       rewindForTabDetailed: controller.rewindForTabDetailed,

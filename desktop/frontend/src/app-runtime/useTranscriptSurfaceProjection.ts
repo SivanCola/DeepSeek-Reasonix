@@ -29,6 +29,7 @@ export type TranscriptSurfaceProjectionInput = {
   commitSingleSurface: (tabId: string) => void;
   ports: {
     loadOlderHistory(tabId: string, targetTurn: number | undefined, trigger: HistoryLoadTrigger): Promise<HistoryLoadOutcome>;
+    loadNewerHistory(tabId: string, latest: boolean): Promise<HistoryLoadOutcome>;
     commitThenSend(tabId: string, displayText: string, submitText?: string): Promise<void>;
   };
 };
@@ -57,6 +58,9 @@ export function useTranscriptSurfaceProjection(input: TranscriptSurfaceProjectio
   const transcriptItems = input.hydratePlaceholderActive ? input.hydratePlaceholderItems! : input.items;
   const handleLoadOlderHistory = useCommittedCommand((targetTurn?: number, trigger: HistoryLoadTrigger = "retry") => {
     return activeTabId ? ports.loadOlderHistory(activeTabId, targetTurn, trigger) : Promise.resolve("empty" as const);
+  });
+  const handleLoadNewerHistory = useCommittedCommand((latest = false) => {
+    return activeTabId ? ports.loadNewerHistory(activeTabId, latest) : Promise.resolve("empty" as const);
   });
 
   // Display items: backend history is authoritative after immediate commit.
@@ -109,6 +113,7 @@ export function useTranscriptSurfaceProjection(input: TranscriptSurfaceProjectio
     visibleTranscriptTabId,
     visibleTranscriptGeometryKey,
     handleLoadOlderHistory,
+    handleLoadNewerHistory,
     handleSurfacePaintReady,
     latestGuidanceConsumed,
     handleTranscriptPrompt,

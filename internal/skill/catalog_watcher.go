@@ -9,18 +9,23 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
+type watcherLifecycle struct {
+	cancel context.CancelFunc
+	active bool
+}
+
 func (s *Store) Close() error {
 	if s == nil {
 		return nil
 	}
 	s.watcherMu.Lock()
-	if s.hostWatchActive {
+	if s.hostWatch.active {
 		// Service-backed watches: Release is logical and never blocks on
 		// backend IO, so Close cannot get stuck on an uninterruptible
 		// registration path.
-		subs := s.watchSubs
-		s.watchSubs = nil
-		s.hostWatchActive = false
+		subs := s.hostWatch.subs
+		s.hostWatch.subs = nil
+		s.hostWatch.active = false
 		s.closed = true
 		s.watcherMu.Unlock()
 		for _, sub := range subs {
@@ -65,7 +70,7 @@ func (s *Store) ensureWatcher() {
 	if s == nil || s.disableDiscovery {
 		return
 	}
-	if s.watchService != nil {
+	if s.hostWatch.service != nil {
 		s.subscribeHostWatch()
 		return
 	}

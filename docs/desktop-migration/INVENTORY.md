@@ -6,7 +6,7 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 
 | Kind | keep-business | migrate-host | delete-shell | total |
 | --- | ---: | ---: | ---: | ---: |
-| command | 622 | 17 | 0 | 639 |
+| command | 627 | 17 | 0 | 644 |
 | native-call | 0 | 0 | 0 | 0 |
 | event | 16 | 0 | 0 | 16 |
 | frontend-native | 0 | 0 | 0 | 0 |
@@ -16,7 +16,7 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 | shell-file | 1 | 39 | 4 | 44 |
 | artifact | 5 | 0 | 0 | 5 |
 | ci-job | 25 | 0 | 0 | 25 |
-| **all** | | | | **761** |
+| **all** | | | | **766** |
 
 ## Desktop commands (Go `App` methods bound to the UI)
 
@@ -155,7 +155,7 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 | `EnqueueInboxSteerForTurn` | `(tabID string, turnID string, display string, submit string, idempotency string) (InboxReceiptView, error)` | desktop/inbox_app.go:192 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `EnsureBlankSurface` | `(scope string, workspaceRoot string) (TabMeta, error)` | desktop/tabs.go:2451 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `EnsureBlankTab` | `(scope string, workspaceRoot string) (TabMeta, error)` | desktop/tabs.go:2490 | keep-business (保留业务实现) | hostrpc desktop/invoke |
-| `EnsureRemoteProjectSessions` | `(hostID string, workspace string) ([]RemoteSessionView, error)` | desktop/remote_listing.go:381 | keep-business (保留业务实现) | hostrpc desktop/invoke |
+| `EnsureRemoteProjectSessions` | `(hostID string, workspace string) ([]RemoteSessionView, error)` | desktop/remote_listing.go:383 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `ExportGoalDiagnostics` | `() (string, error)` | desktop/goal_diagnostics_export.go:22 | migrate-host (迁移宿主实现) | `business in Go; native step through nativeHost host/*` |
 | `ExportScrollDiagnostics` | `(payload string) (string, error)` | desktop/scroll_diagnostics_export.go:358 | migrate-host (迁移宿主实现) | `business in Go; native step through nativeHost host/*` |
 | `ExportThemePack` | `(id string, destPath string) (string, error)` | desktop/theme_app.go:710 | migrate-host (迁移宿主实现) | `business in Go; native step through nativeHost host/*` |
@@ -356,13 +356,15 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 | `RemoteForwards` | `(hostID string) ([]RemoteForwardView, error)` | desktop/remote_app.go:774 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `RemoteHosts` | `() ([]RemoteHostView, error)` | desktop/remote_app.go:301 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `RemoteLastWorkspace` | `(hostID string) string` | desktop/remote_prefs.go:262 | keep-business (保留业务实现) | hostrpc desktop/invoke |
-| `RemoteLocateSessionMessageForTab` | `(tabID string, messageID string, snapshot uint64) (session.MessageLocation, error)` | desktop/remote_transcript_api.go:289 | keep-business (保留业务实现) | hostrpc desktop/invoke |
-| `RemoteProjectSessions` | `(hostID string, workspace string) ([]RemoteSessionView, error)` | desktop/remote_listing.go:368 | keep-business (保留业务实现) | hostrpc desktop/invoke |
-| `RemoteSearchSessionHistoryForTab` | `(tabID string, textQuery string, cursor string, limit int) (session.SearchHistoryPage, error)` | desktop/remote_transcript_api.go:273 | keep-business (保留业务实现) | hostrpc desktop/invoke |
+| `RemoteLocateSessionMessageForTab` | `(tabID string, messageID string, snapshot uint64) (session.MessageLocation, error)` | desktop/remote_transcript_api.go:354 | keep-business (保留业务实现) | hostrpc desktop/invoke |
+| `RemoteProjectSessions` | `(hostID string, workspace string) ([]RemoteSessionView, error)` | desktop/remote_listing.go:370 | keep-business (保留业务实现) | hostrpc desktop/invoke |
+| `RemoteSearchSessionHistoryForTab` | `(tabID string, textQuery string, cursor string, limit int) (session.SearchHistoryPage, error)` | desktop/remote_transcript_api.go:338 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `RemoteServerLogs` | `(hostID string, workspace string, tailLines int) (string, error)` | desktop/remote_app.go:857 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `RemoteServerStatus` | `(hostID string, workspace string) (RemoteServerView, error)` | desktop/remote_app.go:849 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `RemoteSessionHistoryContentForTab` | `(tabID string, ref sessioncontent.Ref, offset int64) (SessionHistoryContentChunk, error)` | desktop/remote_transcript_api.go:252 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `RemoteSessionHistoryPageForTab` | `(tabID string, cursor string, limit int) (session.MessageHistoryPage, error)` | desktop/remote_transcript_api.go:234 | keep-business (保留业务实现) | hostrpc desktop/invoke |
+| `RemoteSessionHistoryWindowForTab` | `(tabID string, req session.HistoryWindowRequest) (session.HistoryWindowPage, error)` | desktop/remote_transcript_api.go:277 | keep-business (保留业务实现) | hostrpc desktop/invoke |
+| `RemoteSessionMessageFieldForTab` | `(tabID string, messageID string, version int, field string, offset int64, length int64) (session.MessageFieldPage, error)` | desktop/remote_transcript_api.go:315 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `RemoteSessionOpenForTab` | `(tabID string) (session.SessionOpenView, error)` | desktop/remote_transcript_api.go:218 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `RemoteTabBranches` | `(tabID string) (json.RawMessage, error)` | desktop/remote_tab_commands.go:529 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `RemoteTabMetadata` | `(tabID string) (RemoteTabSnapshot, error)` | desktop/remote_tab_snapshot.go:78 | keep-business (保留业务实现) | hostrpc desktop/invoke |
@@ -452,7 +454,7 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 | `RewindForTab` | `(tabID string, turn int, scope string) error` | desktop/app.go:2431 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `RewindRemoteTab` | `(tabID string, checkpointID string, scope string) error` | desktop/remote_tab.go:884 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `RunShellForTab` | `(tabID string, command string) error` | desktop/app.go:1107 | keep-business (保留业务实现) | hostrpc desktop/invoke |
-| `RuntimeDoctor` | `() RuntimeDoctorReport` | desktop/rebuild_runtime.go:69 | keep-business (保留业务实现) | hostrpc desktop/invoke |
+| `RuntimeDoctor` | `() RuntimeDoctorReport` | desktop/rebuild_runtime.go:71 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `SanitizeMarkdownSVG` | `(content string) MarkdownSVGView` | desktop/markdown_svg_sanitize.go:47 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `SaveClipboardImage` | `() (string, error)` | desktop/app.go:10855 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `SaveDoc` | `(path string, body string) (string, error)` | desktop/app.go:11644 | keep-business (保留业务实现) | hostrpc desktop/invoke |
@@ -474,6 +476,7 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 | `SaveRemotePresentedFileAs` | `(tabID string, hostID string, toolCallID string, remotePath string) (string, error)` | desktop/remote_app.go:466 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `SaveSessionGroups` | `(scope string, workspaceRoot string, groups []desktopGroup) error` | desktop/project_tree_organization.go:255 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `SaveSessionGroupsVersioned` | `(scope string, workspaceRoot string, expectedRevision uint64, groups []desktopGroup) (ProjectGroupsSnapshot, error)` | desktop/project_tree_organization.go:299 | keep-business (保留业务实现) | hostrpc desktop/invoke |
+| `SaveSessionMarkdownForTab` | `(tabID string, path string, title string) error` | desktop/session_markdown_export.go:17 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `SaveThemePack` | `(input ThemeSaveInput) (ThemePackView, error)` | desktop/theme_app.go:386 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `SaveWindowState` | `(state DesktopWindowState) error` | desktop/window_state.go:127 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `SaveWorkspacePathAsForTab` | `(tabID string, rel string) (string, error)` | desktop/app.go:10686 | keep-business (保留业务实现) | hostrpc desktop/invoke |
@@ -486,6 +489,8 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 | `SearchSessionHistoryForTab` | `(tabID string, textQuery string, cursor string, limit int) (session.SearchHistoryPage, error)` | desktop/session_history_service.go:46 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `SessionHistoryContentForTab` | `(tabID string, ref sessioncontent.Ref, offset int64) (SessionHistoryContentChunk, error)` | desktop/session_history_service.go:64 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `SessionHistoryPageForTab` | `(tabID string, cursor string, limit int) (session.MessageHistoryPage, error)` | desktop/session_history_service.go:28 | keep-business (保留业务实现) | hostrpc desktop/invoke |
+| `SessionHistoryWindowForTab` | `(tabID string, req session.HistoryWindowRequest) (session.HistoryWindowPage, error)` | desktop/session_history_service.go:87 | keep-business (保留业务实现) | hostrpc desktop/invoke |
+| `SessionMessageFieldForTab` | `(tabID string, messageID string, version int, field string, offset int64, length int64) (session.MessageFieldPage, error)` | desktop/session_history_service.go:98 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `SessionOpenForTab` | `(tabID string) (session.SessionOpenView, error)` | desktop/session_history_service.go:38 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `SetActiveSessionVersion` | `(req RecoveryPreferenceRequest) error` | desktop/recovery_lineage.go:114 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `SetActiveTab` | `(tabID string) error` | desktop/tab_selection.go:7 | keep-business (保留业务实现) | hostrpc desktop/invoke |
@@ -677,7 +682,7 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 | `project-tree:changed-v2` |  | desktop/session_catalog.go:373 | keep-business (保留业务实现) | `desktop/event frame (seq + generation), same payload` |
 | `project-tree:runtime-changed` |  | desktop/project_tree_runtime.go:184 | keep-business (保留业务实现) | `desktop/event frame (seq + generation), same payload` |
 | `remote-tab:opened` |  | desktop/remote_projects.go:530 | keep-business (保留业务实现) | `desktop/event frame (seq + generation), same payload` |
-| `remote-tab:updated` |  | desktop/remote_listing.go:547 | keep-business (保留业务实现) | `desktop/event frame (seq + generation), same payload` |
+| `remote-tab:updated` |  | desktop/remote_listing.go:549 | keep-business (保留业务实现) | `desktop/event frame (seq + generation), same payload` |
 | `remote:forwards` |  | desktop/remote_app.go:296 | keep-business (保留业务实现) | `desktop/event frame (seq + generation), same payload` |
 | `remote:server` |  | desktop/remote_app.go:294 | keep-business (保留业务实现) | `desktop/event frame (seq + generation), same payload` |
 | `remote:status` |  | desktop/remote_app.go:231 | keep-business (保留业务实现) | `desktop/event frame (seq + generation), same payload` |

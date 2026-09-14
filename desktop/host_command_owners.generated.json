@@ -6537,6 +6537,22 @@
       ]
     }
   },
+  "SaveSessionMarkdownForTab": {
+    "domain": "desktop/session_markdown_export.go",
+    "owner": "App.SaveSessionMarkdownForTab",
+    "sources": [
+      "desktop/session_markdown_export.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.SaveSessionMarkdownForTab",
+      "inputs": [
+        "tabID",
+        "path",
+        "title"
+      ]
+    }
+  },
   "SaveThemePack": {
     "domain": "desktop/theme_app.go",
     "owner": "App.SaveThemePack",

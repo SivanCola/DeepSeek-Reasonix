@@ -332,7 +332,9 @@ console.log("\ntranscript store");
   eq(forward?.kind, "append", "paging forward appends into the same window");
   const forwardUsers = (forward?.appendItems ?? []).filter((item): item is Extract<Item, { kind: "user" }> => item.kind === "user");
   ok(forwardUsers.length > 0, "paging forward restores newer history after a reclaim");
-  ok(forwardUsers[forwardUsers.length - 1]!.historyTurn > (users[users.length - 1]?.historyTurn ?? 0), "paging forward moves the window toward the live tail");
+  const lastForward = forwardUsers[forwardUsers.length - 1];
+  const lastExisting = users[users.length - 1];
+  ok((lastForward?.historyTurn ?? 0) > (lastExisting?.historyTurn ?? 0), "paging forward moves the window toward the live tail");
 }
 
 // ── cross-page tool call/result merge ───────────────────────────────────────
@@ -384,10 +386,31 @@ console.log("\ntranscript store");
     { entryId: "s1:r0:m2:o0", turn: 2, order: 2, message: { role: "user", content: "p2" }, refs: [] },
     { entryId: "s1:r0:m3:o0", turn: 2, order: 3, message: { role: "assistant", content: "a2" }, refs: [] },
   ]);
-  eq(appended.length, 2, "append contributes the new rows' items");
+  eq(appended?.items.length, baseIds.length + 2, "append contributes the new rows' items");
   const projection = store.peek("tab-a", "/s/a.jsonl");
   eq(JSON.stringify((projection?.items ?? []).slice(0, baseIds.length).map((item) => item.id)), JSON.stringify(baseIds), "append keeps existing item ids");
   eq(projection?.items.length, baseIds.length + 2, "append grows the projection");
+}
+
+// ── long-running live tail uses the same three-page residency budget ────────
+{
+  const backend = new FakeBackend([{ role: "user", content: "seed" }, { role: "assistant", content: "seed answer" }]);
+  const store = new TranscriptStore(backend, { windowMaxPages: 3, windowPageEntries: 4 });
+  await store.loadLatest("tab-live", "/s/live.jsonl", { turns: 12 });
+  let reclaimed = 0;
+  for (let batch = 0; batch < 8; batch += 1) {
+    const turn = batch + 2;
+    const result = store.appendEntries("tab-live", "/s/live.jsonl", [
+      { entryId: `live-u-${turn}`, turn, order: turn * 2, message: { role: "user", content: `p${turn}` }, refs: [] },
+      { entryId: `live-a-${turn}`, turn, order: turn * 2 + 1, message: { role: "assistant", content: `a${turn}` }, refs: [] },
+    ]);
+    reclaimed += result?.removeIds.length ?? 0;
+  }
+  const projection = store.peek("tab-live", "/s/live.jsonl");
+  ok((projection?.items.length ?? 0) <= 12, "live tail remains inside three four-entry pages");
+  ok(reclaimed > 0, "live append reports mounted ids reclaimed from the oldest edge");
+  ok((projection?.startTurn ?? 0) > 1, "live window advances its visible start turn after reclaim");
+  eq(projection?.endTurn, 9, "live window retains the latest settled turn");
 }
 
 // ── weighted LRU: count, pin, byte budget, re-open ──────────────────────────
@@ -668,12 +691,7 @@ console.log("\ntranscript store");
   const afterReclaim = residentIds();
   for (const id of atHead) {
     if (!/^call-\d+$/.test(id)) continue;
-    const owner = /^call-(\d+)$/.exec(id)?.[1];
-    if (owner === undefined) continue;
-    const assistantResident = (store.peek("tab-tool", "/s/tool.jsonl")?.items ?? []).some(
-      (item) => item.kind === "assistant" && (item.toolCalls ?? []).some((call) => call.id === id));
-    ok(!afterReclaim.has(id) || assistantResident,
-      `reclaimed call ${id} did not leave its result behind`);
+    ok(!afterReclaim.has(id), `reclaimed call ${id} did not leave its result behind`);
   }
   ok(store.stats().residentWindowEntries <= 2 * 2, "the window stayed at its page budget");
 }

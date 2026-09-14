@@ -31,6 +31,16 @@ try {
   await act(async () => pending.get("second")!(JSON.stringify({ output: "complete second result" })));
   await harness.settle();
   assert.ok(harness.container.querySelector(".chat-details")!.textContent?.includes("complete second result"));
+  const relations: Item[] = [
+    { kind: "tool", id: "parent", name: "task", args: "{}", status: "done" },
+    ...Array.from({ length: 25 }, (_, index) => ({ kind: "tool" as const, id: `child-${index}`, parentId: "parent", name: `child-${index}`, args: "{}", status: "done" as const })),
+  ];
+  await harness.render(relations, { tabId: "details-race", geometrySessionKey: "relations" });
+  await act(async () => harness.container.querySelector<HTMLElement>(".chat-tool [data-disclosure-row]")!.click());
+  await act(async () => harness.container.querySelector<HTMLButtonElement>(".dsh-ToolRow-inspectButton")!.click());
+  assert.equal(harness.container.querySelectorAll(".chat-details__relations .chat-tool").length, 20, "subcall details mount one 20-item page");
+  await act(async () => harness.container.querySelector<HTMLButtonElement>('[data-testid="tool-children-more"]')!.click());
+  assert.equal(harness.container.querySelectorAll(".chat-details__relations .chat-tool").length, 25, "reader can page the remaining subcalls");
   await harness.render(items, { tabId: "another-session", geometrySessionKey: "replacement" });
   assert.equal(harness.container.querySelector(".chat-details"), null);
   const archived: Item[] = [{ kind: "tool", id: "corrupt", name: "bash", args: "{}", output: "retained preview", status: "done", dataArchived: true }];

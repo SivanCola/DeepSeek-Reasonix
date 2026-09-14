@@ -56,6 +56,7 @@ export type ChatPaneRegionProps = {
     onPrompt: TranscriptProps["onPrompt"];
     onFork: TranscriptProps["onFork"];
     onLoadOlderHistory: TranscriptProps["onLoadOlderHistory"];
+    onLoadNewerHistory: TranscriptProps["onLoadNewerHistory"];
     onSurfacePaintReady: TranscriptProps["onSurfacePaintReady"];
   };
 };
@@ -127,11 +128,16 @@ export function ChatPaneRegion(props: ChatPaneRegionProps) {
                 turnStartAt={state.turnStartAt}
                 hydrating={transcript.transcriptHydrating || (transitioning && !transcript.navigationDataReady)}
                 hasOlderHistory={!transitioning && state.historyHasOlder && !rewind.stateActive}
+                hasNewerHistory={!transitioning && state.historyHasNewer && !rewind.stateActive}
                 historyStartTurn={state.historyStartTurn}
+                historyEndTurn={state.historyEndTurn}
                 totalTurns={state.historyTotalTurns}
                 loadingOlderHistory={state.historyOlderLoading}
                 olderHistoryError={state.historyOlderError}
+                loadingNewerHistory={state.historyNewerLoading}
+                newerHistoryError={state.historyNewerError}
                 onLoadOlderHistory={commands.onLoadOlderHistory}
+                onLoadNewerHistory={commands.onLoadNewerHistory}
                 invocationMetadata={transcript.invocationMetadata}
                 surfaceCommitToken={transcript.surfaceCommitToken}
                 onSurfacePaintReady={commands.onSurfacePaintReady}

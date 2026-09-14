@@ -161,7 +161,7 @@ export function useAppSessionComposition(input: AppSessionCompositionInput) {
   const {
     recoverDeliveryToTab, approveForTab, isPromptCurrentForTab, resolvePlanDecisionForTab, resolveRecoveryForTab,
     answerQuestionForTab, answerMCPInteractionForTab, dismissExtensionForm, drainExtensionNotifications,
-    clearSession, newSession, loadOlderHistory, rewindForTab, rewindForTabDetailed, undoRewindForTab, forkTurnForTab,
+    clearSession, newSession, loadOlderHistory, loadNewerHistory, rewindForTab, rewindForTabDetailed, undoRewindForTab, forkTurnForTab,
     listSessions, openChannelSession, resumeSession,
   } = runtime.sessionActions;
   const {
@@ -515,6 +515,8 @@ export function useAppSessionComposition(input: AppSessionCompositionInput) {
   const sessionHasContent = exportItems.length > 0 || Boolean(exportLive?.text || exportLive?.reasoning);
 
   const sessionExportCommands = useSessionExportCommands({
+    tabId: activeTabId,
+    remote: remoteSurfaceActive,
     sessionTitle,
     items: exportItems,
     live: exportLive,
@@ -631,7 +633,7 @@ export function useAppSessionComposition(input: AppSessionCompositionInput) {
   const {
     transcriptHydrating, emptyHero,
     visibleTranscriptItems, visibleTranscriptTabId, visibleTranscriptGeometryKey,
-    handleLoadOlderHistory, handleSurfacePaintReady, latestGuidanceConsumed, handleTranscriptPrompt,
+    handleLoadOlderHistory, handleLoadNewerHistory, handleSurfacePaintReady, latestGuidanceConsumed, handleTranscriptPrompt,
   } = useTranscriptSurfaceProjection({
     hydrating: state.hydrating,
     hydrateHistoryLoaded: state.hydrateHistoryLoaded,
@@ -657,6 +659,7 @@ export function useAppSessionComposition(input: AppSessionCompositionInput) {
     commitSingleSurface: commitSingleSurfaceNavigation,
     ports: {
       loadOlderHistory: (tabId, targetTurn, trigger) => loadOlderHistory(tabId, targetTurn, trigger),
+      loadNewerHistory: (tabId, latest) => loadNewerHistory(tabId, latest),
       commitThenSend: (tabId, text, submitText) => commitThenSend(tabId, text, submitText),
     },
   });
@@ -716,7 +719,7 @@ export function useAppSessionComposition(input: AppSessionCompositionInput) {
     transcript: {
       transcriptHydrating, emptyHero, availability,
       visibleTranscriptItems, visibleTranscriptTabId, visibleTranscriptGeometryKey,
-      handleLoadOlderHistory, handleSurfacePaintReady, latestGuidanceConsumed, handleTranscriptPrompt,
+      handleLoadOlderHistory, handleLoadNewerHistory, handleSurfacePaintReady, latestGuidanceConsumed, handleTranscriptPrompt,
     },
     automation: { openAutomationTopic },
     desktopNavigation: { enqueueNavigation, enqueueNavigationWithIntent, openRemoteProject },

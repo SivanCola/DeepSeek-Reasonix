@@ -62,7 +62,6 @@ import (
 	"reasonix/internal/sessioncontext"
 	"reasonix/internal/sessiontemp"
 	"reasonix/internal/skill"
-	"reasonix/internal/skill/skillwatch"
 	"reasonix/internal/stats"
 	"reasonix/internal/taskmonitor"
 	"reasonix/internal/tool"
@@ -658,11 +657,8 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	sysPrompt = memory.Compose(sysPrompt, mem)
 
 	implicitSkillInvocation := cfg.ImplicitSkillInvocationEnabled()
-	// A controller owns its production skill watcher and closes it with the
-	// controller. Go package tests routinely construct short-lived controllers
-	// without exercising host teardown; starting one kqueue/inotify instance per
-	// fixture would exhaust process descriptors before the suite completes.
-	// Store-level watcher tests opt in directly and still cover invalidation.
+	// Production controllers own watchers; package fixtures opt out to avoid
+	// exhausting descriptors, while store watcher tests opt in explicitly.
 	watchSkills := !strings.HasSuffix(strings.TrimSuffix(os.Args[0], ".exe"), ".test")
 	// Skills: rediscovery skipped on no-op/interceptor/UI rebuilds when
 	// ReuseAssembly is retained from the previous BuildResult.
@@ -670,20 +666,9 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	var skills []skill.Skill
 	var allSkillStore *skill.Store
 	var allSkills []skill.Skill
-	// One host-lifetime watch service shares physical skill-directory watches
-	// between the enabled and all-stores; store Close releases the logical
-	// subscriptions, Close on the service reclaims the physical watches.
-	var skillWatchService *skillwatch.Service
-	if watchSkills {
-		skillWatchService = skillwatch.NewService(skillwatch.Options{Stderr: opts.Stderr})
-	}
-	skillCleanup := func() {
-		closeSkillStores(skillStore, allSkillStore)
-		if skillWatchService != nil {
-			_ = skillWatchService.Close()
-			skillWatchService = nil
-		}
-	}
+	// Enabled and all-stores share one host-lifetime physical watch service.
+	skillWatchService := newSkillWatchService(watchSkills, opts.Stderr)
+	skillCleanup := func() { closeSkillsWithWatcher(skillStore, allSkillStore, &skillWatchService) }
 	skillsOwned := false
 	defer closeUnownedSkills(&skillsOwned, skillCleanup)
 	canReuseSkills := opts.ReuseAssembly != nil && shouldReuseDiscovery(opts.PreviousPlan) &&
@@ -2083,7 +2068,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		ImplicitSkillInvocation: implicitSkillInvocation,
 	}
 	skillsOwned = true
-	return finalizeBuildResult(&BuildResult{Controller: ctrl, Snapshot: snap, Runtime: runtimeSet, Owner: owner, Extensions: extensionMgr, Dispatcher: extensionDispatcher, ExtensionUI: extUIHub, ProviderResolver: providerResolver, BaseProviderResolver: baseResolver, Assembly: assembly}, !opts.deferPublish), nil
+	return finalizeBuildResult(&BuildResult{Controller: ctrl, Snapshot: snap, Runtime: runtimeSet, Owner: owner, Extensions: extensionMgr, Dispatcher: extensionDispatcher, ExtensionUI: extUIHub, ProviderResolver: providerResolver, BaseProviderResolver: baseResolver, Assembly: assembly, SkillWatchService: skillWatchService}, !opts.deferPublish), nil
 }
 
 // effectivePlannerModel centralizes planner precedence. Every role setting

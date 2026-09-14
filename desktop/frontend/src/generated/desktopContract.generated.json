@@ -12225,6 +12225,36 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/session_markdown_export.go",
+      "name": "SaveSessionMarkdownForTab",
+      "owner": "App.SaveSessionMarkdownForTab",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        }
+      ],
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID",
+          "path",
+          "title"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.SaveSessionMarkdownForTab"
+      },
+      "sources": [
+        "desktop/session_markdown_export.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/theme_app.go",
       "name": "SaveThemePack",
       "owner": "App.SaveThemePack",
@@ -31973,6 +32003,17 @@
           "type": {
             "kind": "integer"
           }
+        },
+        {
+          "name": "skillWatch",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "skillwatch.Diagnostics"
+            },
+            "kind": "nullable"
+          }
         }
       ]
     },
@@ -37528,6 +37569,58 @@
         {
           "name": "integrityBlockBytes",
           "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        }
+      ]
+    },
+    "skillwatch.Diagnostics": {
+      "fields": [
+        {
+          "name": "physicalWatches",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "logicalSubscriptions",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "scans",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "scannedEntries",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "eventsReceived",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "notifications",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "degradedRoots",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "helperRestarts",
           "type": {
             "kind": "integer"
           }

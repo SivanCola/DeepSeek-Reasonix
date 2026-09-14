@@ -14,6 +14,7 @@ import { normalizeMath } from "../components/mathNormalize";
 import { createComponents } from "../components/markdownComponents";
 import { reasonixRehypePlugins, reasonixRemarkPlugins } from "../components/markdownRemarkPlugins";
 import { hastBlockToJsx } from "../lib/hastJsx";
+import { visibleMarkdownBlockCount } from "../lib/markdownDomBudget";
 import {
   defaultMarkdownUrlTransform,
   estimateHastBytes,
@@ -131,6 +132,17 @@ for (const [name, text] of Object.entries(fixtures)) {
 {
   const blocks = parseMarkdownToBlocks("one\n\ntwo\n\nthree");
   eq(blocks.map((b) => b.key).join(","), "b0,b1,b2", "block keys are stable indexes");
+  ok(blocks.every((block) => (block.elementCount ?? 0) > 0), "parse stamps DOM element counts with block fingerprints");
+}
+
+// Progressive DOM publication keeps semantic blocks whole and advances by an
+// explicit element budget instead of mounting an unbounded parsed document.
+{
+  const blocks = parseMarkdownToBlocks(Array.from({ length: 12 }, (_, index) =>
+    `## Part ${index}\n\nParagraph with **bold** and [link](https://example.com/${index}).`).join("\n\n"));
+  const first = visibleMarkdownBlockCount(blocks, 8);
+  ok(first > 0 && first < blocks.length, "small DOM budget publishes a strict leading block page");
+  ok(visibleMarkdownBlockCount(blocks, 10_000) === blocks.length, "larger DOM budget makes every block reachable");
 }
 
 // Footnote definitions survive slicing as a trailing block with working refs.

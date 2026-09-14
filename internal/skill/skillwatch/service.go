@@ -1,28 +1,8 @@
-// Package skillwatch provides the host-shared skill catalog watch service.
-//
-// Ownership of skill directory watching moves from each skill.Store to one
-// host-lifetime Service: stores hold releasable subscription handles and roots
-// that resolve to the same physical directory share one set of watches, while
-// invalidation policy, disabled names and call permissions stay per store.
-// Healthy directories change through native events only — there is no periodic
-// full-tree scan on the healthy path. Events coalesce per root (100ms window,
-// 500ms maximum delay), and a Create/Rename refreshes the watched directory
-// set after notification so new nested skills are still discovered under the
-// existing rules. First-party mutations (install/enable/configure) keep
-// invalidating the owning store synchronously and never depend on this
-// package.
-//
-// Windows registers through a helper process (the host executable re-entered
-// with an internal flag) because in-process fsnotify Add/Close can block
-// inside ReadDirectoryChangesW. macOS and Linux watch in process. A failed
-// registration degrades that root to bounded signature scans with 2/5/15/30s
-// backoff — at most one scan per root at a time — until watching recovers.
-//
-// Ordering invariant: Subscribe registers the physical watches before it
-// returns (bounded on the helper path), so a store scan started afterwards can
-// only miss a change that is already represented by a queued event; the
-// coalesced notification rebuilds the snapshot once more. This is the
-// "register — scan — merge events observed during the scan" contract.
+// Package skillwatch shares physical skill-directory watches across stores.
+// Healthy roots use coalesced native events. Failed roots use bounded backoff
+// scans until registration recovers. Windows isolates blocking filesystem APIs
+// in a helper process. Subscribe completes registration before the caller's
+// first catalog scan, subject to the helper timeout.
 package skillwatch
 
 import (
@@ -71,11 +51,7 @@ type HashFunc func(ctx context.Context, root string, maxDepth int) (sum [sha256.
 type Options struct {
 	// Stderr receives diagnostic warnings; nil defaults to os.Stderr.
 	Stderr io.Writer
-	// HelperCommand starts the watcher helper process, wired to the protocol
-	// over the child's stdin/stdout. nil uses the default: this executable
-	// re-entered through the internal helper entry (Windows), and the
-	// in-process native backend everywhere else. Test binaries inject a
-	// re-exec command to exercise the helper protocol on any OS.
+	// HelperCommand overrides the helper process used by Windows and tests.
 	HelperCommand func(ctx context.Context) (helperProcess, error)
 	// ForceHelper routes every platform through the helper backend. Test-only.
 	ForceHelper bool

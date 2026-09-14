@@ -47,15 +47,11 @@ func RunHelper(r io.Reader, w io.Writer) error {
 	}()
 
 	var mu sync.Mutex
-	// dirRefs counts physical registrations per directory; a directory is
-	// watched once no matter how many logical registrations cover it.
+	// Physical directories are watched once across logical registrations.
 	dirRefs := map[string]int{}
-	// regDirs lists the directories each logical registration covers.
+	// These indexes fence generations and map paths back to registrations.
 	regDirs := map[uint64]map[string]struct{}{}
-	// regGen remembers the host generation per registration so events carry
-	// the generation the host can fence on.
 	regGen := map[uint64]uint64{}
-	// pathRegs maps watched directory -> registrations covering it.
 	pathRegs := map[string]map[uint64]struct{}{}
 
 	pumpDone := make(chan struct{})
@@ -105,9 +101,7 @@ func RunHelper(r io.Reader, w io.Writer) error {
 					select {
 					case outbound <- frame{Kind: wireEvent, ID: id, RootGen: gen, Op: op}:
 					default:
-						// The host is not draining; it will notice via its
-						// control timeout. Dropping beats blocking serial
-						// registration handling.
+						// The host timeout detects a stalled drain.
 					}
 				}
 			case _, ok := <-watcher.Errors:
@@ -123,8 +117,7 @@ func RunHelper(r io.Reader, w io.Writer) error {
 	}()
 
 	defer func() {
-		// Stop the pump's sources first, then drain the writer so no event
-		// send can race the channel close.
+		// Stop pump sources before draining the writer.
 		_ = watcher.Close()
 		<-pumpDone
 		close(outbound)

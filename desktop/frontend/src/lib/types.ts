@@ -1688,19 +1688,7 @@ export interface MemoryView {
 // SettingsTab is the top-level navigation item in the Settings Centre modal.
 export type SettingsTab = "general" | "models" | "model-stats" | "providers" | "bots" | "mcp" | "remote" | "skills" | "subagents" | "plugins" | "memory" | "hooks" | "diagnostics" | "shortcuts" | "permissions" | "sandbox" | "network" | "browser" | "appearance" | "storage" | "updates";
 
-/** Extension runtime doctor report from App.RuntimeDoctor. */
-export interface RuntimeDoctorReport {
-  text: string;
-  publishedGeneration: number;
-  allowResume: boolean;
-  cleanRollback: boolean;
-  hasIrreversible: boolean;
-  noOpRebuilds: number;
-  fullRebuilds: number;
-  subgraphRebuilds: number;
-  staleDrops: number;
-  admissionRejected: number; runtimeOwnerFallbacks: number;
-}
+export type { RuntimeDoctorReport } from "./runtimeDoctorTypes";
 
 /** Capability diagnostics report from App.CapabilityDiagnostics (capdiag.Report). */
 export interface CapabilityDiagnosticsReport {

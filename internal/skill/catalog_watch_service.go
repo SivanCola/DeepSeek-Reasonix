@@ -11,12 +11,17 @@ import (
 	"reasonix/internal/skill/skillwatch"
 )
 
-// This file hosts the Store side of the host-shared watch service. The service
-// (internal/skill/skillwatch) owns physical watches; the store only derives a
-// watch scope from the discovery rules, subscribes one logical subscription
-// per discovery root, and invalidates its catalog when the coalesced
-// notification arrives. First-party mutations keep calling Invalidate
-// directly and never depend on filesystem events.
+// WatchService is the host-lifetime shared physical watcher.
+type WatchService = skillwatch.Service
+
+type hostWatchState struct {
+	service *skillwatch.Service
+	subs    []*skillwatch.Subscription
+	active  bool
+}
+
+// The store derives discovery scopes and owns logical subscriptions. Direct
+// mutations still invalidate synchronously instead of relying on events.
 
 // watchScopeDirectories lists the directories discovery can visit under root
 // for maxDepth levels: dot directories and discovery-skipped bodies
@@ -149,19 +154,19 @@ func rootWatchHash(ctx context.Context, root string, maxDepth int) ([sha256.Size
 // catalog scan cannot lose changes to a registration race.
 func (s *Store) subscribeHostWatch() {
 	s.watcherMu.Lock()
-	if s.closed || s.hostWatchActive {
+	if s.closed || s.hostWatch.active {
 		s.watcherMu.Unlock()
 		return
 	}
-	s.hostWatchActive = true
+	s.hostWatch.active = true
 	s.watcherMu.Unlock()
 	onChange := func(string) { s.Invalidate("filesystem changed") }
 	for _, root := range s.roots() {
-		sub := s.watchService.Subscribe(
+		sub := s.hostWatch.service.Subscribe(
 			root.Dir, s.maxDepth, watchScopeDirectories, rootWatchHash, onChange,
 		)
 		s.watcherMu.Lock()
-		s.watchSubs = append(s.watchSubs, sub)
+		s.hostWatch.subs = append(s.hostWatch.subs, sub)
 		s.watcherMu.Unlock()
 	}
 }
@@ -169,8 +174,8 @@ func (s *Store) subscribeHostWatch() {
 // WatchDiagnostics exposes the shared service counters when this store watches
 // through it. The boolean reports whether the service path is active.
 func (s *Store) WatchDiagnostics() (skillwatch.Diagnostics, bool) {
-	if s == nil || s.watchService == nil {
+	if s == nil || s.hostWatch.service == nil {
 		return skillwatch.Diagnostics{}, false
 	}
-	return s.watchService.Diagnostics(), true
+	return s.hostWatch.service.Diagnostics(), true
 }

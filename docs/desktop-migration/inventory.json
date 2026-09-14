@@ -1069,7 +1069,7 @@
       "kind": "command",
       "name": "EnsureRemoteProjectSessions",
       "detail": "(hostID string, workspace string) ([]RemoteSessionView, error)",
-      "location": "desktop/remote_listing.go:381",
+      "location": "desktop/remote_listing.go:383",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2677,7 +2677,7 @@
       "kind": "command",
       "name": "RemoteLocateSessionMessageForTab",
       "detail": "(tabID string, messageID string, snapshot uint64) (session.MessageLocation, error)",
-      "location": "desktop/remote_transcript_api.go:289",
+      "location": "desktop/remote_transcript_api.go:354",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2685,7 +2685,7 @@
       "kind": "command",
       "name": "RemoteProjectSessions",
       "detail": "(hostID string, workspace string) ([]RemoteSessionView, error)",
-      "location": "desktop/remote_listing.go:368",
+      "location": "desktop/remote_listing.go:370",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2693,7 +2693,7 @@
       "kind": "command",
       "name": "RemoteSearchSessionHistoryForTab",
       "detail": "(tabID string, textQuery string, cursor string, limit int) (session.SearchHistoryPage, error)",
-      "location": "desktop/remote_transcript_api.go:273",
+      "location": "desktop/remote_transcript_api.go:338",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2726,6 +2726,22 @@
       "name": "RemoteSessionHistoryPageForTab",
       "detail": "(tabID string, cursor string, limit int) (session.MessageHistoryPage, error)",
       "location": "desktop/remote_transcript_api.go:234",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
+      "name": "RemoteSessionHistoryWindowForTab",
+      "detail": "(tabID string, req session.HistoryWindowRequest) (session.HistoryWindowPage, error)",
+      "location": "desktop/remote_transcript_api.go:277",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
+      "name": "RemoteSessionMessageFieldForTab",
+      "detail": "(tabID string, messageID string, version int, field string, offset int64, length int64) (session.MessageFieldPage, error)",
+      "location": "desktop/remote_transcript_api.go:315",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -3445,7 +3461,7 @@
       "kind": "command",
       "name": "RuntimeDoctor",
       "detail": "() RuntimeDoctorReport",
-      "location": "desktop/rebuild_runtime.go:69",
+      "location": "desktop/rebuild_runtime.go:71",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -3619,6 +3635,14 @@
     },
     {
       "kind": "command",
+      "name": "SaveSessionMarkdownForTab",
+      "detail": "(tabID string, path string, title string) error",
+      "location": "desktop/session_markdown_export.go:17",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
       "name": "SaveThemePack",
       "detail": "(input ThemeSaveInput) (ThemePackView, error)",
       "location": "desktop/theme_app.go:386",
@@ -3710,6 +3734,22 @@
       "name": "SessionHistoryPageForTab",
       "detail": "(tabID string, cursor string, limit int) (session.MessageHistoryPage, error)",
       "location": "desktop/session_history_service.go:28",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
+      "name": "SessionHistoryWindowForTab",
+      "detail": "(tabID string, req session.HistoryWindowRequest) (session.HistoryWindowPage, error)",
+      "location": "desktop/session_history_service.go:87",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
+      "name": "SessionMessageFieldForTab",
+      "detail": "(tabID string, messageID string, version int, field string, offset int64, length int64) (session.MessageFieldPage, error)",
+      "location": "desktop/session_history_service.go:98",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -5158,7 +5198,7 @@
     {
       "kind": "event",
       "name": "remote-tab:updated",
-      "location": "desktop/remote_listing.go:547",
+      "location": "desktop/remote_listing.go:549",
       "class": "keep-business",
       "owner": "desktop/event frame (seq + generation), same payload"
     },

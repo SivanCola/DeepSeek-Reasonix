@@ -14,8 +14,15 @@ const { default: History } = await server.ssrLoadModule("/src/components/Markdow
 const { LocaleProvider } = await server.ssrLoadModule("/src/lib/i18n.tsx");
 const worker = await server.ssrLoadModule("/src/lib/markdownWorkerClient.ts");
 const calls: Array<{ id: number; text: string }> = [];
+const documents = new Map<string, string>();
 const fake = { onmessage: null as null | ((event: { data: unknown }) => void), onerror: null,
-  postMessage(message: { id: number; text: string }) { calls.push(message); }, terminate() {} };
+  postMessage(message: { id: number; op?: string; documentId?: string; text?: string }) {
+    if (message.op === "release") { documents.delete(message.documentId ?? ""); return; }
+    let text = message.text ?? "";
+    if (message.op === "append") text = (documents.get(message.documentId ?? "") ?? "") + text;
+    if (message.documentId) documents.set(message.documentId, text);
+    calls.push({ id: message.id, text });
+  }, terminate() {} };
 Object.assign(globalThis, { Worker: class {} });
 worker.setMarkdownWorkerClientForTest(new worker.MarkdownWorkerClient({ createWorker: async () => fake }));
 const host = document.getElementById("root")!;
@@ -46,11 +53,14 @@ try {
   assert.equal(calls.length, 3, "cache avoids parsing unchanged history");
   assert.ok(host.querySelector("strong"));
   await render("obsolete source"); const old = calls.length - 1;
-  await render("replacement source"); const current = calls.length - 1;
-  await respond(current); await respond(old);
-  assert.equal(host.textContent, "replacement source", "late worker result cannot replace the current revision");
+  await render("replacement source");
+  await respond(old); // superseded active parse drains before the newest snapshot
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const current = calls.length - 1;
+  await respond(current);
+  assert.equal(host.textContent, "replacement source", "superseded worker result cannot replace the current revision");
   const large = Array.from({ length: 420 }, (_, index) => `Paragraph ${index}.`).join("\n\n");
-  await render(large); await respond(calls.length - 1);
+  await render(large); await new Promise(resolve => setTimeout(resolve, 0)); await respond(calls.length - 1);
   assert.equal(host.querySelectorAll("p").length, 420, "all loaded Markdown blocks remain mounted");
   assert.ok(host.textContent?.includes("Paragraph 0.") && host.textContent.includes("Paragraph 419."));
   assert.equal(host.querySelector("[data-markdown-window-start]"), null);
