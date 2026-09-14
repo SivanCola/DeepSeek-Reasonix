@@ -1493,7 +1493,7 @@
       "kind": "command",
       "name": "HistoryContentForTab",
       "detail": "(tabID string, ref HistoryContentRef, chunkIndex int) HistoryContentChunk",
-      "location": "desktop/history_slice.go:1186",
+      "location": "desktop/history_slice.go:1179",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },

@@ -208,7 +208,7 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 | `HeartbeatTriggerNow` | `(id string)` | desktop/heartbeat.go:655 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `History` | `() []HistoryMessage` | desktop/app.go:5201 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `HistoryCheckpointTurnsForTab` | `(tabID string) []int` | desktop/app.go:5408 | keep-business (保留业务实现) | hostrpc desktop/invoke |
-| `HistoryContentForTab` | `(tabID string, ref HistoryContentRef, chunkIndex int) HistoryContentChunk` | desktop/history_slice.go:1186 | keep-business (保留业务实现) | hostrpc desktop/invoke |
+| `HistoryContentForTab` | `(tabID string, ref HistoryContentRef, chunkIndex int) HistoryContentChunk` | desktop/history_slice.go:1179 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `HistoryForTab` | `(tabID string) []HistoryMessage` | desktop/app.go:5376 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `HistoryPage` | `(beforeTurn int, limit int) HistoryPage` | desktop/app.go:5205 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `HistoryPageForTab` | `(tabID string, beforeTurn int, limit int) HistoryPage` | desktop/app.go:5209 | keep-business (保留业务实现) | hostrpc desktop/invoke |
