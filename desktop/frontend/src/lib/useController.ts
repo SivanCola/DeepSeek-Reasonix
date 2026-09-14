@@ -35,16 +35,10 @@ import { aliasActivationRequest, noteActivationRequested, noteActivationSettled,
 import { applyLiveSegments, coalesceStreamDeltas, completeLiveReasoning, type StreamDeltaEntry, type StreamSegment } from "./streamDeltaBatch";
 import { assistantHasContent, ensureActiveAssistant, ensureAssistant, removeEmptyAssistantItems } from "./assistantItems";
 import { getTranscriptStore } from "./transcriptStore";
+import { historyFingerprintMatchesMeta, historyReplaceAction, historyRevisionIsOlder, usesLegacyTranscriptSnapshots } from "./sessionTranscriptMode";
 import { snapshotRecords, transcriptPageState, transcriptSnapshotState } from "./transcriptSnapshotState";
 import { resolveSnapshotItems, resolveSnapshotTool, StaleCut, TranscriptSnapshotClient } from "./transcriptSnapshotClient";
 import type { TranscriptSnapshot } from "./transcriptProtocol";
-
-// Protocol 7 hosts expose the bounded recent/history reader. Keep the older
-// transcript snapshot client only for hosts that have not upgraded yet; its
-// exclusive-session implementation materializes the complete conversation.
-function usesLegacyTranscriptSnapshots(): boolean {
-  return typeof app.SessionOpenForTab !== "function" && typeof app.TranscriptSnapshotForTab === "function";
-}
 import { recordFrontendDiagnostic } from "./frontendDiagnosticBridge";
 import { uiPerfTracker } from "./uiPerf";
 import { getLocale, t } from "./i18n";
@@ -760,21 +754,7 @@ const STALE_PROMPT_RECONCILE_MS = 150;
 const STARTUP_READY_META_RECONCILE_MS = 250;
 const STARTUP_READY_META_RECONCILE_ATTEMPTS = 60;
 
-function historyFingerprintMatchesMeta(history: { revision: number; revisionKnown?: boolean; digest?: string }, meta: Meta): boolean {
-  const expectedDigest = (meta.sessionDigest ?? "").trim();
-  if (expectedDigest && history.digest !== expectedDigest) return false;
-  const expectedRevision = meta.sessionRevision ?? 0;
-  if (expectedRevision > 0 && (!history.revisionKnown || history.revision !== expectedRevision)) return false;
-  return true;
-}
-
 export { isBatchedReadOnlyTool } from "./searchTranscript";
-
-function historyRevisionIsOlder(current: number | undefined, incoming: number | undefined): boolean {
-  return typeof current === "number" && current > 0
-    && typeof incoming === "number" && incoming > 0
-    && incoming < current;
-}
 type Action =
   | { type: "event"; e: WireEvent; remote?: boolean }
   | { type: "stream_batch"; segments: StreamSegment[] }
@@ -4246,12 +4226,7 @@ export function useController() {
         const projection = await getTranscriptStore().loadLatest(targetTabId, path, { turns: HISTORY_PAGE_TURNS, preferResident: false });
         if (!projection || !isNavigationIntentCurrent(navigationSeq) || !sessionLoadCurrent(targetTabId, seq)) return terminal("superseded");
         dispatchTo(targetTabId, { type: "reset" });
-        dispatchTo(targetTabId, {
-          type: "history_replace", items: projection.items, startTurn: projection.startTurn,
-          totalTurns: projection.totalTurns, hasOlder: projection.hasOlder,
-          revision: projection.revisionKnown ? projection.revision : undefined,
-          digest: projection.digest || undefined,
-        });
+        dispatchTo(targetTabId, historyReplaceAction(projection));
       } else if (page) {
         noteResumeHistoryPage(page, performance.now() - resumeStartedAt);
         dispatchTo(targetTabId, { type: "reset" });
@@ -4307,12 +4282,7 @@ export function useController() {
         const projection = await getTranscriptStore().loadLatest(tabId, path, { turns: HISTORY_PAGE_TURNS, preferResident: false });
         if (!projection || !isNavigationIntentCurrent(navigationSeq) || !sessionLoadCurrent(tabId, seq)) return terminal("superseded");
         dispatchTo(tabId, { type: "reset" });
-        dispatchTo(tabId, {
-          type: "history_replace", items: projection.items, startTurn: projection.startTurn,
-          totalTurns: projection.totalTurns, hasOlder: projection.hasOlder,
-          revision: projection.revisionKnown ? projection.revision : undefined,
-          digest: projection.digest || undefined,
-        });
+        dispatchTo(tabId, historyReplaceAction(projection));
       } else if (page) {
         noteResumeHistoryPage(page, performance.now() - resumeStartedAt);
         dispatchTo(tabId, { type: "reset" });

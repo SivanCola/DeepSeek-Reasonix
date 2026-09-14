@@ -1,42 +1,11 @@
-// transcriptStore is the per-session record store behind the transcript view
-// (Phase C of the session-switch/history refactor). It replaces the old
-// "convert a whole HistoryPage on every call" flow with windowed paging over
-// HistorySliceForTab:
-//
-//   - Records keyed by stable backend entryId, kept sorted by (order, entryId)
-//     and merged a page at a time (replace / prepend / append) — no full
-//     re-sort on each op; pages are contiguous suffixes/prefixes.
-//   - Item projection derives Item ids from entryIds, so ids stay stable
-//     across page merges (the old h<startTurn>-<seq> scheme renumbered every
-//     item on prepend). Cross-page tool call/result pairs merge exactly like
-//     the single-shot historyMessagesToItems conversion: a result row that
-//     paged in before its call converts standalone first and is folded into
-//     the call's tool item (same item id: the toolCallId) when the call's
-//     page arrives.
-//   - Weighted LRU: at most maxResidentSessions sessions keep records
-//     resident; history body bytes and the parsed-markdown cache each have a
-//     byte budget. Sessions whose tab is active, running, or mid-turn are
-//     pinned out of eviction. Eviction only releases memory — records are
-//     re-fetchable from the backend via HistorySliceForTab.
-//   - Generation binding: every in-flight slice/content request carries the
-//     session generation it started under. Switching away, evicting, or
-//     starting a newer load bumps the generation; late responses are
-//     discarded (desktop bridge calls are not abortable).
-//   - Lazy content: entries carrying refs[] keep preview text inline;
-//     requestFullContent fetches and assembles HistoryContentForTab chunks on
-//     demand (and automatically for refs in the newest page). A stale chunk
-//     marks the ref stale and keeps the preview.
-//
-// Rendering consumes the store through TranscriptProjection (items + paging
-// state); useController dispatches projections into per-tab reducer state.
+// Bounded transcript records with stable ids, lazy content, generation-aware paging, and weighted LRU eviction.
 import { asArray } from "./array";
 import { historicalResultNotice } from "./completionResultState";
-import { app } from "./bridge";
+import { canonicalHistoryContent, canonicalHistorySlice, canonicalMessage, resolvedHistoryField } from "./canonicalTranscriptBackend";
 import { noteHistoryPage, registerTranscriptCacheDiagnostics } from "./sessionDiagnostics";
 import { TranscriptMarkdownCache, type ParsedMarkdownValue } from "./transcriptMarkdownCache";
 export type { ParsedMarkdownValue } from "./transcriptMarkdownCache";
 import { historySearchAndAnswer } from "./searchTranscript";
-import type { MessageHistoryPage, PersistentMessage } from "../generated/desktopContract.generated";
 import { fileDiffFromWire, summarizeFileDiff } from "./tools";
 import {
   historyToolError,
@@ -381,20 +350,6 @@ function applyResolvedField(rec: TranscriptRecord, ref: HistoryContentRef, data:
     }
     default:
       return false;
-  }
-}
-
-function resolvedHistoryField(message: HistoryMessage, field: string): string | undefined {
-  switch (field) {
-    case "content": return message.content;
-    case "reasoning": return message.reasoning;
-    case "submitText": return message.submitText;
-    case "detail": return message.detail;
-    case "code": return message.code;
-    case "summary": return message.summary;
-    case "archive": return message.archive;
-    case "toolResultError": return message.toolResultError;
-    default: return message.content;
   }
 }
 
@@ -1069,9 +1024,6 @@ export class TranscriptStore {
     return this.markdown.size();
   }
 
-  // ── subscriptions ─────────────────────────────────────────────────────────
-
-  /** Notified when a record's projected items change (content resolution). */
   subscribe(tabId: string, listener: (change: TranscriptContentChange) => void): () => void {
     let set = this.listeners.get(tabId);
     if (!set) {
@@ -1086,194 +1038,6 @@ export class TranscriptStore {
   }
 }
 
-function asWireObject(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
-}
-
-function canonicalMessage(message: PersistentMessage, body: unknown): HistoryMessage {
-  const raw = asWireObject(body);
-  const decisionReceipt = asWireObject(raw.decision_receipt);
-  if (Object.keys(decisionReceipt).length > 0) {
-    return {
-      role: "notice",
-      messageId: String(raw.id ?? message.messageId),
-      content: "",
-      code: "decision_receipt",
-      level: "info",
-      decisionReceipt: decisionReceipt as unknown as HistoryMessage["decisionReceipt"],
-    };
-  }
-  const readPause = asWireObject(raw.read_pause);
-  if (Boolean(raw.local_only) && Object.keys(readPause).length > 0) {
-    return {
-      role: "notice",
-      messageId: String(raw.id ?? message.messageId),
-      content: "",
-      code: "incomplete_read",
-      level: "info",
-      readPause: readPause as unknown as HistoryMessage["readPause"],
-    };
-  }
-  const readiness = asWireObject(raw.final_readiness_recovery);
-  if (Boolean(raw.local_only) && readiness.pending === true) {
-    return {
-      role: "notice",
-      messageId: String(raw.id ?? message.messageId),
-      content: "Final checks are still required before this task is complete.",
-      code: "historical_checks",
-      level: "info",
-      readiness: { missing: Array.isArray(readiness.missing) ? readiness.missing.map(String) : undefined },
-    };
-  }
-  const protocolRecovery = asWireObject(raw.protocol_recovery);
-  if (Boolean(raw.local_only) && protocolRecovery.state === "pending" && typeof protocolRecovery.id === "string") {
-    return {
-      role: "notice",
-      messageId: String(raw.id ?? message.messageId),
-      content: "",
-      code: "protocol_recovery",
-      level: "info",
-      pending: true,
-      protocolRecovery: { id: protocolRecovery.id },
-    };
-  }
-  const toolCalls = (Array.isArray(raw.tool_calls) ? raw.tool_calls as Record<string, unknown>[] : []).map(call => ({
-    id: String(call.id ?? ""),
-    name: String(call.name ?? ""),
-    arguments: String(call.arguments ?? ""),
-    resolvedName: typeof call.resolved_name === "string" ? call.resolved_name : undefined,
-    capabilityId: typeof call.capability_id === "string" ? call.capability_id : undefined,
-    resolvedReadOnly: typeof call.resolved_read_only === "boolean" ? call.resolved_read_only : undefined,
-    diff: typeof call.diff === "string" ? call.diff : undefined,
-    added: typeof call.added === "number" ? call.added : undefined,
-    removed: typeof call.removed === "number" ? call.removed : undefined,
-  }));
-  const presented = asWireObject(raw.presented_files);
-  return {
-    role: Boolean(raw.local_only) ? "assistant" : String(raw.role ?? message.role),
-    messageId: String(raw.id ?? message.messageId),
-    content: String(raw.content ?? raw.raw_content ?? message.preview ?? ""),
-    reasoning: typeof raw.reasoning_content === "string" ? raw.reasoning_content : undefined,
-    createdAt: typeof raw.createdAt === "number" ? raw.createdAt : undefined,
-    workDurationMs: typeof raw.workDurationMs === "number" ? raw.workDurationMs : undefined,
-    toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-    toolCallId: typeof raw.tool_call_id === "string" ? raw.tool_call_id : undefined,
-    toolName: typeof raw.name === "string" ? raw.name : undefined,
-    memoryCitations: Array.isArray(raw.memoryCitations) ? raw.memoryCitations as MemoryCitation[] : undefined,
-    serverSearch: Array.isArray(raw.server_search) ? raw.server_search as HistoryMessage["serverSearch"] : undefined,
-    execution: Object.keys(asWireObject(raw.tool_execution)).length > 0 ? raw.tool_execution as HistoryMessage["execution"] : undefined,
-    presentedFiles: Array.isArray(presented.files) ? presented.files as HistoryMessage["presentedFiles"] : undefined,
-    readCompletion: Object.keys(asWireObject(raw.read_completion)).length > 0 ? raw.read_completion as HistoryMessage["readCompletion"] : undefined,
-  };
-}
-
-function decodeBase64Bytes(data: string): Uint8Array {
-  const binary = atob(data);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-  return bytes;
-}
-
-async function canonicalHistoryPageForTab(tabId: string, cursor: string, limit: number): Promise<MessageHistoryPage> {
-  try {
-    return await app.SessionHistoryPageForTab(tabId, cursor, limit);
-  } catch (localError) {
-    try {
-      return await app.RemoteSessionHistoryPageForTab(tabId, cursor, limit);
-    } catch {
-      throw localError;
-    }
-  }
-}
-
-async function canonicalSessionOpenForTab(tabId: string) {
-  try {
-    return await app.SessionOpenForTab(tabId);
-  } catch (localError) {
-    try {
-      return await app.RemoteSessionOpenForTab(tabId);
-    } catch {
-      throw localError;
-    }
-  }
-}
-
-const LOCATOR_RESET_CURSOR = "reasonix:locator:newest";
-
-function canonicalEntries(messages: PersistentMessage[], snapshotSequence: number): HistoryEntry[] {
-  const entries: HistoryEntry[] = [];
-  for (const persistent of messages) {
-    const body = persistent.inline;
-    const entryId = `m:${persistent.messageId}`;
-    entries.push({
-      entryId,
-      turn: persistent.visibleTurn ?? 0,
-      order: persistent.position,
-      message: canonicalMessage(persistent, body),
-      refs: persistent.contentRef ? [{
-        entryId,
-        field: "canonicalMessage",
-        size: persistent.contentRef.bytes,
-        chunks: Math.max(1, Math.ceil(persistent.contentRef.bytes / (1 << 20))),
-        revision: snapshotSequence,
-        revKnown: true,
-        digest: persistent.contentRef.digest,
-        canonicalRef: persistent.contentRef,
-      }] : [],
-    });
-  }
-  return entries;
-}
-
-async function canonicalHistorySlice(tabId: string, req: HistorySliceRequest): Promise<HistorySlice> {
-  const cursor = req.cursor ?? "";
-  const limit = Math.min(500, Math.max(1, req.entries ?? 100));
-  if (cursor === "") {
-    const view = await canonicalSessionOpenForTab(tabId);
-    const recent = asArray<PersistentMessage>(view.recent.entries);
-    if (view.storageGeneration || recent.length > 0) {
-      const entries = canonicalEntries(recent, view.snapshotSequence);
-      const turns = entries.map(entry => entry.turn).filter(turn => turn > 0);
-      const startTurn = turns.length > 0 ? Math.min(...turns) : 0;
-      const hasOlder = recent.length >= 100 && startTurn > 1;
-      return {
-        entries,
-        nextCursor: hasOlder ? LOCATOR_RESET_CURSOR : "",
-        hasOlder,
-        totalTurns: view.recent.totalTurns > 0 ? view.recent.totalTurns : (turns.length > 0 ? Math.max(...turns) : 0),
-        startTurn,
-        endTurn: turns.length > 0 ? Math.max(...turns) : 0,
-        stale: false,
-        revision: view.snapshotSequence,
-        revisionKnown: true,
-        digest: view.storageGeneration ?? view.recent.storageGeneration,
-        source: "recent",
-      };
-    }
-  }
-  const resetToLocator = cursor === LOCATOR_RESET_CURSOR;
-  const page = await canonicalHistoryPageForTab(tabId, resetToLocator ? "" : cursor, limit);
-  if (page.status === "stale_cursor") {
-    return { entries: [], nextCursor: "", hasOlder: false, totalTurns: 0, startTurn: 0, endTurn: 0, stale: true, revision: 0 };
-  }
-  if (page.status && page.status !== "ready") throw new Error(`Session history is ${page.status}`);
-  const entries = canonicalEntries(asArray<PersistentMessage>(page.messages), page.snapshotSequence);
-  const turns = entries.map(entry => entry.turn).filter(turn => turn > 0);
-  return {
-    entries,
-    nextCursor: page.nextCursor ?? "",
-    hasOlder: page.hasMore,
-    totalTurns: page.totalTurns ?? (turns.length > 0 ? Math.max(...turns) : 0),
-    startTurn: turns.length > 0 ? Math.min(...turns) : 0,
-    endTurn: turns.length > 0 ? Math.max(...turns) : 0,
-    stale: false,
-    revision: page.snapshotSequence,
-    revisionKnown: true,
-    digest: page.generation,
-    source: resetToLocator ? "locator-reset" : "locator",
-  };
-}
-
 // Bridge-backed singleton: resolves the host bindings at call time through
 // the app proxy, so test/dev mocks install whenever they appear.
 let singleton: TranscriptStore | undefined;
@@ -1282,31 +1046,12 @@ export function getTranscriptStore(): TranscriptStore {
   if (!singleton) {
     singleton = new TranscriptStore({
       HistorySliceForTab: (tabID, req) => canonicalHistorySlice(tabID, req),
-      HistoryContentForTab: async (tabID, ref, chunkIndex) => {
-        if (!ref.canonicalRef) return app.HistoryContentForTab(tabID, ref, chunkIndex);
-        const offset = chunkIndex * (1 << 20);
-        let chunk;
-        try {
-          chunk = await app.SessionHistoryContentForTab(tabID, ref.canonicalRef, offset);
-        } catch (localError) {
-          try {
-            chunk = await app.RemoteSessionHistoryContentForTab(tabID, ref.canonicalRef, offset);
-          } catch {
-            throw localError;
-          }
-        }
-        const bytes = decodeBase64Bytes(chunk.data ?? "");
-        let data = "";
-        for (let start = 0; start < bytes.length; start += 0x8000) data += String.fromCharCode(...bytes.subarray(start, start + 0x8000));
-        return { entryId: ref.entryId, field: ref.field, chunk: chunkIndex, chunks: ref.chunks, data, done: chunk.done, stale: false };
-      },
+      HistoryContentForTab: canonicalHistoryContent,
     });
   }
   return singleton;
 }
 
-// Diagnostics provider: cache weights flow to the crash/perf context without
-// crash.ts importing this module's bridge-backed graph.
 registerTranscriptCacheDiagnostics(() =>
   singleton?.stats() ?? {
     residentSessions: 0,

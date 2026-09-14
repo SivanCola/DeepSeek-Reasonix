@@ -27,15 +27,7 @@ func cleanupGoalDriverController(t *testing.T, c *Controller) {
 			c.goalDriverMu.Lock()
 			settled := !c.goalDriverPending && c.goalDriverActive == nil
 			c.goalDriverMu.Unlock()
-			runtimeRetired := true
-			if exclusive && service != nil && runtime != nil {
-				current, ok := service.Runtime(runtime.Ref())
-				if settled && !c.Running() && ok && current == runtime {
-					_ = service.Close(context.Background(), runtime.Ref())
-					current, ok = service.Runtime(runtime.Ref())
-				}
-				runtimeRetired = !ok || current != runtime
-			}
+			runtimeRetired := !exclusive || service == nil || runtime == nil || goalRuntimeRetired(c, service, runtime, settled)
 			if settled && !c.Running() && runtimeRetired {
 				return
 			}

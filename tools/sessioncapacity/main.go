@@ -200,25 +200,10 @@ func run(ctx context.Context, cfg config) (result report, err error) {
 	result.ColdOpenPeakHeapBytes = peaks.nextStage().heap
 
 	indexStarted := time.Now()
-	var page session.MessageHistoryPage
-	for {
-		page, err = second.Query().HistoryPage(ctx, ref, "", 100)
-		if err != nil {
-			_ = binding.Release(context.Background())
-			return report{}, err
-		}
-		if page.Status == "ready" {
-			break
-		}
-		if page.Status != "preparing" {
-			_ = binding.Release(context.Background())
-			return report{}, fmt.Errorf("capacity: history locator status %q", page.Status)
-		}
-		select {
-		case <-ctx.Done():
-			return report{}, ctx.Err()
-		case <-time.After(5 * time.Millisecond):
-		}
+	page, err := waitForHistoryPage(ctx, second.Query(), ref)
+	if err != nil {
+		_ = binding.Release(context.Background())
+		return report{}, err
 	}
 	result.HistoryIndexBuildMS = time.Since(indexStarted).Milliseconds()
 	if len(page.Messages) == 0 && cfg.HistoryMessages > 0 {
@@ -250,6 +235,23 @@ func run(ctx context.Context, cfg config) (result report, err error) {
 	}
 	result.QueryCacheDiskBytes, err = treeBytes(filepath.Join(cfg.Root, ".query-cache"))
 	return result, err
+}
+
+func waitForHistoryPage(ctx context.Context, query *session.Query, ref session.SessionRef) (session.MessageHistoryPage, error) {
+	for {
+		page, err := query.HistoryPage(ctx, ref, "", 100)
+		if err != nil || page.Status == "ready" {
+			return page, err
+		}
+		if page.Status != "preparing" {
+			return session.MessageHistoryPage{}, fmt.Errorf("capacity: history locator status %q", page.Status)
+		}
+		select {
+		case <-ctx.Done():
+			return session.MessageHistoryPage{}, ctx.Err()
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
 }
 
 func validateConfig(cfg config) error {
