@@ -212,10 +212,11 @@ const desktopStub = installDesktopHostStub(({ main: { App: {
     tape.push(`fork-targets:${tabId}`);
     return { targets: [], verifiable: false };
   },
-  async CreateForkRemoteTab(tabId: string, turnId: string, operationId: string) {
-    tape.push(`fork-create:${tabId}:${turnId}:${operationId}`);
-    return { opened: true, sessionId: "child-remote-1" };
+  async CreateForkRemoteTab(tabId: string, target: { turnId: string; sourceSessionId: string; boundarySequence: number }) {
+    tape.push(`fork-create:${tabId}:${target.turnId}:${target.sourceSessionId}:${target.boundarySequence}`);
+    return { opened: true, sessionId: "child-remote-1", operationId: "operation-remote-1" };
   },
+  async AcknowledgeForkOperation(tabId: string, operationId: string) { tape.push(`fork-ack:${tabId}:${operationId}`); },
   async SetActiveTab(tabID: string) {
     tape.push(`setActive:${tabID}`);
   },
@@ -598,7 +599,8 @@ await act(async () => {
   await probe?.approve("call-1", "allow");
   await probe?.answer("ask-1", [{ QuestionID: "q1", Selected: ["yes"] }]);
   await probe?.rewind(3, "code");
-  await probe?.forkTurn("turn-3");
+  await probe?.forkTurn({ sourceSessionId: "parent-remote-1", sessionGeneration: 1, turnId: "turn-3", boundarySequence: 9,
+    turnNumber: 3, status: "committed", available: true });
   await probe?.rewind(3, "summ-from");
   await probe?.rewind(3, "summ-upto");
   await flush();

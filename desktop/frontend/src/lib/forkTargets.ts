@@ -4,7 +4,7 @@
 // assistant message identity, so live completion, history paging, and cold
 // restore all resolve the same target.
 
-import type { ForkCreationView, ForkTargetSetView, ForkTargetView } from "../generated/desktopContract.generated";
+import type { ForkAnchorView, ForkCreationView, ForkTargetSetView, ForkTargetView } from "../generated/desktopContract.generated";
 import { t, type DictKey } from "./i18n";
 
 export type { ForkTargetSetView, ForkTargetView };
@@ -12,7 +12,8 @@ export type { ForkTargetSetView, ForkTargetView };
 /** The create-only fork commands the host binds per surface: local tabs and remote ones. */
 export interface ForkTargetsBindings {
   ForkTargetsForTab(tabID: string): Promise<ForkTargetSetView>;
-  CreateForkForTab(tabID: string, turnID: string, operationID: string): Promise<ForkCreationView>;
+  CreateForkForTab(tabID: string, anchor: ForkAnchorView): Promise<ForkCreationView>;
+  AcknowledgeForkOperation(tabID: string, operationID: string): Promise<void>;
 }
 
 /**
@@ -20,13 +21,14 @@ export interface ForkTargetsBindings {
  * explanation, because the collapsed "unavailable" it replaces could not tell a
  * running turn from legacy history or from a surface that cannot create a child.
  */
-export type ForkBlockReason = "loading" | "turn_open" | "unverifiable" | "active_authority" | "read_only" | "unsupported" | "creating";
+export type ForkBlockReason = "loading" | "turn_open" | "unverifiable" | "active_authority" | "stale_source" | "read_only" | "unsupported" | "creating";
 
 const FORK_REASON_KEYS: Record<ForkBlockReason, DictKey> = {
   loading: "chat.branchLoading",
   turn_open: "chat.branchTurnOpen",
   unverifiable: "chat.branchUnverifiable",
   active_authority: "chat.branchActiveAuthority",
+  stale_source: "chat.branchStaleSource",
   read_only: "chat.branchReadOnly",
   unsupported: "chat.branchUnsupported",
   creating: "chat.branchCreating",
@@ -90,18 +92,10 @@ export function forkBlockReason(input: {
   return forkTargetReason(input.target);
 }
 
-// The host refuses a create with its own reason token inside an English message.
-// Matching the token keeps the user's explanation localized while any other
-// failure keeps the host's text as the actionable detail.
-const FORK_FAILURE_REASONS: Array<[token: string, reason: ForkBlockReason]> = [
-  ["turn_open", "turn_open"],
-  ["active_authority", "active_authority"],
-  ["history_unverifiable", "unverifiable"],
-];
-
 /** The notice text for a refused create-fork request. */
-export function forkCreateFailureText(error: unknown): string {
+export function forkCreateFailureText(error: unknown, reason?: string): string {
   const detail = error instanceof Error ? error.message : String(error ?? "");
-  const reason = FORK_FAILURE_REASONS.find(([token]) => detail.includes(token))?.[1];
-  return reason ? t("chat.branchFailedDetail", { detail: t(forkReasonKey(reason)) }) : t("chat.branchFailedDetail", { detail });
+  const blockReason: ForkBlockReason | undefined = reason === "history_unverifiable" ? "unverifiable"
+    : reason === "turn_open" || reason === "active_authority" || reason === "stale_source" || reason === "unsupported" ? reason : undefined;
+  return blockReason ? t("chat.branchFailedDetail", { detail: t(forkReasonKey(blockReason)) }) : t("chat.branchFailedDetail", { detail });
 }

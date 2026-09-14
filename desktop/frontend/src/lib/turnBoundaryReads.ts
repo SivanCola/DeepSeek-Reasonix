@@ -14,7 +14,7 @@ export type TurnBoundaryAction = { type: "checkpoints"; checkpoints: CheckpointM
 
 /** The turn-index reads one controller binds, dispatch included. */
 export interface TurnBoundaryReads {
-  /** Drops an in-flight checkpoint read, so the next one it starts is the answer that lands. */
+  /** Drops in-flight checkpoint and fork reads for a replaced session binding. */
   invalidateCheckpoints(tabId: string): void;
   /** Re-reads a tab's checkpoints alone, for a reconcile that patches only its active turn. */
   refreshCheckpoints(tabId: string): Promise<void>;
@@ -41,14 +41,17 @@ export function createTurnBoundaryReads(dispatch: (tabId: string, action: TurnBo
     if (checkpointSeq.get(tabId) !== seq || checkpoints === undefined) return;
     dispatch(tabId, { type: "checkpoints", checkpoints: asArray(checkpoints) });
   };
-  const refreshForkTargets = createForkTargetsRefresh(dispatch);
+  const forkTargets = createForkTargetsRefresh(dispatch);
   return {
-    invalidateCheckpoints: bumpCheckpoints,
+    invalidateCheckpoints: (tabId) => {
+      bumpCheckpoints(tabId);
+      forkTargets.invalidate(tabId);
+    },
     refreshCheckpoints,
-    refreshTurnBoundaries: (tabId) => Promise.all([refreshCheckpoints(tabId), refreshForkTargets(tabId)]).then(() => undefined),
+    refreshTurnBoundaries: (tabId) => Promise.all([refreshCheckpoints(tabId), forkTargets.refresh(tabId)]).then(() => undefined),
     settleCheckpoints: async (tabId, checkpoints) => {
       if (checkpoints !== undefined) dispatch(tabId, { type: "checkpoints", checkpoints: asArray(checkpoints) });
-      await refreshForkTargets(tabId);
+      await forkTargets.refresh(tabId);
     },
   };
 }

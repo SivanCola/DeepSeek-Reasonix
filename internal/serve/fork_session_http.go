@@ -19,6 +19,7 @@ const forkSessionBodyMax = 8 << 10
 // every path, including the empty one: a client renders [] as "nothing to fork
 // from", and null would break its list rendering.
 type forkTargetsResponse struct {
+	Source     session.SessionRef   `json:"source"`
 	Targets    []session.ForkTarget `json:"targets"`
 	Verifiable bool                 `json:"verifiable"`
 }
@@ -31,6 +32,30 @@ type forkSessionResponse struct {
 	SessionID  string `json:"sessionId"`
 	TurnID     string `json:"turnId"`
 	TurnNumber int    `json:"turnNumber"`
+}
+
+type forkErrorResponse struct {
+	Code    string                   `json:"code"`
+	Reason  session.ForkAvailability `json:"reason,omitempty"`
+	Message string                   `json:"message"`
+}
+
+func writeForkError(w http.ResponseWriter, status int, reason session.ForkAvailability, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(forkErrorResponse{Code: "fork_unavailable", Reason: reason, Message: message})
+}
+
+func (s *Server) requireForkSessionFenceLocked(w http.ResponseWriter, r *http.Request) bool {
+	identity, ok := s.ctl().(control.IdentityLifecycle)
+	if !ok || !identity.UsesExclusiveSession() {
+		return true
+	}
+	if strings.TrimSpace(r.Header.Get(expectedSessionIDHeader)) == "" && strings.TrimSpace(r.Header.Get(expectedSessionPathHeader)) == "" {
+		writeForkError(w, http.StatusBadRequest, session.ForkStaleSource, "expected session header is required")
+		return false
+	}
+	return true
 }
 
 // registerForkRoutes mounts the fork reads and the parent-preserving child
@@ -46,7 +71,12 @@ func (s *Server) registerForkRoutes(mux *http.ServeMux) {
 // client computes and it stays readable while a turn is running.
 func (s *Server) forkTargets(w http.ResponseWriter, r *http.Request) {
 	s.bindMu.Lock()
-	if !s.validateExpectedSessionLocked(w, r) {
+	if !s.requireForkSessionFenceLocked(w, r) {
+		s.bindMu.Unlock()
+		return
+	}
+	if err := s.expectedSessionErrorLocked(r); err != nil {
+		writeForkError(w, http.StatusConflict, session.ForkStaleSource, err.Error())
 		s.bindMu.Unlock()
 		return
 	}
@@ -58,7 +88,7 @@ func (s *Server) forkTargets(w http.ResponseWriter, r *http.Request) {
 	// A legacy session keeps messages without turn records, so it proves no
 	// boundary: the empty, unverifiable set is the honest answer.
 	if service == nil {
-		writeJSON(w, forkTargetsResponse{Targets: []session.ForkTarget{}})
+		writeJSON(w, forkTargetsResponse{Source: ref, Targets: []session.ForkTarget{}})
 		return
 	}
 	// The read runs unlocked: it walks the session log, and holding bindMu for
@@ -71,63 +101,70 @@ func (s *Server) forkTargets(w http.ResponseWriter, r *http.Request) {
 	if set.Targets == nil {
 		set.Targets = []session.ForkTarget{}
 	}
-	writeJSON(w, forkTargetsResponse{Targets: set.Targets, Verifiable: set.Verifiable})
+	writeJSON(w, forkTargetsResponse{Source: set.Source, Targets: set.Targets, Verifiable: set.Verifiable})
 }
 
 // forkSession creates an independent child session from one completed turn of
 // the current serve session. Unlike POST /fork it never switches the parent:
 // the controller, the session lease, and the broadcast binding stay where they
 // are, so a running parent keeps running and keeps its remote viewers. The cut
-// is resolved from the source's persisted turn records; a client never supplies
-// a sequence or an index.
+// is resolved from the source's persisted turn records and must match the
+// source identity and atomic boundary the client observed.
 func (s *Server) forkSession(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		TurnID      string `json:"turnId"`
-		Name        string `json:"name"`
-		OperationID string `json:"operationId"`
+		SourceSessionID  string `json:"sourceSessionId"`
+		TurnID           string `json:"turnId"`
+		BoundarySequence uint64 `json:"boundarySequence"`
+		Name             string `json:"name"`
+		OperationID      string `json:"operationId"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, forkSessionBodyMax)
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.TurnID) == "" {
-		http.Error(w, "missing turnId", http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.SourceSessionID) == "" ||
+		strings.TrimSpace(body.TurnID) == "" || body.BoundarySequence == 0 || strings.TrimSpace(body.OperationID) == "" {
+		writeForkError(w, http.StatusBadRequest, "", "sourceSessionId, turnId, boundarySequence, and operationId are required")
 		return
 	}
 	// Validate and resolve the source under bindMu, then create unlocked: the
 	// fork copies the parent's durable log, and holding the binding lock for it
 	// would block /resume, /new, and /fork for the whole copy.
 	s.bindMu.Lock()
-	if !s.validateExpectedSessionLocked(w, r) {
+	if !s.requireForkSessionFenceLocked(w, r) {
+		s.bindMu.Unlock()
+		return
+	}
+	if err := s.expectedSessionErrorLocked(r); err != nil {
+		writeForkError(w, http.StatusConflict, session.ForkStaleSource, err.Error())
 		s.bindMu.Unlock()
 		return
 	}
 	// A mirrored foreground is owned by a local writer, so Serve's copy of it is
 	// not the transcript a child may inherit (the same refusal as POST /fork).
-	if s.rejectMirroredForegroundLocked(w) {
+	if s.foregroundMirroredLocked() {
+		writeForkError(w, http.StatusConflict, session.ForkActiveAuthority, errSessionTakenOver)
 		s.bindMu.Unlock()
 		return
 	}
 	ref, service, ok := s.forkSourceLocked(w)
+	if ok && service != nil && ref.SessionID != strings.TrimSpace(body.SourceSessionID) {
+		writeForkError(w, http.StatusConflict, session.ForkStaleSource, "fork source session changed")
+		ok = false
+	}
 	s.bindMu.Unlock()
 	if !ok {
 		return
 	}
 	if service == nil {
-		http.Error(w, "session forks are unavailable", http.StatusNotImplemented)
+		writeForkError(w, http.StatusNotImplemented, session.ForkUnsupported, "session forks are unavailable")
 		return
 	}
-	// A retried request with no operation id must still address the child it
-	// already created, so the fallback key is the request's own stable content:
-	// the turn plus the requested title. Distinct operation ids fork twice.
-	operation := strings.TrimSpace(body.OperationID)
-	if operation == "" {
-		operation = "title\x00" + strings.TrimSpace(body.Name)
-	}
 	result, err := service.CreateFork(r.Context(), session.ForkRequest{
-		Source: ref, TurnID: strings.TrimSpace(body.TurnID), OperationID: operation,
+		Source: ref, TurnID: strings.TrimSpace(body.TurnID), BoundarySequence: body.BoundarySequence,
+		OperationID: strings.TrimSpace(body.OperationID),
 	})
 	if err != nil {
 		var unavailable *session.ForkUnavailableError
 		if errors.As(err, &unavailable) {
-			http.Error(w, unavailable.Error(), http.StatusConflict)
+			writeForkError(w, http.StatusConflict, unavailable.Reason, unavailable.Error())
 			return
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -158,7 +195,7 @@ func (s *Server) forkSourceLocked(w http.ResponseWriter) (session.SessionRef, *s
 	ref, bound := identity.SessionRef()
 	service := identity.SessionService()
 	if !bound || service == nil || service.Query() == nil {
-		http.Error(w, "canonical session identity is unavailable", http.StatusConflict)
+		writeForkError(w, http.StatusConflict, session.ForkStaleSource, "canonical session identity is unavailable")
 		return session.SessionRef{}, nil, false
 	}
 	return ref, service, true

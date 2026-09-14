@@ -14,6 +14,7 @@ import { getTranscriptOutlineStore, remoteOutlineRead } from "./transcriptOutlin
 import { isAuthoritativeRemoteStatus, remoteCheckpoints, remoteComposerState, remoteGoalRuntime, remoteGoalView, remoteStatusToAction, type RemoteStatus } from "./remoteStatus";
 import type { CollaborationMode, CommandInfo, EffortInfo, GoalLifecycleView, GoalRuntime, GoalStatus, HistoryMessage, QualityFloor, RemoteTabStateValue, TabMeta, ToolApprovalMode, WireEvent } from "./types";
 import type { RemoteAskAnswer } from "./remoteTypes";
+import type { ForkTargetView } from "./forkTargets";
 
 const loadRemoteSurface = () => import("../components/RemoteSessionSurface");
 
@@ -59,9 +60,8 @@ export interface RemoteSessionApi {
   clearExtensionForm: (pluginId: string, surfaceId: string) => void;
   rewind: (turn: number, scope: string) => Promise<void>;
   /** Creates the child session for one turn; returns its id, or undefined with the reason in promptError. */
-  forkTurn: (turnId: string) => Promise<string | undefined>;
-  /** Keeps a child whose surface did not open, so a repeat fork reopens it instead of creating another. */
-  rememberUnopenedFork: (turnId: string, sessionId: string) => void;
+  forkTurn: (target: ForkTargetView) => Promise<{ sessionId: string; operationId: string } | undefined>;
+  acknowledgeFork: (operationId: string) => Promise<void>;
   setModel: (ref: string) => Promise<void>;
   setEffort: (level: string) => Promise<void>;
   setQualityFloor: (floor: QualityFloor) => Promise<void>;
@@ -138,7 +138,7 @@ export function useRemoteSession(tabId: string | undefined, initial?: RemoteTabS
     transcriptRef.current = next;
     setTranscriptState(next);
   }, []);
-  const { forkTurn, rememberUnopenedFork, resetForkChildren, forkTargetsRefreshRef } = useRemoteForkTurn(app, tabId, sessionPath, setTranscript, setPromptError);
+  const { forkTurn, acknowledgeFork, forkTargetsRefreshRef } = useRemoteForkTurn(app, tabId, sessionPath, setTranscript, setPromptError);
   const liveListenersRef = useRef(new Set<() => void>());
   const hydratedRef = useRef(false);
   const hydratingRef = useRef(false);
@@ -199,7 +199,6 @@ export function useRemoteSession(tabId: string | undefined, initial?: RemoteTabS
     setGoalRuntime(undefined);
     setGoalView(undefined);
     setEffortInfo(undefined);
-    resetForkChildren();
     hydratedRef.current = false;
     hydratingRef.current = false;
     bufferedEventsRef.current = [];
@@ -785,7 +784,7 @@ export function useRemoteSession(tabId: string | undefined, initial?: RemoteTabS
   return {
     state, error, transcript, liveStore, hydrated, syncMode, loadOlderHistory: (_targetTurn?: number, trigger?: HistoryLoadTrigger) => olderRef.current?.(trigger) ?? Promise.resolve("empty"), running: transcript.running, modelLabel, commands,
     composerProfile, goalRuntime, goalView, effort, surfaceGeneration, promptError, submit, runManagementCommand, compact, cancelTurn,
-    approve, resolvePlanDecision, answer, clearExtensionForm, rewind, forkTurn, rememberUnopenedFork, setModel, setEffort, setQualityFloor, pauseGoal, resumeGoal, editGoal, steer, cancelJob,
+    approve, resolvePlanDecision, answer, clearExtensionForm, rewind, forkTurn, acknowledgeFork, setModel, setEffort, setQualityFloor, pauseGoal, resumeGoal, editGoal, steer, cancelJob,
     drainApprovals, retryHydration,
   };
 }

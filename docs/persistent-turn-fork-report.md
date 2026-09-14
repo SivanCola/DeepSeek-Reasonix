@@ -1,7 +1,7 @@
 # Persistent turn fork implementation report
 
 Date: 2026-09-14
-Base: `main-v2` at `09cdab386`
+Base: `main-v2` at `236db8c16`
 
 A completed turn can now be forked into an independent child session while its
 parent keeps running, while the parent is read-only, and after a restart. The
@@ -13,9 +13,10 @@ checkpoints keep their own job of file rollback.
 - **Turn boundaries come from the log.** The session projection records two
   facts per completed turn: `MessageID`, the stable transcript identity of the
   turn's final text reply, and `BoundarySequence`, the last sequence of the
-  commit that closed the turn. A turn is forkable exactly when a terminal
-  `turn/end` closed it. Completion is never inferred from answer text, elapsed
-  time, or run state.
+  commit that closed the turn. Eligibility is computed after the complete
+  closing commit has been projected: the turn must be closed, the boundary must
+  be the commit tail, and no interaction or tool authority may remain.
+  Completion is never inferred from answer text, elapsed time, or run state.
 - **A cut covers a whole commit.** `BoundarySequence` is the closing commit's
   last sequence, not the `turn/end` event's. A turn end and the state that ends
   with it can share one commit, and cutting at the event would either inherit
@@ -41,23 +42,31 @@ checkpoints keep their own job of file rollback.
   rotation gate, so a running parent keeps running. The desktop opens the child
   in a new tab afterwards; when that attach fails, the result still carries the
   child session id and a recoverable error, and the child is never deleted.
-- **One operation id, one child.** A retried creation request addresses the same
-  child; a different operation id creates a separate child.
-- **Remote creation does not take over the parent.** `GET /fork-targets` and
+- **Unknown results survive restart.** Desktop owns `operationId` and persists a
+  pending record in `fork-operations.json` before local writes or network
+  requests. Timeouts, disconnects, decode failures, and uncertain internal
+  errors retain it. The record becomes completed before success reaches the UI
+  and is removed only after the child is adopted. A later intentional click
+  then receives a new id and may create another child from the same turn.
+- **Remote creation does not take over the parent.** Fenced `GET /fork-targets` and
   `POST /fork-session` are create-only and leave the foreground session, the
   broadcast binding, and the lease untouched. They are advertised as
   `session-fork-targets-v1`; a desktop talking to a server without it reports
-  the server as unsupported rather than falling back to `/fork`.
+  the server as unsupported rather than falling back to `/fork`. The response
+  names the authoritative source; create requires `sourceSessionId`, `turnId`,
+  `boundarySequence`, and `operationId`, and refusals use structured JSON.
 - **The button follows the persisted log, not checkpoints.** The transcript
   matches a turn to its target by stable message identity
   (`ForkTargetView.messageId` against the rendered answer's message id), so live
-  completion, paged history, and cold restore share one mapping. Fork no longer
+  completion, paged history, and cold restore share one mapping. Creation carries
+  the target's source identity and boundary, so a tab switch cannot reinterpret
+  an inherited turn id in another session. Fork no longer
   reads checkpoints or the session-wide running flag; the unfinished turn alone
   stays unavailable while a turn runs. Checkpoints continue to drive file
   rewind only.
 - **Every refusal names itself.** The fork entry reports its own state — turn not
   finished, targets still loading, boundary unverifiable, server unsupported,
-  creation in flight — localized in English, Simplified Chinese, and Traditional
+  stale source, creation in flight — localized in English, Simplified Chinese, and Traditional
   Chinese, and failures reach the existing notice channel instead of being
   swallowed.
 - **Legacy paths are unchanged.** `Fork`, `ForkForTab`, `ForkWorktreeForTab`,
@@ -68,21 +77,20 @@ checkpoints keep their own job of file rollback.
 
 ## Compatibility result
 
-No persisted byte changed. The v4 log, manifest, frame codec, and content store
-are untouched, and the child is written in the current format.
+The durable conversation format did not change. The v4 log, manifest, frame
+codec, and content store are untouched, and the child is written in the current
+format. Desktop adds a separate host-owned operation journal, and the rebuildable
+recovery projection version advances so old cached projections cannot omit the
+new availability field.
 
 | Field or format | Old-data behavior | New-reader behavior | Previous-reader behavior | Conclusion |
 | --- | --- | --- | --- | --- |
 | `events.frames`, `manifest.json`, frames, `.content-v1` | unchanged | reads as before | reads new writes | no format change |
-| `Projection`, `TurnBoundary` (+`messageId`, +`boundarySequence`) | recomputed from committed events | computes the new fields; no migration, no checkpoint backfill | n/a — never persisted | safe |
-| Host RPC contract | additive | 4 new commands, 3 new interfaces | old frontends ignore them | safe |
+| `Projection`, `TurnBoundary` (+availability) | durable events unchanged | recomputed from complete commits | old recovery projection v1 is rejected and rebuilt | safe cache invalidation |
+| `fork-operations.json` | absent | created atomically on the Desktop host and removed after acknowledgement | ignored | additive host state |
+| Host RPC contract | pre-release correction | anchors replace turn-only create arguments; acknowledgement added | capability was not published | safe to correct in place |
 | Serve capability set | additive token | advertises `session-fork-targets-v1` | older desktop uses `/fork` | safe |
-| Checkpoints (`.ckpt/` sidecars) | unchanged | unchanged; rewind still uses them | unchanged | safe |
-
-The host contract diff is additive: `desktopContract.generated.json` 154
-insertions / 0 deletions, `host_command_owners.generated.json` 30 / 0. The only
-removal in `desktopContract.generated.ts` is the contract digest line, which is
-expected to change with the contract.
+| Rewind checkpoints (`.ckpt/` sidecars) | unchanged | unchanged; rewind still uses them | unchanged | safe |
 
 Pre-existing inconsistency found while testing, not introduced here and left
 as-is: `projectLegacyImport` accepts a `source` field on `legacy/import`, but
@@ -95,8 +103,8 @@ as-is: `projectLegacyImport` accepts a `source` field on `legacy/import`, but
 ## Cache contract
 
 `scripts/check-cache-impact.sh` reports **"No cache-sensitive prompt/tool files
-changed."** No provider-visible prompt, memory prefix, tool schema, or
-serialization was touched, so no cache-hit warning applies.
+changed."** No provider-visible prompt, memory prefix, tool schema, or provider
+request serialization was touched, so no cache-hit warning applies.
 
 The new projection fields are not part of `provider.Message`, and
 `ModelMessages` construction is unchanged; `TestProviderRequestBytesSurviveSessionV4RoundTrip`
@@ -116,23 +124,23 @@ agent:
 
 | Command | Result |
 | --- | --- |
-| `go test ./internal/session/ -count=1` | ok (32s) |
-| `go test ./internal/session/ -run 'ForkTarget\|CreateFork' -race -count=1` | ok, 9/9 |
-| `go test ./internal/session/ -run 'Cache\|Provider' -count=1` | ok |
-| `go test ./internal/control/ -count=1` | ok (200s) |
-| `go test ./internal/serve/ ./internal/servecontract/... -count=1` | ok (67s) |
-| `cd desktop && go test -run 'ForkTargets\|CreateFork' -count=1 .` | ok |
-| `go build ./internal/... ./cmd/...` | ok |
-| `go run ./tools/repolint` | clean |
-| `scripts/check-cache-impact.sh` | clean |
+| `go test ./internal/session ./internal/control ./internal/serve ./internal/servecontract/... -count=1` | ok (session 65s, control 193s, serve 118s) |
+| `go test ./internal/session -run 'ForkTarget\|CreateFork\|ForkAvailability' -race -count=1` | ok |
+| `cd desktop && go test -race -run 'ForkTargets\|CreateFork\|ForkOperation\|ForkedSessionLocator' -count=1 .` | ok |
+| `go test ./... -run '^$' && go build ./internal/... ./cmd/...` | ok |
+| root and Desktop `golangci-lint run --timeout=5m ./...` | 0 issues |
+| `go run ./tools/repolint` | clean (1,231 baselined findings) |
+| `scripts/check-cache-impact.sh` | no cache-sensitive files changed |
+| `go run ./tools/desktopinventory -check` | current, 753 entries |
 | `cd desktop && go test -run 'HostContract\|HostCommandOwners\|HostShellRemote' -count=1 .` | ok |
-| `cd desktop && go test -count=1 .` | ok (192s) |
-| `cd desktop/frontend && pnpm typecheck` | ok |
+| `cd desktop && go test -count=1 .` | ok (325s) |
+| `cd desktop/frontend && pnpm build` | ok, typecheck and bundle budgets included |
 | `tsx src/__tests__/turn-fork-transcript.test.tsx` | ok |
-| `node scripts/run-tests.mjs --keep-going` (frontend) | all 352 suites passed |
-| Locale parity across `en.ts` / `zh.ts` / `zh-TW.ts` | 9 new keys present exactly once in each |
-| `node bench/fork-targets.mjs` (Chromium, real Transcript) | PASS, 16 consecutive runs |
-| `node bench/fork-targets-app.mjs` (built app, `/?mock=1`) | PASS, 5 consecutive runs |
+| `node scripts/run-tests.mjs --keep-going` (frontend) | all 357 suites passed |
+| Locale parity across `en.ts` / `zh.ts` / `zh-TW.ts` | all 11 `chat.branch*` keys present in each |
+| `node bench/fork-targets.mjs` (Chromium, real Transcript) | PASS on the final tree |
+| `node bench/fork-targets-app.mjs` (built app, `/?mock=1`) | PASS on the final tree |
+| `make lint-cross` | root linux/darwin/windows clean; stopped on four pre-existing unused Desktop linux tray stubs, unchanged from `origin/main-v2` |
 
 The browser bench runs against the real `Transcript` with isolated fixture data
 and reads the rendered DOM, not internal state:
@@ -145,11 +153,12 @@ and reads the rendered DOM, not internal state:
   ("该轮次尚未结束，还没有可供分支的边界。").
 - A source whose history keeps no turn records renders the boundary as
   unverifiable ("该轮次在会话记录中没有可确认的分支边界。").
-- Clicking dispatches the target's stable `turnId`, and two clicks carry two
-  distinct operation ids.
+- Clicking dispatches the target's source session, generation, stable `turnId`,
+  and boundary. Desktop, rather than the renderer, assigns operation ids.
 - In the built app, a click adopts the child tab; with the fixture forced into an
-  attach failure, the notice names the created child and a **second click names
-  the same child** — one creation across two clicks.
+  attach failure, the notice names the created child and a **second click returns
+  the same child**. After acknowledgement, another click may create a second
+  intentional child.
 
 The session tests cover: a completed turn listed after the controller is gone
 and the session is re-opened read-only; a cold fork inheriting only the prefix
@@ -157,27 +166,13 @@ through the target turn; an open trailing turn leaving earlier turns forkable; a
 unknown turn id refused instead of redirected to the newest turn; a cut covering
 the whole commit that closed the turn; idempotent retry per operation id; a
 read-only source yielding a writable child with the source log unchanged; a
-boundary whose commit leaves execution authority open refused with its own
-reason and publishing nothing; and message-only history reported unverifiable.
+  boundary whose commit leaves execution authority open refused with its own
+  reason and publishing nothing; authority resolved later in the same atomic
+  commit accepted; source replacement refused as `stale_source`; operation
+  recovery across host reconstruction; and message-only history reported unverifiable.
 
 ## Known gaps
 
-- **The recovery entry is a notice, not a control.** When a child is created but
-  its tab cannot open, the child is kept and named, and a second fork of the
-  same turn target reuses it instead of creating another (verified in the built
-  app: one creation across two clicks). The frontend has no open-by-session-id
-  path — session resume is path-based — so the recovery surfaces as a notice
-  pointing at session history, matching the existing `rewindForkAttachError`
-  convention, rather than a clickable entry that reopens the child.
-- **"No permission to create a child session" is not a pre-emptive state.**
-  The plan lists it among the specific reasons a fork entry must show. A
-  read-only source is deliberately forkable — the child is written from the
-  source and never into it — so the frontend has no read-only signal that could
-  disable the entry without breaking that requirement. The localized string and
-  the reason slot exist, but nothing produces them today: a refusal (a mirrored
-  foreground, an unauthenticated remote, a failed creation) arrives through the
-  error channel and is shown with its own text. Wiring the entry to the
-  channel-session read-only flag would wrongly disable a fork that must succeed.
 - **A fork requested while another rewind is committing is no longer blocked in
   the UI.** That is the intended consequence of dropping the session-wide
   disable; the host refuses it with its own reason instead.
@@ -188,7 +183,7 @@ reason and publishing nothing; and message-only history reported unverifiable.
 ## Deliberately omitted evidence
 
 - **Remote fork in a browser.** The remote create path is exercised only by node
-  tests (call shape, fresh operation id, reuse of an unopened child). No browser
+  tests (anchored call shape, structured refusal, acknowledgement). No browser
   run covers it, because that needs a live Serve surface to attach to.
 - **The two bench gates are not wired into `package.json`.** They are runnable by
   the commands above but do not yet run in CI, so nothing prevents them from
@@ -196,7 +191,10 @@ reason and publishing nothing; and message-only history reported unverifiable.
 
 - **Packaged desktop and native shell.** No package was built, signed, or
   launched, so production-mode shell/service startup is unverified.
-- **Windows and Linux.** Every command above ran on macOS/arm64 only.
+- **Windows and Linux runtime.** Root cross-platform lint passed for linux,
+  darwin, and windows. Desktop linux cross-lint remains blocked by four
+  pre-existing unused tray stubs that are unchanged from `origin/main-v2`; no
+  packaged application was run on either platform.
 - **Live provider calls.** No real-API run was made; the child's inherited
   context is verified against persisted projections, not against a provider.
 - **Cross-process lease behaviour under contention.** The read-only path is
@@ -212,6 +210,6 @@ falls back to English until the chunk resolves, so the first render after a
 switch legitimately shows English. Measured apply latency was 12-98 ms across
 ten runs, so nothing is lost or stuck — the page simply never promised a
 synchronous switch. The bench now waits on the rendered value
-(`page.waitForFunction`, 10 s bound) instead of sleeping, and passed 16
-consecutive runs. Any future browser check that reads localized text must do the
+(`page.waitForFunction`, 10 s bound) instead of sleeping, and passed on the
+final tree. Any future browser check that reads localized text must do the
 same.

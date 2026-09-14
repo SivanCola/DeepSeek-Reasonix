@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -8,59 +10,74 @@ import (
 	"reasonix/internal/session"
 )
 
-// forkTargetsController is the slice of *control.Controller that lists a
-// source's forkable turns and creates a child without switching the parent
-// controller or stopping a running turn. control.SessionAPI does not expose
-// either method, so the desktop binding asserts them locally; the assertion
-// below fails the build if the controller's signatures drift.
 type forkTargetsController interface {
 	ForkTargets() (session.ForkTargetSet, error)
-	CreateForkSession(turnID, name, operationID string) (string, error)
+	CreateForkSession(request session.ForkRequest, name string) (string, error)
 }
 
 var _ forkTargetsController = (*control.Controller)(nil)
 
-// ForkTargetView is one turn of a source tab a caller may fork from. Reason is
-// the refusal a surface shows; Available stays false for an open turn and for
-// history that keeps no turn records.
+type ForkAnchorView struct {
+	SourceHostID      string `json:"sourceHostId,omitempty"`
+	SourceSessionID   string `json:"sourceSessionId"`
+	SessionGeneration uint64 `json:"sessionGeneration"`
+	TurnID            string `json:"turnId"`
+	BoundarySequence  uint64 `json:"boundarySequence"`
+}
+
 type ForkTargetView struct {
-	TurnID     string `json:"turnId"`
-	TurnNumber int    `json:"turnNumber"`
-	Status     string `json:"status"`
-	MessageID  string `json:"messageId,omitempty"`
-	Available  bool   `json:"available"`
-	Reason     string `json:"reason,omitempty"`
+	SourceHostID      string `json:"sourceHostId,omitempty"`
+	SourceSessionID   string `json:"sourceSessionId"`
+	SessionGeneration uint64 `json:"sessionGeneration"`
+	TurnID            string `json:"turnId"`
+	BoundarySequence  uint64 `json:"boundarySequence"`
+	TurnNumber        int    `json:"turnNumber"`
+	Status            string `json:"status"`
+	MessageID         string `json:"messageId,omitempty"`
+	Available         bool   `json:"available"`
+	Reason            string `json:"reason,omitempty"`
 }
 
-// ForkTargetSetView is a tab's fork state. Targets is a non-nil slice even when
-// empty: null would break the renderer's .map/.length calls.
 type ForkTargetSetView struct {
-	Targets    []ForkTargetView `json:"targets"`
-	Verifiable bool             `json:"verifiable"`
+	SourceHostID      string           `json:"sourceHostId,omitempty"`
+	SourceSessionID   string           `json:"sourceSessionId,omitempty"`
+	SessionGeneration uint64           `json:"sessionGeneration,omitempty"`
+	Targets           []ForkTargetView `json:"targets"`
+	Verifiable        bool             `json:"verifiable"`
 }
 
-// ForkCreationView reports the child session created for a tab. SessionID is
-// set as soon as the child is durable, so a caller whose tab attach failed
-// recovers that child instead of creating a second one.
 type ForkCreationView struct {
-	SessionID string `json:"sessionId,omitempty"`
-	TabID     string `json:"tabId,omitempty"`
-	// Opened is always emitted: a missing field would read as "this build cannot
-	// tell you", which is not the same answer as "the child could not be opened".
-	Opened bool   `json:"opened"`
-	Error  string `json:"error,omitempty"`
+	SessionID   string `json:"sessionId,omitempty"`
+	TabID       string `json:"tabId,omitempty"`
+	OperationID string `json:"operationId,omitempty"`
+	Opened      bool   `json:"opened"`
+	Code        string `json:"code,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	Error       string `json:"error,omitempty"`
 }
 
-// ForkTargetsForTab reports the fork boundaries of a source tab; an empty tabID
-// addresses the active tab, as ForkForTab does. Reading targets never mutates
-// the tab, so it answers while a turn is running and for read-only channel
-// tabs, which are legitimate fork sources. A tab with no backend reports an
-// empty set rather than an error, mirroring forkForTabWithOptions.
+func forkTargetSetView(set session.ForkTargetSet, generation uint64) ForkTargetSetView {
+	view := ForkTargetSetView{SourceHostID: set.Source.HostID, SourceSessionID: set.Source.SessionID,
+		SessionGeneration: generation, Targets: make([]ForkTargetView, 0, len(set.Targets)), Verifiable: set.Verifiable}
+	for _, target := range set.Targets {
+		view.Targets = append(view.Targets, ForkTargetView{
+			SourceHostID: set.Source.HostID, SourceSessionID: set.Source.SessionID, SessionGeneration: generation,
+			TurnID: target.TurnID, BoundarySequence: target.BoundarySequence,
+			TurnNumber: target.TurnNumber, Status: string(target.Status), MessageID: target.MessageID,
+			Available: target.Available, Reason: string(target.Reason)})
+	}
+	return view
+}
+
 func (a *App) ForkTargetsForTab(tabID string) (ForkTargetSetView, error) {
-	tab, ctrl := a.tabAndCtrlByID(tabID)
-	if tab == nil || ctrl == nil {
+	a.mu.RLock()
+	tab := a.tabByIDLocked(tabID)
+	if tab == nil || tab.Ctrl == nil {
+		a.mu.RUnlock()
 		return ForkTargetSetView{Targets: []ForkTargetView{}}, nil
 	}
+	ctrl, generation := tab.Ctrl, tab.SessionGeneration
+	a.mu.RUnlock()
 	targets, ok := ctrl.(forkTargetsController)
 	if !ok {
 		return ForkTargetSetView{Targets: []ForkTargetView{}}, nil
@@ -69,47 +86,92 @@ func (a *App) ForkTargetsForTab(tabID string) (ForkTargetSetView, error) {
 	if err != nil {
 		return ForkTargetSetView{Targets: []ForkTargetView{}}, err
 	}
-	view := ForkTargetSetView{Targets: make([]ForkTargetView, 0, len(set.Targets)), Verifiable: set.Verifiable}
-	for _, target := range set.Targets {
-		view.Targets = append(view.Targets, ForkTargetView{
-			TurnID:     target.TurnID,
-			TurnNumber: target.TurnNumber,
-			Status:     string(target.Status),
-			MessageID:  target.MessageID,
-			Available:  target.Available,
-			Reason:     string(target.Reason),
-		})
+	a.mu.RLock()
+	current := a.tabs[tab.ID]
+	stale := current != tab || current.Ctrl != ctrl || current.SessionGeneration != generation ||
+		(strings.TrimSpace(current.SessionID) != "" && current.SessionID != set.Source.SessionID)
+	a.mu.RUnlock()
+	if stale {
+		return ForkTargetSetView{Targets: []ForkTargetView{}}, &session.ForkUnavailableError{Reason: session.ForkStaleSource}
 	}
-	return view, nil
+	return forkTargetSetView(set, generation), nil
 }
 
-// CreateForkForTab creates a child session from one completed turn of the
-// source tab and opens it in a new tab, leaving the source tab's transcript,
-// controller, and running turn untouched. A read-only source is allowed: the
-// child is written from the source, never into it. When the child exists but
-// its tab could not be opened the result carries SessionID with Opened false
-// and Error set, so the caller offers recovery from SessionID instead of
-// repeating the creation.
-func (a *App) CreateForkForTab(tabID string, turnID string, operationID string) (ForkCreationView, error) {
-	tab, ctrl := a.tabAndCtrlByID(tabID)
-	if tab == nil || ctrl == nil {
-		return ForkCreationView{}, nil
+func (a *App) localForkSource(tabID string, anchor ForkAnchorView) (*WorkspaceTab, forkTargetsController, session.SessionRef, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	tab := a.tabByIDLocked(tabID)
+	if tab == nil || tab.Ctrl == nil {
+		return nil, nil, session.SessionRef{}, fmt.Errorf("fork source tab is unavailable")
 	}
-	creator, ok := ctrl.(forkTargetsController)
+	creator, ok := tab.Ctrl.(forkTargetsController)
 	if !ok {
-		return ForkCreationView{}, nil
+		return nil, nil, session.SessionRef{}, fmt.Errorf("fork is unsupported")
 	}
-	childID, err := creator.CreateForkSession(turnID, "", operationID)
+	ref := session.SessionRef{HostID: strings.TrimSpace(anchor.SourceHostID), SessionID: strings.TrimSpace(anchor.SourceSessionID)}
+	if ref.SessionID == "" || tab.SessionID != ref.SessionID || tab.SessionGeneration != anchor.SessionGeneration {
+		return nil, nil, session.SessionRef{}, &session.ForkUnavailableError{TurnID: anchor.TurnID, Reason: session.ForkStaleSource}
+	}
+	return tab, creator, ref, nil
+}
+
+func (a *App) CreateForkForTab(tabID string, anchor ForkAnchorView) (ForkCreationView, error) {
+	tab, creator, source, err := a.localForkSource(tabID, anchor)
+	if err != nil {
+		return forkRefusalView(err), nil
+	}
+	operation, err := a.beginForkOperation(forkOperation{Surface: "local", TabID: tab.ID,
+		SourceHostID: source.HostID, SourceSessionID: source.SessionID,
+		TurnID: strings.TrimSpace(anchor.TurnID), BoundarySequence: anchor.BoundarySequence})
 	if err != nil {
 		return ForkCreationView{}, err
 	}
-	if strings.TrimSpace(childID) == "" {
-		// No child identity to open or recover, so this is the same empty result
-		// as a tab whose backend is missing.
-		return ForkCreationView{}, nil
+	childID := operation.ChildSessionID
+	if operation.State != "completed" || childID == "" {
+		// Keep the source tab stable through the controller's source snapshot.
+		// Otherwise a reset could detach it after the App check and let the old
+		// controller create a child for a tab showing another session.
+		a.mu.RLock()
+		current := a.tabs[tab.ID]
+		var boundCreator forkTargetsController
+		controllerMatches := false
+		if current != nil {
+			boundCreator, controllerMatches = current.Ctrl.(forkTargetsController)
+		}
+		if current != tab || !controllerMatches || boundCreator != creator || current.SessionID != source.SessionID ||
+			current.SessionGeneration != anchor.SessionGeneration {
+			a.mu.RUnlock()
+			_ = a.discardForkOperation(operation.OperationID)
+			return forkRefusalView(&session.ForkUnavailableError{TurnID: anchor.TurnID, Reason: session.ForkStaleSource}), nil
+		}
+		childID, err = creator.CreateForkSession(session.ForkRequest{Source: source, TurnID: operation.TurnID,
+			BoundarySequence: operation.BoundarySequence, OperationID: operation.OperationID}, "")
+		a.mu.RUnlock()
+		if err != nil {
+			var unavailable *session.ForkUnavailableError
+			if errors.As(err, &unavailable) {
+				_ = a.discardForkOperation(operation.OperationID)
+				return forkRefusalView(err), nil
+			}
+			return ForkCreationView{}, err
+		}
+		if err := a.completeForkOperation(operation.OperationID, childID); err != nil {
+			return ForkCreationView{}, err
+		}
 	}
-	view := ForkCreationView{SessionID: childID}
-	opened, openErr := a.openForkedSessionTabWithWorkspace(tab, childID, "")
+	view := ForkCreationView{SessionID: childID, OperationID: operation.OperationID}
+	a.mu.RLock()
+	for _, existing := range a.tabs {
+		if existing != nil && existing.SessionID == childID {
+			view.TabID, view.Opened = existing.ID, true
+			break
+		}
+	}
+	a.mu.RUnlock()
+	if view.Opened {
+		return view, nil
+	}
+	opened, openErr := a.openForkedSessionTabWithWorkspace(tab, forkedSessionLocator{SessionID: childID}, "")
 	view.TabID = opened.tab.ID
 	if openErr == nil && opened.tab.ID != "" {
 		view.Opened = true
@@ -118,8 +180,14 @@ func (a *App) CreateForkForTab(tabID string, turnID string, operationID string) 
 	if openErr != nil {
 		slog.Warn("fork: child session created but tab attach failed", "session", childID, "err", openErr)
 	}
-	// The child is already durable, so the caller must recover it rather than
-	// fork the same turn again; the cause is logged above.
 	view.Error = rewindForkAttachError
 	return view, nil
+}
+
+func forkRefusalView(err error) ForkCreationView {
+	var unavailable *session.ForkUnavailableError
+	if errors.As(err, &unavailable) {
+		return ForkCreationView{Code: "fork_unavailable", Reason: string(unavailable.Reason), Error: unavailable.Error()}
+	}
+	return ForkCreationView{Error: err.Error()}
 }

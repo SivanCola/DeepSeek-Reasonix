@@ -1,5 +1,5 @@
 import type { ForkBindings, ForkWorktreeResultView } from "./forkWorktree";
-import type { ForkCreationView, ForkTargetSetView, ForkTargetView } from "../generated/desktopContract.generated";
+import type { ForkAnchorView, ForkCreationView, ForkTargetSetView, ForkTargetView } from "../generated/desktopContract.generated";
 import type { HistoryMessage, TabMeta } from "./types";
 
 export function mockForkWorktree(tab: TabMeta): ForkWorktreeResultView {
@@ -30,8 +30,8 @@ export function mockForkTargets(tabId: string, messages: readonly HistoryMessage
     if (!turn) return;
     const turnId = `${tabId}:turn-${turn}`;
     targets.push(!open && answer
-      ? { turnId, turnNumber: turn, status: "committed", messageId: answer, available: true }
-      : { turnId, turnNumber: turn, status: open ? "in_progress" : "committed", available: false, reason: "turn_open" });
+      ? { sourceSessionId: tabId, sessionGeneration: 1, turnId, boundarySequence: turn * 3, turnNumber: turn, status: "committed", messageId: answer, available: true }
+      : { sourceSessionId: tabId, sessionGeneration: 1, turnId, boundarySequence: 0, turnNumber: turn, status: open ? "in_progress" : "committed", available: false, reason: "turn_open" });
     answer = undefined;
   };
   for (const message of messages) {
@@ -39,7 +39,7 @@ export function mockForkTargets(tabId: string, messages: readonly HistoryMessage
     if (message.role === "assistant" && message.messageId && message.content?.trim()) answer = message.messageId;
   }
   close(running);
-  return { targets, verifiable: messages.some((message) => Boolean(message.messageId)) };
+  return { sourceSessionId: tabId, sessionGeneration: 1, targets, verifiable: messages.some((message) => Boolean(message.messageId)) };
 }
 
 // Browser-dev fork fixtures: an attach failure exercises the recovery notice,
@@ -62,7 +62,8 @@ export function withMockHistoryIds(prefix: string, messages: HistoryMessage[]): 
 interface MockForkBindings extends ForkBindings {
   Fork(turn: number): Promise<TabMeta>;
   ForkTargetsForTab(tabID: string): Promise<ForkTargetSetView>;
-  CreateForkForTab(tabID: string, turnID: string, operationID: string): Promise<ForkCreationView>;
+  CreateForkForTab(tabID: string, anchor: ForkAnchorView): Promise<ForkCreationView>;
+  AcknowledgeForkOperation(tabID: string, operationID: string): Promise<void>;
 }
 
 export function makeMockForkBindings(
@@ -72,6 +73,7 @@ export function makeMockForkBindings(
   history: (tabID: string) => Promise<HistoryMessage[]>,
   attachFailure = mockForkFixture("fork-attach-failure"),
 ): MockForkBindings {
+  const pendingForks = new Map<string, { operationId: string; sessionId: string }>();
   const fork = async (_turn: number): Promise<TabMeta> => {
     const tabs = getTabs();
     const active = tabs.find((tab) => tab.active) ?? tabs[0];
@@ -104,14 +106,22 @@ export function makeMockForkBindings(
       const tab = tabs.find((candidate) => candidate.id === tabID) ?? tabs.find((candidate) => candidate.active) ?? tabs[0];
       return mockForkTargets(tab?.id ?? tabID, await history(tab?.id ?? tabID), Boolean(tab?.running));
     },
-    async CreateForkForTab(tabID, turnID, operationID) {
-      if (!tabID || !turnID) return { opened: false };
-      // The child id carries the operation id, so a repeated request names the
-      // same child and a second user action creates its own.
-      const sessionId = `mock-fork-${turnID}-${operationID}`;
-      if (attachFailure) return { sessionId, opened: false, error: "conversation fork was created but could not be opened; open the recovery branch from session history" };
+    async CreateForkForTab(tabID, anchor) {
+      if (!tabID || !anchor.turnId) return { opened: false };
+      const key = [anchor.sourceHostId ?? "", anchor.sourceSessionId, anchor.turnId, anchor.boundarySequence].join("\0");
+      let operation = pendingForks.get(key);
+      if (!operation) {
+        const operationId = crypto.randomUUID();
+        operation = { operationId, sessionId: `mock-fork-${anchor.turnId}-${operationId}` };
+        pendingForks.set(key, operation);
+      }
+      const { operationId, sessionId } = operation;
+      if (attachFailure) return { sessionId, operationId, opened: false, error: "conversation fork was created but could not be opened; open the recovery branch from session history" };
       const tab = await forkForTab(tabID, 0);
-      return { sessionId, tabId: tab.id, opened: true };
+      return { sessionId, operationId, tabId: tab.id, opened: true };
+    },
+    async AcknowledgeForkOperation(_tabID, operationID) {
+      for (const [key, operation] of pendingForks) if (operation.operationId === operationID) pendingForks.delete(key);
     },
   };
 }

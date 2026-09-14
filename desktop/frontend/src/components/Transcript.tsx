@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ArrowDown } from "lucide-react";
 import type { ControllerLiveStore, HistoryLoadOutcome, HistoryLoadTrigger, Item, LiveStream } from "../lib/useController";
-import { forkTargetForAnswer, type ForkBlockReason, type ForkTargetSetView } from "../lib/forkTargets";
+import { forkTargetForAnswer, type ForkBlockReason, type ForkTargetSetView, type ForkTargetView } from "../lib/forkTargets";
 import type { InvocationMetadataMap } from "../lib/invocationDisplay";
 import { acquireMarkdownWorkerClient, releaseMarkdownWorkerClient } from "../lib/markdownWorkerClient";
 import { ChatSource } from "../lib/chatViewSource";
@@ -30,7 +30,7 @@ export type TranscriptProps = {
   geometrySessionKey?: string;
   footerHeight?: number;
   onPrompt: (displayText: string, submitText?: string) => void;
-  onFork?: (turnId: string) => void;
+  onFork?: (target: ForkTargetView) => void;
   /** Persisted fork boundaries of the shown session; undefined until the first read resolves. */
   forkTargets?: ForkTargetSetView;
   /** Non-null replaces every fork entry's own state, e.g. a surface that cannot create a child. */

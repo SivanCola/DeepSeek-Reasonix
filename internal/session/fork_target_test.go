@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -59,7 +60,8 @@ func completedTurnTarget(commit Commit, turnID, messageID string, number int) Fo
 	return ForkTarget{
 		TurnID: turnID, TurnNumber: number,
 		StartSequence: commit.FirstSequence, EndSequence: commit.LastSequence(),
-		Status: event.TurnCompleted, MessageID: messageID, Available: true,
+		BoundarySequence: commit.LastSequence(),
+		Status:           event.TurnCompleted, MessageID: messageID, Available: true,
 	}
 }
 
@@ -163,7 +165,7 @@ func TestForkTargetsListCompletedTurnForClosedSession(t *testing.T) {
 func TestCreateForkFromColdSourceInheritsOnlyPrefixThroughTurn(t *testing.T) {
 	source := newClosedTurnSource(t)
 	result, err := source.service.CreateFork(t.Context(), ForkRequest{
-		Source: source.ref, TurnID: "turn-1", ChildID: "child-after-turn-1", OperationID: "fork-turn-1",
+		Source: source.ref, TurnID: "turn-1", BoundarySequence: source.first.LastSequence(), ChildID: "child-after-turn-1", OperationID: "fork-turn-1",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -217,7 +219,7 @@ func TestForkTargetsIncludeOpenTrailingTurnWhileEarlierTurnStaysForkable(t *test
 		t.Fatalf("open target = %+v, want %+v", set.Targets[1], wantOpen)
 	}
 	result, err := source.service.CreateFork(t.Context(), ForkRequest{
-		Source: source.ref, TurnID: "turn-1", ChildID: "child-after-turn-1", OperationID: "fork-turn-1",
+		Source: source.ref, TurnID: "turn-1", BoundarySequence: source.first.LastSequence(), ChildID: "child-after-turn-1", OperationID: "fork-turn-1",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -315,7 +317,7 @@ func TestCreateForkInheritsWholeAtomicCommitThatClosedTurn(t *testing.T) {
 	if turns[0].BoundarySequence != commit.LastSequence() {
 		t.Fatalf("boundary sequence = %d, want %d", turns[0].BoundarySequence, commit.LastSequence())
 	}
-	result, err := service.CreateFork(t.Context(), ForkRequest{Source: runtime.Ref(), TurnID: "turn-1", ChildID: "child-atomic", OperationID: "fork-atomic"})
+	result, err := service.CreateFork(t.Context(), ForkRequest{Source: runtime.Ref(), TurnID: "turn-1", BoundarySequence: commit.LastSequence(), ChildID: "child-atomic", OperationID: "fork-atomic"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +355,7 @@ func TestCreateForkInheritsWholeAtomicCommitThatClosedTurn(t *testing.T) {
 
 func TestCreateForkIsIdempotentPerOperationID(t *testing.T) {
 	source := newClosedTurnSource(t)
-	request := ForkRequest{Source: source.ref, TurnID: "turn-1", OperationID: "fork-retry"}
+	request := ForkRequest{Source: source.ref, TurnID: "turn-1", BoundarySequence: source.first.LastSequence(), OperationID: "fork-retry"}
 	first, err := source.service.CreateFork(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -368,7 +370,7 @@ func TestCreateForkIsIdempotentPerOperationID(t *testing.T) {
 	if children := forkChildDirs(t, source.root, source.ref.SessionID); len(children) != 1 || children[0] != first.Child.SessionID {
 		t.Fatalf("child directories = %v", children)
 	}
-	other, err := source.service.CreateFork(t.Context(), ForkRequest{Source: source.ref, TurnID: "turn-1", OperationID: "fork-other"})
+	other, err := source.service.CreateFork(t.Context(), ForkRequest{Source: source.ref, TurnID: "turn-1", BoundarySequence: source.first.LastSequence(), OperationID: "fork-other"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,19 +389,17 @@ func TestCreateForkIsIdempotentPerOperationID(t *testing.T) {
 // surface as a hard failure, and the source must hold exactly one child.
 func TestCreateForkConcurrentSameOperationIDPublishesOneChild(t *testing.T) {
 	source := newClosedTurnSource(t)
-	request := ForkRequest{Source: source.ref, TurnID: "turn-1", OperationID: "fork-race"}
+	request := ForkRequest{Source: source.ref, TurnID: "turn-1", BoundarySequence: source.first.LastSequence(), OperationID: "fork-race"}
 	const callers = 4
 	start := make(chan struct{})
 	results := make([]ForkResult, callers)
 	errs := make([]error, callers)
 	var wait sync.WaitGroup
 	for caller := range callers {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
+		wait.Go(func() {
 			<-start
 			results[caller], errs[caller] = source.service.CreateFork(t.Context(), request)
-		}()
+		})
 	}
 	close(start)
 	wait.Wait()
@@ -420,6 +420,36 @@ func TestCreateForkConcurrentSameOperationIDPublishesOneChild(t *testing.T) {
 	}
 }
 
+func TestCreateForkConcurrentDifferentOperationIDsPublishDistinctChildren(t *testing.T) {
+	source := newClosedTurnSource(t)
+	const callers = 4
+	start := make(chan struct{})
+	results := make([]ForkResult, callers)
+	errs := make([]error, callers)
+	var wait sync.WaitGroup
+	for caller := range callers {
+		wait.Go(func() {
+			<-start
+			results[caller], errs[caller] = source.service.CreateFork(t.Context(), ForkRequest{
+				Source: source.ref, TurnID: "turn-1", BoundarySequence: source.first.LastSequence(),
+				OperationID: fmt.Sprintf("fork-distinct-%d", caller),
+			})
+		})
+	}
+	close(start)
+	wait.Wait()
+	children := map[string]bool{}
+	for caller := range callers {
+		if errs[caller] != nil {
+			t.Fatalf("caller %d: %v", caller, errs[caller])
+		}
+		children[results[caller].Child.SessionID] = true
+	}
+	if len(children) != callers {
+		t.Fatalf("distinct operations published %d children: %+v", len(children), results)
+	}
+}
+
 func TestCreateForkFromReadOnlySourceYieldsWritableChildAndLeavesSourceLog(t *testing.T) {
 	source := newClosedTurnSource(t)
 	logPath := filepath.Join(source.root, source.ref.SessionID, currentLogName)
@@ -430,7 +460,7 @@ func TestCreateForkFromReadOnlySourceYieldsWritableChildAndLeavesSourceLog(t *te
 	if len(before) == 0 {
 		t.Fatal("source log is empty")
 	}
-	result, err := source.service.CreateFork(t.Context(), ForkRequest{Source: source.ref, TurnID: "turn-2", ChildID: "child-from-read-only", OperationID: "fork-read-only"})
+	result, err := source.service.CreateFork(t.Context(), ForkRequest{Source: source.ref, TurnID: "turn-2", BoundarySequence: source.second.LastSequence(), ChildID: "child-from-read-only", OperationID: "fork-read-only"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -472,15 +502,20 @@ func TestCreateForkRefusesCutWhoseCommitLeavesAuthorityOpen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runtime.Session().Append(t.Context(), Batch{OperationID: "turn-1", TurnID: "turn-1", Events: []Event{
+	commit, err := runtime.Session().Append(t.Context(), Batch{OperationID: "turn-1", TurnID: "turn-1", Events: []Event{
 		{Kind: "turn/start"},
 		{Kind: "message/complete", Payload: message},
 		{Kind: "interaction/created", Payload: json.RawMessage(`{"id":"interaction-1"}`)},
 		{Kind: "turn/end", Payload: json.RawMessage(`{"status":"completed"}`)},
-	}}); err != nil {
+	}})
+	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = service.CreateFork(t.Context(), ForkRequest{Source: runtime.Ref(), TurnID: "turn-1", OperationID: "fork-open-authority"})
+	set, setErr := service.ForkTargetSetFor(t.Context(), runtime.Ref())
+	if setErr != nil || len(set.Targets) != 1 || set.Targets[0].Available || set.Targets[0].Reason != ForkActiveAuthority {
+		t.Fatalf("unsafe target set = %+v, err=%v", set, setErr)
+	}
+	_, err = service.CreateFork(t.Context(), ForkRequest{Source: runtime.Ref(), TurnID: "turn-1", BoundarySequence: commit.LastSequence(), OperationID: "fork-open-authority"})
 	var unavailable *ForkUnavailableError
 	if !errors.As(err, &unavailable) {
 		t.Fatalf("fork error = %v, want a *ForkUnavailableError", err)
@@ -490,6 +525,45 @@ func TestCreateForkRefusesCutWhoseCommitLeavesAuthorityOpen(t *testing.T) {
 	}
 	if children := forkChildDirs(t, root, "source"); len(children) != 0 {
 		t.Fatalf("refused fork published %v", children)
+	}
+}
+
+func TestForkAvailabilityUsesTheCompleteClosingCommit(t *testing.T) {
+	service, _, runtime := newSourceService(t, "complete-commit")
+	message, _ := json.Marshal(map[string]any{"message": provider.Message{ID: "message-1", Role: provider.RoleAssistant, Content: "one"}})
+	commit, err := runtime.Session().Append(t.Context(), Batch{OperationID: "turn-1", TurnID: "turn-1", Events: []Event{
+		{Kind: "turn/start"},
+		{Kind: "message/complete", Payload: message},
+		{Kind: "interaction/created", Payload: json.RawMessage(`{"id":"interaction-1","state":"pending"}`)},
+		{Kind: "tool/start", Payload: json.RawMessage(`{"id":"tool-1","name":"bash"}`)},
+		{Kind: "turn/end", Payload: json.RawMessage(`{"status":"completed"}`)},
+		// These records share the atomic commit with turn/end. Eligibility must be
+		// computed after both have cleared their authority.
+		{Kind: "interaction/resolved", Payload: json.RawMessage(`{"id":"interaction-1","state":"answered"}`)},
+		{Kind: "tool/result", Payload: json.RawMessage(`{"id":"tool-1","name":"bash","output":"ok"}`)},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	set, err := service.ForkTargetSetFor(t.Context(), runtime.Ref())
+	if err != nil || len(set.Targets) != 1 || !set.Targets[0].Available || set.Targets[0].BoundarySequence != commit.LastSequence() {
+		t.Fatalf("complete closing commit = %+v, err=%v", set, err)
+	}
+}
+
+func TestForkAvailabilityRejectsActiveToolAtClosingBoundary(t *testing.T) {
+	service, _, runtime := newSourceService(t, "active-tool")
+	_, err := runtime.Session().Append(t.Context(), Batch{OperationID: "turn-1", TurnID: "turn-1", Events: []Event{
+		{Kind: "turn/start"},
+		{Kind: "tool/start", Payload: json.RawMessage(`{"id":"tool-1","name":"bash"}`)},
+		{Kind: "turn/end", Payload: json.RawMessage(`{"status":"completed"}`)},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	set, err := service.ForkTargetSetFor(t.Context(), runtime.Ref())
+	if err != nil || len(set.Targets) != 1 || set.Targets[0].Available || set.Targets[0].Reason != ForkActiveAuthority {
+		t.Fatalf("active-tool closing commit = %+v, err=%v", set, err)
 	}
 }
 

@@ -109,7 +109,8 @@ func TestCreateForkSessionCreatesChildWithoutSwitchingController(t *testing.T) {
 	}
 	parentPath := c.SessionPath()
 
-	childID, err := c.CreateForkSession(targets.Targets[0].TurnID, "first turn", "op-create-child")
+	childID, err := c.CreateForkSession(session.ForkRequest{Source: targets.Source, TurnID: targets.Targets[0].TurnID,
+		BoundarySequence: targets.Targets[0].BoundarySequence, OperationID: "op-create-child"}, "first turn")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,6 +148,38 @@ func TestCreateForkSessionCreatesChildWithoutSwitchingController(t *testing.T) {
 	}
 }
 
+func TestCreateForkSessionRejectsAnchorAfterControllerRebind(t *testing.T) {
+	service, persistence, c := newForkTargetsHarness(t, "anchor-parent", testutil.Turn{Text: "answer"})
+	if err := c.RunTurn(t.Context(), "one"); err != nil {
+		t.Fatal(err)
+	}
+	targets, err := c.ForkTargets()
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := targets.Targets[0]
+	// Seed a second session from the same boundary so it inherits the same turn
+	// and message identities. Only the source SessionRef distinguishes it.
+	second, err := service.CreateFork(t.Context(), session.ForkRequest{Source: targets.Source, TurnID: target.TurnID,
+		BoundarySequence: target.BoundarySequence, OperationID: "seed-second-session"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.OpenSession(t.Context(), second.Child); err != nil {
+		t.Fatal(err)
+	}
+	before := sessionDirNames(t, persistence.Root)
+	_, err = c.CreateForkSession(session.ForkRequest{Source: targets.Source, TurnID: target.TurnID,
+		BoundarySequence: target.BoundarySequence, OperationID: "stale-source-create"}, "")
+	var unavailable *session.ForkUnavailableError
+	if !errors.As(err, &unavailable) || unavailable.Reason != session.ForkStaleSource {
+		t.Fatalf("rebound create error = %v, want stale_source", err)
+	}
+	if after := sessionDirNames(t, persistence.Root); !slices.Equal(before, after) {
+		t.Fatalf("stale source created a child: %v then %v", before, after)
+	}
+}
+
 func TestCreateForkSessionUnknownTurnCreatesNoChild(t *testing.T) {
 	_, persistence, c := newForkTargetsHarness(t, "unknown-turn-parent", testutil.Turn{Text: "answer"})
 	if err := c.RunTurn(t.Context(), "one"); err != nil {
@@ -158,7 +191,8 @@ func TestCreateForkSessionUnknownTurnCreatesNoChild(t *testing.T) {
 	}
 	before := sessionDirNames(t, persistence.Root)
 
-	childID, err := c.CreateForkSession("no-such-turn", "", "op-unknown-turn")
+	childID, err := c.CreateForkSession(session.ForkRequest{Source: parentRef, TurnID: "no-such-turn",
+		BoundarySequence: 1, OperationID: "op-unknown-turn"}, "")
 	if childID != "" || err == nil {
 		t.Fatalf("CreateForkSession(unknown turn) = %q, %v", childID, err)
 	}
@@ -209,7 +243,8 @@ func TestCreateForkSessionWorksWhileTurnRunning(t *testing.T) {
 		t.Fatalf("targets while a turn runs = %+v", targets)
 	}
 
-	childID, err := c.CreateForkSession(targets.Targets[0].TurnID, "from a running turn", "op-running-turn")
+	childID, err := c.CreateForkSession(session.ForkRequest{Source: targets.Source, TurnID: targets.Targets[0].TurnID,
+		BoundarySequence: targets.Targets[0].BoundarySequence, OperationID: "op-running-turn"}, "from a running turn")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +272,7 @@ func TestForkTargetsLegacyEngineReportsUnverifiable(t *testing.T) {
 	}
 	// The checkpoint engine has no v3 identity, so a cut cannot be requested
 	// from it at all.
-	if _, err := c.CreateForkSession("turn", "name", "op-legacy"); !errors.Is(err, session.ErrSessionNotRunning) {
+	if _, err := c.CreateForkSession(session.ForkRequest{TurnID: "turn", BoundarySequence: 1, OperationID: "op-legacy"}, "name"); !errors.Is(err, session.ErrSessionNotRunning) {
 		t.Fatalf("legacy CreateForkSession = %v, want ErrSessionNotRunning", err)
 	}
 }

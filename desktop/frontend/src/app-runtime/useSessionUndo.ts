@@ -3,6 +3,7 @@ import { useCommittedCommand } from "../lib/useCommittedCommand";
 import type { Item } from "../lib/useController";
 import type { RewindUndoState } from "../lib/rewindTypes";
 import type { RewindResultView } from "../lib/types";
+import type { ForkTargetView } from "../lib/forkTargets";
 
 export type SessionUndoInput = {
   activeTabId: string | undefined;
@@ -18,7 +19,7 @@ export type SessionUndoInput = {
   ports: {
     rewindForTab(tabId: string, turn: number, scope: string): Promise<boolean>;
     rewindForTabDetailed(tabId: string, turn: number, scope: string): Promise<RewindResultView>;
-    forkTurnForTab(tabId: string, turnId: string): Promise<boolean>;
+    forkTurnForTab(tabId: string, target: ForkTargetView): Promise<boolean>;
     refreshTabMetas(): void;
     undoRewindForTab(tabId: string, transactionId: string): Promise<boolean>;
     sendToTab(tabId: string, display: string, submit: string, original: string): Promise<void>;
@@ -85,10 +86,10 @@ export function useSessionUndo(input: SessionUndoInput) {
    * banner nor a read-only source blocks it: the child is written from the
    * source, never into it.
    */
-  const handleForkTurn = useCommittedCommand((turnId: string) => {
+  const handleForkTurn = useCommittedCommand((target: ForkTargetView) => {
     const sourceTabId = activeTabId;
-    if (!sourceTabId || !turnId || !input.controllerReady || input.hydratePlaceholderActive) return;
-    void ports.forkTurnForTab(sourceTabId, turnId).then((ok) => {
+    if (!sourceTabId || !target?.turnId || !input.controllerReady || input.hydratePlaceholderActive) return;
+    void ports.forkTurnForTab(sourceTabId, target).then((ok) => {
       if (!ok) return;
       ports.refreshTabMetas();
       ports.refreshProject();

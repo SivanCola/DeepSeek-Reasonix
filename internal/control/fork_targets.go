@@ -33,21 +33,20 @@ func (c *Controller) ForkTargets() (session.ForkTargetSet, error) {
 }
 
 // CreateForkSession creates an independent child session from the completed turn
-// turnID of this controller's session, titled name when it is non-empty, and
+// named by the request, titled name when it is non-empty, and
 // returns the child's id. Unlike ForkSession it takes no rotation gate: it runs
 // while a turn is in flight, leaves that turn and this controller's own session
 // untouched, and publishes no runtime — whichever surface shows the child opens
 // it later.
-func (c *Controller) CreateForkSession(turnID string, name string, operationID string) (childSessionID string, err error) {
-	service, parent, err := c.forkSourceRuntime()
+func (c *Controller) CreateForkSession(request session.ForkRequest, name string) (childSessionID string, err error) {
+	service, parent, err := c.forkSourceRuntime(request.Source)
 	if err != nil {
 		return "", err
 	}
-	result, err := service.CreateFork(context.Background(), session.ForkRequest{
-		Source:      parent.Ref(),
-		TurnID:      turnID,
-		OperationID: operationID,
-	})
+	// The exact runtime captured above is authoritative, but keep its ref in the
+	// request so Service.CreateFork also validates the same immutable source.
+	request.Source = parent.Ref()
+	result, err := service.CreateFork(context.Background(), request)
 	if err != nil {
 		return "", err
 	}
@@ -69,13 +68,16 @@ func (c *Controller) CreateForkSession(turnID string, name string, operationID s
 // controller's session. It mirrors branch_ops: sessionEngineEnabled selects the
 // v3 engine, and a controller that is not on it — or that is on it without an
 // active runtime — has no source identity to fork from.
-func (c *Controller) forkSourceRuntime() (*session.Service, *session.Runtime, error) {
+func (c *Controller) forkSourceRuntime(expected session.SessionRef) (*session.Service, *session.Runtime, error) {
 	if c == nil {
 		return nil, nil, session.ErrSessionNotRunning
 	}
 	service, runtime, exclusive := c.v3Binding()
 	if !exclusive || service == nil || runtime == nil {
 		return nil, nil, session.ErrSessionNotRunning
+	}
+	if runtime.Ref() != expected {
+		return nil, nil, &session.ForkUnavailableError{TurnID: "", Reason: session.ForkStaleSource}
 	}
 	return service, runtime, nil
 }

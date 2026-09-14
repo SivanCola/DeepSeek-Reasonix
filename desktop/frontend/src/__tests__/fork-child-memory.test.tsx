@@ -6,6 +6,7 @@ import { JSDOM } from "jsdom";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import type { AppBindings } from "../lib/bridge";
+import { createForkTargetsRefresh } from "../lib/forkTurn";
 import { useController } from "../lib/useController";
 import { historySliceFromMessages } from "./mockHistorySlice";
 import type { BalanceInfo, CheckpointMeta, ContextInfo, EffortInfo, HistoryMessage, HistorySliceRequest, JobView, Meta, TabMeta } from "../lib/types";
@@ -99,6 +100,10 @@ const history: HistoryMessage[] = [{ role: "user", content: "hello" }, { role: "
 const created: string[] = [];
 let attachFails = true;
 let childSeq = 0;
+const pending = new Map<string, { operationId: string; sessionId: string }>();
+let forkTargetsRead: () => Promise<{ targets: never[]; verifiable: boolean }> = async () => ({ targets: [], verifiable: true });
+const anchor = (turnId: string) => ({ sourceSessionId: "source-1", sessionGeneration: 1, turnId, boundarySequence: 9,
+  turnNumber: 1, status: "committed", available: true });
 
 installDesktopHostStub(({
   main: {
@@ -110,7 +115,7 @@ installDesktopHostStub(({
       BalanceForTab: async () => balance,
       JobsForTab: async () => jobs,
       CheckpointsForTab: async () => checkpoints,
-      ForkTargetsForTab: async () => ({ targets: [], verifiable: true }),
+      ForkTargetsForTab: async () => forkTargetsRead(),
       HistoryForTab: async () => history,
       HistoryPageForTab: async (tabId: string) => ({
         messages: history,
@@ -122,16 +127,34 @@ installDesktopHostStub(({
       HistorySliceForTab: async (tabId: string, req: HistorySliceRequest) => historySliceFromMessages(tabId, history, req),
       HistoryCheckpointTurnsForTab: async () => [],
       ReplayPendingPrompts: async () => {},
-      CreateForkForTab: async (_tabId: string, turnId: string, operationId: string) => {
-        created.push(`${turnId}:${operationId}`);
-        childSeq += 1;
-        const sessionId = `child-${childSeq}`;
-        if (attachFails) return { sessionId, opened: false, error: "conversation fork was created but could not be opened" };
-        return { sessionId, tabId: "tab-a", opened: true };
+      CreateForkForTab: async (_tabId: string, target: ReturnType<typeof anchor>) => {
+        created.push(target.turnId);
+        let record = pending.get(target.turnId);
+        if (!record) {
+          childSeq += 1;
+          record = { operationId: `operation-${childSeq}`, sessionId: `child-${childSeq}` };
+          pending.set(target.turnId, record);
+        }
+        if (attachFails) return { ...record, opened: false, error: "conversation fork was created but could not be opened" };
+        return { ...record, tabId: "tab-a", opened: true };
+      },
+      AcknowledgeForkOperation: async (_tabId: string, operationId: string) => {
+        for (const [turnId, record] of pending) if (record.operationId === operationId) pending.delete(turnId);
       },
     } as Partial<AppBindings> as AppBindings,
   },
 }).main.App);
+
+let resolveLateForkTargets: ((value: { targets: never[]; verifiable: boolean }) => void) | undefined;
+forkTargetsRead = () => new Promise((resolve) => { resolveLateForkTargets = resolve; });
+const lateForkActions: unknown[] = [];
+const forkTargetReads = createForkTargetsRefresh((_tabId, action) => { lateForkActions.push(action); });
+const lateForkRead = forkTargetReads.refresh("tab-a");
+forkTargetReads.invalidate("tab-a");
+resolveLateForkTargets?.({ targets: [], verifiable: true });
+await lateForkRead;
+ok(lateForkActions.length === 0, "a session rebind invalidates a late fork-target response");
+forkTargetsRead = async () => ({ targets: [], verifiable: true });
 
 type Controller = ReturnType<typeof useController>;
 let controller: Controller | undefined;
@@ -146,33 +169,31 @@ try {
   await act(async () => { root.render(<Probe />); await flushPromises(); });
   await waitFor("the source tab hydrates", () => controller?.activeTabId === "tab-a" && controller.state.hydrating === false);
 
-  await act(async () => { await controller!.forkTurnForTab("tab-a", "turn-2"); await flushPromises(); });
+  await act(async () => { await controller!.forkTurnForTab("tab-a", anchor("turn-2")); await flushPromises(); });
   ok(created.length === 1, "the first fork creates one child");
   ok(notices().some((text) => text.includes("child-1")), "a child whose tab could not open is recovered by name");
-  ok(controller!.state.forkChildren["turn-2"] === "child-1", "the created child is remembered for its turn");
+  ok(pending.get("turn-2")?.sessionId === "child-1", "the host retains the completed operation until adoption");
 
   const beforeRepeat = notices().length;
-  await act(async () => { await controller!.forkTurnForTab("tab-a", "turn-2"); await flushPromises(); });
-  ok(created.length === 1, "forking the same turn again never creates a second child");
-  ok(controller!.state.forkChildren["turn-2"] === "child-1", "the remembered child survives the repeated fork");
+  await act(async () => { await controller!.forkTurnForTab("tab-a", anchor("turn-2")); await flushPromises(); });
+  ok(childSeq === 1, "retrying an unacknowledged operation never creates a second child");
+  ok(pending.get("turn-2")?.sessionId === "child-1", "the durable operation survives the repeated request");
   ok(notices().slice(beforeRepeat).some((text) => text.includes("child-1")), "the repeat reports the same child instead of creating another");
 
-  await act(async () => { await controller!.forkTurnForTab("tab-a", "turn-7"); await flushPromises(); });
-  ok(created.length === 2, "a fork of another turn still creates its own child");
-  ok(created[1].startsWith("turn-7:"), "the second creation names the new turn");
-  ok(controller!.state.forkChildren["turn-7"] === "child-2", "each turn keeps its own remembered child");
+  await act(async () => { await controller!.forkTurnForTab("tab-a", anchor("turn-7")); await flushPromises(); });
+  ok(childSeq === 2, "a fork of another turn creates its own child");
+  ok(pending.get("turn-7")?.sessionId === "child-2", "each anchor keeps its own durable operation");
 
-  // The memory is scoped to children that could not be opened: a fork whose
-  // child opened is adopted, and its turn stays free for a later fork.
+  // An opened child is acknowledged, and its turn stays free for a later
+  // intentional fork.
   attachFails = false;
-  await act(async () => { await controller!.forkTurnForTab("tab-a", "turn-9"); await flushPromises(); });
-  ok(created.length === 3, "an unrelated turn creates normally");
-  ok(controller!.state.forkChildren["turn-9"] === undefined, "a child that opened is not remembered as unopened");
+  await act(async () => { await controller!.forkTurnForTab("tab-a", anchor("turn-9")); await flushPromises(); });
+  ok(childSeq === 3, "an unrelated turn creates normally");
+  ok(pending.get("turn-9") === undefined, "adopting a child acknowledges and clears its operation");
 
-  // The memory belongs to one session: a session switch clears it.
-  controller!.newSession();
-  await waitFor("the new session resets the tab", () => controller?.state.forkChildren["turn-9"] === undefined);
-  ok(Object.keys(controller!.state.forkChildren).length === 0, "a new session forgets every child of the previous one");
+  await act(async () => { await controller!.forkTurnForTab("tab-a", anchor("turn-9")); await flushPromises(); });
+  ok(childSeq === 4, "a new click after acknowledgement creates a second intentional child");
+
 } finally {
   await act(async () => { root.unmount(); });
   dom.window.close();

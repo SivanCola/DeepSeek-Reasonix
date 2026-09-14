@@ -3,6 +3,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { useSessionUndo, type RewindResultView } from "../app-runtime/useSessionUndo";
+import type { ForkTargetView } from "../lib/forkTargets";
 import type { Item } from "../lib/useController";
 
 const dom = new JSDOM("<div id='root'></div>");
@@ -33,7 +34,7 @@ function Probe({ readOnly = false, hydrating = false }: { readOnly?: boolean; hy
         if (entry?.gate) return entry.gate.promise;
         return entry?.outcome ?? { ok: true };
       },
-      forkTurnForTab: async (tabId, turnId) => { calls.push(`fork:${tabId}:${turnId}`); return true; },
+      forkTurnForTab: async (tabId, target) => { calls.push(`fork:${tabId}:${target.turnId}`); return true; },
       refreshTabMetas: () => { calls.push("refresh-metas"); },
       undoRewindForTab: async () => { calls.push("undo"); return true; },
       sendToTab: async () => { calls.push("send"); },
@@ -104,9 +105,11 @@ try {
   assert.ok(calls.includes("detailed:A:0:conversation"), "allowed edit rewinds through the detailed backend");
   assert.ok(calls.includes("send"), "allowed edit resends the edited prompt after the conversation rewind");
 
+  const forkTarget: ForkTargetView = { sourceSessionId: "session-A", sessionGeneration: 1,
+    turnId: "turn-9", boundarySequence: 99, turnNumber: 9, status: "committed", available: true };
   const forkTurn = async () => {
     await act(async () => {
-      states.handleForkTurn("turn-9");
+      states.handleForkTurn(forkTarget);
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
   };

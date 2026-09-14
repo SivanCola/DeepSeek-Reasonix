@@ -27,17 +27,26 @@ const (
 	// so no boundary can be proven. Text matching, elapsed time, or a turn that
 	// merely looks finished must never substitute for one.
 	ForkHistoryUnverifiable ForkAvailability = "history_unverifiable"
+	// ForkStaleSource means the request no longer addresses the session boundary
+	// the caller displayed.
+	ForkStaleSource ForkAvailability = "stale_source"
+	// ForkUnsupported means this surface has no create-only session fork.
+	ForkUnsupported ForkAvailability = "unsupported"
 )
 
 // ForkTarget is one source turn a client may fork from. It is derived only from
 // committed events, so the same source yields the same targets whether it is
 // live in this process, owned by another process, or read cold from disk.
 type ForkTarget struct {
-	TurnID        string           `json:"turnId"`
-	TurnNumber    int              `json:"turnNumber"`
-	StartSequence uint64           `json:"startSequence"`
-	EndSequence   uint64           `json:"endSequence"`
-	Status        event.TurnStatus `json:"status"`
+	TurnID        string `json:"turnId"`
+	TurnNumber    int    `json:"turnNumber"`
+	StartSequence uint64 `json:"startSequence"`
+	EndSequence   uint64 `json:"endSequence"`
+	// BoundarySequence is the complete atomic commit boundary observed by the
+	// caller. CreateFork requires the same value so a delayed request cannot be
+	// reinterpreted against another projection.
+	BoundarySequence uint64           `json:"boundarySequence"`
+	Status           event.TurnStatus `json:"status"`
 	// MessageID is the stable transcript identity of this turn's final assistant
 	// reply, empty when the turn committed none.
 	MessageID string           `json:"messageId,omitempty"`
@@ -50,8 +59,19 @@ type ForkTarget struct {
 // records, which is what lets a surface say the boundary is unverifiable
 // instead of offering a cut it cannot prove.
 type ForkTargetSet struct {
+	Source     SessionRef   `json:"source"`
 	Targets    []ForkTarget `json:"targets"`
 	Verifiable bool         `json:"verifiable"`
+}
+
+func forkProjectionAvailability(projection Projection, boundary uint64) ForkAvailability {
+	if boundary == 0 || boundary != projection.CommittedSequence {
+		return ForkHistoryUnverifiable
+	}
+	if projection.TurnID != "" || len(projection.Interactions) != 0 || len(projection.ActiveTools) != 0 {
+		return ForkActiveAuthority
+	}
+	return ForkAvailable
 }
 
 // ForkTargets lists the source's turns in display order. The open turn is
@@ -63,11 +83,14 @@ func ForkTargets(projection Projection) ForkTargetSet {
 		target := ForkTarget{
 			TurnID: turn.TurnID, TurnNumber: index + 1,
 			StartSequence: turn.StartSequence, EndSequence: turn.EndSequence,
-			Status: turn.Status, MessageID: turn.MessageID,
-			Available: turn.BoundarySequence != 0,
+			BoundarySequence: turn.BoundarySequence,
+			Status:           turn.Status, MessageID: turn.MessageID,
+			Available: turn.Availability == ForkAvailable,
 		}
-		if !target.Available {
-			target.Reason = ForkTurnOpen
+		if !target.Available && turn.Availability != "" {
+			target.Reason = turn.Availability
+		} else if !target.Available {
+			target.Reason = ForkHistoryUnverifiable
 		}
 		targets = append(targets, target)
 	}
@@ -96,8 +119,12 @@ func ForkSequence(projection Projection, turnID string) (uint64, ForkAvailabilit
 		if turn.TurnID != turnID {
 			continue
 		}
-		if turn.BoundarySequence == 0 {
-			return 0, ForkTurnOpen, nil
+		if turn.Availability != ForkAvailable {
+			reason := turn.Availability
+			if reason == "" {
+				reason = ForkHistoryUnverifiable
+			}
+			return 0, reason, nil
 		}
 		return turn.BoundarySequence, ForkAvailable, nil
 	}
@@ -129,7 +156,9 @@ func (s *Service) ForkTargetSetFor(ctx context.Context, ref SessionRef) (ForkTar
 	if err != nil {
 		return ForkTargetSet{}, err
 	}
-	return ForkTargets(projection), nil
+	set := ForkTargets(projection)
+	set.Source = ref
+	return set, nil
 }
 
 // forkTurnProjection reads only the projection a fork resolves its cut from. A
@@ -161,13 +190,17 @@ func (e *ForkUnavailableError) Error() string {
 	return fmt.Sprintf("session: turn %q cannot start a fork (%s)", e.TurnID, e.Reason)
 }
 
-// ForkRequest identifies one create-a-child-session request. The cut is always
-// resolved by the host from persisted turn records: a client never supplies a
-// sequence, an array index, or a checkpoint number.
+// ForkRequest identifies one create-a-child-session request. The host resolves
+// the cut from persisted turn records and requires BoundarySequence to match
+// the atomic boundary the client observed. Array positions and checkpoint
+// numbers are never accepted as authority.
 type ForkRequest struct {
 	Source SessionRef
 	// TurnID is the stable identity of the completed turn to cut after.
 	TurnID string
+	// BoundarySequence is the exact atomic boundary the client observed for the
+	// turn. The host re-resolves it and refuses a stale or reinterpreted anchor.
+	BoundarySequence uint64
 	// ChildID is optional; the host mints one when empty.
 	ChildID string
 	// OperationID identifies this creation request. A retried submission with
@@ -206,6 +239,9 @@ func (s *Service) CreateFork(ctx context.Context, request ForkRequest) (ForkResu
 	}
 	if availability != ForkAvailable {
 		return ForkResult{}, &ForkUnavailableError{TurnID: request.TurnID, Reason: availability}
+	}
+	if request.BoundarySequence == 0 || request.BoundarySequence != sequence {
+		return ForkResult{}, &ForkUnavailableError{TurnID: request.TurnID, Reason: ForkStaleSource}
 	}
 	target, ok := forkTargetByID(projection, request.TurnID)
 	if !ok {

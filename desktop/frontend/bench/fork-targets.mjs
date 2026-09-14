@@ -105,8 +105,8 @@ try {
   assert.equal(calls.length, 2, "each click dispatches one create");
   assert.deepEqual(calls.map((call) => call.turnId), ["turn-2", "turn-2"], "the click carries the turn identity");
   assert.ok(calls.every((call) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(call.operationId)),
-    "every click mints a fresh operation id");
-  assert.notEqual(calls[0].operationId, calls[1].operationId, "the second click is a new operation, not a replay");
+    "each acknowledged host operation has an id");
+  assert.notEqual(calls[0].operationId, calls[1].operationId, "the second acknowledged click is a new operation, not a replay");
   assert.deepEqual(operations, calls.map((call) => call.operationId), "the dispatched operation ids are the rendered ones");
   report.clicks = calls;
 
@@ -116,8 +116,11 @@ try {
   await waitForLabel(page, "Branch into a new conversation");
   await entry(page).click();
   await page.waitForFunction(() => (document.querySelector("[data-fork-notice]")?.textContent ?? "").includes("mock-fork-turn-"), null, { timeout: 10_000 });
+  await entry(page).click();
+  await page.waitForFunction(() => window.forkFixture.calls().length === 2, null, { timeout: 10_000 });
   const notice = await page.locator("[data-fork-notice]").textContent();
   const failed = await page.evaluate(() => window.forkFixture.calls());
+  assert.equal(failed[1].operationId, failed[0].operationId, "an unacknowledged attach failure reuses the host operation");
   assert.ok(notice?.includes(failed[0].operationId), "the recovery notice names the child the failed attach produced");
   assert.match(notice ?? "", /could not open/, "the notice explains what happened to the child");
   assert.equal(await page.locator("[data-fork-notice]").count(), 1, "the failure is surfaced, never swallowed");

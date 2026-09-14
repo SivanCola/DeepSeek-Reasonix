@@ -2066,7 +2066,7 @@ export function reducer(s: State, a: Action): State {
     case "effort": return { ...s, effort: a.effort };
     case "jobs": return { ...s, jobs: a.jobs };
     case "checkpoints": return { ...s, checkpoints: a.checkpoints };
-    case "fork_targets": case "fork_creating": case "fork_child": return { ...s, ...reduceForkTurn(s, a) };
+    case "fork_targets": case "fork_creating": return { ...s, ...reduceForkTurn(s, a) };
     case "hydrate_start": return {
       ...s,
       hydrating: true,
@@ -2712,7 +2712,7 @@ export function useController() {
     } else {
       sessionLoadInFlight.current.delete(tabId);
     }
-
+    if (resetSurface) invalidateCheckpoints(tabId);
     const promise = (async () => {
       const cancelHydrateGeneration = options.cancelHydrateGeneration;
       if (cancelHydrateGeneration !== undefined && !cancelHydrateCurrent(tabId, cancelHydrateGeneration)) return;
@@ -2925,7 +2925,7 @@ export function useController() {
         sessionLoadInFlight.current.delete(tabId);
       }
     }
-  }, [bumpSessionLoadSeq, cancelHydrateCurrent, dispatchTo, loadMetaForTab, refreshBalanceForTab, refreshTurnBoundaries, sessionLoadCurrent, snapshotClient]);
+  }, [bumpSessionLoadSeq, cancelHydrateCurrent, dispatchTo, invalidateCheckpoints, loadMetaForTab, refreshBalanceForTab, refreshTurnBoundaries, sessionLoadCurrent, snapshotClient]);
 
   const resetTurnEventProjection = useCallback(async (tabId: string, replay: TurnEventReplayView): Promise<boolean> => {
     const state = statesRef.current.get(tabId);
@@ -4216,6 +4216,7 @@ export function useController() {
     const terminal = (outcome: SurfaceDataOutcome, error?: string): SurfaceDataCommit => ({ intent: navigationSeq, outcome, tabId: targetTabId, error });
     const existingState = statesRef.current.get(targetTabId);
     const sameSession = sameSessionHydrateIdentity({ sessionPath: path }, existingState?.meta); const placeholderItems = sameSessionPlaceholderItems({ sessionPath: path }, existingState);
+    if (!sameSession) invalidateCheckpoints(targetTabId);
     const seq = bumpSessionLoadSeq(targetTabId);
     beginResumeHistory();
     // Withholding readiness is what keeps a switch from submitting into the runtime it is leaving: the composer reopens once the reconcile confirms the new session.
@@ -4270,13 +4271,14 @@ export function useController() {
       return terminal("ready");
     })().catch(() => failSessionNavigation(navigationSeq, targetTabId));
     return { value: undefined, surfaceReady };
-  }, [activeTabId, beginActiveNavigation, bumpSessionLoadSeq, dispatchTo, ensureTranscriptSubscription, failSessionNavigation, navigationCompletionCurrent, reconcileSessionNavigationForTab, refreshTurnBoundaries, requireRegisteredNavigationIntent, sessionLoadCurrent, snapshotClient, snapshotNavigationSourceTab, waitForBackendActiveTab, waitForTabReady]);
+  }, [activeTabId, beginActiveNavigation, bumpSessionLoadSeq, dispatchTo, ensureTranscriptSubscription, failSessionNavigation, invalidateCheckpoints, navigationCompletionCurrent, reconcileSessionNavigationForTab, refreshTurnBoundaries, requireRegisteredNavigationIntent, sessionLoadCurrent, snapshotClient, snapshotNavigationSourceTab, waitForBackendActiveTab, waitForTabReady]);
 
   const openChannelSession = useCallback((path: string, tabId: string, navigationIntentSeq?: number): NavigationResult<void> | undefined => {
     if (!tabId) return;
     const navigationSeq = navigationIntentSeq ?? beginActiveNavigation();
     snapshotNavigationSourceTab(navigationSeq);
     const existingState = statesRef.current.get(tabId); const sameSession = sameSessionHydrateIdentity({ sessionPath: path }, existingState?.meta);
+    if (!sameSession) invalidateCheckpoints(tabId);
     const seq = bumpSessionLoadSeq(tabId);
     beginResumeHistory();
     // Same withholding as resumeSession: a channel switch must not submit into the runtime it is leaving.
@@ -4326,7 +4328,7 @@ export function useController() {
       return terminal("ready");
     })().catch(() => failSessionNavigation(navigationSeq, tabId));
     return { value: undefined, surfaceReady };
-  }, [beginActiveNavigation, bumpSessionLoadSeq, dispatchTo, ensureTranscriptSubscription, failSessionNavigation, isNavigationIntentCurrent, navigationCompletionCurrent, reconcileSessionNavigationForTab, refreshTurnBoundaries, requireRegisteredNavigationIntent, sessionLoadCurrent, snapshotClient, snapshotNavigationSourceTab, waitForTabReady]);
+  }, [beginActiveNavigation, bumpSessionLoadSeq, dispatchTo, ensureTranscriptSubscription, failSessionNavigation, invalidateCheckpoints, isNavigationIntentCurrent, navigationCompletionCurrent, reconcileSessionNavigationForTab, refreshTurnBoundaries, requireRegisteredNavigationIntent, sessionLoadCurrent, snapshotClient, snapshotNavigationSourceTab, waitForTabReady]);
 
   const previewSession = useCallback(async (path: string): Promise<HistoryMessage[]> => asArray<HistoryMessage>(await app.PreviewSession(path).catch(() => [])), []);
   const deleteSession = useCallback((path: string) => app.DeleteSession(path).finally(() => invalidateCache()), []);
@@ -4517,9 +4519,8 @@ export function useController() {
     return (await rewindForTabDetailed(sourceTabId, turn, scope)).ok;
   }, [rewindForTabDetailed]);
 
-  const forkTurnForTab = useCallback((sourceTabId: string, turnId: string): Promise<boolean> =>
-    settleForkTurnForTab(app, sourceTabId, turnId, {
-      rememberedChild: statesRef.current.get(sourceTabId)?.forkChildren[turnId],
+  const forkTurnForTab = useCallback((sourceTabId: string, target: import("./forkTargets").ForkTargetView): Promise<boolean> =>
+    settleForkTurnForTab(app, sourceTabId, target, {
       dispatch: (action) => dispatchTo(sourceTabId, action),
       adopt: (tab) => adoptReturnedTab(tab, sourceTabId, activeNavigationSeqRef.current, "tab.fork-target"),
       sync: () => syncActiveTabFromBackend(true), waitForTabReady,

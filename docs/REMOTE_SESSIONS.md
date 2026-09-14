@@ -277,6 +277,10 @@ seconds of inactivity.
   running turn. Desktop uses this path when the server advertises
   `session-fork-targets-v1`; without that capability the tab reports the server
   as unsupported rather than falling back to `/fork`, which switches the parent.
+  Both requests carry an expected-session header. The read returns the
+  authoritative `source`; creation submits `sourceSessionId`, stable `turnId`,
+  the atomic commit's `boundarySequence`, and a required `operationId`.
+  Refusals use structured `code`, `reason`, and `message` JSON fields.
 
 The following screenshots show both ends of a handoff. First, the Reasonix
 window running locally on the remote host confirms taking over an idle

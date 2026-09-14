@@ -138,7 +138,7 @@ func writeForkChild(ctx context.Context, parentDir, parentID string, prefix []Co
 	if err != nil {
 		return Manifest{}, err
 	}
-	if projection.TurnID != "" || len(projection.Interactions) != 0 {
+	if forkProjectionAvailability(projection, throughSequence) == ForkActiveAuthority {
 		return Manifest{}, ErrForkActiveAuthority
 	}
 

@@ -492,7 +492,11 @@ func sessionDirectoryForPath(path string) string {
 	if path == "" {
 		return ""
 	}
-	return filepath.Dir(path)
+	clean := filepath.Clean(path)
+	if clean == "." || filepath.Base(clean) == clean {
+		return ""
+	}
+	return filepath.Dir(clean)
 }
 
 func (a *App) saveTabSessionMetaSnapshotAndIndex(snap tabSessionMetaSnapshot) error {

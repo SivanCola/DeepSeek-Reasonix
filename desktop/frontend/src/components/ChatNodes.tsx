@@ -42,7 +42,7 @@ export type ChatForkAction = {
   verifiable: boolean;
   /** Non-null replaces every entry's own state, e.g. a create request already in flight. */
   blocked: ForkBlockReason | null;
-  create: (turnId: string) => void;
+  create: (target: ForkTargetView) => void;
 };
 export type ChatActions = {
   openDetails: (key: string, trigger: HTMLElement) => void;
@@ -223,7 +223,6 @@ function ChatTurnTail({ node, source, actions, loader, tabId, hostId }: { node: 
   const target = hasAnswer ? fork?.targetFor(node.answerKey) : undefined;
   const reason = fork ? forkBlockReason({ target, loaded: fork.loaded, verifiable: fork.verifiable, blocked: fork.blocked, latest: node.latest }) : null;
   const reasonText = reason ? t(forkReasonKey(reason)) : "";
-  const turnId = reason ? undefined : target?.turnId;
   const create = fork?.create;
   return <div className="chat-turn-tail">
     {node.presentedFiles.length > 0 && <Suspense fallback={null}>
@@ -246,7 +245,7 @@ function ChatTurnTail({ node, source, actions, loader, tabId, hostId }: { node: 
         aria-disabled={reason ? true : undefined}
         aria-describedby={reason ? reasonId : undefined}
         data-unavailable={reason ? true : undefined}
-        onClick={reason || !turnId || !create ? undefined : () => create(turnId)}
+        onClick={reason || !target || !create ? undefined : () => create(target)}
       ><GitBranch aria-hidden="true" /></button>
     </Tooltip>}
     {reason && <span id={reasonId} className="sr-only">{reasonText}</span>}

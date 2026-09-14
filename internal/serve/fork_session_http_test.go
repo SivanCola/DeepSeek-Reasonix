@@ -47,9 +47,35 @@ func forkResponseBody(t *testing.T, resp *http.Response) string {
 	return string(body)
 }
 
-func getForkTargets(t *testing.T, baseURL string) forkTargetsResponse {
+func forkCreateJSON(ref session.SessionRef, target session.ForkTarget, operationID string) string {
+	boundary := target.BoundarySequence
+	if boundary == 0 {
+		boundary = 1
+	}
+	body, _ := json.Marshal(map[string]any{"sourceSessionId": ref.SessionID, "turnId": target.TurnID,
+		"boundarySequence": boundary, "operationId": operationID})
+	return string(body)
+}
+
+func postForkJSON(t *testing.T, baseURL string, ref session.SessionRef, body string) *http.Response {
 	t.Helper()
-	resp, err := http.Get(baseURL + "/fork-targets")
+	req, _ := http.NewRequest(http.MethodPost, baseURL+"/fork-session", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(expectedSessionIDHeader, ref.SessionID)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+func getForkTargets(t *testing.T, baseURL string, refs ...session.SessionRef) forkTargetsResponse {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, baseURL+"/fork-targets", nil)
+	if len(refs) > 0 {
+		req.Header.Set(expectedSessionIDHeader, refs[0].SessionID)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,11 +91,13 @@ func getForkTargets(t *testing.T, baseURL string) forkTargetsResponse {
 }
 
 func TestForkTargetsRouteEncodesEmptyTargetSetAsArray(t *testing.T) {
-	srv, _, _, _ := newExclusiveSessionServe(t)
+	srv, _, _, ref := newExclusiveSessionServe(t)
 	server := httptest.NewServer(srv.Handler())
 	defer server.Close()
 
-	resp, err := http.Get(server.URL + "/fork-targets")
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/fork-targets", nil)
+	req.Header.Set(expectedSessionIDHeader, ref.SessionID)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,9 +114,39 @@ func TestForkTargetsRouteEncodesEmptyTargetSetAsArray(t *testing.T) {
 	}
 	// A null array decodes into a nil slice, so the decoded value is the check
 	// that a client can always map or measure the list.
-	payload := getForkTargets(t, server.URL)
+	payload := getForkTargets(t, server.URL, ref)
 	if payload.Targets == nil || len(payload.Targets) != 0 || payload.Verifiable {
 		t.Fatalf("empty target set = %+v", payload)
+	}
+}
+
+func TestForkRoutesRequireAndEnforceSessionFence(t *testing.T) {
+	srv, _, service, ref := newExclusiveSessionServe(t)
+	appendForkTurn(t, service, ref, "turn-1", false)
+	server := httptest.NewServer(srv.Handler())
+	defer server.Close()
+
+	get, _ := http.NewRequest(http.MethodGet, server.URL+"/fork-targets", nil)
+	missing, err := http.DefaultClient.Do(get)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer missing.Body.Close()
+	var refusal forkErrorResponse
+	if err := json.NewDecoder(missing.Body).Decode(&refusal); err != nil || missing.StatusCode != http.StatusBadRequest ||
+		refusal.Code != "fork_unavailable" || refusal.Reason != session.ForkStaleSource {
+		t.Fatalf("missing fence status=%d refusal=%+v err=%v", missing.StatusCode, refusal, err)
+	}
+
+	target := getForkTargets(t, server.URL, ref).Targets[0]
+	staleRef := ref
+	staleRef.SessionID = "another-session"
+	stale := postForkJSON(t, server.URL, staleRef, forkCreateJSON(ref, target, "stale-fence"))
+	defer stale.Body.Close()
+	refusal = forkErrorResponse{}
+	if err := json.NewDecoder(stale.Body).Decode(&refusal); err != nil || stale.StatusCode != http.StatusConflict ||
+		refusal.Code != "fork_unavailable" || refusal.Reason != session.ForkStaleSource {
+		t.Fatalf("stale fence status=%d refusal=%+v err=%v", stale.StatusCode, refusal, err)
 	}
 }
 
@@ -101,7 +159,7 @@ func TestForkRoutesReportLegacySessionWithoutTurnRecords(t *testing.T) {
 	if payload.Targets == nil || len(payload.Targets) != 0 || payload.Verifiable {
 		t.Fatalf("legacy target set = %+v", payload)
 	}
-	resp := postRuntimeJSON(t, server.URL+"/fork-session", `{"turnId":"turn-1"}`)
+	resp := postRuntimeJSON(t, server.URL+"/fork-session", `{"sourceSessionId":"legacy","turnId":"turn-1","boundarySequence":1,"operationId":"legacy-op"}`)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotImplemented {
 		t.Fatalf("legacy fork session status = %d: %s", resp.StatusCode, forkResponseBody(t, resp))
@@ -115,7 +173,7 @@ func TestForkTargetsRouteListsCompletedAndOpenTurns(t *testing.T) {
 	server := httptest.NewServer(srv.Handler())
 	defer server.Close()
 
-	payload := getForkTargets(t, server.URL)
+	payload := getForkTargets(t, server.URL, ref)
 	if !payload.Verifiable || len(payload.Targets) != 2 {
 		t.Fatalf("target set = %+v", payload)
 	}
@@ -129,12 +187,12 @@ func TestForkTargetsRouteListsCompletedAndOpenTurns(t *testing.T) {
 }
 
 func TestForkSessionRouteRejectsMissingOrEmptyTurnID(t *testing.T) {
-	srv, _, _, _ := newExclusiveSessionServe(t)
+	srv, _, _, ref := newExclusiveSessionServe(t)
 	server := httptest.NewServer(srv.Handler())
 	defer server.Close()
 
 	for _, body := range []string{`{}`, `{"turnId":""}`, `{"turnId":"   "}`, `{`, `{"turnId":"t1","name":`} {
-		resp := postRuntimeJSON(t, server.URL+"/fork-session", body)
+		resp := postForkJSON(t, server.URL, ref, body)
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Fatalf("body %q status = %d: %s", body, resp.StatusCode, forkResponseBody(t, resp))
 		}
@@ -148,8 +206,9 @@ func TestForkSessionRouteCreatesChildWithoutSwitchingParent(t *testing.T) {
 	parentPath := ctrl.SessionPath()
 	server := httptest.NewServer(srv.Handler())
 	defer server.Close()
+	target := getForkTargets(t, server.URL, ref).Targets[0]
 
-	resp := postRuntimeJSON(t, server.URL+"/fork-session", `{"turnId":"turn-1"}`)
+	resp := postForkJSON(t, server.URL, ref, forkCreateJSON(ref, target, "create-op"))
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("fork session status = %d: %s", resp.StatusCode, forkResponseBody(t, resp))
 	}
@@ -183,7 +242,7 @@ func TestForkSessionRouteCreatesChildWithoutSwitchingParent(t *testing.T) {
 		t.Fatalf("child projection = %+v", child.Projection)
 	}
 
-	retry := postRuntimeJSON(t, server.URL+"/fork-session", `{"turnId":"turn-1"}`)
+	retry := postForkJSON(t, server.URL, ref, forkCreateJSON(ref, target, "create-op"))
 	defer retry.Body.Close()
 	if retry.StatusCode != http.StatusOK {
 		t.Fatalf("retry status = %d: %s", retry.StatusCode, forkResponseBody(t, retry))
@@ -203,15 +262,17 @@ func TestForkSessionRouteReportsUnavailableTurnReason(t *testing.T) {
 	appendForkTurn(t, service, ref, "turn-2", true)
 	server := httptest.NewServer(srv.Handler())
 	defer server.Close()
+	targets := getForkTargets(t, server.URL, ref)
 
-	resp := postRuntimeJSON(t, server.URL+"/fork-session", `{"turnId":"turn-2"}`)
+	resp := postForkJSON(t, server.URL, ref, forkCreateJSON(ref, targets.Targets[1], "open-op"))
 	defer resp.Body.Close()
 	body := forkResponseBody(t, resp)
 	if resp.StatusCode < 400 || resp.StatusCode >= 500 {
 		t.Fatalf("refused fork status = %d, want a 4xx: %s", resp.StatusCode, body)
 	}
-	if !strings.Contains(body, string(session.ForkTurnOpen)) {
-		t.Fatalf("refusal %q does not carry the reason %q", body, session.ForkTurnOpen)
+	var refusal forkErrorResponse
+	if err := json.Unmarshal([]byte(body), &refusal); err != nil || refusal.Code != "fork_unavailable" || refusal.Reason != session.ForkTurnOpen {
+		t.Fatalf("refusal %q does not carry structured reason %q: %+v err=%v", body, session.ForkTurnOpen, refusal, err)
 	}
 }
 

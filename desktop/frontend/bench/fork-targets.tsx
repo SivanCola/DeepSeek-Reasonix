@@ -6,7 +6,7 @@ import { createRoot } from "react-dom/client";
 import { Transcript } from "../src/components/Transcript";
 import { LocaleProvider, useI18n } from "../src/lib/i18n";
 import { app } from "../src/lib/bridge";
-import { forkCreateFailureText, type ForkTargetSetView } from "../src/lib/forkTargets";
+import { forkCreateFailureText, type ForkTargetSetView, type ForkTargetView } from "../src/lib/forkTargets";
 import type { Item } from "../src/lib/useController";
 import "../src/styles.css";
 
@@ -43,9 +43,10 @@ const SOURCES: Record<SourceName, { records: TurnRecord[]; verifiable: boolean; 
 // no boundary, and a recordless source proves none at all.
 function targetsOf(source: SourceName, records: TurnRecord[]): ForkTargetSetView {
   return {
+    sourceSessionId: `bench-${source}`, sessionGeneration: 1,
     targets: records.map((record, index) => record.open || !record.messageId
-      ? { turnId: record.turnId, turnNumber: index + 1, status: record.open ? "in_progress" : "committed", available: false, reason: "turn_open" }
-      : { turnId: record.turnId, turnNumber: index + 1, status: "committed", messageId: record.messageId, available: true }),
+      ? { sourceSessionId: `bench-${source}`, sessionGeneration: 1, turnId: record.turnId, boundarySequence: 0, turnNumber: index + 1, status: record.open ? "in_progress" : "committed", available: false, reason: "turn_open" }
+      : { sourceSessionId: `bench-${source}`, sessionGeneration: 1, turnId: record.turnId, boundarySequence: (index + 1) * 3, turnNumber: index + 1, status: "committed", messageId: record.messageId, available: true }),
     verifiable: SOURCES[source].verifiable,
   };
 }
@@ -77,15 +78,17 @@ function Fixture() {
   const { t, setPref } = useI18n();
   const { records, verifiable, running } = SOURCES[source];
 
-  // The same create-only binding the app shell clicks through: a fresh
-  // operation id per action, and every refusal surfaced as the user's notice.
-  const onFork = useCallback(async (turnId: string) => {
-    const operationId = crypto.randomUUID();
-    setCalls((current) => [...current, { turnId, operationId }]);
+  // The same create-only binding the app shell clicks through: the host returns
+  // an operation id, and every refusal is surfaced as the user's notice.
+  const onFork = useCallback(async (target: ForkTargetView) => {
     setNotice("");
     try {
-      const created = await app.CreateForkForTab("bench-fork-tab", turnId, operationId);
-      if (created?.opened) return;
+      const created = await app.CreateForkForTab("bench-fork-tab", target);
+      setCalls((current) => [...current, { turnId: target.turnId, operationId: created.operationId ?? "" }]);
+      if (created?.opened) {
+        if (created.operationId) await app.AcknowledgeForkOperation("bench-fork-tab", created.operationId);
+        return;
+      }
       setNotice(created?.sessionId
         ? t("chat.branchRecoverChild", { session: created.sessionId })
         : t("chat.branchFailedDetail", { detail: created?.error ?? "" }));
@@ -105,7 +108,7 @@ function Fixture() {
 
   return <div style={{ height: "40vh", display: "flex", flexDirection: "column", background: "var(--bg)" }}>
     <Transcript items={itemsOf(records)} geometrySessionKey={`fixture-${source}`} running={running} tabId="bench-fork-tab"
-      onPrompt={() => {}} onFork={(turnId) => void onFork(turnId)} forkTargets={targetsOf(source, records)} forkBlocked={null} />
+      onPrompt={() => {}} onFork={(target) => void onFork(target)} forkTargets={targetsOf(source, records)} forkBlocked={null} />
     {notice && <div role="status" data-fork-notice style={{ flex: "none", padding: "4px 16px", color: "var(--text)" }}>{notice}</div>}
     <div data-fork-calls hidden>{calls.map((call, index) => <span key={index} data-fork-call data-turn={call.turnId}>{call.operationId}</span>)}</div>
   </div>;

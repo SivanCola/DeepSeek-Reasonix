@@ -193,6 +193,32 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/fork_operations.go",
+      "name": "AcknowledgeForkOperation",
+      "owner": "App.AcknowledgeForkOperation",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        }
+      ],
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID",
+          "operationID"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.AcknowledgeForkOperation"
+      },
+      "sources": [
+        "desktop/fork_operations.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/theme_app.go",
       "name": "ActivateBaseStyle",
       "owner": "App.ActivateBaseStyle",
@@ -2632,10 +2658,8 @@
           "kind": "string"
         },
         {
-          "kind": "string"
-        },
-        {
-          "kind": "string"
+          "kind": "object",
+          "ref": "main.ForkAnchorView"
         }
       ],
       "result": {
@@ -2646,8 +2670,7 @@
       "scope": {
         "inputs": [
           "tabID",
-          "turnID",
-          "operationID"
+          "anchor"
         ],
         "kind": "owner-inputs",
         "resolver": "App.CreateForkForTab"
@@ -2666,10 +2689,8 @@
           "kind": "string"
         },
         {
-          "kind": "string"
-        },
-        {
-          "kind": "string"
+          "kind": "object",
+          "ref": "main.ForkAnchorView"
         }
       ],
       "result": {
@@ -2680,8 +2701,7 @@
       "scope": {
         "inputs": [
           "tabID",
-          "turnID",
-          "operationID"
+          "anchor"
         ],
         "kind": "owner-inputs",
         "resolver": "App.CreateForkRemoteTab"
@@ -24633,6 +24653,41 @@
         }
       ]
     },
+    "main.ForkAnchorView": {
+      "fields": [
+        {
+          "name": "sourceHostId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "sourceSessionId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "sessionGeneration",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "turnId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "boundarySequence",
+          "type": {
+            "kind": "integer"
+          }
+        }
+      ]
+    },
     "main.ForkCreationView": {
       "fields": [
         {
@@ -24650,9 +24705,30 @@
           }
         },
         {
+          "name": "operationId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
           "name": "opened",
           "type": {
             "kind": "boolean"
+          }
+        },
+        {
+          "name": "code",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "reason",
+          "optional": true,
+          "type": {
+            "kind": "string"
           }
         },
         {
@@ -24666,6 +24742,27 @@
     },
     "main.ForkTargetSetView": {
       "fields": [
+        {
+          "name": "sourceHostId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "sourceSessionId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "sessionGeneration",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
         {
           "name": "targets",
           "type": {
@@ -24687,9 +24784,34 @@
     "main.ForkTargetView": {
       "fields": [
         {
+          "name": "sourceHostId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "sourceSessionId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "sessionGeneration",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
           "name": "turnId",
           "type": {
             "kind": "string"
+          }
+        },
+        {
+          "name": "boundarySequence",
+          "type": {
+            "kind": "integer"
           }
         },
         {

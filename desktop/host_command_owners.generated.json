@@ -109,6 +109,21 @@
       ]
     }
   },
+  "AcknowledgeForkOperation": {
+    "domain": "desktop/fork_operations.go",
+    "owner": "App.AcknowledgeForkOperation",
+    "sources": [
+      "desktop/fork_operations.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.AcknowledgeForkOperation",
+      "inputs": [
+        "tabID",
+        "operationID"
+      ]
+    }
+  },
   "ActivateBaseStyle": {
     "domain": "desktop/theme_app.go",
     "owner": "App.ActivateBaseStyle",
@@ -1432,8 +1447,7 @@
       "resolver": "App.CreateForkForTab",
       "inputs": [
         "tabID",
-        "turnID",
-        "operationID"
+        "anchor"
       ]
     }
   },
@@ -1448,8 +1462,7 @@
       "resolver": "App.CreateForkRemoteTab",
       "inputs": [
         "tabID",
-        "turnID",
-        "operationID"
+        "anchor"
       ]
     }
   },

@@ -48,6 +48,10 @@ type TurnBoundary struct {
 	// A cut may only land here: a turn end and the state ending with it can share
 	// one commit, and a cut inside that commit inherits half an operation.
 	BoundarySequence uint64 `json:"boundarySequence"`
+	// Availability is fixed from the complete commit that closed the turn. It
+	// must not be recomputed from the latest projection: a later commit may
+	// resolve authority that the earlier fork prefix would still inherit.
+	Availability ForkAvailability `json:"availability"`
 	// MessageID is the stable transcript identity of the turn's final reply, empty
 	// when the turn committed none. Surfaces match turns to messages through this
 	// identity, never through an array position.
@@ -89,6 +93,7 @@ func applyProjectionCommit(projection *Projection, commit Commit) error {
 	if projection.ActiveTools == nil {
 		projection.ActiveTools = map[string]string{}
 	}
+	closedBefore := len(projection.Turns)
 	for _, ev := range commit.Events {
 		projection.CommittedSequence = ev.Sequence
 		var err error
@@ -141,6 +146,12 @@ func applyProjectionCommit(projection *Projection, commit Commit) error {
 		if err != nil {
 			return err
 		}
+	}
+	// turn/end can be followed by more events in the same atomic commit. Only
+	// after the whole commit is projected do we know whether its cut leaves a
+	// turn, interaction, or tool authority open.
+	for index := closedBefore; index < len(projection.Turns); index++ {
+		projection.Turns[index].Availability = forkProjectionAvailability(*projection, projection.Turns[index].BoundarySequence)
 	}
 	return nil
 }

@@ -16,7 +16,7 @@ import (
 // appended only for the serve that actually mounts the fork routes.
 const forkTestCapabilities = "execution-v2,session-history-v1,session-identity-v1,session-ownership-v1"
 
-const forkTestSessionPath = "/sessions/current.jsonl"
+const forkTestSessionID = "parent-1"
 
 // forkServeCall is one request the fork serve received. It keeps the fence
 // header the bridge attached, which is what proves a command was fenced to the
@@ -31,22 +31,23 @@ type forkServeCall struct {
 // the handshake and the event stream is recorded, so a binding that reached a
 // route it should not have is visible to the assertions.
 type forkServe struct {
-	t          *testing.T
-	token      string
-	caps       string
-	server     *httptest.Server
-	mu         sync.Mutex
-	calls      []forkServeCall
-	targets    string
-	forkBody   string
-	forkStatus int
+	t                *testing.T
+	token            string
+	caps             string
+	server           *httptest.Server
+	mu               sync.Mutex
+	calls            []forkServeCall
+	targets          string
+	forkBody         string
+	forkStatus       int
+	dropForkResponse bool
 }
 
 func newForkServe(t *testing.T, forkCapable bool) *forkServe {
 	t.Helper()
 	fs := &forkServe{
 		t: t, token: "s3cret", caps: forkTestCapabilities,
-		targets:  `{"targets":[],"verifiable":false}`,
+		targets:  `{"source":{"hostId":"box","sessionId":"parent-1"},"targets":[],"verifiable":false}`,
 		forkBody: `{"sessionId":"child-1","turnId":"turn-1","turnNumber":1}`,
 	}
 	if forkCapable {
@@ -66,12 +67,12 @@ func newForkServe(t *testing.T, forkCapable bool) *forkServe {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("POST /new", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("X-Reasonix-Session-Path", forkTestSessionPath)
+		w.Header().Set("X-Reasonix-Session-ID", forkTestSessionID)
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("GET /sessions", func(w http.ResponseWriter, _ *http.Request) {
 		writeTestJSON(w, []serveSessionEntry{
-			{Name: "current", Path: forkTestSessionPath, Current: true, SessionID: "parent-1"},
+			{Name: "current", Current: true, HostID: "box", SessionID: forkTestSessionID},
 		})
 	})
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, _ *http.Request) {
@@ -103,7 +104,16 @@ func newForkServe(t *testing.T, forkCapable bool) *forkServe {
 	mux.HandleFunc("POST /fork-session", func(w http.ResponseWriter, _ *http.Request) {
 		fs.mu.Lock()
 		status, payload := fs.forkStatus, fs.forkBody
+		drop := fs.dropForkResponse
+		fs.dropForkResponse = false
 		fs.mu.Unlock()
+		if drop {
+			if hijacker, ok := w.(http.Hijacker); ok {
+				connection, _, _ := hijacker.Hijack()
+				_ = connection.Close()
+				return
+			}
+		}
 		if status != 0 {
 			http.Error(w, payload, status)
 			return
@@ -135,7 +145,7 @@ func newForkServe(t *testing.T, forkCapable bool) *forkServe {
 func (fs *forkServe) record(r *http.Request) {
 	call := forkServeCall{
 		method: r.Method, path: r.URL.Path,
-		fence: r.Header.Get(expectedSessionPathHeader),
+		fence: r.Header.Get(expectedSessionIDHeader),
 	}
 	if raw, err := io.ReadAll(io.LimitReader(r.Body, 8<<10)); err == nil && len(raw) > 0 {
 		r.Body = io.NopCloser(bytes.NewReader(raw))
@@ -150,6 +160,13 @@ func (fs *forkServe) record(r *http.Request) {
 	fs.mu.Unlock()
 }
 
+func forkRemoteAnchor(a *App, tabID, turnID string, boundary uint64) ForkAnchorView {
+	a.remoteTabMu.Lock()
+	defer a.remoteTabMu.Unlock()
+	return ForkAnchorView{SourceHostID: "box", SourceSessionID: forkTestSessionID,
+		SessionGeneration: a.remoteTabs[tabID].gen, TurnID: turnID, BoundarySequence: boundary}
+}
+
 func (fs *forkServe) recorded() []forkServeCall {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
@@ -160,6 +177,7 @@ func (fs *forkServe) recorded() []forkServeCall {
 // which is when the handshake capabilities are recorded on the tab.
 func openForkTab(t *testing.T, fs *forkServe) (*App, TabMeta) {
 	t.Helper()
+	isolateDesktopUserDirs(t)
 	kernel := &fakeRemoteKernel{
 		statuses:    []RemoteConnectionStatusView{{HostID: "box", State: "connected"}},
 		ensureView:  RemoteServerView{HostID: "box", State: "ready", LocalURL: fs.server.URL},
@@ -293,7 +311,7 @@ func TestForkTargetsRemoteTabEmptyWithoutCapability(t *testing.T) {
 // targets and verifiability reach the view unchanged.
 func TestForkTargetsRemoteTabDecodesServeTargets(t *testing.T) {
 	fs := newForkServe(t, true)
-	fs.targets = `{"targets":[{"turnId":"turn-1","turnNumber":1,"status":"committed","messageId":"m1","available":true},` +
+	fs.targets = `{"source":{"hostId":"box","sessionId":"parent-1"},"targets":[{"turnId":"turn-1","boundarySequence":7,"turnNumber":1,"status":"committed","messageId":"m1","available":true},` +
 		`{"turnId":"turn-2","turnNumber":2,"status":"open","available":false,"reason":"turn_open"}],"verifiable":true}`
 	a, meta := openForkTab(t, fs)
 
@@ -310,6 +328,73 @@ func TestForkTargetsRemoteTabDecodesServeTargets(t *testing.T) {
 	if view.Targets[1].Available || view.Targets[1].Reason != "turn_open" {
 		t.Fatalf("second target = %+v, want the open-turn refusal", view.Targets[1])
 	}
+	fenced := false
+	for _, call := range fs.recorded() {
+		if call.path == "/fork-targets" && call.fence == forkTestSessionID {
+			fenced = true
+		}
+	}
+	if !fenced {
+		t.Fatal("fork target GET did not carry the expected session id")
+	}
+}
+
+func TestCreateForkRemoteTabRejectsStaleSourceBeforePosting(t *testing.T) {
+	fs := newForkServe(t, true)
+	a, meta := openForkTab(t, fs)
+	anchor := forkRemoteAnchor(a, meta.ID, "shared-turn", 9)
+	a.remoteTabMu.Lock()
+	a.remoteTabs[meta.ID].routing.currentPath = remoteSessionIDRoutePrefix + "source-b"
+	a.remoteTabMu.Unlock()
+	before := len(fs.recorded())
+	view, err := a.CreateForkRemoteTab(meta.ID, anchor)
+	if err != nil || view.Reason != "stale_source" {
+		t.Fatalf("stale remote create = %+v, err=%v", view, err)
+	}
+	if got := fs.recorded()[before:]; len(got) != 0 {
+		t.Fatalf("stale remote create reached Serve: %+v", got)
+	}
+}
+
+func TestCreateForkRemoteTabReusesOperationAfterLostResponse(t *testing.T) {
+	fs := newForkServe(t, true)
+	a, meta := openForkTab(t, fs)
+	anchor := forkRemoteAnchor(a, meta.ID, "turn-1", 9)
+	fs.mu.Lock()
+	fs.dropForkResponse = true
+	fs.mu.Unlock()
+	before := len(fs.recorded())
+	if _, err := a.CreateForkRemoteTab(meta.ID, anchor); err == nil {
+		t.Fatal("dropped response unexpectedly succeeded")
+	}
+	// Reconstruct Desktop and its remote tab before retrying. The journal is a
+	// host file, so neither the App instance nor the restored tab id is part of
+	// the idempotency key.
+	restarted := &App{remoteRuntime: &fakeRemoteKernel{
+		statuses:    []RemoteConnectionStatusView{{HostID: "box", State: "connected"}},
+		ensureView:  RemoteServerView{HostID: "box", State: "ready", LocalURL: fs.server.URL},
+		ensureToken: fs.token,
+	}}
+	cleanupRemoteTabPumps(t, restarted)
+	restartedMeta := openReadyRemoteTab(t, restarted, RemoteTabOpenOptions{NewSession: true})
+	restartedAnchor := forkRemoteAnchor(restarted, restartedMeta.ID, anchor.TurnID, anchor.BoundarySequence)
+	view, err := restarted.CreateForkRemoteTab(restartedMeta.ID, restartedAnchor)
+	if err != nil || view.SessionID != "child-1" || view.OperationID == "" {
+		t.Fatalf("retry = %+v, err=%v", view, err)
+	}
+	var operations []string
+	for _, call := range fs.recorded()[before:] {
+		if call.path != "/fork-session" {
+			continue
+		}
+		var body map[string]any
+		if json.Unmarshal([]byte(call.body), &body) == nil {
+			operations = append(operations, fmt.Sprint(body["operationId"]))
+		}
+	}
+	if len(operations) != 2 || operations[0] == "" || operations[0] != operations[1] {
+		t.Fatalf("operation ids across unknown-result retry = %v", operations)
+	}
 }
 
 // TestCreateForkRemoteTabRefusesUnsupportedServe pins that a serve without the
@@ -320,7 +405,7 @@ func TestCreateForkRemoteTabRefusesUnsupportedServe(t *testing.T) {
 	a, meta := openForkTab(t, fs)
 	before := len(fs.recorded())
 
-	view, err := a.CreateForkRemoteTab(meta.ID, "turn-1", "op-1")
+	view, err := a.CreateForkRemoteTab(meta.ID, forkRemoteAnchor(a, meta.ID, "turn-1", 7))
 	if err != nil {
 		t.Fatalf("CreateForkRemoteTab: %v", err)
 	}
@@ -339,7 +424,7 @@ func TestCreateForkRemoteTabRefusesUnsupportedServe(t *testing.T) {
 // programming error rather than a state a serve could refuse.
 func TestCreateForkRemoteTabRequiresTurnID(t *testing.T) {
 	a := &App{}
-	if _, err := a.CreateForkRemoteTab("missing", "  ", "op-1"); err == nil {
+	if _, err := a.CreateForkRemoteTab("missing", ForkAnchorView{TurnID: "  "}); err == nil {
 		t.Fatal("empty turn id was accepted")
 	}
 }
@@ -352,7 +437,7 @@ func TestCreateForkRemoteTabPostsFencedForkSession(t *testing.T) {
 	a, meta := openForkTab(t, fs)
 	before := len(fs.recorded())
 
-	view, err := a.CreateForkRemoteTab(meta.ID, "turn-4", "op-7")
+	view, err := a.CreateForkRemoteTab(meta.ID, forkRemoteAnchor(a, meta.ID, "turn-4", 9))
 	if err != nil {
 		t.Fatalf("CreateForkRemoteTab: %v", err)
 	}
@@ -369,15 +454,15 @@ func TestCreateForkRemoteTabPostsFencedForkSession(t *testing.T) {
 			if call.method != http.MethodPost {
 				t.Fatalf("fork-session method = %s", call.method)
 			}
-			var body map[string]string
+			var body map[string]any
 			if err := json.Unmarshal([]byte(call.body), &body); err != nil {
 				t.Fatalf("fork-session body %s: %v", call.body, err)
 			}
-			if body["turnId"] != "turn-4" || body["operationId"] != "op-7" || body["name"] != "" {
+			if body["turnId"] != "turn-4" || body["operationId"] == "" || body["sourceSessionId"] != forkTestSessionID || body["boundarySequence"] != float64(9) {
 				t.Fatalf("fork-session body = %s, want the turn and operation", call.body)
 			}
-			if call.fence != forkTestSessionPath {
-				t.Fatalf("fork-session fence = %q, want the parent session path %q", call.fence, forkTestSessionPath)
+			if call.fence != forkTestSessionID {
+				t.Fatalf("fork-session fence = %q, want the parent session id %q", call.fence, forkTestSessionID)
 			}
 		case "/fork", "/new", "/resume", "/clear":
 			t.Fatalf("create fork reached the session-switching route %s", call.path)
@@ -390,7 +475,7 @@ func TestCreateForkRemoteTabPostsFencedForkSession(t *testing.T) {
 	tab := a.remoteTabs[meta.ID]
 	path, state := tab.routing.currentPath, tab.state
 	a.remoteTabMu.Unlock()
-	if path != forkTestSessionPath || state != "ready" {
+	if path != remoteSessionIDRoutePrefix+forkTestSessionID || state != "ready" {
 		t.Fatalf("parent tab moved to path %q state %q, want its original session still ready", path, state)
 	}
 }
@@ -402,14 +487,18 @@ func TestCreateForkRemoteTabSurfacesRefusalReason(t *testing.T) {
 	a, meta := openForkTab(t, fs)
 	const reason = `session: turn "turn-2" cannot start a fork (turn_open)`
 	fs.mu.Lock()
-	fs.forkStatus, fs.forkBody = http.StatusConflict, reason
+	fs.forkStatus, fs.forkBody = http.StatusConflict, `{"code":"fork_unavailable","reason":"turn_open","message":"`+strings.ReplaceAll(reason, `"`, `\"`)+`"}`
 	fs.mu.Unlock()
 
-	view, err := a.CreateForkRemoteTab(meta.ID, "turn-2", "op-2")
+	view, err := a.CreateForkRemoteTab(meta.ID, forkRemoteAnchor(a, meta.ID, "turn-2", 9))
 	if err != nil {
 		t.Fatalf("CreateForkRemoteTab: %v", err)
 	}
 	if view.Opened || view.Error != reason {
 		t.Fatalf("view = %+v, want the refusal %q with nothing opened", view, reason)
+	}
+	journal, loadErr := loadForkOperations(forkOperationsPath())
+	if loadErr != nil || len(journal.Operations) != 0 {
+		t.Fatalf("explicit remote refusal journal = %+v, err=%v", journal, loadErr)
 	}
 }

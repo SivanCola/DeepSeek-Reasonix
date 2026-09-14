@@ -67,6 +67,14 @@
     },
     {
       "kind": "command",
+      "name": "AcknowledgeForkOperation",
+      "detail": "(tabID string, operationID string) error",
+      "location": "desktop/fork_operations.go:128",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
       "name": "ActivateBaseStyle",
       "detail": "(style string) error",
       "location": "desktop/theme_app.go:273",
@@ -788,16 +796,16 @@
     {
       "kind": "command",
       "name": "CreateForkForTab",
-      "detail": "(tabID string, turnID string, operationID string) (ForkCreationView, error)",
-      "location": "desktop/fork_targets.go:93",
+      "detail": "(tabID string, anchor ForkAnchorView) (ForkCreationView, error)",
+      "location": "desktop/fork_targets.go:118",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
     {
       "kind": "command",
       "name": "CreateForkRemoteTab",
-      "detail": "(tabID string, turnID string, operationID string) (ForkCreationView, error)",
-      "location": "desktop/remote_fork_targets.go:68",
+      "detail": "(tabID string, anchor ForkAnchorView) (ForkCreationView, error)",
+      "location": "desktop/remote_fork_targets.go:86",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1213,7 +1221,7 @@
       "kind": "command",
       "name": "ForkTargetsForTab",
       "detail": "(tabID string) (ForkTargetSetView, error)",
-      "location": "desktop/fork_targets.go:59",
+      "location": "desktop/fork_targets.go:72",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1221,7 +1229,7 @@
       "kind": "command",
       "name": "ForkTargetsRemoteTab",
       "detail": "(tabID string) (ForkTargetSetView, error)",
-      "location": "desktop/remote_fork_targets.go:43",
+      "location": "desktop/remote_fork_targets.go:24",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1317,7 +1325,7 @@
       "kind": "command",
       "name": "GetProjectTreeSnapshot",
       "detail": "() ProjectTreeSnapshot",
-      "location": "desktop/session_catalog.go:570",
+      "location": "desktop/session_catalog.go:574",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -5325,6 +5333,13 @@
       "kind": "persistence",
       "name": "downloaded.json",
       "location": "desktop/updater.go:541",
+      "class": "keep-business",
+      "owner": "format unchanged; read by both shells"
+    },
+    {
+      "kind": "persistence",
+      "name": "fork-operations.json",
+      "location": "desktop/fork_operations.go:37",
       "class": "keep-business",
       "owner": "format unchanged; read by both shells"
     },

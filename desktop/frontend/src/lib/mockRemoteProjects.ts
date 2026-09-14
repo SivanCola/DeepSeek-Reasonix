@@ -163,13 +163,14 @@ export function createMockRemoteProjects(tabs: MockRemoteTabCatalog): {
     async ForkTargetsRemoteTab(tabId) {
       if (!tabId) return { targets: [], verifiable: false };
       return {
-        targets: [{ turnId: `${tabId}:turn-1`, turnNumber: 1, status: "committed", available: true }],
+        sourceSessionId: tabId, sessionGeneration: 1,
+        targets: [{ sourceSessionId: tabId, sessionGeneration: 1, turnId: `${tabId}:turn-1`, boundarySequence: 3, turnNumber: 1, status: "committed", available: true }],
         verifiable: true,
       };
     },
-    async CreateForkRemoteTab(tabId, turnID) {
-      if (!tabId || !turnID) return { opened: false };
-      return { sessionId: `mock-remote-fork-${turnID}`, opened: true };
+    async CreateForkRemoteTab(tabId, anchor) {
+      if (!tabId || !anchor.turnId) return { opened: false };
+      return { sessionId: `mock-remote-fork-${anchor.turnId}`, operationId: crypto.randomUUID(), opened: true };
     },
     async SummarizeRemoteTab() {},
     async ForgetRemoteTab() {},

@@ -1,13 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
-	"path/filepath"
 	"testing"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/session"
@@ -17,15 +15,16 @@ import (
 // forkTargetsController and records the creation request it received.
 type forkTargetsStubController struct {
 	*tabScopedActionController
-	running    bool
-	set        session.ForkTargetSet
-	setErr     error
-	childID    string
-	createErr  error
-	createTurn string
-	createName string
-	createOp   string
-	creates    int
+	running        bool
+	set            session.ForkTargetSet
+	setErr         error
+	childID        string
+	createErr      error
+	createTurn     string
+	createBoundary uint64
+	createName     string
+	createOp       string
+	creates        int
 }
 
 // RuntimeStatus reports a turn in flight when running is set, so a scenario can
@@ -41,10 +40,28 @@ func (c *forkTargetsStubController) ForkTargets() (session.ForkTargetSet, error)
 	return c.set, c.setErr
 }
 
-func (c *forkTargetsStubController) CreateForkSession(turnID, name, operationID string) (string, error) {
+func (c *forkTargetsStubController) CreateForkSession(request session.ForkRequest, name string) (string, error) {
 	c.creates++
-	c.createTurn, c.createName, c.createOp = turnID, name, operationID
+	c.createTurn, c.createBoundary, c.createName, c.createOp = request.TurnID, request.BoundarySequence, name, request.OperationID
 	return c.childID, c.createErr
+}
+
+func (c *forkTargetsStubController) UsesExclusiveSession() bool { return true }
+func (c *forkTargetsStubController) SessionRef() (session.SessionRef, bool) {
+	return session.SessionRef{HostID: "host-1", SessionID: "source-1"}, true
+}
+func (c *forkTargetsStubController) SessionService() *session.Service { return nil }
+func (c *forkTargetsStubController) BindFreshSession(context.Context, string) (session.SessionRef, error) {
+	return session.SessionRef{}, errors.New("not implemented")
+}
+func (c *forkTargetsStubController) OpenSession(context.Context, session.SessionRef) (session.SessionRef, error) {
+	return session.SessionRef{}, errors.New("not implemented")
+}
+func (c *forkTargetsStubController) ContinueLegacySession(context.Context, string, string) (session.SessionRef, error) {
+	return session.SessionRef{}, errors.New("not implemented")
+}
+func (c *forkTargetsStubController) ContinuePrototypeSession(context.Context, string) (session.SessionRef, error) {
+	return session.SessionRef{}, errors.New("not implemented")
 }
 
 // assertEmptyForkTargets checks the shared empty result: no error, a non-nil
@@ -88,6 +105,23 @@ func TestForkTargetsForTabReturnsEmptyNonNilTargets(t *testing.T) {
 	assertEmptyForkTargets(t, "active tab", active, activeErr)
 }
 
+func TestForkedSessionLocatorRejectsCatalogPseudoPaths(t *testing.T) {
+	source := &WorkspaceTab{ID: "source"}
+	for _, path := range []string{"", ".", "bare-session-id"} {
+		if _, err := normalizeForkedSessionLocator(source, forkedSessionLocator{SessionPath: path}); err == nil {
+			t.Fatalf("session path %q was accepted", path)
+		}
+	}
+	if got, err := normalizeForkedSessionLocator(source, forkedSessionLocator{SessionID: "child-session"}); err != nil || got.SessionID != "child-session" {
+		t.Fatalf("canonical session id = %+v, err=%v", got, err)
+	}
+	for _, path := range []string{"", ".", "child-session"} {
+		if got := sessionDirectoryForPath(path); got != "" {
+			t.Fatalf("sessionDirectoryForPath(%q) = %q, want no catalog target", path, got)
+		}
+	}
+}
+
 func TestForkTargetsForTabMapsTargetsForReadOnlyTab(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
@@ -96,8 +130,9 @@ func TestForkTargetsForTabMapsTargetsForReadOnlyTab(t *testing.T) {
 		// A read-only channel tab whose turn is running still lists targets.
 		running: true,
 		set: session.ForkTargetSet{
+			Source: session.SessionRef{HostID: "host-1", SessionID: "source-1"},
 			Targets: []session.ForkTarget{
-				{TurnID: "turn-1", TurnNumber: 1, Status: event.TurnCompleted, MessageID: "msg-1", Available: true},
+				{TurnID: "turn-1", BoundarySequence: 7, TurnNumber: 1, Status: event.TurnCompleted, MessageID: "msg-1", Available: true},
 				{TurnID: "turn-2", TurnNumber: 2, Status: event.TurnInProgress, Reason: session.ForkTurnOpen},
 			},
 			Verifiable: true,
@@ -105,6 +140,8 @@ func TestForkTargetsForTabMapsTargetsForReadOnlyTab(t *testing.T) {
 	}
 	app := NewApp()
 	app.setTestCtrl(ctrl, "")
+	app.tabs["test"].SessionID = "source-1"
+	app.tabs["test"].Scope = "global"
 	app.tabs["test"].ReadOnly = true
 
 	view, err := app.ForkTargetsForTab("test")
@@ -115,8 +152,8 @@ func TestForkTargetsForTabMapsTargetsForReadOnlyTab(t *testing.T) {
 		t.Fatal("Verifiable = false, want the controller's value")
 	}
 	want := []ForkTargetView{
-		{TurnID: "turn-1", TurnNumber: 1, Status: string(event.TurnCompleted), MessageID: "msg-1", Available: true},
-		{TurnID: "turn-2", TurnNumber: 2, Status: string(event.TurnInProgress), Reason: string(session.ForkTurnOpen)},
+		{SourceHostID: "host-1", SourceSessionID: "source-1", TurnID: "turn-1", BoundarySequence: 7, TurnNumber: 1, Status: string(event.TurnCompleted), MessageID: "msg-1", Available: true},
+		{SourceHostID: "host-1", SourceSessionID: "source-1", TurnID: "turn-2", TurnNumber: 2, Status: string(event.TurnInProgress), Reason: string(session.ForkTurnOpen)},
 	}
 	if len(view.Targets) != len(want) {
 		t.Fatalf("targets = %+v, want %+v", view.Targets, want)
@@ -160,36 +197,38 @@ func TestForkTargetsForTabReturnsControllerError(t *testing.T) {
 func TestCreateForkForTabOpensChildInNewTab(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
-	childPath := filepath.Join(config.SessionDir(), "created-fork.jsonl")
+	childID := "created-fork"
 	ctrl := &forkTargetsStubController{
 		tabScopedActionController: newTabScopedActionController(),
 		// Creating a child neither stops the running turn nor takes a rotation gate.
 		running: true,
-		childID: childPath,
+		childID: childID,
 	}
 	app := NewApp()
 	app.setTestCtrl(ctrl, "")
+	app.tabs["test"].SessionID = "source-1"
+	app.tabs["test"].Scope = "global"
 	app.tabs["test"].TopicTitle = "Source topic"
 	// A read-only channel tab is a legitimate fork source: the child is written
 	// from the source, never into it.
 	app.tabs["test"].ReadOnly = true
 
-	view, err := app.CreateForkForTab("test", "turn-7", "op-1")
+	view, err := app.CreateForkForTab("test", ForkAnchorView{SourceHostID: "host-1", SourceSessionID: "source-1", TurnID: "turn-7", BoundarySequence: 9})
 	if err != nil {
 		t.Fatalf("CreateForkForTab: %v", err)
 	}
 	if !view.Opened || view.Error != "" {
 		t.Fatalf("view = %+v, want an opened tab without an error", view)
 	}
-	if view.SessionID != childPath {
-		t.Fatalf("sessionId = %q, want %q", view.SessionID, childPath)
+	if view.SessionID != childID {
+		t.Fatalf("sessionId = %q, want %q", view.SessionID, childID)
 	}
 	if view.TabID == "" || view.TabID == "test" {
 		t.Fatalf("tabId = %q, want a fresh tab", view.TabID)
 	}
-	if ctrl.createTurn != "turn-7" || ctrl.createName != "" || ctrl.createOp != "op-1" {
-		t.Fatalf("create request = (%q, %q, %q), want (turn-7, \"\", op-1)",
-			ctrl.createTurn, ctrl.createName, ctrl.createOp)
+	if ctrl.createTurn != "turn-7" || ctrl.createBoundary != 9 || ctrl.createName != "" || ctrl.createOp == "" || view.OperationID != ctrl.createOp {
+		t.Fatalf("create request = (%q, %d, %q, %q), want the anchored turn and host operation",
+			ctrl.createTurn, ctrl.createBoundary, ctrl.createName, ctrl.createOp)
 	}
 	if app.tabs["test"] == nil || app.tabs["test"].Ctrl != ctrl {
 		t.Fatal("source tab lost its controller")
@@ -201,28 +240,23 @@ func TestCreateForkForTabOpensChildInNewTab(t *testing.T) {
 	if child == nil {
 		t.Fatalf("child tab %q is missing", view.TabID)
 	}
-	// The tab's controller build may adopt the fork file as an exclusive v3
-	// session, so its identity is compared through the branch meta the open path
-	// wrote for the child path.
-	meta, ok, metaErr := agent.LoadBranchMeta(childPath)
-	if metaErr != nil || !ok {
-		t.Fatalf("LoadBranchMeta(%q): ok=%v err=%v", childPath, ok, metaErr)
-	}
-	if child.TopicID == "" || child.TopicID != meta.TopicID {
-		t.Fatalf("child tab topic = %q, branch meta topic = %q", child.TopicID, meta.TopicID)
+	if child.TopicID == "" || child.SessionID != childID || child.SessionPath != "" {
+		t.Fatalf("child tab = %+v, want canonical session id %q", child, childID)
 	}
 }
 
 func TestCreateForkForTabKeepsChildWhenTabAttachFails(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
-	childPath := filepath.Join(config.SessionDir(), "orphan-fork.jsonl")
+	childID := "orphan-fork"
 	ctrl := &forkTargetsStubController{
 		tabScopedActionController: newTabScopedActionController(),
-		childID:                   childPath,
+		childID:                   childID,
 	}
 	app := NewApp()
 	app.setTestCtrl(ctrl, "")
+	app.tabs["test"].SessionID = "source-1"
+	app.tabs["test"].Scope = "global"
 	app.tabs["test"].TopicTitle = "Source topic"
 	t.Cleanup(func() { forkTabBeforePublishHookForTest.Store(nil) })
 	// Closing the source tab mid-flight makes the attach a no-op, which is the
@@ -238,7 +272,7 @@ func TestCreateForkForTabKeepsChildWhenTabAttachFails(t *testing.T) {
 	}
 	forkTabBeforePublishHookForTest.Store(&hook)
 
-	view, err := app.CreateForkForTab("test", "turn-7", "op-1")
+	view, err := app.CreateForkForTab("test", ForkAnchorView{SourceHostID: "host-1", SourceSessionID: "source-1", TurnID: "turn-7", BoundarySequence: 9})
 	if err != nil {
 		t.Fatalf("CreateForkForTab: %v", err)
 	}
@@ -248,8 +282,8 @@ func TestCreateForkForTabKeepsChildWhenTabAttachFails(t *testing.T) {
 	if view.TabID != "" {
 		t.Fatalf("tabId = %q, want empty", view.TabID)
 	}
-	if view.SessionID != childPath {
-		t.Fatalf("sessionId = %q, want the created child %q", view.SessionID, childPath)
+	if view.SessionID != childID {
+		t.Fatalf("sessionId = %q, want the created child %q", view.SessionID, childID)
 	}
 	if view.Error == "" {
 		t.Fatal("error is empty; the caller cannot offer a recovery entry")
@@ -257,8 +291,8 @@ func TestCreateForkForTabKeepsChildWhenTabAttachFails(t *testing.T) {
 	if ctrl.creates != 1 {
 		t.Fatalf("creates = %d, want exactly one child", ctrl.creates)
 	}
-	if ctrl.createOp != "op-1" {
-		t.Fatalf("operationId = %q, want op-1 so a retry addresses the same child", ctrl.createOp)
+	if ctrl.createOp == "" || view.OperationID != ctrl.createOp {
+		t.Fatalf("operationId = %q view=%q, want one host-owned id", ctrl.createOp, view.OperationID)
 	}
 }
 
@@ -271,8 +305,10 @@ func TestCreateForkForTabReturnsCreateFailure(t *testing.T) {
 	}
 	app := NewApp()
 	app.setTestCtrl(ctrl, "")
+	app.tabs["test"].SessionID = "source-1"
+	app.tabs["test"].Scope = "global"
 
-	view, err := app.CreateForkForTab("test", "turn-7", "op-1")
+	view, err := app.CreateForkForTab("test", ForkAnchorView{SourceHostID: "host-1", SourceSessionID: "source-1", TurnID: "turn-7", BoundarySequence: 9})
 	if err == nil {
 		t.Fatal("CreateForkForTab: err = nil, want the controller's failure")
 	}
@@ -281,5 +317,106 @@ func TestCreateForkForTabReturnsCreateFailure(t *testing.T) {
 	}
 	if len(app.tabs) != 1 || app.tabs["test"] == nil || app.activeTabID != "test" {
 		t.Fatalf("tabs = %d, active = %q, want only the unchanged source tab", len(app.tabs), app.activeTabID)
+	}
+	journal, loadErr := loadForkOperations(forkOperationsPath())
+	if loadErr != nil || len(journal.Operations) != 1 || journal.Operations[0].State != "pending" {
+		t.Fatalf("uncertain failure journal = %+v, err=%v", journal, loadErr)
+	}
+}
+
+func TestCreateForkForTabDiscardsExplicitRefusal(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	ctrl := &forkTargetsStubController{tabScopedActionController: newTabScopedActionController(),
+		createErr: &session.ForkUnavailableError{TurnID: "turn-7", Reason: session.ForkActiveAuthority}}
+	app := NewApp()
+	app.setTestCtrl(ctrl, "")
+	app.tabs["test"].SessionID = "source-1"
+	view, err := app.CreateForkForTab("test", ForkAnchorView{SourceHostID: "host-1", SourceSessionID: "source-1",
+		TurnID: "turn-7", BoundarySequence: 9})
+	if err != nil || view.Reason != string(session.ForkActiveAuthority) {
+		t.Fatalf("explicit refusal = %+v, err=%v", view, err)
+	}
+	journal, loadErr := loadForkOperations(forkOperationsPath())
+	if loadErr != nil || len(journal.Operations) != 0 {
+		t.Fatalf("explicit refusal journal = %+v, err=%v", journal, loadErr)
+	}
+}
+
+func TestCreateForkForTabRejectsStaleSourceIdentity(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	ctrl := &forkTargetsStubController{tabScopedActionController: newTabScopedActionController(), childID: "must-not-exist"}
+	app := NewApp()
+	app.setTestCtrl(ctrl, "")
+	app.tabs["test"].Scope = "global"
+	app.tabs["test"].SessionID = "source-b"
+
+	view, err := app.CreateForkForTab("test", ForkAnchorView{SourceHostID: "host-1", SourceSessionID: "source-a",
+		TurnID: "shared-turn", BoundarySequence: 9})
+	if err != nil || view.Reason != string(session.ForkStaleSource) || ctrl.creates != 0 {
+		t.Fatalf("stale create = %+v, err=%v creates=%d", view, err, ctrl.creates)
+	}
+	journal, loadErr := loadForkOperations(forkOperationsPath())
+	if loadErr != nil || len(journal.Operations) != 0 {
+		t.Fatalf("stale create journal = %+v, err=%v", journal, loadErr)
+	}
+}
+
+func TestForkOperationJournalSurvivesRestartAndAcknowledgement(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	template := forkOperation{Surface: "remote", TabID: "tab", SourceHostID: "host", SourceSessionID: "source",
+		TurnID: "turn", BoundarySequence: 12}
+	first, err := (&App{}).beginForkOperation(template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (&App{}).AcknowledgeForkOperation("tab", first.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	second, err := (&App{}).beginForkOperation(template)
+	if err != nil || second.OperationID != first.OperationID || second.State != "pending" {
+		t.Fatalf("reloaded pending = %+v, err=%v; want %+v", second, err, first)
+	}
+	if err := (&App{}).completeForkOperation(first.OperationID, "child"); err != nil {
+		t.Fatal(err)
+	}
+	restartedTemplate := template
+	restartedTemplate.TabID = "tab-after-restart"
+	completed, err := (&App{}).beginForkOperation(restartedTemplate)
+	if err != nil || completed.OperationID != first.OperationID || completed.State != "completed" || completed.ChildSessionID != "child" {
+		t.Fatalf("reloaded completion = %+v, err=%v", completed, err)
+	}
+	if err := (&App{}).AcknowledgeForkOperation("tab-after-restart", first.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := (&App{}).beginForkOperation(template)
+	if err != nil || fresh.OperationID == first.OperationID {
+		t.Fatalf("fresh operation after acknowledgement = %+v, err=%v", fresh, err)
+	}
+}
+
+func TestCreateForkForTabReopensCompletedOperationAfterAttachFailure(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	ctrl := &forkTargetsStubController{tabScopedActionController: newTabScopedActionController(), childID: "recovered-child"}
+	app := NewApp()
+	app.setTestCtrl(ctrl, "")
+	app.tabs["test"].Scope = "global"
+	app.tabs["test"].SessionID = "source-1"
+	anchor := ForkAnchorView{SourceHostID: "host-1", SourceSessionID: "source-1", TurnID: "turn", BoundarySequence: 9}
+	t.Cleanup(func() { forkTabBeforePublishHookForTest.Store(nil) })
+	hook := func() {
+		app.mu.Lock()
+		app.tabs["test"] = &WorkspaceTab{ID: "test", Scope: "global", TopicTitle: "Source",
+			SessionID: "source-1", Ctrl: ctrl}
+		app.mu.Unlock()
+		forkTabBeforePublishHookForTest.Store(nil)
+	}
+	forkTabBeforePublishHookForTest.Store(&hook)
+	first, err := app.CreateForkForTab("test", anchor)
+	if err != nil || first.Opened || first.SessionID != "recovered-child" || ctrl.creates != 1 {
+		t.Fatalf("first attach = %+v err=%v creates=%d", first, err, ctrl.creates)
+	}
+	second, err := app.CreateForkForTab("test", anchor)
+	if err != nil || !second.Opened || second.SessionID != first.SessionID || second.OperationID != first.OperationID || ctrl.creates != 1 {
+		t.Fatalf("recovered attach = %+v err=%v creates=%d; first=%+v", second, err, ctrl.creates, first)
 	}
 }

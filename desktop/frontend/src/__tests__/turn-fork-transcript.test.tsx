@@ -14,9 +14,9 @@ const items: Item[] = [
     turnUsage: { totalTokens: 185_225, uncachedInputTokens: 26_278, cacheReadTokens: 155_520, outputTokens: 3_427, reasoningTokens: 1_909, routes: ["deepseek-official/deepseek-flash"] } },
 ];
 const target = (targets: ForkTargetSetView["targets"], verifiable = true): ForkTargetSetView => ({ targets, verifiable });
-const available = { turnId: "turn-42", turnNumber: 42, status: "committed", messageId: "a42", available: true };
-const calls: string[] = [];
-const props = { forkTargets: target([available]), onFork: (turnId: string) => { calls.push(turnId); } };
+const available = { sourceSessionId: "source-1", sessionGeneration: 4, turnId: "turn-42", boundarySequence: 99, turnNumber: 42, status: "committed", messageId: "a42", available: true };
+const calls: typeof available[] = [];
+const props = { forkTargets: target([available]), onFork: (forkTarget: typeof available) => { calls.push(forkTarget); } };
 try {
   await harness.render(items, props); await harness.settle();
   const branch = () => harness.container.querySelector<HTMLButtonElement>(".chat-actions button.chat-action-icon:not(.copybtn)")!;
@@ -28,7 +28,7 @@ try {
   await act(async () => { branch().focus(); await new Promise(resolve => setTimeout(resolve, 1)); });
   assert.equal(harness.dom.window.document.querySelector('[role="tooltip"]')?.textContent, branch().getAttribute("aria-label"), "keyboard focus exposes the Harness tooltip");
   await act(async () => branch().click());
-  assert.deepEqual(calls, ["turn-42"], "an enabled branch creates the child from the target's turn identity");
+  assert.deepEqual(calls, [available], "an enabled branch carries the complete source and boundary anchor");
   const statButtons = () => [...harness.container.querySelectorAll<HTMLButtonElement>(".chat-stat-trigger")];
   assert.equal(statButtons().length, 2, "completed answers expose Harness usage and time pills");
   assert.match(statButtons()[0].textContent ?? "", /185\.2K|185K/);
@@ -62,7 +62,7 @@ try {
   await refusal({ forkTargets: target([{ ...available, available: false, reason: "turn_open" }]) }, /not finished yet/, "open turn");
   // The boundary is proven here; it is the child it would carry that is unsafe,
   // so this refusal must not read as a missing boundary.
-  await refusal({ forkTargets: target([{ ...available, available: false, reason: "active_authority" }]) }, /question or approval was still open/, "unusable boundary");
+  await refusal({ forkTargets: target([{ ...available, available: false, reason: "active_authority" }]) }, /question or approval.*tool action.*still open/, "unusable boundary");
   await refusal({ forkTargets: target([{ ...available, turnId: "turn-41", messageId: "a41" }]) }, /not finished yet/, "answer without a persisted boundary");
   await refusal({ forkBlocked: "creating" }, /Creating the branch/, "request in flight");
   await refusal({ forkBlocked: "read_only" }, /does not allow creating/, "read-only surface");
@@ -71,7 +71,7 @@ try {
     calls.length = 0;
     await harness.render(items, { ...props, ...running }); await harness.settle();
     await act(async () => branch().click());
-    assert.deepEqual(calls, ["turn-42"], "the fork entry follows the persisted boundary, not the turn's runtime state");
+    assert.deepEqual(calls, [available], "the fork entry follows the persisted boundary, not the turn's runtime state");
   }
   console.log("chat branches: message identity, per-state reasons and persisted boundaries passed");
 } finally { await harness.unmount(); await harness.close(); }

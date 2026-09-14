@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 7;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:215db661df4967f1516b90e1ebd430d6c308b927653903cbd4263e0141b83aec";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:73e008e708d02ff7d2950319b985ef410258de124e37fadb4256d9b08e1aaec6";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -14,6 +14,7 @@ export const DESKTOP_COMMANDS = [
   "AcceptMemorySuggestionForTab",
   "AcceptSkillSuggestion",
   "AcceptSkillSuggestionForTab",
+  "AcknowledgeForkOperation",
   "ActivateBaseStyle",
   "ActivateThemePack",
   "ActivateTopic",
@@ -2054,20 +2055,38 @@ export interface FilePreview {
   err?: string;
 }
 
+export interface ForkAnchorView {
+  sourceHostId?: string;
+  sourceSessionId: string;
+  sessionGeneration: number;
+  turnId: string;
+  boundarySequence: number;
+}
+
 export interface ForkCreationView {
   sessionId?: string;
   tabId?: string;
+  operationId?: string;
   opened: boolean;
+  code?: string;
+  reason?: string;
   error?: string;
 }
 
 export interface ForkTargetSetView {
+  sourceHostId?: string;
+  sourceSessionId?: string;
+  sessionGeneration?: number;
   targets: ForkTargetView[];
   verifiable: boolean;
 }
 
 export interface ForkTargetView {
+  sourceHostId?: string;
+  sourceSessionId: string;
+  sessionGeneration: number;
   turnId: string;
+  boundarySequence: number;
   turnNumber: number;
   status: string;
   messageId?: string;
@@ -4728,6 +4747,7 @@ export interface GeneratedDesktopCommands {
   AcceptMemorySuggestionForTab(arg0: string, arg1: MemorySuggestion): Promise<string>;
   AcceptSkillSuggestion(arg0: SkillSuggestion): Promise<string>;
   AcceptSkillSuggestionForTab(arg0: string, arg1: SkillSuggestion): Promise<string>;
+  AcknowledgeForkOperation(arg0: string, arg1: string): Promise<void>;
   ActivateBaseStyle(arg0: string): Promise<void>;
   ActivateThemePack(arg0: string): Promise<void>;
   ActivateTopic(arg0: string, arg1: string, arg2: string, arg3: string): Promise<TabMeta>;
@@ -4818,8 +4838,8 @@ export interface GeneratedDesktopCommands {
   CopyThemePack(arg0: string, arg1: string, arg2: string): Promise<ThemePackView>;
   CreateBlankProject(arg0: string, arg1: string): Promise<string>;
   CreateDeliveryWorktree(arg0: string): Promise<IsolatedWorktreeOpenResult>;
-  CreateForkForTab(arg0: string, arg1: string, arg2: string): Promise<ForkCreationView>;
-  CreateForkRemoteTab(arg0: string, arg1: string, arg2: string): Promise<ForkCreationView>;
+  CreateForkForTab(arg0: string, arg1: ForkAnchorView): Promise<ForkCreationView>;
+  CreateForkRemoteTab(arg0: string, arg1: ForkAnchorView): Promise<ForkCreationView>;
   CreateIsolatedWorktree(arg0: string): Promise<IsolatedWorktreeOpenResult>;
   CreatePresentedBrowserPreviewForTab(arg0: string, arg1: string, arg2: string): Promise<string>;
   CreateSubagentProfile(arg0: SubagentProfileInput): Promise<string>;
