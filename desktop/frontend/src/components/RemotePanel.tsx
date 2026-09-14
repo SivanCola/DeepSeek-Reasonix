@@ -282,6 +282,11 @@ function RemoteFileView({ hostId, path, connected, dockGeneration, forceReadOnly
   identityRef.current = identity;
   useEffect(() => () => { operation.current++; }, []);
 
+  // The remote read entry point is host-scoped: it revalidates connectivity on
+  // the host the user authenticated, not the presented tool scope an entry was
+  // opened with. A presented remote file is therefore read with host
+  // credentials and shown read-only; parity with the local presented entry
+  // points needs a bridge entry point this change does not add.
   const load = useCallback(async () => {
     const generation = ++operation.current;
     const at = identity;
