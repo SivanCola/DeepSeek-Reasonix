@@ -293,7 +293,8 @@ jobs:
           bash scripts/verify-embedded-docs.sh "$DOCS_BUILD_VERSION" "$DOCS_SOURCE_REVISION"
 
   build:
-    name: build (${{ matrix.name }})
+    # Recovery reads this exact per-platform, per-invocation name in attempt history.
+    name: build (${{ matrix.name }}, ${{ inputs.signing_preflight && 'preflight' || 'release' }})
     needs: [resolve, cache-guard, signing-contract]
     if: ${{ always() && !cancelled() && needs.resolve.result == 'success' && needs.cache-guard.result == 'success' && inputs.preflight_artifact_prefix == '' }}
     permissions:
@@ -316,6 +317,16 @@ jobs:
       # Windows Authenticode signing engages only when the SignPath token is set, so
       # forks / token-less runs still build (unsigned), mirroring the APPLE_* gate.
       HAS_SIGNPATH: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+      SIGNPATH_SOURCE_SHA: ${{ needs.resolve.outputs.sha }}
+      SIGNPATH_CONTROL_SHA: ${{ github.workflow_sha }}
+      SIGNPATH_FINGERPRINT: ${{ needs.signing-contract.outputs.fingerprint }}
+      SIGNPATH_VERSION: ${{ needs.resolve.outputs.version }}
+      SIGNPATH_CHANNEL: ${{ needs.resolve.outputs.channel }}
+      SIGNPATH_MODE: ${{ inputs.signing_preflight && 'preflight' || 'release' }}
+      SIGNPATH_PLATFORM: ${{ matrix.name }}
+      SIGNPATH_ORGANIZATION_ID: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+      SIGNPATH_PROJECT: DeepSeek-Reasonix
+      SIGNPATH_POLICY: release-signing
     defaults:
       run:
         shell: bash # desktop-build.sh is bash; windows runners default to pwsh otherwise
@@ -431,6 +442,7 @@ jobs:
           sparse-checkout: |
             scripts/verify-windows-authenticode.ps1
             scripts/desktop-release-artifacts.mjs
+            scripts/signpath-checkpoint.mjs
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
@@ -477,18 +489,52 @@ jobs:
       # payload directory holds the flat Go executables, the Electron app/ tree
       # and signing-files.txt (the PE enumeration the SignPath artifact
       # configuration and the Authenticode verifier share).
-      - name: Upload unsigned Windows payload for SignPath
+      - name: Find Windows payload signing receipt
         if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true'
+        id: payload-checkpoint
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node release-control/scripts/signpath-checkpoint.mjs prepare desktop/build/windows/signing-payload payload-receipt windows-payload
+
+      - name: Download Windows payload signing receipt
+        if: runner.os == 'Windows' && steps.payload-checkpoint.outputs.exists == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ steps.payload-checkpoint.outputs.name }}
+          path: payload-receipt
+
+      # Reuse the original smoke-tested build, not newly rebuilt bytes (which
+      # can differ because of archive timestamps or non-deterministic tooling).
+      - name: Clear rebuilt Windows payload before recovery
+        if: runner.os == 'Windows' && steps.payload-checkpoint.outputs.exists == 'true'
+        run: rm -rf -- desktop/build/windows/signing-payload
+
+      - name: Restore original unsigned Windows payload
+        if: runner.os == 'Windows' && steps.payload-checkpoint.outputs.exists == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: unsigned-payload-${{ matrix.name }}
+          path: desktop/build/windows/signing-payload
+
+      - name: Validate Windows payload signing receipt
+        if: runner.os == 'Windows' && steps.payload-checkpoint.outputs.exists == 'true'
+        id: restore-payload
+        run: node release-control/scripts/signpath-checkpoint.mjs restore desktop/build/windows/signing-payload payload-receipt windows-payload
+
+      - name: Upload unsigned Windows payload for SignPath
+        if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && steps.payload-checkpoint.outputs.exists == 'false'
         id: unsigned-windows-payload
         uses: actions/upload-artifact@v7
         with:
           name: unsigned-payload-${{ matrix.name }}
           path: desktop/build/windows/signing-payload
           if-no-files-found: error
-          retention-days: 1
+          # No receipt is allowed here only when prior submission never ran.
+          overwrite: true
+          retention-days: 30
 
       - name: Submit Windows payload for Authenticode signing
-        if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true'
+        if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && steps.payload-checkpoint.outputs.exists == 'false'
         id: submit-windows-payload
         uses: signpath/github-action-submit-signing-request@v2
         with:
@@ -500,6 +546,21 @@ jobs:
           github-artifact-id: ${{ steps.unsigned-windows-payload.outputs.artifact-id }}
           github-token: ${{ github.token }}
           wait-for-completion: false
+
+      - name: Record Windows payload signing request
+        if: runner.os == 'Windows' && steps.submit-windows-payload.outputs.signing-request-id != ''
+        env:
+          SIGNPATH_REQUEST_ID: ${{ steps.submit-windows-payload.outputs.signing-request-id }}
+        run: node release-control/scripts/signpath-checkpoint.mjs record desktop/build/windows/signing-payload payload-receipt windows-payload
+
+      - name: Preserve Windows payload signing receipt
+        if: runner.os == 'Windows' && steps.submit-windows-payload.outputs.signing-request-id != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.payload-checkpoint.outputs.name }}
+          path: payload-receipt/request.json
+          if-no-files-found: error
+          retention-days: 30
 
       # The release certificate requires an approval for every request. Public
       # builds reach this step only after their GitHub environment has been
@@ -514,7 +575,7 @@ jobs:
           $waitForExternalApproval = "${{ inputs.production_signing_smoke }}" -eq "true"
           ./scripts/complete-signpath-request.ps1 `
             -OrganizationId "${{ secrets.SIGNPATH_ORGANIZATION_ID }}" `
-            -SigningRequestId "${{ steps.submit-windows-payload.outputs.signing-request-id }}" `
+            -SigningRequestId "${{ steps.restore-payload.outputs.request_id || steps.submit-windows-payload.outputs.signing-request-id }}" `
             -ExpectedSigningPolicySlug "release-signing" `
             -OutputArtifactDirectory "signed-payload" `
             -TimeoutSeconds 1800 `
@@ -540,18 +601,49 @@ jobs:
       # The second request signs the rebuilt NSIS container. Release signing
       # also verifies every payload signature (flat executables and the app/
       # tree) against a Windows trusted root.
-      - name: Upload unsigned installer for SignPath
+      - name: Find Windows installer signing receipt
         if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true'
+        id: installer-checkpoint
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node release-control/scripts/signpath-checkpoint.mjs prepare desktop/build/windows/installer-signing-bundle installer-receipt windows-installer-v2
+
+      - name: Download Windows installer signing receipt
+        if: runner.os == 'Windows' && steps.installer-checkpoint.outputs.exists == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ steps.installer-checkpoint.outputs.name }}
+          path: installer-receipt
+
+      - name: Clear rebuilt Windows installer before recovery
+        if: runner.os == 'Windows' && steps.installer-checkpoint.outputs.exists == 'true'
+        run: rm -rf -- desktop/build/windows/installer-signing-bundle
+
+      - name: Restore original unsigned Windows installer
+        if: runner.os == 'Windows' && steps.installer-checkpoint.outputs.exists == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: unsigned-${{ matrix.name }}
+          path: desktop/build/windows/installer-signing-bundle
+
+      - name: Validate Windows installer signing receipt
+        if: runner.os == 'Windows' && steps.installer-checkpoint.outputs.exists == 'true'
+        id: restore-installer
+        run: node release-control/scripts/signpath-checkpoint.mjs restore desktop/build/windows/installer-signing-bundle installer-receipt windows-installer-v2
+
+      - name: Upload unsigned installer for SignPath
+        if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && steps.installer-checkpoint.outputs.exists == 'false'
         id: unsigned-installer
         uses: actions/upload-artifact@v7
         with:
           name: unsigned-${{ matrix.name }}
           path: desktop/build/windows/installer-signing-bundle
           if-no-files-found: error
-          retention-days: 1
+          overwrite: true
+          retention-days: 30
 
       - name: Submit installer for Authenticode signing
-        if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true'
+        if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && steps.installer-checkpoint.outputs.exists == 'false'
         id: submit-windows-installer
         uses: signpath/github-action-submit-signing-request@v2
         with:
@@ -564,6 +656,21 @@ jobs:
           github-token: ${{ github.token }}
           wait-for-completion: false
 
+      - name: Record Windows installer signing request
+        if: runner.os == 'Windows' && steps.submit-windows-installer.outputs.signing-request-id != ''
+        env:
+          SIGNPATH_REQUEST_ID: ${{ steps.submit-windows-installer.outputs.signing-request-id }}
+        run: node release-control/scripts/signpath-checkpoint.mjs record desktop/build/windows/installer-signing-bundle installer-receipt windows-installer-v2
+
+      - name: Preserve Windows installer signing receipt
+        if: runner.os == 'Windows' && steps.submit-windows-installer.outputs.signing-request-id != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.installer-checkpoint.outputs.name }}
+          path: installer-receipt/request.json
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Approve and download signed Windows installer
         if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true'
         shell: pwsh
@@ -573,7 +680,7 @@ jobs:
           $waitForExternalApproval = "${{ inputs.production_signing_smoke }}" -eq "true"
           ./scripts/complete-signpath-request.ps1 `
             -OrganizationId "${{ secrets.SIGNPATH_ORGANIZATION_ID }}" `
-            -SigningRequestId "${{ steps.submit-windows-installer.outputs.signing-request-id }}" `
+            -SigningRequestId "${{ steps.restore-installer.outputs.request_id || steps.submit-windows-installer.outputs.signing-request-id }}" `
             -ExpectedSigningPolicySlug "release-signing" `
             -OutputArtifactDirectory "signed-installer" `
             -TimeoutSeconds 1800 `
