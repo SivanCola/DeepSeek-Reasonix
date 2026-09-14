@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -68,6 +69,22 @@ func TestChatFileReferenceResolvesWorkspaceRelativeAndAbsolute(t *testing.T) {
 	}
 }
 
+func TestChatFileReferencePreservesRawFilenameCharacters(t *testing.T) {
+	root := t.TempDir()
+	app := newChatReferenceApp(t, root)
+	writeChatReferenceFile(t, root, "out/raw%20name.txt", "percent")
+	if got := resolveOne(t, app, "out/raw%20name.txt"); got.Status != "resolved" || got.DisplayPath != "out/raw%20name.txt" {
+		t.Fatalf("literal percent path = %+v", got)
+	}
+	if runtime.GOOS == "windows" {
+		return
+	}
+	writeChatReferenceFile(t, root, "out/raw?query#fragment.txt", "punctuation")
+	if got := resolveOne(t, app, "out/raw?query#fragment.txt"); got.Status != "resolved" || got.DisplayPath != "out/raw?query#fragment.txt" {
+		t.Fatalf("literal query/fragment path = %+v", got)
+	}
+}
+
 func TestChatFileReferenceOffersSourceForTextMedia(t *testing.T) {
 	root := t.TempDir()
 	app := newChatReferenceApp(t, root)
@@ -76,31 +93,22 @@ func TestChatFileReferenceOffersSourceForTextMedia(t *testing.T) {
 	writeChatReferenceFile(t, root, "out/notes.md", "# notes")
 
 	svg := resolveOne(t, app, "out/diagram.svg")
-	if !hasChatReferenceAction(svg.Actions, "source") {
+	if !slices.Contains(svg.Actions, "source") {
 		t.Fatalf("SVG is a text format and must offer the source view: %v", svg.Actions)
 	}
 	png := resolveOne(t, app, "out/shot.png")
-	if hasChatReferenceAction(png.Actions, "source") {
+	if slices.Contains(png.Actions, "source") {
 		t.Fatalf("a raster image must not offer the source view: %v", png.Actions)
 	}
 	notes := resolveOne(t, app, "out/notes.md")
-	if !hasChatReferenceAction(notes.Actions, "source") || notes.Kind != "" {
+	if !slices.Contains(notes.Actions, "source") || notes.Kind != "" {
 		t.Fatalf("plain text resolve = kind %q actions %v", notes.Kind, notes.Actions)
 	}
 	for _, action := range []string{"preview", "reveal-tree", "copy-path", "save-copy", "open-native", "reveal-native"} {
-		if !hasChatReferenceAction(notes.Actions, action) {
+		if !slices.Contains(notes.Actions, action) {
 			t.Fatalf("plain text is missing %q: %v", action, notes.Actions)
 		}
 	}
-}
-
-func hasChatReferenceAction(actions []string, want string) bool {
-	for _, action := range actions {
-		if action == want {
-			return true
-		}
-	}
-	return false
 }
 
 func TestChatFileReferenceRejectsEscapeAndNonRegularFiles(t *testing.T) {

@@ -97,10 +97,9 @@ export function fileIdentity(path: string, flavor?: PathFlavor): string {
   // treated as an ordinary path.
   if (fromURL === undefined && /^file:/i.test(raw)) return "";
   const value = fromURL ?? raw;
-  // A relative path with no declared flavor defaults to the Windows separator
-  // rule: model output writes `src\app.ts` far more often than it names a POSIX
-  // file containing a literal backslash.
-  const resolved = flavor ?? declaredPathFlavor(value) ?? "windows";
+  // Keep an ambiguous relative path literal until the source host supplies its
+  // separator semantics, matching Harness' host-owned file identity boundary.
+  const resolved = flavor ?? declaredPathFlavor(value) ?? "posix";
   const unc = resolved === "windows" && isUncPath(value);
   const absolute = unc || (resolved === "windows" ? isWindowsDrivePath(value) : value.startsWith("/"));
 
@@ -134,7 +133,7 @@ export function fileIdentity(path: string, flavor?: PathFlavor): string {
 export function pathBasename(path: string, flavor?: PathFlavor): string {
   const value = fileURLToPath(path) ?? path.trim();
   if (!value) return "";
-  const resolved = flavor ?? declaredPathFlavor(value) ?? "windows";
+  const resolved = flavor ?? declaredPathFlavor(value) ?? "posix";
   const parts = splitSegments(value, resolved).filter(Boolean);
   return parts[parts.length - 1] ?? "";
 }

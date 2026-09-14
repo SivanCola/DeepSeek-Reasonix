@@ -10,7 +10,24 @@
  */
 export function looksLikeSvgDocument(value: string): boolean {
   const head = value.replace(/^﻿/, "").trimStart();
-  return /^(?:<\?xml[^>]*\?>\s*)?(?:<!--[\s\S]*?-->\s*)*<svg[\s/>]/i.test(head);
+  let offset = 0;
+  const skipWhitespace = () => {
+    while (offset < head.length && /\s/u.test(head[offset] ?? "")) offset += 1;
+  };
+  if (head.slice(0, 5).toLowerCase() === "<?xml") {
+    const end = head.indexOf("?>", 5);
+    if (end < 0) return false;
+    offset = end + 2;
+    skipWhitespace();
+  }
+  while (head.startsWith("<!--", offset)) {
+    const end = head.indexOf("-->", offset + 4);
+    if (end < 0) return false;
+    offset = end + 3;
+    skipWhitespace();
+  }
+  return head.slice(offset, offset + 4).toLowerCase() === "<svg"
+    && /[\s/>]/u.test(head[offset + 4] ?? "");
 }
 
 /** The picture's own ratio, so the block reserves space before the image loads. */

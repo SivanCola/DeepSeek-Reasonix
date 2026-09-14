@@ -40,3 +40,13 @@ func TestSanitizeMarkdownSVGStaysWellFormedForTheRenderer(t *testing.T) {
 		})
 	}
 }
+
+func TestSanitizeMarkdownSVGRejectsEscapedCSSReferences(t *testing.T) {
+	view := NewApp().SanitizeMarkdownSVG(`<svg><rect style="fill:u\72 l(https://example.invalid/pixel)"/></svg>`)
+	if !view.OK {
+		t.Fatalf("document should remain previewable: %+v", view)
+	}
+	if strings.Contains(view.SVG, "example.invalid") || strings.Contains(view.SVG, `\72`) {
+		t.Fatalf("escaped external reference survived sanitizing: %s", view.SVG)
+	}
+}

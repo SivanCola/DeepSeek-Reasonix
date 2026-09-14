@@ -8,10 +8,9 @@ import (
 	"strings"
 )
 
-// One parser for every local path the renderer may name: Markdown image
-// sources, chat file references, and their file:// URL spellings. Path
-// resolution follows the host that owns the file, so `filepath.IsAbs` — and
-// therefore the Windows drive/UNC rules — is deliberately the local OS's.
+// localPathSource parses Markdown image sources, whose relative path is URL
+// encoded by the Markdown pipeline. Chat references use localChatPathSource so
+// ordinary filesystem characters are never mistaken for URL syntax.
 func localPathSource(source string) (string, error) {
 	source = strings.TrimSpace(source)
 	if source == "" || strings.ContainsRune(source, 0) {
@@ -48,6 +47,21 @@ func localPathSource(source string) (string, error) {
 		return "", os.ErrInvalid
 	}
 	return filepath.FromSlash(path), nil
+}
+
+// localChatPathSource follows Harness' file-resource boundary: an ordinary
+// path reaches the owning host unchanged, while an explicit file URL is decoded
+// exactly once. In particular, %, ? and # are legal raw filename characters on
+// POSIX and must not select a different file.
+func localChatPathSource(source string) (string, error) {
+	source = strings.TrimSpace(source)
+	if source == "" || strings.ContainsRune(source, 0) {
+		return "", os.ErrInvalid
+	}
+	if strings.HasPrefix(strings.ToLower(source), "file:") {
+		return localPathSource(source)
+	}
+	return filepath.Clean(source), nil
 }
 
 // canonicalPathWithin resolves symlinks on both sides before comparing, so a

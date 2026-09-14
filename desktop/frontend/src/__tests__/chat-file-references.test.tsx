@@ -74,6 +74,10 @@ ok(linkifyLocalPaths("See https://x.test/a.png").every(segment => segment.path =
 // ── SVG recognition ─────────────────────────────────────────────────────────
 ok(looksLikeSvgDocument(`<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>`), "a bare svg root is recognised");
 ok(looksLikeSvgDocument(`<?xml version="1.0"?>\n<!-- c -->\n<svg/>`), "a prolog and comment are tolerated");
+const adversarialCommentPrefix = `<!--${"--><!--".repeat(2_000)}x`;
+const adversarialStarted = performance.now();
+ok(!looksLikeSvgDocument(adversarialCommentPrefix), "an unterminated adversarial comment is refused");
+ok(performance.now() - adversarialStarted < 100, "SVG prefix recognition stays linear");
 ok(!looksLikeSvgDocument("<html><body>x</body></html>"), "mixed HTML is not an SVG document");
 ok(!looksLikeSvgDocument("just text"), "ordinary text is not an SVG document");
 ok(svgAspectRatio(`<svg viewBox="0 0 200 100"></svg>`) === 2, "viewBox supplies the aspect ratio");

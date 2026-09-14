@@ -8,16 +8,8 @@ import (
 	"strings"
 )
 
-// SVG sanitizing for every surface that shows model-authored markup: remote
-// Markdown images and chat code blocks. The renderer only ever receives the
-// sanitized bytes as an <img> source, never as markup it injects into the app
-// DOM.
-//
-// The pass is an allowlist by exclusion: a strict XML parse that must see a
-// single `svg` root, with scripting, embedded documents, animation, external
-// references and event attributes dropped. Document-internal references
-// (`#id`, embedded raster data) survive so gradients, clip paths and text
-// keep working.
+// SVG sanitizing shared by Markdown images and chat blocks. A strict XML pass
+// drops executable or external content before bytes reach an image source.
 
 // MarkdownSVGView is the renderer-safe result of sanitizing a chat code block.
 // SVG is the sanitized markup; the caller turns it into an image source.
@@ -101,13 +93,7 @@ func sanitizeMarkdownSVG(body []byte, limits svgSanitizeLimits) ([]byte, bool) {
 
 	decoder := xml.NewDecoder(bytes.NewReader(trimmed))
 	decoder.Strict = true
-	var out bytes.Buffer
-	encoder := xml.NewEncoder(&out)
-	rootSeen := false
-	rootDepth := 0
-	skipDepth := 0
-	elements := 0
-
+	sanitizer := newSVGTokenSanitizer(limits)
 	for {
 		token, err := decoder.Token()
 		if errors.Is(err, io.EOF) {
@@ -116,118 +102,138 @@ func sanitizeMarkdownSVG(body []byte, limits svgSanitizeLimits) ([]byte, bool) {
 		if err != nil {
 			return nil, false
 		}
-		switch value := token.(type) {
-		case xml.StartElement:
-			// Every element counts, including one dropped with its subtree: the
-			// cost being bounded is parsing the document the model emitted.
-			elements++
-			if limits.maxElements > 0 && elements > limits.maxElements {
-				return nil, false
-			}
-			if skipDepth > 0 {
-				skipDepth++
-				continue
-			}
-			name := strings.ToLower(value.Name.Local)
-			if !rootSeen {
-				if name != "svg" || (value.Name.Space != "" && value.Name.Space != markdownSVGNamespace) {
-					return nil, false
-				}
-				rootSeen = true
-			} else if rootDepth == 0 {
-				return nil, false
-			}
-			if markdownSVGForbiddenElements[name] {
-				skipDepth = 1
-				continue
-			}
-			attrs := value.Attr[:0]
-			for _, attr := range value.Attr {
-				// The encoder writes the element's namespace itself, so an
-				// explicit declaration would come out twice and make the whole
-				// document a parse error for the renderer.
-				if isNamespaceDeclaration(attr.Name) {
-					continue
-				}
-				attrName := strings.ToLower(attr.Name.Local)
-				if strings.HasPrefix(attrName, "on") || attrName == "srcset" ||
-					(attr.Name.Space == "http://www.w3.org/XML/1998/namespace" && attrName == "base") {
-					continue
-				}
-				if attrName == "href" || attrName == "src" {
-					if !safeMarkdownSVGReference(attr.Value) {
-						continue
-					}
-				} else if !safeMarkdownSVGAttributeValue(attr.Value) {
-					continue
-				}
-				attrs = append(attrs, attr)
-			}
-			value.Attr = attrs
-			// The root always declares the SVG namespace: a source that omitted
-			// xmlns would otherwise not be parsed as SVG at all.
-			if rootDepth == 0 {
-				value.Name.Space = markdownSVGNamespace
-			} else if value.Name.Space == markdownSVGNamespace {
-				// Children inherit the root's default namespace; re-declaring it
-				// on every element is noise, not information.
-				value.Name.Space = ""
-			}
-			rootDepth++
-			if limits.maxDepth > 0 && rootDepth > limits.maxDepth {
-				return nil, false
-			}
-			if err := encoder.EncodeToken(value); err != nil {
-				return nil, false
-			}
-		case xml.EndElement:
-			if skipDepth > 0 {
-				skipDepth--
-				continue
-			}
-			if rootDepth <= 0 {
-				return nil, false
-			}
-			// The end tag must name the same element the start tag did: the
-			// encoder rejects a mismatch, so it follows the namespace rewrite
-			// applied to the start tag above.
-			if rootDepth == 1 {
-				value.Name.Space = markdownSVGNamespace
-			} else if value.Name.Space == markdownSVGNamespace {
-				value.Name.Space = ""
-			}
-			if err := encoder.EncodeToken(value); err != nil {
-				return nil, false
-			}
-			rootDepth--
-		case xml.CharData:
-			if skipDepth == 0 && (!rootSeen || rootDepth == 0) {
-				if len(bytes.TrimSpace(value)) != 0 {
-					return nil, false
-				}
-				continue
-			}
-			if skipDepth == 0 {
-				if err := encoder.EncodeToken(value); err != nil {
-					return nil, false
-				}
-			}
-		case xml.Comment:
-			// Comments are not needed for display and can hide suspicious payloads.
-		case xml.Directive, xml.ProcInst:
-			// Drop DTDs and processing instructions; SVG does not need them here.
-		default:
-			if skipDepth == 0 {
-				if err := encoder.EncodeToken(value); err != nil {
-					return nil, false
-				}
-			}
+		if !sanitizer.accept(token) {
+			return nil, false
 		}
 	}
-	if !rootSeen || rootDepth != 0 || skipDepth != 0 || encoder.Flush() != nil {
+	return sanitizer.finish()
+}
+
+type svgTokenSanitizer struct {
+	limits               svgSanitizeLimits
+	out                  bytes.Buffer
+	encoder              *xml.Encoder
+	rootSeen             bool
+	rootDepth, skipDepth int
+	elements             int
+}
+
+func newSVGTokenSanitizer(limits svgSanitizeLimits) *svgTokenSanitizer {
+	s := &svgTokenSanitizer{limits: limits}
+	s.encoder = xml.NewEncoder(&s.out)
+	return s
+}
+
+func (s *svgTokenSanitizer) accept(token xml.Token) bool {
+	switch value := token.(type) {
+	case xml.StartElement:
+		return s.start(value)
+	case xml.EndElement:
+		return s.end(value)
+	case xml.CharData:
+		return s.text(value)
+	case xml.Comment, xml.Directive, xml.ProcInst:
+		return true
+	default:
+		return s.skipDepth > 0 || s.encoder.EncodeToken(value) == nil
+	}
+}
+
+func (s *svgTokenSanitizer) start(value xml.StartElement) bool {
+	s.elements++
+	if s.limits.maxElements > 0 && s.elements > s.limits.maxElements {
+		return false
+	}
+	if s.skipDepth > 0 {
+		s.skipDepth++
+		return true
+	}
+	name := strings.ToLower(value.Name.Local)
+	if !s.acceptRoot(name, value.Name.Space) {
+		return false
+	}
+	if markdownSVGForbiddenElements[name] {
+		s.skipDepth = 1
+		return true
+	}
+	value.Attr = safeMarkdownSVGAttributes(value.Attr)
+	value.Name.Space = outputSVGNamespace(value.Name.Space, s.rootDepth == 0)
+	s.rootDepth++
+	return (s.limits.maxDepth <= 0 || s.rootDepth <= s.limits.maxDepth) && s.encoder.EncodeToken(value) == nil
+}
+
+func (s *svgTokenSanitizer) acceptRoot(name, namespace string) bool {
+	if s.rootSeen {
+		return s.rootDepth > 0
+	}
+	if name != "svg" || (namespace != "" && namespace != markdownSVGNamespace) {
+		return false
+	}
+	s.rootSeen = true
+	return true
+}
+
+func (s *svgTokenSanitizer) end(value xml.EndElement) bool {
+	if s.skipDepth > 0 {
+		s.skipDepth--
+		return true
+	}
+	if s.rootDepth <= 0 {
+		return false
+	}
+	value.Name.Space = outputSVGNamespace(value.Name.Space, s.rootDepth == 1)
+	if s.encoder.EncodeToken(value) != nil {
+		return false
+	}
+	s.rootDepth--
+	return true
+}
+
+func (s *svgTokenSanitizer) text(value xml.CharData) bool {
+	if s.skipDepth > 0 {
+		return true
+	}
+	if !s.rootSeen || s.rootDepth == 0 {
+		return len(bytes.TrimSpace(value)) == 0
+	}
+	return s.encoder.EncodeToken(value) == nil
+}
+
+func (s *svgTokenSanitizer) finish() ([]byte, bool) {
+	if !s.rootSeen || s.rootDepth != 0 || s.skipDepth != 0 || s.encoder.Flush() != nil {
 		return nil, false
 	}
-	return out.Bytes(), true
+	return s.out.Bytes(), true
+}
+
+func outputSVGNamespace(namespace string, root bool) string {
+	if root {
+		return markdownSVGNamespace
+	}
+	if namespace == markdownSVGNamespace {
+		return ""
+	}
+	return namespace
+}
+
+func safeMarkdownSVGAttributes(input []xml.Attr) []xml.Attr {
+	attrs := input[:0]
+	for _, attr := range input {
+		name := strings.ToLower(attr.Name.Local)
+		unsafeName := isNamespaceDeclaration(attr.Name) || strings.HasPrefix(name, "on") || name == "srcset" ||
+			(attr.Name.Space == "http://www.w3.org/XML/1998/namespace" && name == "base")
+		if unsafeName {
+			continue
+		}
+		safe := safeMarkdownSVGAttributeValue(attr.Value)
+		if name == "href" || name == "src" {
+			safe = safeMarkdownSVGReference(attr.Value)
+		}
+		if safe {
+			attrs = append(attrs, attr)
+		}
+	}
+	return attrs
 }
 
 func safeMarkdownSVGReference(raw string) bool {
@@ -251,6 +257,9 @@ func safeMarkdownSVGReference(raw string) bool {
 }
 
 func safeMarkdownSVGAttributeValue(raw string) bool {
+	if strings.Contains(raw, `\`) {
+		return false
+	}
 	value := strings.ToLower(raw)
 	if strings.Contains(value, "javascript:") || strings.Contains(value, "vbscript:") || strings.Contains(value, "data:text/html") {
 		return false

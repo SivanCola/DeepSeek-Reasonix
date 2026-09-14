@@ -34,7 +34,8 @@ assert.notEqual(fileIdentity("/tmp/a\\b.svg"), fileIdentity("/tmp/a/b.svg"));
 assert.equal(fileIdentity("out/a.svg", "posix"), "out/a.svg");
 assert.equal(fileIdentity("out\\a.svg", "posix"), "out\\a.svg", "a POSIX host keeps the backslash");
 assert.equal(fileIdentity("out\\a.svg", "windows"), "out/a.svg");
-assert.equal(fileIdentity("out\\a.svg"), "out/a.svg", "a relative path defaults to the Windows rule");
+assert.equal(fileIdentity("out\\a.svg"), "out\\a.svg", "an ambiguous relative path preserves a literal backslash");
+assert.notEqual(fileIdentity("out\\a.svg"), fileIdentity("out/a.svg"), "the renderer never merges host-ambiguous paths");
 
 // ── file:// URLs decode once, ordinary paths never decode ───────────────────
 assert.equal(fileURLToPath("file:///home/me/a%20b.svg"), "/home/me/a b.svg");

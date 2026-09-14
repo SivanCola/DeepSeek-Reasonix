@@ -7,17 +7,9 @@ import (
 	"strings"
 )
 
-// Chat file reference resolution.
-//
-// An answer frequently names a file it never declared with `present` — a script
-// wrote it, or the model printed a path it already knew. The renderer collects
-// those candidates from the Markdown body and asks the host to verify them, so
-// a click reaches the file panel instead of the system opener.
-//
-// Verification is metadata-only: the host stats the file, re-applies the current
-// read policy, and never reads content or scans a directory. Every action
-// re-resolves the path, because a successful resolution is not a standing
-// authorization.
+// Chat file references let the renderer submit answer-named paths for host
+// verification. Resolution reads no content and every action revalidates the
+// path, because one successful lookup is not a standing authorization.
 
 const (
 	// chatFileReferenceBatchLimit caps one request; the renderer splits larger
@@ -112,7 +104,7 @@ func (a *App) chatReferencePathForTab(tabID, candidate string) (resolved, displa
 	if !ok {
 		return "", "", "unknown-session"
 	}
-	source, err := localPathSource(candidate)
+	source, err := localChatPathSource(candidate)
 	if err != nil {
 		if errors.Is(err, os.ErrPermission) {
 			return "", "", "outside-workspace"
@@ -165,10 +157,8 @@ func validateChatReferencePath(workspaceRoot, resolved, display string) (string,
 		}
 		return "", "", "unreadable"
 	}
-	// Containment is proven on the real location before this point, so a link
-	// that stays inside its authorized root is already resolved to its target
-	// and the display path names that target. Anything that is not a plain file
-	// — a directory, a device, a fifo — has no preview action.
+	// Containment is already proven on the real path. Directories, devices, and
+	// other non-regular targets have no preview action.
 	if !info.Mode().IsRegular() {
 		return "", "", "not-a-file"
 	}
