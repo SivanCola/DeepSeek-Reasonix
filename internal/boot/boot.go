@@ -62,6 +62,7 @@ import (
 	"reasonix/internal/sessioncontext"
 	"reasonix/internal/sessiontemp"
 	"reasonix/internal/skill"
+	"reasonix/internal/skill/skillwatch"
 	"reasonix/internal/stats"
 	"reasonix/internal/taskmonitor"
 	"reasonix/internal/tool"
@@ -669,7 +670,20 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	var skills []skill.Skill
 	var allSkillStore *skill.Store
 	var allSkills []skill.Skill
-	skillCleanup := func() { closeSkillStores(skillStore, allSkillStore) }
+	// One host-lifetime watch service shares physical skill-directory watches
+	// between the enabled and all-stores; store Close releases the logical
+	// subscriptions, Close on the service reclaims the physical watches.
+	var skillWatchService *skillwatch.Service
+	if watchSkills {
+		skillWatchService = skillwatch.NewService(skillwatch.Options{Stderr: opts.Stderr})
+	}
+	skillCleanup := func() {
+		closeSkillStores(skillStore, allSkillStore)
+		if skillWatchService != nil {
+			_ = skillWatchService.Close()
+			skillWatchService = nil
+		}
+	}
 	skillsOwned := false
 	defer closeUnownedSkills(&skillsOwned, skillCleanup)
 	canReuseSkills := opts.ReuseAssembly != nil && shouldReuseDiscovery(opts.PreviousPlan) &&
@@ -677,7 +691,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	if canReuseSkills {
 		skills = opts.ReuseAssembly.Skills
 		allSkills = skills
-		skillStore = skill.New(skill.Options{ProjectRoot: root, Stderr: io.Discard, Watch: watchSkills})
+		skillStore = skill.New(skill.Options{ProjectRoot: root, Stderr: io.Discard, Watch: watchSkills, WatchService: skillWatchService})
 		allSkillStore = skillStore
 		if s := strings.TrimSpace(opts.ReuseAssembly.SystemPrompt); s != "" {
 			sysPrompt = s
@@ -687,10 +701,11 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 			ProjectRoot: root, CustomPaths: cfg.SkillCustomPaths(), PluginPaths: cfg.PluginPackageSkillOwners(),
 			PluginAgentPaths: cfg.PluginPackageAgentOwners(), ExcludedPaths: cfg.SkillExcludedPaths(),
 			DisabledNames: cfg.DisabledSkillNames(), MaxDepth: cfg.SkillMaxDepth(), Stderr: opts.Stderr, Watch: watchSkills,
+			WatchService: skillWatchService,
 		})
 		skillStore.ConfigureInvocationPolicy("", nil)
 		skills = skillStore.List()
-		allSkillStore = skill.New(skill.Options{ProjectRoot: root, CustomPaths: cfg.SkillCustomPaths(), PluginPaths: cfg.PluginPackageSkillOwners(), PluginAgentPaths: cfg.PluginPackageAgentOwners(), ExcludedPaths: cfg.SkillExcludedPaths(), MaxDepth: cfg.SkillMaxDepth(), Stderr: io.Discard, Watch: watchSkills})
+		allSkillStore = skill.New(skill.Options{ProjectRoot: root, CustomPaths: cfg.SkillCustomPaths(), PluginPaths: cfg.PluginPackageSkillOwners(), PluginAgentPaths: cfg.PluginPackageAgentOwners(), ExcludedPaths: cfg.SkillExcludedPaths(), MaxDepth: cfg.SkillMaxDepth(), Stderr: io.Discard, Watch: watchSkills, WatchService: skillWatchService})
 		allSkills = allSkillStore.List()
 		if implicitSkillInvocation {
 			sysPrompt += "\n\n" + skill.InvocationPolicyBlock()
