@@ -55,6 +55,10 @@ func countingScope(ctx context.Context, root string, maxDepth int) ([]string, bo
 		if !e.IsDir() || maxDepth < 2 {
 			continue
 		}
+		switch e.Name() {
+		case "assets", "node_modules", "references", "scripts":
+			continue
+		}
 		dirs = append(dirs, filepath.Join(root, e.Name()))
 	}
 	return dirs, true
@@ -104,8 +108,8 @@ func TestSharedSubscriptionsCoalesceEvents(t *testing.T) {
 	sub1 := svc.Subscribe(dir, 2, countingScope, flatHash, func(string) { mu.Lock(); hits["one"]++; mu.Unlock() })
 	sub2 := svc.Subscribe(dir, 2, countingScope, flatHash, func(string) { mu.Lock(); hits["two"]++; mu.Unlock() })
 
-	// Registration is asynchronous by design (never blocks Subscribe on
-	// backend IO on the helper path), so wait for it to settle.
+	// Helper registration is bounded rather than unconditionally blocking, so
+	// keep this assertion tolerant of either backend.
 	waitFor(t, "physical watch registration", func() bool {
 		return svc.Diagnostics().PhysicalWatches == 1
 	})
@@ -166,6 +170,9 @@ func TestScopeSkippedBodyChangesDoNotNotify(t *testing.T) {
 	var hits int
 	var mu sync.Mutex
 	svc.Subscribe(dir, 3, countingScope, flatHash, func(string) { mu.Lock(); hits++; mu.Unlock() })
+	if got := svc.Diagnostics().PhysicalWatches; got != 1 {
+		t.Fatalf("physical watches = %d, want only the discovery root", got)
+	}
 
 	if err := os.WriteFile(filepath.Join(dir, "scripts", "tool.sh"), []byte("echo hi"), 0o644); err != nil {
 		t.Fatal(err)

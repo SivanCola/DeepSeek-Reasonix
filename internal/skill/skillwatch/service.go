@@ -207,9 +207,13 @@ func (s *Service) Subscribe(root string, maxDepth int, scope ScopeFunc, hash Has
 	regDone := state.regDone
 	kind := s.backendKind
 	s.mu.Unlock()
-	// Bounded register-before-scan wait. On the helper path the confirmation
-	// travels over a pipe; on the native path regDone is already closed.
-	if kind == "helper" && regDone != nil {
+	// Preserve register-before-scan ordering. Native registration is local and
+	// must settle before Subscribe returns. Helper confirmation travels over a
+	// pipe, so only that path needs a timeout to keep a wedged child bounded.
+	if regDone != nil && kind == "native" {
+		<-regDone
+	}
+	if regDone != nil && kind == "helper" {
 		timer := time.NewTimer(helperSubscribeWait)
 		defer timer.Stop()
 		select {
