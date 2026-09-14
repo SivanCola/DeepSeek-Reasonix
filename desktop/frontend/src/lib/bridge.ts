@@ -3,7 +3,10 @@ import { mockProviderTemplate, mockPreset, mockBundlePreset, mockKimiAPIModels, 
 // The Electron host and the browser mock share this React-to-Go contract.
 import type {
   CancelReceipt,
+  ChatFileReferenceRequest,
+  ChatFileReferenceResult,
   DesktopCommandName,
+  MarkdownSVGView,
 } from "../generated/desktopContract.generated";
 import type { InvocationRequest } from "./invocationDisplay";
 import type { FollowupBindings } from "./pendingFollowup";
@@ -500,6 +503,10 @@ export interface AppBindings extends ToolRecoveryBindings, ModelSettingsBindings
   ReadPresentedFileForTab(tabID: string, toolCallID: string, path: string): Promise<FilePreview>;
   ReadPresentedFileSourceForTab(tabID: string, toolCallID: string, path: string): Promise<FilePreview>;
   ReadPresentedTextPageForTab(tabID: string, toolCallID: string, path: string, offset: number, expectedVersion: string): Promise<import("./types").PresentedTextPage>;
+  ResolveChatFileReferencesForTab(tabID: string, turnKey: string, candidates: ChatFileReferenceRequest[]): Promise<ChatFileReferenceResult>;
+  ReadReferenceFileForTab(tabID: string, path: string): Promise<FilePreview>;
+  ReadReferenceFileSourceForTab(tabID: string, path: string): Promise<FilePreview>;
+  SanitizeMarkdownSVG(content: string): Promise<MarkdownSVGView>;
   CreateWorkspaceBrowserPreviewForTab(tabID: string, rel: string): Promise<string>;
   CreatePresentedBrowserPreviewForTab(tabID: string, toolCallID: string, path: string): Promise<string>;
   RevokeWorkspaceBrowserPreview(url: string): Promise<void>;
@@ -522,15 +529,19 @@ export interface AppBindings extends ToolRecoveryBindings, ModelSettingsBindings
   WorkspaceGitCommitDetail(tabID: string, hash: string, path: string): Promise<GitCommitDetailView>;
   OpenWorkspacePathForTab(tabID: string, rel: string): Promise<void>;
   OpenPresentedPathForTab(tabID: string, toolCallID: string, path: string): Promise<void>;
+  OpenReferencePathForTab(tabID: string, path: string): Promise<void>;
   ResolvePresentedPathForTab(tabID: string, toolCallID: string, path: string): Promise<string>;
+  ResolveReferencePathForTab(tabID: string, path: string): Promise<string>;
   ResolveWorkspacePathForTab(tabID: string, rel: string): Promise<string>;
   ExternalOpeners(): Promise<ExternalOpenersView>; ExternalOpenersForTab(tabID: string): Promise<ExternalOpenersView>;
   SetPreferredExternalOpener(id: string): Promise<void>;
   OpenWorkspaceInExternalOpenerForTab(tabID: string, id: string): Promise<void>; OpenLocalPathInExternalOpener(path: string, id: string): Promise<void>; SaveLocalPathAs(path: string): Promise<string>;
   RevealWorkspacePathForTab(tabID: string, rel: string): Promise<void>;
   RevealPresentedPathForTab(tabID: string, toolCallID: string, path: string): Promise<void>;
+  RevealReferencePathForTab(tabID: string, path: string): Promise<void>;
   SaveWorkspacePathAsForTab(tabID: string, rel: string): Promise<string>;
   SavePresentedPathAsForTab(tabID: string, toolCallID: string, path: string): Promise<string>;
+  SaveReferencePathAsForTab(tabID: string, path: string): Promise<string>;
   SaveRemoteFileAs(hostID: string, remotePath: string): Promise<string>;
   SaveRemotePresentedFileAs(tabID: string, hostID: string, toolCallID: string, remotePath: string): Promise<string>;
   ResolveRemotePresentedPathForTab(tabID: string, hostID: string, toolCallID: string, remotePath: string): Promise<string>;
@@ -4047,6 +4058,27 @@ function makeMockApp(): AppBindings {
     async ReadPresentedTextPageForTab(_tabID: string, _toolCallID: string, path: string, offset: number, expectedVersion: string) {
       return { path, body: "", offset, nextOffset: offset, size: offset, hasMore: false, version: expectedVersion };
     },
+    async ResolveChatFileReferencesForTab(_tabID: string, turnKey: string, candidates: ChatFileReferenceRequest[]): Promise<ChatFileReferenceResult> {
+      return {
+        turnKey,
+        references: candidates.map(candidate => ({
+          key: candidate.key,
+          path: candidate.path,
+          status: "unavailable" as const,
+          actions: [],
+          reason: "not-found" as const,
+        })),
+      };
+    },
+    async ReadReferenceFileForTab(tabID: string, path: string) {
+      return this.ReadFileForTab(tabID, path);
+    },
+    async ReadReferenceFileSourceForTab(tabID: string, path: string) {
+      return this.ReadFileForTab(tabID, path);
+    },
+    async SanitizeMarkdownSVG(): Promise<MarkdownSVGView> {
+      return { ok: false, reason: "unsupported" };
+    },
     async CreatePresentedBrowserPreviewForTab(tabID: string, _toolCallID: string, path: string) {
       return this.CreateWorkspaceBrowserPreviewForTab(tabID, path);
     },
@@ -4134,8 +4166,14 @@ function makeMockApp(): AppBindings {
     async OpenPresentedPathForTab(tabID: string, _toolCallID: string, path: string) {
       return this.OpenWorkspacePathForTab(tabID, path);
     },
+    async OpenReferencePathForTab(_tabID: string, path: string) {
+      console.info("mock OpenReferencePathForTab", path);
+    },
     async ResolvePresentedPathForTab(tabID: string, _toolCallID: string, path: string) {
       return this.ResolveWorkspacePathForTab(tabID, path);
+    },
+    async ResolveReferencePathForTab(_tabID: string, path: string) {
+      return path;
     },
     async ResolveWorkspacePathForTab(_tabID: string, rel: string) { return `${cwd.replace(/[\\/]+$/, "")}/${rel.replace(/^[/\\]+/, "").replace(/[\\/]+$/, "")}`; },
     async ExternalOpeners() {
@@ -4157,12 +4195,18 @@ function makeMockApp(): AppBindings {
     async RevealPresentedPathForTab(tabID: string, _toolCallID: string, path: string) {
       return this.RevealWorkspacePathForTab(tabID, path);
     },
+    async RevealReferencePathForTab(_tabID: string, path: string) {
+      console.info("mock RevealReferencePathForTab", path);
+    },
     async SaveWorkspacePathAsForTab(_tabID: string, rel: string) {
       console.info("mock SaveWorkspacePathAsForTab", rel);
       return rel;
     },
     async SavePresentedPathAsForTab(tabID: string, _toolCallID: string, path: string) {
       return this.SaveWorkspacePathAsForTab(tabID, path);
+    },
+    async SaveReferencePathAsForTab(_tabID: string, path: string) {
+      return path;
     },
     async RevealPath(path: string) {
       console.info("mock RevealPath", path);

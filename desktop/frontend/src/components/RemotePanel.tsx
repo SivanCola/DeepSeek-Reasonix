@@ -7,7 +7,7 @@ import { useT } from "../lib/i18n";
 import { isRemoteDegradedWarning, isRemoteTerminalFailure, remoteConnectionErrorSummaryKey } from "../lib/remoteErrors";
 import { resolveRemoteWorkspace } from "../lib/remoteWorkspace";
 import { publishNavigationIntent } from "../lib/useNavigationIntentFence";
-import { presentedFileRequestSnapshot, subscribePresentedFileRequest } from "../lib/presentedFileNavigation";
+import { presentedFileRequestSnapshot, subscribePresentedFileRequest, type FileResourceRef } from "../lib/presentedFileNavigation";
 import { useRemoteStore, type RemoteExplorerTab } from "../store/remote";
 import type { RemoteDirEntry, RemoteForwardView } from "../lib/types";
 import { CodeViewer } from "./CodeViewer";
@@ -116,7 +116,7 @@ function RemoteFilesTab({ hostId, connected, revealRequest, navigationSignal }: 
   hostId: string;
   connected: boolean;
   navigationSignal?: AbortSignal;
-  revealRequest: { id: number; ref: { path: string; source: "presented" | "workspace" }; action: "preview" | "reveal-tree" | "source"; signal?: AbortSignal; acceptNavigation?: () => boolean } | null;
+  revealRequest: { id: number; ref: { path: string; source: FileResourceRef["source"] }; action: "preview" | "reveal-tree" | "source"; signal?: AbortSignal; acceptNavigation?: () => boolean } | null;
 }) {
   const t = useT();
   const [entriesByDir, setEntriesByDir] = useState<Record<string, RemoteDirEntry[]>>({});

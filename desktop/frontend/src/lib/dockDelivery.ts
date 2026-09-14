@@ -1,9 +1,11 @@
 import type { WireCompletionSummary } from "./types";
 export type DockDelivery = { navigationSource?: string; navigationCancellation?: AbortSignal; acceptNavigation?: () => boolean };
-export type DockResources = Record<string, { toolCallId?: string; source?: boolean }>;
+export type DockResources = Record<string, { toolCallId?: string; source?: boolean; reference?: boolean }>;
 export const restoredSourcePaths = (resources: DockResources = {}) => new Set(Object.keys(resources).filter(path => resources[path].source));
 export const restoredPresentedTools = (resources: DockResources = {}) => new Map(Object.entries(resources).flatMap(([path, value]) => value.toolCallId ? [[path, value.toolCallId] as const] : []));
-export type WorkspaceRevealRequest = DockDelivery & { id: number; path: string; toolCallId?: string; source?: boolean; action?: "preview" | "reveal-tree" | "source" };
+/** Paths the dock must re-verify through the answer-reference reader. */
+export const restoredReferencePaths = (resources: DockResources = {}) => new Set(Object.keys(resources).filter(path => resources[path].reference));
+export type WorkspaceRevealRequest = DockDelivery & { id: number; path: string; toolCallId?: string; source?: boolean; reference?: boolean; action?: "preview" | "reveal-tree" | "source" };
 export type WorkspaceVerificationRevealRequest = DockDelivery & { id: number; summary: WireCompletionSummary; tabId: string; turnStartAt: number; currentSummary?: WireCompletionSummary; sessionPath?: string; view?: "changes" | "checks" };
 export type WorkspaceFileListRequest = DockDelivery & { id: number; paths: string[] };
 export type WorkspaceChangeListEntry = { key: string; path: string; meta: string; time: string; detail: string };

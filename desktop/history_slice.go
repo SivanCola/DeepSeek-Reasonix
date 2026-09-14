@@ -302,24 +302,17 @@ func (a *App) HistorySliceForTab(tabID string, req HistorySliceRequest) HistoryS
 	a.mu.RLock()
 	tab := a.tabByIDLocked(tabID)
 	var ctrl control.SessionAPI
-	var sessionDir, sessionPath string
+	var sessionDir, sessionPath, sessionID string
 	if tab != nil {
 		ctrl = tab.Ctrl
 		sessionDir = tabSessionDir(tab)
 		sessionPath = tab.currentSessionPath()
+		sessionID = strings.TrimSpace(tab.SessionID)
 	}
 	a.mu.RUnlock()
 
 	if ctrl == nil {
-		if strings.TrimSpace(sessionPath) == "" {
-			return failedHistorySlice("session path unavailable before controller ready")
-		}
-		slice, err := a.coldHistorySlice(sessionDir, sessionPath, req)
-		if err != nil {
-			slog.Debug("desktop: cold history slice failed", "path", sessionPath, "err", err)
-			return failedHistorySlice(err.Error())
-		}
-		return slice
+		return a.historySliceBeforeController(tabID, sessionDir, sessionPath, sessionID, req)
 	}
 	if identity, ok := ctrl.(control.IdentityLifecycle); ok && identity.UsesExclusiveSession() {
 		ref, bound := identity.SessionRef()
@@ -1193,13 +1186,17 @@ func (a *App) HistoryContentForTab(tabID string, ref HistoryContentRef, chunkInd
 	a.mu.RLock()
 	tab := a.tabByIDLocked(tabID)
 	var ctrl control.SessionAPI
-	var sessionDir, sessionPath string
+	var sessionDir, sessionPath, sessionID string
 	if tab != nil {
 		ctrl = tab.Ctrl
 		sessionDir = tabSessionDir(tab)
 		sessionPath = tab.currentSessionPath()
+		sessionID = strings.TrimSpace(tab.SessionID)
 	}
 	a.mu.RUnlock()
+	if ctrl == nil && sessionID != "" {
+		return a.canonicalHistoryContentBeforeController(tabID, sessionDir, sessionPath, sessionID, msgIndex, sub, ref, chunkIndex, out)
+	}
 	if ctrl != nil {
 		if identity, ok := ctrl.(control.IdentityLifecycle); ok && identity.UsesExclusiveSession() {
 			sessionRef, bound := identity.SessionRef()
@@ -1235,8 +1232,8 @@ func (a *App) HistoryContentForTab(tabID string, ref HistoryContentRef, chunkInd
 		out.Done = true
 		return out
 	}
-	sessionID := strings.TrimSuffix(filepath.Base(sessionPath), ".jsonl")
-	if entryIDSession(ref.EntryID) != sessionID {
+	resolvedSessionID := strings.TrimSuffix(filepath.Base(sessionPath), ".jsonl")
+	if entryIDSession(ref.EntryID) != resolvedSessionID {
 		out.Stale = true
 		return out
 	}

@@ -4568,7 +4568,7 @@ export function Composer({
               <PermissionPresetChoice
                 key={`approval-${tabId}`}
                 value={permissionPreset}
-                disabled={approvalBarDisabled}
+                disabled={approvalBarDisabled} dismissSignal={transientDismissSignal}
                 scopeKey={`${tabId ?? ""}:${sessionKey ?? ""}:${workspaceScopeKey ?? ""}`}
                 projectConfirmationKey={fullAccessConfirmationKey}
                 onPick={chooseApprovalMode}
@@ -4595,7 +4595,7 @@ export function Composer({
             <div className="composer-meta__control composer-meta__control--model">
               {!heroMode && (
                 <ContextWindowRing
-                  enabled
+                  enabled={!suspendedByDecision}
                   turnMetrics={runMetrics ?? undefined}
                   context={context}
                   tabId={tabId}
@@ -4604,10 +4604,10 @@ export function Composer({
                   currency={currency}
                   cacheHitTokens={cacheHitTokens}
                   cacheMissTokens={cacheMissTokens}
-                  balance={balance}
+                  balance={balance} dismissSignal={transientDismissSignal}
                 />
               )}
-              <Suspense fallback={<span className="modelsw__label">{modelLabel}</span>}><ModelSwitcher composerMenu label={modelLabel} tabId={tabId} ready={ready} sessionKey={sessionKey} onPick={onSwitchModel} onManage={() => {
+              <Suspense fallback={<span className="modelsw__label">{modelLabel}</span>}><ModelSwitcher composerMenu label={modelLabel} tabId={tabId} ready={ready} sessionKey={sessionKey} disabled={suspendedByDecision} dismissSignal={transientDismissSignal} onPick={onSwitchModel} onManage={() => {
                 useAppNavigationStore.getState().setSettingsFocus({ target: "model-access" });
                 useAppNavigationStore.getState().setSettingsTarget("models");
               }} /></Suspense>
@@ -4615,7 +4615,7 @@ export function Composer({
                 <ComposerChoice key={`effort-${tabId}`} label={effortLabel(currentEffort)}
                   ariaLabel={`${t("status.effortTitle")}: ${effortLabel(currentEffort)}`}
                   icon={<Brain size={16} />} showChevron
-                  value={currentEffort} disabled={disabled || readOnly || running}
+                  value={currentEffort} disabled={disabled || readOnly || running} dismissSignal={transientDismissSignal}
                   onPick={chooseEffortLevel}
                   options={effortLevels.map(level => ({ value: level, label: effortLabel(level) }))} />
               </div>}

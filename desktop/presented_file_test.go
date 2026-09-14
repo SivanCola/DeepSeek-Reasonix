@@ -52,14 +52,14 @@ func TestPresentedReadPolicyRechecksCurrentForbidRead(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "reasonix.toml"), []byte("[sandbox]\nforbid_read = [\"secret\"]\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if presentedReadPolicyAllows(root, secret) {
+	if readPolicyAllowsPath(root, secret) {
 		t.Fatal("a current forbid_read entry must revoke an older presentation")
 	}
 	public := filepath.Join(root, "public.txt")
 	if err := os.WriteFile(public, []byte("public"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if !presentedReadPolicyAllows(root, public) {
+	if !readPolicyAllowsPath(root, public) {
 		t.Fatal("ordinary readable file was rejected")
 	}
 }

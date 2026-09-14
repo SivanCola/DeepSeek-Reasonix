@@ -202,6 +202,9 @@ function requireReadyWindow(window: HistoryWindowPageView): HistorySlice | undef
 }
 
 export async function canonicalHistorySlice(tabId: string, req: HistorySliceRequest): Promise<HistorySlice> {
+  // Protocol 6 and older hosts expose only the windowed compatibility reader.
+  // Keep it available when their controller-backed snapshot cannot start.
+  if (typeof app.SessionOpenForTab !== "function") return app.HistorySliceForTab(tabId, req);
   const cursor = req.cursor ?? "";
   const limit = Math.min(500, Math.max(1, req.entries ?? 100));
   // A cursor names a position inside a window, so it pages through the window

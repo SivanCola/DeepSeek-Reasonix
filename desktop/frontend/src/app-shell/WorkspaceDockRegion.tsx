@@ -69,6 +69,7 @@ export function WorkspaceDockRegion(props: WorkspaceDockRegionProps) {
         navigationCancellation: presentedRequest.signal,
         path: presentedRequest.ref.path,
         toolCallId: presentedRequest.ref.source === "presented" ? presentedRequest.ref.toolCallId : undefined,
+        reference: presentedRequest.ref.source === "reference" || undefined,
         source: presentedRequest.action === "source",
         action: presentedRequest.action,
       }

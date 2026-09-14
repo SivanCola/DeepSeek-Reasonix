@@ -3772,6 +3772,21 @@
       ]
     }
   },
+  "OpenReferencePathForTab": {
+    "domain": "desktop/chat_file_reference.go",
+    "owner": "App.OpenReferencePathForTab",
+    "sources": [
+      "desktop/chat_file_reference.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.OpenReferencePathForTab",
+      "inputs": [
+        "tabID",
+        "path"
+      ]
+    }
+  },
   "OpenRemoteProjectTab": {
     "domain": "desktop/remote_projects.go",
     "owner": "App.OpenRemoteProjectTab",
@@ -4308,6 +4323,36 @@
         "path",
         "offset",
         "expectedVersion"
+      ]
+    }
+  },
+  "ReadReferenceFileForTab": {
+    "domain": "desktop/chat_file_reference.go",
+    "owner": "App.ReadReferenceFileForTab",
+    "sources": [
+      "desktop/chat_file_reference.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.ReadReferenceFileForTab",
+      "inputs": [
+        "tabID",
+        "path"
+      ]
+    }
+  },
+  "ReadReferenceFileSourceForTab": {
+    "domain": "desktop/chat_file_reference.go",
+    "owner": "App.ReadReferenceFileSourceForTab",
+    "sources": [
+      "desktop/chat_file_reference.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.ReadReferenceFileSourceForTab",
+      "inputs": [
+        "tabID",
+        "path"
       ]
     }
   },
@@ -5389,6 +5434,22 @@
       ]
     }
   },
+  "ResolveChatFileReferencesForTab": {
+    "domain": "desktop/chat_file_reference.go",
+    "owner": "App.ResolveChatFileReferencesForTab",
+    "sources": [
+      "desktop/chat_file_reference.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.ResolveChatFileReferencesForTab",
+      "inputs": [
+        "tabID",
+        "turnKey",
+        "candidates"
+      ]
+    }
+  },
   "ResolveMarkdownImageForTab": {
     "domain": "desktop/markdown_image_resolver.go",
     "owner": "App.ResolveMarkdownImageForTab",
@@ -5537,6 +5598,21 @@
         "id",
         "action",
         "feedback"
+      ]
+    }
+  },
+  "ResolveReferencePathForTab": {
+    "domain": "desktop/chat_file_reference.go",
+    "owner": "App.ResolveReferencePathForTab",
+    "sources": [
+      "desktop/chat_file_reference.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.ResolveReferencePathForTab",
+      "inputs": [
+        "tabID",
+        "path"
       ]
     }
   },
@@ -5909,6 +5985,21 @@
       ]
     }
   },
+  "RevealReferencePathForTab": {
+    "domain": "desktop/chat_file_reference.go",
+    "owner": "App.RevealReferencePathForTab",
+    "sources": [
+      "desktop/chat_file_reference.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.RevealReferencePathForTab",
+      "inputs": [
+        "tabID",
+        "path"
+      ]
+    }
+  },
   "RevealWorkspacePathForTab": {
     "domain": "desktop/app.go",
     "owner": "App.RevealWorkspacePathForTab",
@@ -6055,6 +6146,20 @@
       "kind": "owner-state",
       "resolver": "App.RuntimeDoctor",
       "inputs": []
+    }
+  },
+  "SanitizeMarkdownSVG": {
+    "domain": "desktop/markdown_svg_sanitize.go",
+    "owner": "App.SanitizeMarkdownSVG",
+    "sources": [
+      "desktop/markdown_svg_sanitize.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.SanitizeMarkdownSVG",
+      "inputs": [
+        "content"
+      ]
     }
   },
   "SaveClipboardImage": {
@@ -6276,6 +6381,21 @@
       "inputs": [
         "p",
         "key"
+      ]
+    }
+  },
+  "SaveReferencePathAsForTab": {
+    "domain": "desktop/chat_file_reference.go",
+    "owner": "App.SaveReferencePathAsForTab",
+    "sources": [
+      "desktop/chat_file_reference.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.SaveReferencePathAsForTab",
+      "inputs": [
+        "tabID",
+        "path"
       ]
     }
   },

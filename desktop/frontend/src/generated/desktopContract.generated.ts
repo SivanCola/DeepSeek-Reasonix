@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 8;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:2e923412e7735d5acee1b7ef559ebe9325d83a3dc090db0efc656090c800ced1";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:4c01430abebe10ce6564ce780dac4c8486d798ebcf12fb85ab358e0c5a5361bd";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -271,6 +271,7 @@ export const DESKTOP_COMMANDS = [
   "OpenLocalPathInExternalOpener",
   "OpenPresentedPathForTab",
   "OpenProjectTab",
+  "OpenReferencePathForTab",
   "OpenRemoteProjectTab",
   "OpenRemoteWorkspace",
   "OpenTaskSessionByKey",
@@ -309,6 +310,8 @@ export const DESKTOP_COMMANDS = [
   "ReadPresentedFileForTab",
   "ReadPresentedFileSourceForTab",
   "ReadPresentedTextPageForTab",
+  "ReadReferenceFileForTab",
+  "ReadReferenceFileSourceForTab",
   "ReadRemoteFile",
   "RebuildHistoryIndex",
   "RebuildSessionCatalog",
@@ -384,6 +387,7 @@ export const DESKTOP_COMMANDS = [
   "ResetProviderPresetAccess",
   "ResetThemePack",
   "ResizeTerminalForTab",
+  "ResolveChatFileReferencesForTab",
   "ResolveMarkdownImageForTab",
   "ResolvePlanDecision",
   "ResolvePlanDecisionTab",
@@ -393,6 +397,7 @@ export const DESKTOP_COMMANDS = [
   "ResolveRecovery",
   "ResolveRecoveryTab",
   "ResolveRecoveryTabForTurn",
+  "ResolveReferencePathForTab",
   "ResolveRemotePresentedPathForTab",
   "ResolveRemoteTabPlanDecision",
   "ResolveRemoteWorkspacePathForTab",
@@ -418,6 +423,7 @@ export const DESKTOP_COMMANDS = [
   "RevealBackgroundRuntime",
   "RevealPath",
   "RevealPresentedPathForTab",
+  "RevealReferencePathForTab",
   "RevealWorkspacePathForTab",
   "RevealWorkspaceWriterForTab",
   "RevokePermissionGrantForTab",
@@ -428,6 +434,7 @@ export const DESKTOP_COMMANDS = [
   "RewindRemoteTab",
   "RunShellForTab",
   "RuntimeDoctor",
+  "SanitizeMarkdownSVG",
   "SaveClipboardImage",
   "SaveDoc",
   "SaveDocForTab",
@@ -443,6 +450,7 @@ export const DESKTOP_COMMANDS = [
   "SaveProviderKey",
   "SaveProviderModelCatalogs",
   "SaveProviderWithKey",
+  "SaveReferencePathAsForTab",
   "SaveRemoteFileAs",
   "SaveRemotePresentedFileAs",
   "SaveSessionGroups",
@@ -1787,6 +1795,26 @@ export interface ChangedFileInfo {
   latestTime?: number;
 }
 
+export interface ChatFileReference {
+  key: string;
+  path: string;
+  status: string;
+  displayPath?: string;
+  kind?: string;
+  actions: string[];
+  reason?: string;
+}
+
+export interface ChatFileReferenceRequest {
+  key: string;
+  path: string;
+}
+
+export interface ChatFileReferenceResult {
+  turnKey: string;
+  references: ChatFileReference[];
+}
+
 export interface CheckpointMeta {
   turn: number;
   prompt: string;
@@ -2453,6 +2481,12 @@ export interface MarkdownImageView {
   size?: number;
   openHref?: string;
   errorCode?: string;
+}
+
+export interface MarkdownSVGView {
+  ok: boolean;
+  svg?: string;
+  reason?: string;
 }
 
 export interface MemoryArchive {
@@ -4999,6 +5033,7 @@ export interface GeneratedDesktopCommands {
   OpenLocalPathInExternalOpener(arg0: string, arg1: string): Promise<void>;
   OpenPresentedPathForTab(arg0: string, arg1: string, arg2: string): Promise<void>;
   OpenProjectTab(arg0: string, arg1: string): Promise<TabMeta>;
+  OpenReferencePathForTab(arg0: string, arg1: string): Promise<void>;
   OpenRemoteProjectTab(arg0: string, arg1: string, arg2: RemoteTabOpenOptions): Promise<TabMeta>;
   OpenRemoteWorkspace(arg0: string, arg1: string): Promise<void>;
   OpenTaskSessionByKey(arg0: TaskOpenRequest): Promise<ControlResult>;
@@ -5037,6 +5072,8 @@ export interface GeneratedDesktopCommands {
   ReadPresentedFileForTab(arg0: string, arg1: string, arg2: string): Promise<FilePreview>;
   ReadPresentedFileSourceForTab(arg0: string, arg1: string, arg2: string): Promise<FilePreview>;
   ReadPresentedTextPageForTab(arg0: string, arg1: string, arg2: string, arg3: number, arg4: string): Promise<PresentedTextPage>;
+  ReadReferenceFileForTab(arg0: string, arg1: string): Promise<FilePreview>;
+  ReadReferenceFileSourceForTab(arg0: string, arg1: string): Promise<FilePreview>;
   ReadRemoteFile(arg0: string, arg1: string): Promise<RemoteFilePreview>;
   RebuildHistoryIndex(): Promise<void>;
   RebuildSessionCatalog(): Promise<void>;
@@ -5112,6 +5149,7 @@ export interface GeneratedDesktopCommands {
   ResetProviderPresetAccess(arg0: string): Promise<void>;
   ResetThemePack(): Promise<void>;
   ResizeTerminalForTab(arg0: string, arg1: string, arg2: number, arg3: number): Promise<void>;
+  ResolveChatFileReferencesForTab(arg0: string, arg1: string, arg2: ChatFileReferenceRequest[]): Promise<ChatFileReferenceResult>;
   ResolveMarkdownImageForTab(arg0: string, arg1: string): Promise<MarkdownImageView>;
   ResolvePlanDecision(arg0: string, arg1: string): Promise<void>;
   ResolvePlanDecisionTab(arg0: string, arg1: string, arg2: string): Promise<void>;
@@ -5121,6 +5159,7 @@ export interface GeneratedDesktopCommands {
   ResolveRecovery(arg0: string, arg1: string, arg2: string): Promise<void>;
   ResolveRecoveryTab(arg0: string, arg1: string, arg2: string, arg3: string): Promise<void>;
   ResolveRecoveryTabForTurn(arg0: string, arg1: string, arg2: string, arg3: string, arg4: string, arg5: string): Promise<void>;
+  ResolveReferencePathForTab(arg0: string, arg1: string): Promise<string>;
   ResolveRemotePresentedPathForTab(arg0: string, arg1: string, arg2: string, arg3: string): Promise<string>;
   ResolveRemoteTabPlanDecision(arg0: string, arg1: string, arg2: string, arg3: string): Promise<void>;
   ResolveRemoteWorkspacePathForTab(arg0: string, arg1: string, arg2: string, arg3: string): Promise<string>;
@@ -5146,6 +5185,7 @@ export interface GeneratedDesktopCommands {
   RevealBackgroundRuntime(arg0: string): Promise<TabMeta>;
   RevealPath(arg0: string): Promise<void>;
   RevealPresentedPathForTab(arg0: string, arg1: string, arg2: string): Promise<void>;
+  RevealReferencePathForTab(arg0: string, arg1: string): Promise<void>;
   RevealWorkspacePathForTab(arg0: string, arg1: string): Promise<void>;
   RevealWorkspaceWriterForTab(arg0: string): Promise<TabMeta>;
   RevokePermissionGrantForTab(arg0: string, arg1: string, arg2: string, arg3: number): Promise<PermissionSnapshot>;
@@ -5156,6 +5196,7 @@ export interface GeneratedDesktopCommands {
   RewindRemoteTab(arg0: string, arg1: string, arg2: string): Promise<void>;
   RunShellForTab(arg0: string, arg1: string): Promise<void>;
   RuntimeDoctor(): Promise<RuntimeDoctorReport>;
+  SanitizeMarkdownSVG(arg0: string): Promise<MarkdownSVGView>;
   SaveClipboardImage(): Promise<string>;
   SaveDoc(arg0: string, arg1: string): Promise<string>;
   SaveDocForTab(arg0: string, arg1: string, arg2: string): Promise<string>;
@@ -5171,6 +5212,7 @@ export interface GeneratedDesktopCommands {
   SaveProviderKey(arg0: string, arg1: string): Promise<string>;
   SaveProviderModelCatalogs(arg0: ProviderModelCatalogUpdate[]): Promise<string[]>;
   SaveProviderWithKey(arg0: ProviderView, arg1: string): Promise<string>;
+  SaveReferencePathAsForTab(arg0: string, arg1: string): Promise<string>;
   SaveRemoteFileAs(arg0: string, arg1: string): Promise<string>;
   SaveRemotePresentedFileAs(arg0: string, arg1: string, arg2: string, arg3: string): Promise<string>;
   SaveSessionGroups(arg0: string, arg1: string, arg2: desktopGroup[]): Promise<void>;

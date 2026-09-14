@@ -1,8 +1,8 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown } from "lucide-react";
 import { AnchoredPopover } from "./AnchoredPopover";
 
-export function ComposerChoice({ label, ariaLabel, icon, showChevron, value, options, disabled, onPick, tone }: {
+export function ComposerChoice({ label, ariaLabel, icon, showChevron, value, options, disabled, dismissSignal, onPick, tone }: {
   label: string;
   ariaLabel?: string;
   showChevron?: boolean;
@@ -10,11 +10,13 @@ export function ComposerChoice({ label, ariaLabel, icon, showChevron, value, opt
   value: string;
   options: { value: string; label: string; badge?: string; description?: string; icon?: ReactNode; title?: string }[];
   disabled?: boolean;
+  dismissSignal?: number;
   onPick: (value: string) => void;
   tone?: string;
 }) {
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLButtonElement>(null);
+  useEffect(() => { if (disabled || dismissSignal !== undefined) setOpen(false); }, [disabled, dismissSignal]);
   return <>
     <button ref={anchor} type="button" className={`composer-choice ${tone || ""}`} disabled={disabled}
       aria-label={ariaLabel || label} aria-haspopup="menu" aria-expanded={open && !disabled} onClick={() => setOpen(!open)}>
