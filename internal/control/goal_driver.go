@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"reasonix/internal/event"
@@ -54,6 +55,12 @@ type goalRoundReservation struct {
 	admitted  *goaldomain.View
 	runErr    error
 	cancelled bool
+}
+
+type goalDriverControl struct {
+	inherited atomic.Bool
+	ctx       context.Context
+	cancel    context.CancelFunc
 }
 
 func (r *goalRoundReservation) setAdmitted(view goaldomain.View) {
@@ -149,7 +156,7 @@ func (c *Controller) driveOneGoalRound() bool {
 	}
 	// This is a semantic checkpoint: no downstream model call starts unless all
 	// already accepted events are durable.
-	flushCtx := c.goalDriverCtx
+	flushCtx := c.goalDriverControl.ctx
 	if flushCtx == nil {
 		flushCtx = context.Background()
 	}

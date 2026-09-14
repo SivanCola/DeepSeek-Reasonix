@@ -90,6 +90,7 @@ import {
 } from "../lib/selectedTextContext";
 import { formatGoalWorkTime } from "../lib/goalRuntime";
 import { ComposerContentMenuActions } from "./ComposerContentMenuActions";
+import { GoalLifecycleActions } from "./GoalLifecycleActions";
 
 interface Attachment {
   path: string;
@@ -4043,55 +4044,10 @@ export function Composer({
                   </span>
                 )}
               </div>
-              {goalView && (
-                <button
-                  type="button"
-                  className="composer-intent-menu__stop"
-                  onClick={() => {
-                    const objective = window.prompt(t("composer.goalEditObjective"), goalView.objective);
-                    if (objective === null) return;
-                    const rawLimit = window.prompt(t("composer.goalEditMaxRounds"), goalView.maxGoalRounds?.toString() ?? "");
-                    if (rawLimit === null) return;
-                    const trimmedLimit = rawLimit.trim();
-                    const parsedLimit = trimmedLimit === "" ? null : Number(trimmedLimit);
-                    if (parsedLimit !== null && (!Number.isSafeInteger(parsedLimit) || parsedLimit <= 0)) {
-                      window.alert(t("composer.goalEditInvalidRounds"));
-                      return;
-                    }
-                    onEditGoal(objective, parsedLimit);
-                  }}
-                  disabled={disabled}
-                >
-                  {t("composer.taskModeEditGoal")}
-                </button>
-              )}
-              {goalView?.phase === "paused" || goalView?.phase === "blocked" || (goalView?.phase === "active" && goalView.activation === "disarmed") || (!goalView && goalStatus === "blocked") ? (
-                <button
-                  type="button"
-                  className="composer-intent-menu__stop"
-                  onClick={onResumeGoal}
-                  disabled={disabled}
-                >
-                  {t("composer.taskModeResumeGoal")}
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className="composer-intent-menu__stop"
-                  onClick={onPauseGoal}
-                  disabled={disabled}
-                >
-                  {t("composer.taskModePauseGoal")}
-                </button>
-              )}
-              <button
-                type="button"
-                className="composer-intent-menu__stop"
-                onClick={stopGoalMode}
-                disabled={disabled || running}
-              >
-                {t("composer.taskModeStopGoal")}
-              </button>
+              <GoalLifecycleActions
+                goalView={goalView} goalStatus={goalStatus} disabled={disabled} running={running}
+                onEditGoal={onEditGoal} onPauseGoal={onPauseGoal} onResumeGoal={onResumeGoal} onStopGoal={stopGoalMode}
+              />
             </div>
           )}
         </div>

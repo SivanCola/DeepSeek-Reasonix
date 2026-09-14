@@ -259,13 +259,11 @@ type Controller struct {
 	// goalDriver is a level-triggered, process-local scheduler. It never owns a
 	// cross-turn Activity: each accepted continuation enters through the normal
 	// guarded top-level turn path.
-	goalDriverMu        sync.Mutex
-	goalDriverWG        sync.WaitGroup
-	goalDriverPending   bool
-	goalDriverActive    *goalRoundReservation
-	goalDriverInherited atomic.Bool
-	goalDriverCtx       context.Context
-	goalDriverCancel    context.CancelFunc
+	goalDriverMu      sync.Mutex
+	goalDriverWG      sync.WaitGroup
+	goalDriverPending bool
+	goalDriverActive  *goalRoundReservation
+	goalDriverControl goalDriverControl
 	// legacyResearchArchive reads explicit pre-unification task paths. It never
 	// creates or mutates archive state. See
 	// autoresearch_manager.go.
@@ -821,8 +819,7 @@ func New(opts Options) *Controller {
 		providerResolver:                  opts.ProviderResolver,
 		runtimeGeneration:                 opts.RuntimeGeneration,
 		runtimeOwner:                      runtimeOwner,
-		goalDriverCtx:                     goalDriverCtx,
-		goalDriverCancel:                  goalDriverCancel,
+		goalDriverControl:                 goalDriverControl{ctx: goalDriverCtx, cancel: goalDriverCancel},
 		approval:                          newApprovalManager(opts.Policy, ToolApprovalAsk, opts.ApprovalTimeout),
 	}
 	c.initializeOwnedResources(opts)
@@ -1858,66 +1855,6 @@ func (c *Controller) rememberProjectNote(note string) {
 	} else {
 		c.notice("remembered → " + path)
 	}
-}
-
-func (c *Controller) applyGoalCommand(input, display string) bool {
-	cmd, ok := ParseGoalCommand(input)
-	if !ok {
-		return false
-	}
-	if cmd.DeprecatedBudgetFlag {
-		c.notice(GoalBudgetFlagDeprecatedNotice)
-	}
-	switch cmd.Action {
-	case GoalCommandSet:
-		if c.exclusiveV3Enabled() {
-			if err := c.SetGoalDurable(cmd.Text); err != nil {
-				c.notice("goal: " + err.Error())
-				break
-			}
-		} else {
-			c.SetGoalWithResearchMode(cmd.Text, cmd.ResearchMode)
-		}
-		c.SetPlanMode(false)
-		c.GoalStrict(cmd.Strict)
-		c.startGoalCommandTurn(cmd, display)
-	case GoalCommandClear:
-		if c.exclusiveV3Enabled() {
-			if err := c.SetGoalDurable(""); err != nil {
-				c.notice("goal: " + err.Error())
-				break
-			}
-		} else {
-			c.ClearGoal()
-		}
-		c.notice(i18n.M.GoalCleared)
-	case GoalCommandPause:
-		if !c.PauseGoal() {
-			c.notice(i18n.M.GoalNotRunning)
-		}
-	case GoalCommandResume:
-		if !c.ResumeGoal() {
-			c.notice(i18n.M.GoalNotPaused)
-		}
-	default:
-		goal := c.Goal()
-		if strings.TrimSpace(goal) == "" {
-			c.notice(i18n.M.GoalEmpty)
-			break
-		}
-		rt := c.GoalRuntime()
-		c.notice(fmt.Sprintf(i18n.M.GoalCurrentFmt, goal))
-		c.notice(fmt.Sprintf(i18n.M.GoalRuntimeFmt,
-			rt.TurnsUsed, rt.RequestsUsed, rt.TokensUsed,
-			GoalWorkDurationText(rt.WorkDurationMs)))
-		if rt.LastReason != "" {
-			c.noticeDetail(i18n.M.GoalRuntimeLastReason, rt.LastReason)
-		}
-		if rt.StopCause != "" {
-			c.notice(fmt.Sprintf(i18n.M.GoalPausedFmt, rt.StopCause))
-		}
-	}
-	return true
 }
 
 // applyPlanExec is a command tombstone. The old path coupled Plan approval,
@@ -2968,33 +2905,6 @@ func (c *Controller) SetGoalDurable(goal string) error {
 		c.notice("legacy research archive resume failed: " + setup.blockReason)
 	}
 	return nil
-}
-
-// EditGoalDurable edits the current v3 Goal without replacing its identity or
-// resetting admitted rounds. A nil limit explicitly selects unlimited rounds.
-func (c *Controller) EditGoalDurable(objective string, maxGoalRounds *uint64) error {
-	if !c.exclusiveV3Enabled() {
-		return errors.New("editing a goal in place requires a linear v3 session")
-	}
-	current, err := c.goalLifecycleView()
-	if err != nil {
-		return err
-	}
-	if current == nil {
-		return errors.New("no goal is available to edit")
-	}
-	objective = strings.TrimSpace(objective)
-	_, err = c.applyHostGoalMutation(context.Background(), "edit", func(machine *goaldomain.Machine) (*goaldomain.View, error) {
-		edited, editErr := machine.Edit(current.Ref(), goaldomain.EditRequest{
-			Objective:     &objective,
-			MaxGoalRounds: goaldomain.RoundLimitChange{Set: true, Value: maxGoalRounds},
-		})
-		return &edited, editErr
-	})
-	if err == nil && current.Phase == goaldomain.PhaseActive && current.Activation == goaldomain.ActivationArmed {
-		c.kickGoalDriver()
-	}
-	return err
 }
 
 func (c *Controller) SetGoalWithResearchMode(goal string, researchMode GoalResearchMode) {
@@ -5314,89 +5224,6 @@ func (c *Controller) ModelSettingsState() (applied, desired string, err error) {
 // It is transport bookkeeping only, never part of the conversation.
 func (c *Controller) ModelSettingsSourceRevision() string { return c.modelSettings.sourceRevision }
 
-// InheritLifecycleFrom carries same-session lifecycle state across controller
-// rebuilds, such as model switches that preserve the conversation.
-func (c *Controller) InheritLifecycleFrom(prev *Controller) error {
-	if prev == nil {
-		return nil
-	}
-	if c.workspaceRoot == prev.workspaceRoot && c.executor != nil {
-		c.executor.InheritFileObservationsFrom(prev.executor)
-	}
-	prev.mu.Lock()
-	started := prev.startedOnce
-	turn := prev.turn
-	prev.mu.Unlock()
-
-	c.mu.Lock()
-	c.startedOnce = started
-	if c.turn < turn {
-		c.turn = turn
-	}
-	c.mu.Unlock()
-
-	_, currentRuntime, currentExclusive := c.v3Binding()
-	_, previousRuntime, previousExclusive := prev.v3Binding()
-	if !currentExclusive || !previousExclusive || currentRuntime == nil || currentRuntime != previousRuntime {
-		return nil
-	}
-	prev.goalDriverMu.Lock()
-	defer prev.goalDriverMu.Unlock()
-	if prev.goalDriverPending || prev.goalDriverActive != nil {
-		return sessionv3.ErrRuntimeBusy
-	}
-	prev.goalLifecycleMu.RLock()
-	previousMachine, previousLoadErr := prev.goalLifecycle, prev.goalLifecycleLoadErr
-	prev.goalLifecycleMu.RUnlock()
-	if previousLoadErr != nil {
-		return previousLoadErr
-	}
-	c.goalLifecycleMu.Lock()
-	if c.goalLifecycleLoadErr != nil {
-		err := c.goalLifecycleLoadErr
-		c.goalLifecycleMu.Unlock()
-		return err
-	}
-	candidate := c.goalLifecycle.Clone()
-	if err := candidate.InheritRuntimeFrom(previousMachine); err != nil {
-		c.goalLifecycleMu.Unlock()
-		return err
-	}
-	c.goalLifecycle = candidate
-	c.goalLifecycleMu.Unlock()
-
-	prev.goalResourceMu.Lock()
-	tokensUsed, requestsUsed := prev.goalTokensUsed, prev.goalRequestsUsed
-	tokenLimit, extensions := prev.goalTokenLimit, prev.goalBudgetExtensions
-	previousBudget := prev.goalTokenBudget
-	prev.goalResourceMu.Unlock()
-	c.goalResourceMu.Lock()
-	c.goalTokensUsed = tokensUsed
-	c.goalRequestsUsed = requestsUsed
-	c.goalBudgetExtensions = extensions
-	if c.goalTokenBudget == previousBudget {
-		c.goalTokenLimit = tokenLimit
-	} else if c.goalTokenBudget <= 0 {
-		c.goalTokenLimit = 0
-	} else {
-		c.goalTokenLimit = c.goalTokenBudget * (extensions + 1)
-	}
-	c.goalResourceMu.Unlock()
-	if view := candidate.Get(); view != nil && view.Phase == goaldomain.PhaseActive && view.Activation == goaldomain.ActivationArmed {
-		c.goalDriverInherited.Store(true)
-	}
-	return nil
-}
-
-// ActivateGoalDriverAfterRebuild is called only after a host has published the
-// replacement controller. It keeps an unpublished build from racing the old
-// controller for the shared SessionRuntime.
-func (c *Controller) ActivateGoalDriverAfterRebuild() {
-	if c != nil && c.goalDriverInherited.Swap(false) {
-		c.kickGoalDriver()
-	}
-}
-
 // SessionAuthorizations snapshots this controller's same-session tool
 // grants ("Allow for this session") and Plan-mode read-only command trust,
 // for carrying into a replacement controller across a rebuild — see
@@ -5475,8 +5302,8 @@ func (c *Controller) close(fireSessionEnd bool, jobsMode closeJobsMode) {
 		} else {
 			c.promptOwner.Clear()
 		}
-		if c.goalDriverCancel != nil {
-			c.goalDriverCancel()
+		if c.goalDriverControl.cancel != nil {
+			c.goalDriverControl.cancel()
 		}
 		// Goal-driver workers may be inside the pre-admission durability
 		// checkpoint. Join them before closing the v3 writer so teardown cannot

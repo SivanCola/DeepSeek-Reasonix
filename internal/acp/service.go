@@ -468,25 +468,6 @@ func (s *acpSession) isGoalDraftMode() bool {
 	return s.goalDraftMode
 }
 
-func loadedGoalDraftMode(goal string) bool {
-	return strings.TrimSpace(goal) == ""
-}
-
-func selectedGoalDraftMode(modeID, goal string) bool {
-	return modeID == sessionModeGoal && loadedGoalDraftMode(goal)
-}
-
-func setACPGoalDurably(ctrl acpController, objective string) error {
-	if ctrl == nil {
-		return errors.New("session controller is unavailable")
-	}
-	if setter, ok := ctrl.(interface{ SetGoalDurable(string) error }); ok {
-		return setter.SetGoalDurable(objective)
-	}
-	ctrl.SetGoal(objective)
-	return nil
-}
-
 func (s *acpSession) setToolApprovalMode(mode string) {
 	s.mu.Lock()
 	s.toolApprovalMode = normalizeACPToolApprovalMode(mode)
@@ -816,32 +797,10 @@ func (s *service) sessionSetMode(ctx context.Context, raw json.RawMessage) (any,
 	sess.stateChangeMu.Lock()
 	defer sess.stateChangeMu.Unlock()
 	ctrl := sess.currentCtrl()
-	nextMode := p.ModeID
-	legacyApproval := ""
-	clearGoal := false
-	switch p.ModeID {
-	case sessionModeNormal:
-		clearGoal = true
-	case sessionModePlan:
-		clearGoal = true
-	case sessionModeGoal:
-	case sessionModeLegacyDefault:
-		nextMode = sessionModeNormal
-		legacyApproval = control.ToolApprovalReadOnly
-		clearGoal = true
-	case sessionModeLegacyAuto:
-		nextMode = sessionModeNormal
-		legacyApproval = control.ToolApprovalWorkspaceWrite
-		clearGoal = true
-	default:
-		return nil, &RPCError{Code: ErrInvalidParams, Message: "session/set_mode: unknown modeId " + p.ModeID}
+	nextMode, legacyApproval, rpcErr := applyACPSessionMode(ctrl, p.ModeID)
+	if rpcErr != nil {
+		return nil, rpcErr
 	}
-	if clearGoal {
-		if err := setACPGoalDurably(ctrl, ""); err != nil {
-			return nil, &RPCError{Code: ErrInternal, Message: "session/set_mode: persist goal: " + err.Error()}
-		}
-	}
-	ctrl.SetPlanMode(nextMode == sessionModePlan)
 	// Entering Goal mode only arms a draft when no lifecycle exists. A restored,
 	// blocked, paused, or disarmed Goal must retain its complete objective so the
 	// user's next prompt can authorize recovery instead of replacing it.
@@ -1093,22 +1052,7 @@ func (s *service) openExistingSession(ctx context.Context, method, id, cwdParam 
 		toolApprovalMode = control.ToolApprovalWorkspaceWrite
 	}
 	ctrl.SetToolApprovalMode(toolApprovalMode)
-	modeID := normalizeACPCollaborationMode(saved.CollaborationMode)
-	goalDraftMode := false
-	switch modeID {
-	case sessionModePlan:
-		ctrl.SetPlanMode(true)
-	case sessionModeGoal:
-		ctrl.SetPlanMode(false)
-		goalDraftMode = loadedGoalDraftMode(ctrl.Goal())
-	default:
-		if ctrl.GoalStatus() == control.GoalStatusRunning {
-			modeID = sessionModeGoal
-		} else {
-			modeID = sessionModeNormal
-			ctrl.SetPlanMode(false)
-		}
-	}
+	modeID, goalDraftMode := applyLoadedACPMode(ctrl, saved.CollaborationMode)
 
 	meta := metadataForLoadedSession(path, id, cwd, ctrl.History())
 	meta.Model = cfgState.Model
@@ -1242,12 +1186,8 @@ func (s *service) sessionPrompt(ctx context.Context, raw json.RawMessage) (any, 
 		cancel()
 	}()
 	statusStarted := false
-	if sess.takeGoalDraftMode() {
-		if err := setACPGoalDurably(sess.currentCtrl(), text); err != nil {
-			sess.setGoalDraftMode(true)
-			return nil, &RPCError{Code: ErrInternal, Message: "session/prompt: persist goal: " + err.Error()}
-		}
-		sess.saveMetaIfPresent()
+	if rpcErr := prepareACPGoalPrompt(sess, text); rpcErr != nil {
+		return nil, rpcErr
 	}
 	beginTurn := func() {
 		if sess.status == nil {
@@ -1990,15 +1930,9 @@ func (s *service) rebuildSessionLocked(ctx context.Context, sess *acpSession, cf
 	// InheritLifecycleFrom wires two concrete controllers' turn/hook state; it's a
 	// construction concern, not part of the driving port. cur is always the
 	// *control.Controller the factory built for this session, so this is safe.
-	if prev, ok := cur.(*control.Controller); ok {
-		if err := newCtrl.InheritLifecycleFrom(prev); err != nil {
-			newCtrl.ReleaseResources()
-			return &RPCError{Code: ErrInvalidRequest, Message: "session config: active Goal continuation must finish before switching config"}
-		}
-		// A rebuild must not force the user to re-approve tools already granted
-		// for this session, or re-trust Plan-mode read-only commands already
-		// trusted this session.
-		newCtrl.RestoreSessionAuthorizations(prev.SessionAuthorizations())
+	if rpcErr := inheritACPControllerLifecycle(newCtrl, cur); rpcErr != nil {
+		newCtrl.ReleaseResources()
+		return rpcErr
 	}
 	// Persist before publishing the replacement. If this fails, the outgoing
 	// controller and transcript still agree and remain fully usable; publishing

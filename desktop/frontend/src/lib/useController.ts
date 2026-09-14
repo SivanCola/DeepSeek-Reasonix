@@ -62,6 +62,7 @@ import { TurnEventProjector } from "./turnEventProjection";
 import { useStaleTurnWatchdog } from "./useStaleTurnWatchdog";
 import { useRemoteTabSwitch } from "./useRemoteTabSwitch";
 import { useNavigationIntentFence } from "./useNavigationIntentFence";
+import { useGoalControllerActions } from "./useGoalControllerActions";
 import type { SearchSource } from "./searchSources";
 import { attachWebSearchOutput } from "./searchTranscript";
 import { fileDiffFromWire, summarize, summarizeFileDiff, type ToolFileDiff } from "./tools";
@@ -4068,76 +4069,10 @@ export function useController() {
     }
   }, [dispatchTo, refreshMetaForTab]);
 
-  const setGoalForTab = useCallback(async (tabId: string, goal: string): Promise<void> => {
-    if (!tabId) return;
-    // Propagate activation failures so the first Goal turn (especially structured
-    // Skill submit) can abort instead of executing without an active Goal.
-    try {
-      await app.SetGoalForTab(tabId, goal);
-    } finally {
-      await refreshMetaForTab(tabId);
-    }
-  }, [refreshMetaForTab]);
-
-  const setGoal = useCallback(async (goal: string): Promise<void> => {
-    if (!activeTabId) return;
-    await setGoalForTab(activeTabId, goal);
-  }, [activeTabId, setGoalForTab]);
-
-  const editGoalForTab = useCallback(async (tabId: string, objective: string, maxGoalRounds: number | null): Promise<void> => {
-    if (!tabId) return;
-    try {
-      await app.EditGoalForTab(tabId, objective, maxGoalRounds);
-    } finally {
-      await refreshMetaForTab(tabId);
-    }
-  }, [refreshMetaForTab]);
-
-  const clearGoalForTab = useCallback(async (tabId: string): Promise<void> => {
-    if (!tabId) return;
-    try {
-      await app.ClearGoalForTab(tabId);
-    } finally {
-      await refreshMetaForTab(tabId);
-    }
-  }, [refreshMetaForTab]);
-
-  const clearGoal = useCallback(async (): Promise<void> => {
-    if (!activeTabId) return;
-    await clearGoalForTab(activeTabId);
-  }, [activeTabId, clearGoalForTab]);
-
-  const resumeGoalForTab = useCallback(async (tabId: string): Promise<boolean> => {
-    if (!tabId) return false;
-    try {
-      const resumed = await app.ResumeGoalForTab(tabId);
-      await refreshMetaForTab(tabId);
-      return resumed;
-    } catch {
-      return false;
-    }
-  }, [refreshMetaForTab]);
-
-  const resumeGoal = useCallback(async (): Promise<boolean> => {
-    if (!activeTabId) return false;
-    return resumeGoalForTab(activeTabId);
-  }, [activeTabId, resumeGoalForTab]);
-
-  const pauseGoalForTab = useCallback(async (tabId: string): Promise<boolean> => {
-    if (!tabId) return false;
-    try {
-      const paused = await app.PauseGoalForTab(tabId);
-      await refreshMetaForTab(tabId);
-      return paused;
-    } catch {
-      return false;
-    }
-  }, [refreshMetaForTab]);
-
-  const pauseGoal = useCallback(async (): Promise<boolean> => {
-    if (!activeTabId) return false;
-    return pauseGoalForTab(activeTabId);
-  }, [activeTabId, pauseGoalForTab]);
+  const {
+    setGoalForTab, setGoal, editGoalForTab, clearGoalForTab, clearGoal,
+    resumeGoalForTab, resumeGoal, pauseGoalForTab, pauseGoal,
+  } = useGoalControllerActions(activeTabId, refreshMetaForTab);
 
   const newSession = useCallback(async () => {
     const tabId = activeTabId;

@@ -1924,7 +1924,7 @@
     },
     {
       "cancellation": "before-dispatch",
-      "domain": "desktop/app.go",
+      "domain": "desktop/goal_app.go",
       "name": "ClearGoalForTab",
       "owner": "App.ClearGoalForTab",
       "params": [
@@ -1941,7 +1941,7 @@
         "resolver": "App.ClearGoalForTab"
       },
       "sources": [
-        "desktop/app.go"
+        "desktop/goal_app.go"
       ]
     },
     {
@@ -3154,7 +3154,7 @@
     },
     {
       "cancellation": "before-dispatch",
-      "domain": "desktop/app.go",
+      "domain": "desktop/goal_app.go",
       "name": "EditGoalForTab",
       "owner": "App.EditGoalForTab",
       "params": [
@@ -3182,12 +3182,12 @@
         "resolver": "App.EditGoalForTab"
       },
       "sources": [
-        "desktop/app.go"
+        "desktop/goal_app.go"
       ]
     },
     {
       "cancellation": "before-dispatch",
-      "domain": "desktop/remote_tab.go",
+      "domain": "desktop/remote_goal_edit.go",
       "name": "EditRemoteTabGoal",
       "owner": "App.EditRemoteTabGoal",
       "params": [
@@ -3215,7 +3215,7 @@
         "resolver": "App.EditRemoteTabGoal"
       },
       "sources": [
-        "desktop/remote_tab.go"
+        "desktop/remote_goal_edit.go"
       ]
     },
     {
@@ -7257,7 +7257,7 @@
     },
     {
       "cancellation": "before-dispatch",
-      "domain": "desktop/app.go",
+      "domain": "desktop/goal_app.go",
       "name": "PauseGoalForTab",
       "owner": "App.PauseGoalForTab",
       "params": [
@@ -7276,7 +7276,7 @@
         "resolver": "App.PauseGoalForTab"
       },
       "sources": [
-        "desktop/app.go"
+        "desktop/goal_app.go"
       ]
     },
     {
@@ -10357,7 +10357,7 @@
     },
     {
       "cancellation": "before-dispatch",
-      "domain": "desktop/app.go",
+      "domain": "desktop/goal_app.go",
       "name": "ResumeGoalForTab",
       "owner": "App.ResumeGoalForTab",
       "params": [
@@ -10376,7 +10376,7 @@
         "resolver": "App.ResumeGoalForTab"
       },
       "sources": [
-        "desktop/app.go"
+        "desktop/goal_app.go"
       ]
     },
     {
@@ -12610,7 +12610,7 @@
     },
     {
       "cancellation": "before-dispatch",
-      "domain": "desktop/app.go",
+      "domain": "desktop/goal_app.go",
       "name": "SetGoal",
       "owner": "App.SetGoal",
       "params": [
@@ -12627,12 +12627,12 @@
         "resolver": "App.SetGoal"
       },
       "sources": [
-        "desktop/app.go"
+        "desktop/goal_app.go"
       ]
     },
     {
       "cancellation": "before-dispatch",
-      "domain": "desktop/app.go",
+      "domain": "desktop/goal_app.go",
       "name": "SetGoalForTab",
       "owner": "App.SetGoalForTab",
       "params": [
@@ -12653,7 +12653,7 @@
         "resolver": "App.SetGoalForTab"
       },
       "sources": [
-        "desktop/app.go"
+        "desktop/goal_app.go"
       ]
     },
     {
