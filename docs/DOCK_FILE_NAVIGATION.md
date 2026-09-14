@@ -27,7 +27,7 @@ file row / markdown link / file tree / preview control
 - **Access context travels with the command.** A workspace reference carries no
   presented tool scope, so reopening a path from another entry point reads it
   under that command's credentials, never an earlier presentation's.
-- **Records are keyed by session tab and dock tab.** A record holds the dock
+- **Records are keyed by dock tab.** A record holds the dock
   instance identity, its lifecycle generation, the entries with their access
   contexts, the last navigation intent, a display revision, a content revision
   and the lifetime signal.
@@ -42,11 +42,11 @@ file row / markdown link / file tree / preview control
 | Command-driven navigation: opening is an event, rendering reads the result | `FileNavigationOwner` (`lib/fileNavigationOwner.ts`) commits records; `WorkspaceDockRegion` no longer builds a request during render; `useFileNavigationRecord` (`app-shell/useFileNavigation.ts`) only reads |
 | Stable resource identity: the file and its access scope, not an object reference | `FileResourceRef` / `FileAccessContext` / `ResolvedFileResource` (`lib/fileResource.ts`); identity is host + session + canonical path, access context is source + session + tool call |
 | Separate navigation parameters from identity | `FileNavigationParams` — `action` (`preview`/`source`/`reveal-tree`) and `view` (`files`/`changed`) never change what the resource is |
-| Independent navigation instance per dock | One `FileNavigationOwner` per running app instance (`useFileNavigationRuntime`), records per session tab and dock tab, `generation` per lifecycle |
+| Independent navigation instance per dock | One `FileNavigationOwner` per running app instance (`useFileNavigationRuntime`), one record per dock tab, `generation` per lifecycle |
 | Command results are reported, not thrown | `FileNavigationOutcome` — `opened` / `cancelled` (superseded, closed, disposed) / `failed`; a cancelled command shows no error |
 | Resource URL ownership on a cancelled browser preview | `openBrowserPreview` releases exactly one URL: the tab owns it once handed over, otherwise the command revokes it |
 | No global cancellation | `fileNavigationLifetime.ts` is gone; a new command supersedes the record's pending one, and `retain`/`bindScope` end a record's lifetime |
-| Tab restore without replay | The record survives a dock collapse; a remount re-applies the last intent and re-reads the retained selection, and never re-runs the open command |
+| Tab restore without replay | The record survives a dock collapse; a remount reads the retained selection without re-applying the last intent or re-running the open command |
 
 Not ported: split view, floating preview windows, layout undo history, the
 Cordis plugin framework, and the `dsh-resource://` scheme (resource ids stay
@@ -58,8 +58,9 @@ internal to navigation).
 | --- | --- |
 | New command for the same dock | Aborts the record's pending operation; the older outcome is `cancelled` |
 | Another command to a different dock | Nothing: panels never cancel each other |
-| Dock tab closed, or another session/workspace active | `retain` drops the record and aborts its lifetime |
-| Workspace scope key changed (session, cwd, session generation) | `bindScope` rebuilds the record: empty entries, advanced generation, previous lifetime aborted |
+| Dock tab closed or removed from the active workspace | `retain` drops the record and aborts its lifetime |
+| Session changes inside the same project | `bindScope` keeps entries and selection, then replaces their access contexts with current-session workspace access |
+| Project/remote-host resource space changes | `bindScope` rebuilds the record: empty entries, advanced generation, previous lifetime aborted |
 | Dock collapsed (`workspacePanelOpen` false) | Nothing: the record is what re-expanding restores |
 | Runtime unmounted | `dispose` aborts every record and every one-shot operation |
 | Dock tab id reused after close | A new generation; remembered paths come back with workspace access only |
@@ -72,8 +73,8 @@ never written to `localStorage`. Storage written by older versions is read as
 paths and revalidated against the current workspace, which is why a restored
 preview never regains a presented tool scope.
 
-No Go/Electron bridge payload, session log, tool schema or provider request byte
-changes, so prompt caching is unaffected.
+No Go/Electron bridge payload, session log, tool schema, standing instruction or
+provider request byte changes, so prompt caching is unaffected.
 
 ## Verification
 

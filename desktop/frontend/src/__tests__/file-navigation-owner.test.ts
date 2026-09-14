@@ -13,7 +13,7 @@ const scope = { sessionTabId: "session-a", dockTabId: DOCK };
 const key = fileNavigationKey(scope);
 const resolutions = new Map<string, { resolve: (path: string) => void }>();
 const owner = new FileNavigationOwner({
-  resolve: (ref) => ({ hostId: ref.hostId, path: ref.path, requestedPath: ref.path, access: fileAccessContext(ref) }),
+  resolve: (ref) => ({ hostId: ref.hostId, path: ref.path, identityPath: ref.path, requestedPath: ref.path, access: fileAccessContext(ref) }),
   revealDock: () => DOCK,
 });
 const presented = (path: string, toolCallId = "call"): FileResourceRef =>
@@ -83,7 +83,7 @@ assert.equal(snapshot(), cleared, "clearing an empty selection produces no new s
 // ── Restore carries workspace access only ──
 owner.dispose();
 const restoredOwner = new FileNavigationOwner({
-  resolve: (ref) => ({ hostId: ref.hostId, path: ref.path, requestedPath: ref.path, access: fileAccessContext(ref) }),
+  resolve: (ref) => ({ hostId: ref.hostId, path: ref.path, identityPath: ref.path, requestedPath: ref.path, access: fileAccessContext(ref) }),
   revealDock: () => DOCK,
 });
 restoredOwner.bindScope(scope, { resource: "project", session: "workspace-scope" });
@@ -96,6 +96,31 @@ assert.equal(restored.navigation, null, "a restore is not a command and carries 
 const restoredSnapshot = restoredOwner.getSnapshot(key);
 restoredOwner.restore(scope, { paths: ["c.md"], selectedPath: null, hostId: "local" });
 assert.equal(restoredOwner.getSnapshot(key), restoredSnapshot, "a restore never outranks a record a command or an earlier restore wrote");
+
+// A slow restore is background hydration. An explicit command that begins
+// afterward owns the dock even before its own path resolution completes.
+const hydration = new Map<string, { resolve: (resource: ReturnType<typeof workspace>) => void }>();
+const hydrationOwner = new FileNavigationOwner({
+  resolve: (ref) => new Promise((resolve) => hydration.set(ref.path, {
+    resolve: (resource) => resolve({
+      hostId: resource.hostId,
+      path: resource.path,
+      identityPath: `/repo/${resource.path}`,
+      requestedPath: resource.path,
+      access: fileAccessContext(resource),
+    }),
+  })),
+  revealDock: () => DOCK,
+});
+hydrationOwner.bindScope(scope, { resource: "project", session: "workspace-scope" });
+const restoring = hydrationOwner.restore(scope, { paths: ["remembered.md"], selectedPath: "remembered.md", hostId: "local" });
+const liveOpen = hydrationOwner.open({ ref: workspace("live.md"), params: { action: "preview", view: "files" } });
+hydration.get("remembered.md")!.resolve(workspace("remembered.md"));
+await restoring;
+assert.equal(hydrationOwner.getSnapshot(key)!.selected, null, "late hydration cannot commit over a resolving command");
+hydration.get("live.md")!.resolve(workspace("live.md"));
+assert.equal((await liveOpen as { status: string }).status, "opened");
+assert.equal(hydrationOwner.getSnapshot(key)!.selected?.resource.path, "live.md");
 
 // ── Another session in the same project keeps the previews, not the scope ──
 restoredOwner.open({ ref: presented("presented.md"), params: { action: "preview", view: "files" } });
@@ -142,14 +167,16 @@ assert.deepEqual(shared.selected?.resource.access, { source: "presented", tabId:
 
 // ── A click is never replaced by an earlier command's late result ──
 const slow = new FileNavigationOwner({
-  resolve: (ref) => new Promise((resolve) => resolutions.set("slow.md", {
-    resolve: () => resolve({ hostId: ref.hostId, path: "slow.md", requestedPath: ref.path, access: fileAccessContext(ref) }),
+  resolve: (ref) => new Promise((resolve) => resolutions.set(ref.path, {
+    resolve: (path) => resolve({ hostId: ref.hostId, path, identityPath: path, requestedPath: ref.path, access: fileAccessContext(ref) }),
   })),
   revealDock: () => DOCK,
 });
 const slowOpen = slow.open({ ref: workspace("slow.md"), params: { action: "preview", view: "files" } });
 assert(resolutions.has("slow.md"), "the slow open is resolving");
-slow.selectPath(scope, { hostId: "local", path: "clicked.md" });
+const click = slow.selectPath(scope, { hostId: "local", path: "clicked.md" });
+resolutions.get("clicked.md")!.resolve("clicked.md");
+await click;
 assert.equal(slow.getSnapshot(key)!.selected?.resource.path, "clicked.md", "the click lands while the open is still resolving");
 resolutions.get("slow.md")!.resolve("slow.md");
 assert.deepEqual(await slowOpen, { status: "cancelled", reason: "superseded" });
@@ -158,7 +185,7 @@ assert.equal(slow.getSnapshot(key)!.selected?.resource.path, "clicked.md", "the 
 // ── A command that moves the dock to another host survives the panel's bind ──
 const hostScoped = new FileNavigationOwner({
   resolve: (ref) => new Promise((resolve) => resolutions.set("host-b.md", {
-    resolve: () => resolve({ hostId: ref.hostId, path: "host-b.md", requestedPath: ref.path, access: fileAccessContext(ref) }),
+    resolve: () => resolve({ hostId: ref.hostId, path: "host-b.md", identityPath: "host-b.md", requestedPath: ref.path, access: fileAccessContext(ref) }),
   })),
   revealDock: () => "dock-remote",
 });
@@ -174,13 +201,29 @@ assert.equal(hostScoped.getSnapshot("dock-remote")!.selected?.resource.path, "ho
 // ── A panel acting on its own contents never picks a dock ──
 let reveals = 0;
 const panelOwner = new FileNavigationOwner({
-  resolve: (ref) => ({ hostId: ref.hostId, path: ref.path, requestedPath: ref.path, access: fileAccessContext(ref) }),
+  resolve: (ref) => ({ hostId: ref.hostId, path: ref.path, identityPath: ref.path, requestedPath: ref.path, access: fileAccessContext(ref) }),
   revealDock: () => { reveals += 1; return "another-dock"; },
 });
 panelOwner.openIn(scope, { ref: workspace("own.ts"), params: { action: "preview", view: "files" } });
 assert.equal(reveals, 0, "a command inside a panel must not ask which dock to open");
 assert.equal(panelOwner.getSnapshot(key)!.selected?.resource.path, "own.ts", "it commits to the dock the caller named");
 assert.equal(panelOwner.getSnapshot(fileNavigationKey({ sessionTabId: "session-a", dockTabId: "another-dock" })), null);
+
+// ── Canonical identity deduplicates caller spellings of the same file ──
+const canonicalOwner = new FileNavigationOwner({
+  resolve: (ref) => ({
+    hostId: ref.hostId,
+    path: ref.path,
+    identityPath: ref.path.startsWith("/repo/") ? ref.path : `/repo/${ref.path}`,
+    requestedPath: ref.path,
+    access: fileAccessContext(ref),
+  }),
+  revealDock: () => DOCK,
+});
+canonicalOwner.open({ ref: workspace("src/a.ts"), params: { action: "preview", view: "files" } });
+canonicalOwner.open({ ref: workspace("/repo/src/a.ts"), params: { action: "preview", view: "files" } });
+assert.deepEqual(canonicalOwner.getSnapshot(key)!.entries.map((entry) => entry.resource.path), ["/repo/src/a.ts"],
+  "relative and absolute spellings of one canonical file reuse a preview tab");
 
 // ── A failed resolution reports to its caller and commits nothing ──
 const failing = new FileNavigationOwner({

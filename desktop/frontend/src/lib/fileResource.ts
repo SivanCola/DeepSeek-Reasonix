@@ -29,6 +29,8 @@ export type ResolvedFileResource = Readonly<{
   hostId: string;
   /** Path the read entry points accept. */
   path: string;
+  /** Stable backend-resolved coordinate used only for resource identity. */
+  identityPath: string;
   /** Path as the caller supplied it, for display and tree reveal. */
   requestedPath: string;
   access: FileAccessContext;
@@ -44,19 +46,21 @@ export const sameAccessContext = (left: FileAccessContext, right: FileAccessCont
   left.source === right.source && left.tabId === right.tabId && left.toolCallId === right.toolCallId;
 
 /**
- * Navigation resolution: only a remote workspace reference needs the backend,
- * because its relative path is meaningful on the host rather than here. Every
- * other reference is used as supplied, so an open command commits before React
- * paints and the dock never renders an empty panel first.
+ * Resolve a caller spelling into the stable coordinate that identifies the
+ * file. The original local spelling remains the read path because it may be an
+ * external-folder token or a presented path whose access must be revalidated by
+ * its scoped read entry point. Remote reads accept the resolved host coordinate.
  */
-export function resolveFileResource(ref: FileResourceRef): ResolvedFileResource | Promise<ResolvedFileResource> {
+export async function resolveFileResource(ref: FileResourceRef): Promise<ResolvedFileResource> {
   const access = fileAccessContext(ref);
-  if (ref.hostId !== "local" && ref.source === "workspace") {
-    return app
-      .ResolveRemoteWorkspacePathForTab(ref.tabId, ref.hostId, ref.toolCallId ?? "", ref.path)
-      .then((path) => ({ hostId: ref.hostId, path, requestedPath: ref.path, access }));
-  }
-  return { hostId: ref.hostId, path: ref.path, requestedPath: ref.path, access };
+  const identityPath = await resolveFileResourcePath(ref);
+  return {
+    hostId: ref.hostId,
+    path: ref.hostId === "local" ? ref.path : identityPath,
+    identityPath,
+    requestedPath: ref.path,
+    access,
+  };
 }
 
 /** Absolute path for copy-to-clipboard and save-a-copy, where display needs one. */

@@ -220,7 +220,7 @@ function RemoteFilesTab({ hostId, connected, navigationSignal, fileNavigation, f
         ) : (
           <button
             className={`remote-tree__row ${selected === e.path ? "is-selected" : ""}`}
-            onClick={() => fileNavigation.selectPath(fileScope, { hostId, path: e.path })}
+            onClick={() => { void Promise.resolve(fileNavigation.selectPath(fileScope, { hostId, path: e.path })); }}
             role="treeitem"
           >
             {e.name}
@@ -239,7 +239,7 @@ function RemoteFilesTab({ hostId, connected, navigationSignal, fileNavigation, f
         {presentedSelection && (
           <button
             className="remote-tree__row is-selected remote-tree__presented"
-            onClick={() => fileNavigation.selectPath(fileScope, { hostId, path: presentedSelection })}
+            onClick={() => { void Promise.resolve(fileNavigation.selectPath(fileScope, { hostId, path: presentedSelection })); }}
             role="treeitem"
             title={presentedSelection}
           >

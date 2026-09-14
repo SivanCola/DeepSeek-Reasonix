@@ -108,5 +108,25 @@ assert.deepEqual(revoked, ["http://preview.test/one.html", "http://preview.test/
 const openTabs = useBrowserPanelStore.getState().tabs;
 assert.deepEqual(openTabs.map((tab) => tab.id), ["open-tab-2"], "only the preview whose host arrived opened a page");
 assert(!openTabs.some((tab) => tab.id === "only-owned-tab"), "a tab from a dock that closed never opens");
+
+// Direct bridge actions keep the public outcome contract even when the host
+// rejects: callers receive `failed` instead of an escaping promise rejection.
+Object.assign(stub.commands, {
+  OpenWorkspacePathForTab: async () => { throw new Error("open denied"); },
+  RevealWorkspacePathForTab: async () => { throw new Error("reveal denied"); },
+  SaveWorkspacePathAsForTab: async () => { throw new Error("save denied"); },
+});
+for (const [action, message] of [
+  ["open-native", "open denied"],
+  ["reveal-native", "reveal denied"],
+  ["save-copy", "save denied"],
+] as const) {
+  const outcome = await performResourceAction(
+    { hostId: "local", tabId: "session", source: "workspace", path: "failed.txt" },
+    action,
+  );
+  assert.equal(outcome.status, "failed");
+  assert.equal((outcome as { error: Error }).error.message, message);
+}
 stub.uninstall(); dom.window.close();
-console.log("PASS navigation ordering, dock-scoped cancellation, obsolete errors and browser resource cleanup");
+console.log("PASS navigation ordering, cancellation, failed outcomes and browser resource cleanup");

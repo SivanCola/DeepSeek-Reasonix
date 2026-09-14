@@ -42,8 +42,6 @@ A workflow document does not grant publication, merge, or release authorization.
   checks. Budget exceptions require narrow, measured justification.
 - Transcript viewport, virtualization, measurement, or scroll behavior:
   [scroll contract](docs/TRANSCRIPT_SCROLL_CONTRACT.md).
-- Dock file opening, preview tabs, or file navigation lifetimes:
-  [dock file navigation](docs/DOCK_FILE_NAVIGATION.md).
 - Standing instructions, imports, background facts, and memory scope:
   [memory retrieval](docs/SESSION_MEMORY_RETRIEVAL.md).
 - Release qualification and publication: [releasing](docs/RELEASING.md).

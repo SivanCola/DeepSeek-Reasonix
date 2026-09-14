@@ -118,7 +118,7 @@ const isPromise = <T>(value: T | Promise<T>): value is Promise<T> =>
 /**
  * Navigation state for one running app instance, held outside React.
  *
- * Records are keyed by session tab and dock instance. A record carries the
+ * Records are keyed by dock instance. A record carries the
  * resource identity, its access context, the navigation parameters and a
  * monotonic revision, so a panel reads a committed result instead of publishing
  * requests while it renders. Only an explicit command advances a revision, an
@@ -283,14 +283,21 @@ export class FileNavigationOwner {
    * restored session. The read goes through the current workspace access, so a
    * path alone never re-grants the permissions of an earlier presentation.
    */
-  selectPath(scope: FileNavigationScope, resource: FileResourceIdentityInput): void {
+  selectPath(scope: FileNavigationScope, resource: FileResourceIdentityInput): FileNavigationOutcome | Promise<FileNavigationOutcome> | void {
     const record = this.records.get(fileNavigationKey(scope));
     if (!record) return;
+    if (resource.hostId === "local") {
+      return this.openIn(scope, {
+        ref: { source: "workspace", hostId: resource.hostId, tabId: scope.sessionTabId, path: resource.path },
+        params: { action: "preview", view: "files" },
+      });
+    }
+    // Remote tree paths come from ListRemoteDir and are already host coordinates;
+    // resolving them as derived artifacts would require a tool-call grant they do
+    // not carry.
     this.supersede(record);
-    this.commitNavigation(record,workspaceResource(resource, scope.sessionTabId), {
-      action: "preview",
-      view: "files",
-    });
+    this.commitNavigation(record, workspaceResource(resource, scope.sessionTabId), { action: "preview", view: "files" });
+    return { status: "opened", resource: record.snapshot.selected!.resource };
   }
 
   /** Switch an open tab between its preview and its source, reusing the tab. */
@@ -339,23 +346,41 @@ export class FileNavigationOwner {
    * Restored entries carry workspace access only; a record a command already
    * wrote to is left alone, so a restore never outranks a live navigation.
    */
-  restore(scope: FileNavigationScope, state: FileNavigationRestore): void {
+  restore(scope: FileNavigationScope, state: FileNavigationRestore): void | Promise<void> {
     const record = this.records.get(fileNavigationKey(scope));
     if (!record) return;
-    this.supersede(record);
     const current = record.snapshot;
-    if (current.entries.length > 0 || current.selected) return;
-    const entries = state.paths.map((path): FilePreviewEntry => ({
-      resource: workspaceResource({ hostId: state.hostId, path }, scope.sessionTabId),
-      source: false,
-    }));
-    if (!entries.length) return;
-    this.commitState(record, {
-      entries,
-      selected: state.selectedPath
-        ? entries.find((entry) => entry.resource.path === state.selectedPath) ?? null
-        : null,
+    if (record.pending || current.entries.length > 0 || current.selected || !state.paths.length) return;
+    const resources = state.paths.map((path): ResolvedFileResource | Promise<ResolvedFileResource> | null => {
+      try {
+        return this.ports.resolve({
+          source: "workspace",
+          hostId: state.hostId,
+          tabId: scope.sessionTabId,
+          path,
+        });
+      } catch {
+        return null;
+      }
     });
+    const commit = (resolved: readonly (ResolvedFileResource | null)[]): void => {
+      if (this.records.get(fileNavigationKey(scope)) !== record || record.snapshot !== current || record.pending) return;
+      const entries = resolved
+        .filter((resource): resource is ResolvedFileResource => resource !== null)
+        .reduce((all, resource) => upsertEntry(all, resource, false).entries, [] as readonly FilePreviewEntry[]);
+      if (!entries.length) return;
+      this.commitState(record, {
+        entries,
+        selected: state.selectedPath
+          ? entries.find((entry) => entry.resource.requestedPath === state.selectedPath) ?? null
+          : null,
+      });
+    };
+    if (!resources.some((resource) => resource !== null && isPromise(resource))) {
+      commit(resources as (ResolvedFileResource | null)[]);
+      return;
+    }
+    return Promise.all(resources.map((resource) => Promise.resolve(resource).catch(() => null))).then(commit);
   }
 
   dispose(): void {
@@ -534,11 +559,18 @@ export type FileResourceIdentityInput = Readonly<{ hostId: string; path: string 
 
 function workspaceResource(resource: FileResourceIdentityInput, sessionTabId: string): ResolvedFileResource {
   const access: FileAccessContext = { source: "workspace", tabId: sessionTabId };
-  return { hostId: resource.hostId, path: resource.path, requestedPath: resource.path, access };
+  return {
+    hostId: resource.hostId,
+    path: resource.path,
+    identityPath: resource.path.replace(/\\/g, "/"),
+    requestedPath: resource.path,
+    access,
+  };
 }
 
 function sameResource(left: ResolvedFileResource, right: ResolvedFileResource): boolean {
   return left.hostId === right.hostId
+    && left.identityPath === right.identityPath
     && left.path === right.path
     && sameAccessContext(left.access, right.access);
 }
@@ -557,11 +589,11 @@ function upsertEntry(
   resource: ResolvedFileResource,
   source: boolean,
 ): { entries: readonly FilePreviewEntry[]; selected: FilePreviewEntry } {
-  const existing = entries.find((candidate) => candidate.resource.path === resource.path);
+  const existing = entries.find((candidate) => candidate.resource.identityPath === resource.identityPath);
   const entry = existing && existing.source === source && sameResource(existing.resource, resource)
     ? existing
     : { resource, source };
-  const next = [...entries.filter((candidate) => candidate.resource.path !== resource.path), entry]
+  const next = [...entries.filter((candidate) => candidate.resource.identityPath !== resource.identityPath), entry]
     .slice(-FILE_PREVIEW_LIMIT);
   const unchanged = next.length === entries.length && next.every((candidate, index) => candidate === entries[index]);
   return { entries: unchanged ? entries : next, selected: entry };

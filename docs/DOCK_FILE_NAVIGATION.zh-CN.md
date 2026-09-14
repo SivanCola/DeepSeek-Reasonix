@@ -25,7 +25,7 @@
 - **访问凭据随命令传递。** workspace 来源的引用不携带 presented 工具范围，
   因此从另一个入口重新打开同一路径时，只会使用本次命令的凭据，不会沿用
   此前 presented 请求的权限。
-- **记录按会话标签与 Dock 标签索引。** 记录包含 Dock 实例身份、生命周期代数、
+- **记录按 Dock 标签索引。** 记录包含 Dock 实例身份、生命周期代数、
   带访问上下文的条目、最后一次导航意图、显示修订、内容修订与生命周期信号。
 - **只有显式命令推进修订。** 等价命令会保持条目对象与条目列表完全一致，
   因此仍有效的内容读取不会被重新启动。
@@ -37,11 +37,11 @@
 | 命令驱动导航：打开由事件触发，渲染只读取结果 | `FileNavigationOwner`（`lib/fileNavigationOwner.ts`）提交记录；`WorkspaceDockRegion` 不再在渲染中构造请求；`useFileNavigationRecord`（`app-shell/useFileNavigation.ts`）只读取 |
 | 稳定资源身份：按文件与访问范围识别，不按对象引用 | `FileResourceRef` / `FileAccessContext` / `ResolvedFileResource`（`lib/fileResource.ts`）；身份为主机 + 会话 + 规范路径，访问上下文为来源 + 会话 + 工具调用 |
 | 导航参数与身份分离 | `FileNavigationParams`——`action`（`preview`/`source`/`reveal-tree`）与 `view`（`files`/`changed`）不改变资源本身 |
-| 每个 Dock 独立导航实例 | 每个运行实例一个 `FileNavigationOwner`（`useFileNavigationRuntime`），记录按会话标签与 Dock 标签划分，每次生命周期一个 `generation` |
+| 每个 Dock 独立导航实例 | 每个运行实例一个 `FileNavigationOwner`（`useFileNavigationRuntime`），每个 Dock 标签一条记录，每次生命周期一个 `generation` |
 | 命令结果上报而非抛出 | `FileNavigationOutcome`——`opened` / `cancelled`（superseded、closed、disposed）/ `failed`；取消不显示错误 |
 | 取消浏览器预览时的 URL 归属 | `openBrowserPreview` 只释放一次 URL：交接后归标签页所有，未交接则由命令撤销 |
 | 取消全局化 | 删除 `fileNavigationLifetime.ts`；新命令取代该记录尚未完成的旧命令，`retain`/`bindScope` 结束记录生命周期 |
-| 恢复不重放命令 | 记录在 Dock 折叠后保留；重新挂载后只重新应用最后一次意图并重读已保留的选择，不会重新执行打开命令 |
+| 恢复不重放命令 | 记录在 Dock 折叠后保留；重新挂载只读取已保留的选择，不重新应用最后一次意图，也不重新执行打开命令 |
 
 未移植：分栏、浮窗、布局撤销历史、Cordis 插件框架，以及
 `dsh-resource://` 外部协议（资源标识仅用于内部导航）。
@@ -52,8 +52,9 @@
 | --- | --- |
 | 同一 Dock 的新命令 | 中止该记录尚未完成的旧命令，旧结果返回 `cancelled` |
 | 发往其他 Dock 的命令 | 无影响：面板之间不互相取消 |
-| 关闭 Dock 标签、切换会话或工作区 | `retain` 删除记录并中止其生命周期 |
-| 工作区作用域键变化（会话、cwd、会话代数） | `bindScope` 重建记录：条目清空、代数递增、旧生命周期中止 |
+| Dock 标签关闭或移出当前工作区 | `retain` 删除记录并中止其生命周期 |
+| 同一项目内切换会话 | `bindScope` 保留条目与选择，并把访问上下文替换为当前会话的 workspace 权限 |
+| 项目或远程主机资源空间变化 | `bindScope` 重建记录：条目清空、代数递增、旧生命周期中止 |
 | Dock 折叠（`workspacePanelOpen` 为 false） | 无影响：展开时正是靠该记录恢复 |
 | 运行实例卸载 | `dispose` 中止全部记录与一次性操作 |
 | 关闭后复用同一标签 ID | 使用新的生命周期代数；记忆中的路径仅以 workspace 访问权限恢复 |
@@ -64,8 +65,8 @@
 与访问上下文仅存于内存，不写入 `localStorage`。旧版本写入的存储按路径读取，
 并重新走当前工作区校验，因此恢复的预览不会重新获得 presented 工具范围。
 
-不修改 Go/Electron 桥接负载、会话日志、工具 schema 或 provider 请求字节，
-对提示缓存无影响。
+不修改 Go/Electron 桥接负载、会话日志、工具 schema、standing instruction 或
+provider 请求字节，对提示缓存无影响。
 
 ## 验证
 

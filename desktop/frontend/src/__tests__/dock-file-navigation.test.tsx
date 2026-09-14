@@ -23,6 +23,7 @@ const { dom, root } = await renderFilesWorkspace({
     if (path === "denied.txt") throw new Error("permission denied");
     return path;
   },
+  ResolveRemotePresentedPathForTab: async (_tab, _host, _tool, path) => path,
 });
 const props: WorkspaceDockRegionProps = {
   visible: false, overlay: false, mode: "files", creation: false, showContext: false,
@@ -58,6 +59,11 @@ for (const hostId of ["local", "remote-test"]) {
     await act(async () => useActivityBarStore.getState().activateTab(original));
     await waitFor("restored presented resource", () => document.body.textContent?.includes("content local-reveal-tree.txt") === true);
     console.log("PASS presented resource identity survives view remount without replay");
+    await act(async () => performResourceAction({ hostId, tabId: "navigation-session", path: "src/alias.ts", source: "workspace" }, "preview"));
+    await act(async () => performResourceAction({ hostId, tabId: "navigation-session", path: "/repo/src/alias.ts", source: "workspace" }, "preview"));
+    const aliasRecord = committed(useActivityBarStore.getState().activeTabId)!;
+    assert.equal(aliasRecord.entries.filter((entry) => entry.resource.identityPath === "/repo/src/alias.ts").length, 1,
+      "canonical identity deduplicates relative and absolute spellings through the real command path");
   }
 }
 // A remote workspace path the host refuses reports its failure to the row that

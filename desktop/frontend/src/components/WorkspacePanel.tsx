@@ -601,11 +601,11 @@ export function WorkspacePanel({
     // Remembered paths come back as plain workspace resources: a persisted path
     // never restores the presented access an earlier session read it with.
     const remembered = readWorkspaceTreeMemory(workspaceMemoryKey);
-    fileNavigation.restore(fileScope, {
+    void Promise.resolve(fileNavigation.restore(fileScope, {
       paths: remembered?.openTabs ?? [],
       selectedPath: remembered?.selectedFilePath ?? null,
       hostId: "local",
-    });
+    }));
     // The preview is left alone: its key carries the scope, path, mode and
     // access context, so a preview for anything else cannot render anyway, and
     // clearing it here would erase the read another effect just started when
@@ -1780,7 +1780,7 @@ export function WorkspacePanel({
                   onClick={() => {
                     // A remembered path carries no presentation of its own: it
                     // opens as a workspace file under the current session scope.
-                    fileNavigation.selectPath(fileScope, { hostId: "local", path });
+                    void Promise.resolve(fileNavigation.selectPath(fileScope, { hostId: "local", path }));
                     setRecentOpen(false);
                   }}
                 >
