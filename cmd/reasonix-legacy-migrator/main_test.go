@@ -7,7 +7,12 @@ import (
 	"testing"
 
 	"reasonix/internal/installlayout"
+	"reasonix/internal/testenv"
 )
+
+func TestMain(m *testing.M) {
+	testenv.RunWithIsolatedUserState(m)
+}
 
 func installerVersionNames() []string {
 	names := []string{installlayout.DesktopBinaryName(), installlayout.CLIBinaryName()}

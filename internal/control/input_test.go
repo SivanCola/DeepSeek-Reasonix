@@ -1279,23 +1279,18 @@ func TestSubmitRememberCommandQuickAddsMemory(t *testing.T) {
 	}
 }
 
-// waitIdle blocks until the controller's turn-admission gate reopens.
-// TurnDone is emitted INSIDE the finishing window (finishGuardedTurn sets
-// running=false, finishing=true, emits, then clears finishing), and runGuarded
-// silently no-ops while finishing is set — so "received TurnDone" does NOT
-// mean "may submit the next turn". A submit raced into that window is
-// dropped, and the next turn's TurnDone never arrives; under parallel test
-// load the window is wide enough to hit (observed in CI and on a clean
-// main-v2 worktree). Poll the same running||finishing gate the controller
-// admission checks.
+// waitIdle blocks on the controller-owned boundary until the turn-admission
+// gate reopens after both execution and TurnDone fan-out.
 func waitIdle(t *testing.T, c *Controller) {
 	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
-	for c.Running() {
-		if time.Now().After(deadline) {
-			t.Fatal("timed out waiting for the controller to return to idle")
-		}
-		time.Sleep(time.Millisecond)
+	done, running := c.TurnIdleDone()
+	if !running {
+		return
+	}
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatalf("timed out waiting for the controller to return to idle: %+v", c.RuntimeStatus())
 	}
 }
 

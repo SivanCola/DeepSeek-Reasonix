@@ -41,6 +41,7 @@ func (c *Controller) runSynchronousTurn(
 	}
 	c.cancel = cancel
 	c.activeDone = make(chan struct{})
+	c.turnBoundary.beginIdle()
 	c.running = true
 	c.canceling = false
 	c.mu.Unlock()
@@ -56,6 +57,7 @@ func (c *Controller) runSynchronousTurn(
 			}
 			c.cancel = nil
 			c.canceling = false
+			c.turnBoundary.endIdle()
 			c.mu.Unlock()
 			c.refreshRuntimeState(event.Event{})
 			cancel()
@@ -73,6 +75,7 @@ func (c *Controller) runSynchronousTurn(
 		}
 		c.cancel = nil
 		c.canceling = false
+		c.turnBoundary.endIdle()
 		c.mu.Unlock()
 		c.refreshRuntimeState(event.Event{})
 		c.finishSessionRuntimeActivity(runtimeActivity)

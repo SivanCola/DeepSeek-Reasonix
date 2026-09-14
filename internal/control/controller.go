@@ -307,13 +307,13 @@ type Controller struct {
 
 	// mu guards the run state; every critical section under it is short and
 	// non-blocking.
-	mu                sync.Mutex
-	cancel            context.CancelFunc
-	activeDone        chan struct{}
-	running           bool
-	finishing         bool // TurnDone is still being delivered; park a replacement turn
-	finishingBoundary turnFinishingBoundary
-	canceling         bool
+	mu           sync.Mutex
+	cancel       context.CancelFunc
+	activeDone   chan struct{}
+	running      bool
+	finishing    bool // TurnDone is still being delivered; park a replacement turn
+	turnBoundary turnLifecycleBoundary
+	canceling    bool
 	// closed marks the controller as terminally torn down (close() ran). It
 	// seals turn admission: without it, a submit arriving AFTER close cleared
 	// the parked queue — but while a still-running turn's TurnDone delivery
@@ -1206,7 +1206,7 @@ func (c *Controller) finishGuardedTurn(err error, completion *guardedTurnComplet
 	// Close has already sealed admission permanently, so a late completion must
 	// not resurrect a finishing state after teardown.
 	c.finishing = !c.closed
-	c.finishingBoundary.begin(c.finishing)
+	c.turnBoundary.beginFinishing(c.finishing)
 	c.cancel = nil
 	// Keep cancelling visible through TurnDone fan-out; clearing it here creates
 	// a finishing-only window before Stop reaches its durable terminal event.
@@ -1219,10 +1219,9 @@ func (c *Controller) finishGuardedTurn(err error, completion *guardedTurnComplet
 	c.refreshRuntimeState(event.Event{})
 	defer func() {
 		c.mu.Lock()
-		c.finishing = false
-		c.canceling = false
-		c.finishingBoundary.end()
+		c.finishTurnFanoutLocked()
 		if c.closed {
+			c.turnBoundary.endIdle()
 			c.mu.Unlock()
 			c.refreshRuntimeState(event.Event{})
 			return
@@ -1230,11 +1229,13 @@ func (c *Controller) finishGuardedTurn(err error, completion *guardedTurnComplet
 		// Preserve queued input after an uncooperative activity, but do not run it
 		// in a process whose previous effects can no longer be proven.
 		if ledger := c.turnEventLedger(); ledger != nil && ledger.CurrentStatus() == event.TurnRecoveryRequired {
+			c.turnBoundary.endIdle()
 			c.mu.Unlock()
 			c.refreshRuntimeState(event.Event{})
 			return
 		}
 		if len(c.parkedTurns) == 0 {
+			c.turnBoundary.endIdle()
 			c.mu.Unlock()
 			// No parked compatibility body: admit the next durable inbox item.
 			c.maybeDispatchInbox()
@@ -5296,8 +5297,7 @@ func (c *Controller) close(fireSessionEnd bool, jobsMode closeJobsMode) {
 		// closed seals every admission path. Keep running truthful until the
 		// foreground goroutine actually exits; clearing it here would report idle
 		// while tools and prompt waiters were still live.
-		c.finishing = false
-		c.finishingBoundary.end()
+		c.closeTurnBoundariesLocked()
 		if cancel != nil {
 			c.canceling = true
 		}

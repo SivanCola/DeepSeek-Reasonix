@@ -90,6 +90,7 @@ func (c *Controller) admitGuardedTurn(body func(ctx context.Context) error, park
 	ctx, cancel := context.WithCancel(extension.ContextWithRuntimeOwner(context.Background(), c.runtimeOwner))
 	c.cancel = cancel
 	c.activeDone = make(chan struct{})
+	c.turnBoundary.beginIdle()
 	c.running = true
 	c.canceling = false
 	c.mu.Unlock()
