@@ -81,4 +81,14 @@ test("bounded collection makes exactly two retries after a long-task exceedance"
     throw new Error("functional failure");
   }), /functional failure/);
   assert.deepEqual(functionalCalls, [1]);
+
+  const inputCalls = [];
+  await assert.rejects(() => collectTranscriptPerformance(async ordinal => {
+    inputCalls.push(ordinal);
+    return attempt(ordinal, {
+      maxima: { historyPaging: ordinal === 1 ? 558 : 420 },
+      inputP95: ordinal === 2 ? 201 : 80,
+    });
+  }), /input P95/);
+  assert.deepEqual(inputCalls, [1, 2]);
 });

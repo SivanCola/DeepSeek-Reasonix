@@ -42,10 +42,16 @@ export function decideTranscriptPerformance(attempts) {
 }
 
 export async function collectTranscriptPerformance(sampleAttempt) {
-  const attempts = [await sampleAttempt(1)];
+  const first = await sampleAttempt(1);
+  validateAttempt(first);
+  const attempts = [first];
   if (needsBoundedRetry(attempts[0])) {
-    attempts.push(await sampleAttempt(2));
-    attempts.push(await sampleAttempt(3));
+    const second = await sampleAttempt(2);
+    validateAttempt(second);
+    attempts.push(second);
+    const third = await sampleAttempt(3);
+    validateAttempt(third);
+    attempts.push(third);
   }
   return { attempts, decision: decideTranscriptPerformance(attempts) };
 }
@@ -151,6 +157,5 @@ export async function measureTranscriptPerformance({ page, turns, attempt, frame
     errors: attemptErrors,
     dom: await page.locator("*").count(),
   };
-  validateAttempt(result);
   return result;
 }

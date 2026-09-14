@@ -1,11 +1,11 @@
-import { useLayoutEffect, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Transcript } from "../src/components/Transcript";
 import { LocaleProvider } from "../src/lib/i18n";
 import { ToastProvider } from "../src/lib/toast";
 import { getMarkdownWorkerClient } from "../src/lib/markdownWorkerClient";
 import { Composer } from "../src/components/Composer";
-import type { Item } from "../src/lib/useController";
+import type { ControllerLiveStore, Item, LiveStream } from "../src/lib/useController";
 import "../src/styles.css";
 
 function makeTurns(count: number, start = 0): Item[] {
@@ -38,22 +38,51 @@ function Fixture() {
   const [session, setSession] = useState(0);
   const [running, setRunning] = useState(false);
   const [ready, setReady] = useState(0);
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  const liveRef = useRef<LiveStream>();
+  const liveListeners = useRef(new Set<() => void>());
+  // Production stream deltas bypass the full controller tree through this
+  // store. Keep the benchmark on that path so input timing measures the UI
+  // users run instead of rebuilding the complete history fixture per token.
+  const liveStore = useMemo<ControllerLiveStore>(() => ({
+    subscribe: (_tabId, listener) => {
+      liveListeners.current.add(listener);
+      return () => { liveListeners.current.delete(listener); };
+    },
+    getSnapshot: () => liveRef.current,
+  }), []);
+  const publishLive = () => liveListeners.current.forEach(listener => listener());
+  const clearLive = () => { liveRef.current = undefined; publishLive(); };
   useLayoutEffect(() => {
     window.chatFixture = {
       ready, pending: () => getMarkdownWorkerClient().stats().pending,
-      weather: () => { setItems(weatherTurn()); setRunning(false); setSession(value => value + 1); },
-      replace: count => { setItems(makeTurns(count)); setRunning(false); setReady(value => value + 1); },
-      reset: count => { setItems(makeTurns(Math.min(60, count), Math.max(0, count - 60))); setRunning(false); setSession(value => value + 1); setReady(value => value + 1); },
+      weather: () => { clearLive(); setItems(weatherTurn()); setRunning(false); setSession(value => value + 1); },
+      replace: count => { clearLive(); setItems(makeTurns(count)); setRunning(false); setReady(value => value + 1); },
+      reset: count => { clearLive(); setItems(makeTurns(Math.min(60, count), Math.max(0, count - 60))); setRunning(false); setSession(value => value + 1); setReady(value => value + 1); },
       older: () => setItems(previous => { const start = Number(previous[0].id.slice(1)); return [...makeTurns(Math.min(60, start), Math.max(0, start - 60)), ...previous]; }),
-      tick: index => { setRunning(true); setItems(previous => previous.map((item, position) => position === previous.length - 1 && item.kind === "assistant"
-        ? { ...item, streaming: true, text: `Live answer\n\n${"Stable paragraph.\n\n".repeat(index + 1)}`, reasoning: `thinking ${index}` } : item)); },
-      settle: () => { setRunning(false); setItems(previous => previous.map(item => item.kind === "assistant" && item.streaming ? { ...item, streaming: false } : item)); },
+      tick: index => {
+        const assistant = [...itemsRef.current].reverse().find((item): item is Extract<Item, { kind: "assistant" }> => item.kind === "assistant");
+        if (!assistant) return;
+        liveRef.current = { id: assistant.id, text: `Live answer\n\n${"Stable paragraph.\n\n".repeat(index + 1)}`,
+          reasoning: `thinking ${index}`, reasoningComplete: false };
+        setRunning(true);
+        publishLive();
+      },
+      settle: () => {
+        const live = liveRef.current;
+        liveRef.current = undefined;
+        setRunning(false);
+        if (live) setItems(previous => previous.map(item => item.kind === "assistant" && item.id === live.id
+          ? { ...item, text: live.text, reasoning: live.reasoning, reasoningComplete: live.reasoningComplete, streaming: false } : item));
+        publishLive();
+      },
       switchSession: () => setSession(value => value + 1),
       prepend: () => setItems(previous => [{ kind: "user", id: `older${previous.length}`, text: "An older question" }, { kind: "assistant", id: `older-answer${previous.length}`, text: "Earlier context\n\n".repeat(20), reasoning: "", streaming: false }, ...previous]),
     };
   }, [ready]);
   return <div style={{ height: "100vh", display: "flex", flexDirection: "column", background: "var(--bg)" }}>
-    <Transcript items={items} geometrySessionKey={`fixture-${session}`} running={running} onPrompt={() => {}} checkpoints={items.filter(item => item.kind === "user").map((_, index) => ({ turn: index + 1, canConversation: true })) as never}
+    <Transcript items={items} liveStore={liveStore} tabId="chat-bench" geometrySessionKey={`fixture-${session}`} running={running} onPrompt={() => {}} checkpoints={items.filter(item => item.kind === "user").map((_, index) => ({ turn: index + 1, canConversation: true })) as never}
       onFork={() => {}} hasOlderHistory={items[0]?.id !== "u0"} onLoadOlderHistory={() => { window.chatFixture.older(); return true; }} />
     <div style={{ flex: "none", maxHeight: "40vh", padding: 16 }}><Composer running={running} collaborationMode="normal" toolApprovalMode="ask" modelLabel="DeepSeek" tabId="chat-bench"
       onSend={() => {}} onCancel={async () => ({ discardedItemIds: [] })} onCycleMode={() => {}} onSetMode={() => {}}
