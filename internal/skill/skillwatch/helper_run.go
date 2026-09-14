@@ -4,7 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"sync"
 
 	"github.com/fsnotify/fsnotify"
@@ -93,7 +93,7 @@ func RunHelper(r io.Reader, w io.Writer) error {
 					dir = parent
 				}
 				mu.Unlock()
-				sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+				slices.Sort(ids)
 				for _, id := range ids {
 					mu.Lock()
 					gen := regGen[id]

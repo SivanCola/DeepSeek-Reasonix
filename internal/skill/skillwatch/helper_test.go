@@ -105,7 +105,7 @@ func TestHelperRestartBudgetDegradesThenScans(t *testing.T) {
 
 	// Kill the helper repeatedly: restart 1, restart 2, then the budget is
 	// spent and the service must degrade this root to scan fallback.
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		procMu.Lock()
 		proc := current
 		procMu.Unlock()

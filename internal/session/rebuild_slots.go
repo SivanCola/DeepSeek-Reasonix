@@ -92,7 +92,8 @@ func (s *rebuildSlots) release() {
 	if s.held < 0 {
 		s.held = 0
 	}
-	for prio := rebuildPriorityUser; prio < rebuildPriorityCount; prio++ {
+	for offset := range int(rebuildPriorityCount - rebuildPriorityUser) {
+		prio := rebuildPriorityUser + rebuildPriority(offset)
 		if len(s.queues[prio]) == 0 {
 			continue
 		}

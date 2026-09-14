@@ -22,9 +22,7 @@ func TestRebuildSlotsPriorityOrder(t *testing.T) {
 	ready := make(chan struct{})
 	var wg sync.WaitGroup
 	start := func(prio rebuildPriority) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if err := slots.acquire(context.Background(), prio); err != nil {
 				t.Errorf("acquire(%d): %v", prio, err)
 				return
@@ -34,7 +32,7 @@ func TestRebuildSlotsPriorityOrder(t *testing.T) {
 			mu.Unlock()
 			slots.release()
 			ready <- struct{}{}
-		}()
+		})
 	}
 	start(rebuildPriorityPrefetch)
 	time.Sleep(20 * time.Millisecond) // let the prefetch waiter queue first

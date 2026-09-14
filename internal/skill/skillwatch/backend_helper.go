@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"sync"
@@ -256,9 +257,7 @@ func (c *helperClient) restart() {
 func (c *helperClient) replay() {
 	c.mu.Lock()
 	regs := make(map[uint64]activeRegistration, len(c.active))
-	for id, reg := range c.active {
-		regs[id] = reg
-	}
+	maps.Copy(regs, c.active)
 	unusable := c.unusable
 	c.mu.Unlock()
 	if unusable {
@@ -302,12 +301,6 @@ func (c *helperClient) markUnavailable() {
 	c.unusable = true
 	c.mu.Unlock()
 	c.svc.helperDied()
-}
-
-func (c *helperClient) unavailable() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.unusable
 }
 
 // physicalWatches reports the directories covered by live registrations. The
