@@ -137,10 +137,10 @@ checks only when new changes or unresolved risks justify it.
 When adding an internal import, check the target package's test imports for a
 reverse dependency and run the target package tests to catch setup cycles.
 
-Desktop transcript scroll changes follow the
-[scroll contract](docs/TRANSCRIPT_SCROLL_CONTRACT.md), including the single writer
-and deterministic regression cases via `pnpm test:transcript` in
-`desktop/frontend/`.
+Desktop transcript scroll and history changes follow the
+[scroll and history contract](docs/TRANSCRIPT_SCROLL_CONTRACT.md), including the
+single writer, the bounded reading window, and deterministic regression cases via
+`pnpm test:transcript` in `desktop/frontend/`.
 
 Keep correctness gates deterministic. Prove concurrency and lifecycle ordering
 with channels, injected clocks, state transitions, or emitted events instead of
