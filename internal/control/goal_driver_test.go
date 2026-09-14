@@ -426,10 +426,7 @@ func (r *unlimitedGoalRunner) Run(ctx context.Context, _ string) error {
 }
 
 func TestUnlimitedGoalDriverRunsBeyondHarnessDefaultCeiling(t *testing.T) {
-	service, err := session.NewService("desktop", session.NewFilesystemPersistence(t.TempDir()))
-	if err != nil {
-		t.Fatal(err)
-	}
+	service := goalRoundTestService(t)
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "goal-unlimited"})
 	if err != nil {
 		t.Fatal(err)
