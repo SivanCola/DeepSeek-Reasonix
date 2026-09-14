@@ -33,7 +33,6 @@ type turnLoop struct {
 	cancel          context.CancelFunc
 	done            chan struct{}
 	turnID          string
-	submissionID    string
 	token           uint64
 	lastToken       uint64
 	pending         []queuedTurn
