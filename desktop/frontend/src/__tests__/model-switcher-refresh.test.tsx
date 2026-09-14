@@ -85,13 +85,15 @@ installDesktopHostStub(({
 }).main.App);
 
 const root = createRoot(document.getElementById("root")!);
-const renderSwitcher = (label: string, tabId: string, ready = true, sessionKey?: string) => (
+const renderSwitcher = (label: string, tabId: string, ready = true, sessionKey?: string, disabled = false, dismissSignal?: number) => (
   <LocaleProvider>
     <ModelSwitcher
       label={label}
       tabId={tabId}
       ready={ready}
       sessionKey={sessionKey}
+      disabled={disabled}
+      dismissSignal={dismissSignal}
       onPick={(ref) => {
         picked.push(ref);
         return pickGates.shift()?.promise ?? Promise.resolve(true);
@@ -449,6 +451,15 @@ await act(async () => {
 });
 await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
 if (!restoredLabel().includes("First connection")) throw new Error("resumed session retained another session's connection label");
+
+await act(async () => {
+  (document.querySelector(".modelsw__trigger") as HTMLButtonElement).click();
+  await new Promise(resolve => setTimeout(resolve, 0));
+});
+if (!document.querySelector(".modelsw__menu")) throw new Error("model menu did not open before suspension");
+await act(async () => { root.render(renderSwitcher("shared", "tab-restored", true, "session-two", true, 1)); });
+await act(async () => { root.render(renderSwitcher("shared", "tab-restored", true, "session-two", false, 1)); });
+if (document.querySelector(".modelsw__menu")) throw new Error("suspended model menu reopened after recovery");
 
 await act(async () => root.unmount());
 console.log("model switcher refresh: PASS");

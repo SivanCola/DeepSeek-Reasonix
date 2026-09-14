@@ -9,12 +9,14 @@ import { RiskConfirmation } from "./RiskConfirmation";
 export function PermissionPresetChoice({
   value,
   disabled,
+  dismissSignal,
   scopeKey,
   projectConfirmationKey,
   onPick,
 }: {
   value: ToolApprovalMode;
   disabled: boolean;
+  dismissSignal?: number;
   scopeKey: string;
   projectConfirmationKey: string;
   onPick: (value: ToolApprovalMode) => void;
@@ -31,7 +33,7 @@ export function PermissionPresetChoice({
 
   useEffect(() => {
     closeConfirmation();
-  }, [closeConfirmation, disabled, projectConfirmationKey, scopeKey]);
+  }, [closeConfirmation, disabled, dismissSignal, projectConfirmationKey, scopeKey]);
 
   const choose = (next: ToolApprovalMode) => {
     const normalized = normalizeToolApprovalMode(next);
@@ -63,6 +65,7 @@ export function PermissionPresetChoice({
       tone={`composer-choice--permission-${preset}`}
       value={preset}
       disabled={disabled || confirmingFullAccess}
+      dismissSignal={dismissSignal}
       onPick={(next) => choose(next as ToolApprovalMode)}
       options={[
         { value: "read-only", label: t("composer.permissionReadOnly"), icon: <Eye size={18} />, description: t("composer.permissionReadOnlyDesc") },
