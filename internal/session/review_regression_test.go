@@ -123,11 +123,7 @@ func TestDirectoryOwnershipExcludesWriterDuringRename(t *testing.T) {
 
 func TestCancelReceiptDoesNotWaitForSessionProjection(t *testing.T) {
 	service, runtime := reviewRuntime(t)
-	ctx, activity, err := runtime.BeginOwnedActivity(t.Context(), "model")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { activity.Finish(nil) })
+	ctx, _ := bindTestExecution(t, runtime, "model")
 	store := runtime.Session().Handle().(*Store)
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -145,11 +141,7 @@ func TestCancelReceiptDoesNotWaitForSessionProjection(t *testing.T) {
 
 func TestCancelSignalsWithoutRuntimeMutex(t *testing.T) {
 	service, runtime := reviewRuntime(t)
-	ctx, activity, err := runtime.BeginOwnedActivity(t.Context(), "model")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { activity.Finish(nil) })
+	ctx, _ := bindTestExecution(t, runtime, "model")
 
 	runtime.mu.Lock()
 	done := make(chan CancelReceipt, 1)
@@ -338,10 +330,7 @@ func TestLastClientDetachDoesNotCancelActiveRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, activity, err := runtime.BeginOwnedActivity(t.Context(), "model")
-	if err != nil {
-		t.Fatal(err)
-	}
+	ctx, exec := bindTestExecution(t, runtime, "model")
 	if err := binding.Release(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -351,7 +340,7 @@ func TestLastClientDetachDoesNotCancelActiveRuntime(t *testing.T) {
 	if got, ok := service.Runtime(runtime.Ref()); !ok || got != runtime {
 		t.Fatal("active runtime retired when its last client detached")
 	}
-	activity.Finish(nil)
+	exec.Finish()
 	if _, ok := service.Runtime(runtime.Ref()); !ok {
 		t.Fatal("completed runtime was not retained for quick rebinding")
 	}
@@ -456,11 +445,9 @@ func TestRewindBeforeFirstTurnPreservesInitialization(t *testing.T) {
 
 func TestFinishedActivityCancelsItsContext(t *testing.T) {
 	_, runtime := reviewRuntime(t)
-	ctx, activity, err := runtime.BeginOwnedActivity(t.Context(), "model")
-	if err != nil {
-		t.Fatal(err)
-	}
-	activity.Finish(nil)
+	ctx, exec := bindTestExecution(t, runtime, "model")
+	exec.cancel()
+	exec.Finish()
 	if !errors.Is(ctx.Err(), context.Canceled) {
 		t.Fatal("finished activity retains live cancellation context")
 	}

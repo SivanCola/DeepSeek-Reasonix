@@ -15,6 +15,7 @@ import (
 	"reasonix/internal/evidence"
 	"reasonix/internal/hook"
 	"reasonix/internal/provider"
+	"reasonix/internal/session"
 	"reasonix/internal/skill"
 	"reasonix/internal/tool"
 )
@@ -589,7 +590,8 @@ func TestTurnOrchestratorCancelPreservesVisibleUserPrompt(t *testing.T) {
 	c.SetPlanMode(true)
 	// Simulate a user-initiated cancel: set the cancelling flag.
 	c.mu.Lock()
-	c.canceling = true
+	c.turns.cancelRequested = true
+	c.turns.phase = session.RuntimeCancelling
 	c.mu.Unlock()
 
 	// Pre-seed only the executor's legacy mutable copy. Without a committed
@@ -683,7 +685,8 @@ func TestTurnOrchestratorInterruptedAfterCompactionRelocatesVisibleTurn(t *testi
 			c := newOwnedTestController(t, Options{Runner: runner, Executor: agent.New(nil, nil, sess, agent.Options{}, event.Discard)})
 			if tc.cancel {
 				c.mu.Lock()
-				c.canceling = true
+				c.turns.cancelRequested = true
+				c.turns.phase = session.RuntimeCancelling
 				c.mu.Unlock()
 			}
 
@@ -727,7 +730,8 @@ func TestTurnOrchestratorCancelClassifiesCancelledToolResultAsInterrupted(t *tes
 	}
 	c := newOwnedTestController(t, Options{Runner: runner, Executor: agent.New(nil, nil, sess, agent.Options{}, event.Discard)})
 	c.mu.Lock()
-	c.canceling = true
+	c.turns.cancelRequested = true
+	c.turns.phase = session.RuntimeCancelling
 	c.mu.Unlock()
 
 	err := newTurnOrchestrator(c).runTurnWithRawDisplay(context.Background(), "run tests", "run tests", "")
@@ -761,7 +765,8 @@ func TestTurnOrchestratorCancelBeforeRunnerAddsUserPreservesVisiblePrompt(t *tes
 	})
 	c.SetPlanMode(true)
 	c.mu.Lock()
-	c.canceling = true
+	c.turns.cancelRequested = true
+	c.turns.phase = session.RuntimeCancelling
 	c.mu.Unlock()
 
 	err := newTurnOrchestrator(c).runTurnWithImageRefsRawDisplay(context.Background(), "Referenced context:\n\n<image path=\"diagram.png\">\n@diagram.png\n</image>\n\ninspect the diagnostic", "inspect the diagnostic", "@diagram.png", "")
@@ -814,7 +819,8 @@ func TestTurnOrchestratorCancelFlushesCleanTranscriptToDisk(t *testing.T) {
 	})
 	c.SetPlanMode(true)
 	c.mu.Lock()
-	c.canceling = true
+	c.turns.cancelRequested = true
+	c.turns.phase = session.RuntimeCancelling
 	c.mu.Unlock()
 
 	o := newTurnOrchestrator(c)

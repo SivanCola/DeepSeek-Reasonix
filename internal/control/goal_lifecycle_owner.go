@@ -88,21 +88,19 @@ func (c *Controller) applyGoalMutation(
 	if err != nil {
 		return goaldomain.View{}, err
 	}
-	c.v3ActivityMu.Lock()
-	activity := c.v3Activity
-	c.v3ActivityMu.Unlock()
-	if activity == nil {
-		return goaldomain.View{}, session.ErrStaleActivity
-	}
 	operationID := fmt.Sprintf("goal:%s:%s:%d:%s", runtime.Ref().SessionID, view.ID, view.Revision, action)
-	if _, err := activity.Append(ctx, session.Batch{
+	appendCtx := ctx
+	if appendCtx == nil || appendCtx.Err() != nil {
+		appendCtx = context.Background()
+	}
+	if _, err := runtime.Session().Append(appendCtx, session.Batch{
 		OperationID: operationID,
 		TurnID:      runtime.Session().ExecutionSnapshot().Projection.TurnID,
 		Events:      []session.Event{{Kind: "goal/state", Payload: json.RawMessage(payload)}},
 	}); err != nil {
 		return goaldomain.View{}, err
 	}
-	// Activity.Append is the final authority check. Once accepted, goal/state is
+	// Session.Append is the final authority check. Once accepted, goal/state is
 	// a session fact and must be published locally; a stale error here could make
 	// the model repeat a mutation whose durability is already certain.
 	_, currentRuntime, stillExclusive := c.v3Binding()

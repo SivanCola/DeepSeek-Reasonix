@@ -235,7 +235,7 @@ func (c *Controller) goalRoundEligibility() (*goaldomain.View, *session.Runtime,
 		return nil, nil, session.RuntimeSnapshot{}, false
 	}
 	c.mu.Lock()
-	busy := c.running || c.finishing || c.rotating || c.canceling || c.closed
+	busy := c.bodyActiveLocked() || c.finalizingLocked() || c.rotating || c.cancelRequestedLocked() || c.closed
 	c.mu.Unlock()
 	if busy {
 		return nil, nil, session.RuntimeSnapshot{}, false
@@ -389,9 +389,9 @@ func (c *Controller) disarmGoalLifecycle(reason string) {
 	}
 }
 
-// applyHostGoalMutation is the serialized UI/command control plane. It uses
-// the current activity when one exists or a short owned control activity while
-// idle; it never bypasses v3 with a direct sidecar write.
+// applyHostGoalMutation is the serialized UI/command control plane. Idle Goal
+// state writes use the current session write lease; they never create a fake
+// control activity.
 func (c *Controller) applyHostGoalMutation(ctx context.Context, reason string, mutate func(*goaldomain.Machine) (*goaldomain.View, error)) (*goaldomain.View, error) {
 	if c == nil || mutate == nil {
 		return nil, session.ErrSessionNotRunning
@@ -421,31 +421,16 @@ func (c *Controller) applyHostGoalMutation(ctx context.Context, reason string, m
 		return nil, session.ErrSessionNotRunning
 	}
 	snapshot := runtime.StateSnapshot()
-	var activity *session.Activity
-	owned := false
 	switch snapshot.Phase {
-	case session.RuntimeIdle:
-		_, activity, err = runtime.BeginOwnedActivity(ctx, "goal-control")
-		if err != nil {
-			return nil, err
-		}
-		owned = true
-	case session.RuntimeRunning:
-		c.v3ActivityMu.Lock()
-		activity = c.v3Activity
-		c.v3ActivityMu.Unlock()
-		if activity == nil {
-			return nil, session.ErrStaleActivity
-		}
+	case session.RuntimeIdle, session.RuntimeRunning, session.RuntimeCancelling, session.RuntimeFinalizing:
+	case session.RuntimeRecoveryRequired:
+		return nil, session.ErrRecoveryRequired
 	default:
 		return nil, session.ErrRuntimeBusy
 	}
-	if owned {
-		defer activity.Finish(nil)
-	}
 	execution := runtime.ExecutionSnapshot()
 	op := fmt.Sprintf("goal-control:%s:%d:%s", reason, execution.Session.EventSequence+1, snapshot.Epoch)
-	if _, err := activity.Append(ctx, session.Batch{OperationID: op, TurnID: execution.Session.Projection.TurnID,
+	if _, err := runtime.Session().Append(context.Background(), session.Batch{OperationID: op, TurnID: execution.Session.Projection.TurnID,
 		Events: []session.Event{{Kind: "goal/state", Payload: payload}}}); err != nil {
 		return nil, err
 	}

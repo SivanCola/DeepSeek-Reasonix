@@ -21,14 +21,19 @@ Plan 自动播种、Goal 恢复 todo、完成前缀保护及完成门禁。隐�
 
 ## 运行与交互所有权
 
-Controller runtime 唯一拥有前台准入、取消、活动回合和待处理交互。持久日志只
-记录已发生事实，进程重启后不得从旧 running 记录恢复出并不存在的执行器。
-运行阶段为 `idle`、`executing`、`cancelling`、`finishing`、
-`recovery_required`、`closed`，兼容布尔字段由这些状态和当前所有者派生。
+会话级 turn-loop 是执行权威：唯一持有前台准入、取消、当前回合身份、FIFO
+待处理输入和 level-triggered wake。`session.Runtime` 是持久化权威：会话身份、
+单写者租约、内存接收和后台落盘。持久日志只记录已发生事实，进程重启后不得从
+旧 running 记录恢复出并不存在的执行器。运行阶段为 `idle`、`executing`、
+`cancelling`、`finishing`、`recovery_required`、`closed`，兼容布尔字段由这些
+状态和当前所有者派生。不再保留 Activity 许可，也不再在 Runtime 上设置第二套
+准入门。
 
 Stop 以 session 为目标，UI turn id 只能作为诊断信息，不能成为取消前提。取消
-信号先于磁盘、通知和回调清理发出。已有 15 秒宽限统一覆盖所属工作；无法收敛
-时保持 `recovery_required`，迟到结果不得恢复旧回合或写入新代际。
+信号先到达已绑定的 turn-loop，再做磁盘、通知和回调清理；每一轮使用全新取消
+上下文，Stop 不得污染下一轮。已有 15 秒宽限统一覆盖所属工作；无法收敛时保持
+`recovery_required`，迟到结果不得恢复旧回合或写入新代际。Runtime 以精确
+generation 绑定 turn-loop，旧 Controller 解绑不得清除新代际的控制权。
 
 Ask、批准、Plan、恢复和 MCP 决策共用 `PendingPromptOwner`。身份绑定 request、
 类型、turn 和 runtime epoch；回答只有一个胜者，过期回答明确拒绝；回调不在
@@ -71,7 +76,7 @@ head。一个物理 JSONL 记录保存一个完整逻辑批次，事件获得连
 三层各自拥有明确事实：内存 `Session` 拥有类型化事件日志、序号分配、操作幂等表和投影；
 `PersistenceBinding` 拥有待写队列、durable 水位和唯一排空链；物理 `Store` 只拥有 JSONL
 字节、写者租约和可重建偏移索引。句柄不再保存投影、操作表或已接受提交列表，因此无法
-从磁盘结构反推业务状态。`Session.PrepareBatch` 在取得活动提交门之前完成载荷复制、
+从磁盘结构反推业务状态。`Session.PrepareBatch` 在取得提交锁之前完成载荷复制、
 schema 校验和操作摘要；摘要只覆盖调用方提供的字段，因此重试同一逻辑批次保持幂等。
 `Session.CommitPrepared` 随后在一把短内存锁内完成幂等检查、序号分配、整批追加和投影
 替换。批次在提交锁释放后才进入绑定队列，入队过程不做任何文件 I/O。
@@ -86,8 +91,11 @@ schema 校验和操作摘要；摘要只覆盖调用方提供的字段，因此�
 Controller 只取得可发送和观察的 `ClientBinding`；
 关闭标签页或连接只解除自身绑定，不能关闭共享写者或取消活动回合。最后一个绑定离开
 后，空闲 Runtime 由宿主回收；仍在活动的 Runtime 继续收敛，结束后再回收。准备失败
-和迟到清理回调只能丢弃自己持有的准确候选或实例。取消直接触达不可变活动句柄，
-不先等待 Runtime、持久化或 UI 锁，因此回执不会被提交或磁盘操作阻塞。
+和迟到清理回调只能丢弃自己持有的准确候选或实例。取消直接触达已绑定的
+turn-loop，不先等待 Runtime、持久化或 UI 锁，因此回执不会被提交或磁盘操作阻塞。
+会话事件只要求当前 Controller 仍持有写租约；Stop 不会撤销 `history/replace`、
+`turn/end`、交互收尾或诊断写入。Session 先接受，兼容 ledger 和前端投影只在
+Session 接收成功后推进。
 
 `Append` 表示事实已被实时会话接受：先校验完整批次，再分配序号、保存不可变副本、
 更新内存投影并通知观察者。它不表示已经落盘。第一份待写事件启动固定 200ms 批处理

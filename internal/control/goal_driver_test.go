@@ -748,14 +748,9 @@ func TestColdRestoredGoalCanResumeFromNaturalUserRequestAndContinue(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, activity, err := seedRuntime.BeginOwnedActivity(t.Context(), "seed")
-	if err != nil {
+	if _, err := seedRuntime.Session().Append(t.Context(), session.Batch{OperationID: "seed-goal", Events: []session.Event{{Kind: "goal/state", Payload: payload}}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := activity.Append(t.Context(), session.Batch{OperationID: "seed-goal", Events: []session.Event{{Kind: "goal/state", Payload: payload}}}); err != nil {
-		t.Fatal(err)
-	}
-	activity.Finish(nil)
 	if err := seedService.Close(t.Context(), seedRuntime.Ref()); err != nil {
 		t.Fatal(err)
 	}

@@ -1,5 +1,7 @@
 package control
 
+import "reasonix/internal/session"
+
 // turnFinishingBoundary lets asynchronous frontends wait for TurnDone fan-out
 // without waiting for a genuinely running model turn.
 type turnFinishingBoundary struct {
@@ -24,15 +26,21 @@ func (b *turnFinishingBoundary) end() {
 func (c *Controller) Running() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.running || c.finishing
+	if c.closed {
+		return false
+	}
+	if c.turns.phase == session.RuntimeRecoveryRequired && c.turns.done != nil {
+		return true
+	}
+	return c.bodyActiveLocked() || c.finalizingLocked()
 }
 
 // TurnFinishingDone returns the current TurnDone delivery boundary.
 func (c *Controller) TurnFinishingDone() (done <-chan struct{}, ok bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.finishing || c.finishingBoundary.done == nil {
+	if !c.finalizingLocked() || c.turns.finishingBound.done == nil {
 		return nil, false
 	}
-	return c.finishingBoundary.done, true
+	return c.turns.finishingBound.done, true
 }

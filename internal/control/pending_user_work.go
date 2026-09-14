@@ -11,8 +11,8 @@ func (c *Controller) hasPendingUserWork() bool {
 		return false
 	}
 	c.mu.Lock()
-	canceling := c.canceling
-	parked := len(c.parkedTurns) > 0
+	canceling := c.cancelRequestedLocked()
+	parked := len(c.turns.pending) > 0
 	executor := c.executor
 	c.mu.Unlock()
 	if canceling || parked {

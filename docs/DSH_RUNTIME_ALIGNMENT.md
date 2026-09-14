@@ -29,18 +29,25 @@ actionable retirement error. Old transcript records remain readable.
 
 ## Runtime ownership
 
-The controller runtime is the sole owner of foreground admission, cancellation,
-the active turn identity, and pending interactions. Durable turn events record
-facts and never recreate a live executor after process restart. Runtime phases
-are `idle`, `executing`, `cancelling`, `finishing`, `recovery_required`, and
-`closed`; compatibility booleans are derived from the phase and current owners.
+The session-scoped turn-loop is the execution authority: it uniquely owns
+foreground admission, cancellation, the active turn identity, FIFO pending
+input, and the level-triggered wake. `session.Runtime` is the persistence
+authority: session identity, the single-writer lease, in-memory event receive,
+and background write-behind. Durable turn events record facts and never
+recreate a live executor after process restart. Runtime phases are `idle`,
+`executing`, `cancelling`, `finishing`, `recovery_required`, and `closed`;
+compatibility booleans are derived from the phase and current owners. There is
+no parallel Activity permit and no second admission gate on `session.Runtime`.
 
 Stop is session-scoped. A supplied UI turn id is diagnostic only and cannot be a
-precondition for cancellation. Cancellation signals the captured controller
-before storage, notification, or callback cleanup. The existing 15-second tool
+precondition for cancellation. Cancellation signals the bound turn-loop before
+storage, notification, or callback cleanup, and each turn uses a fresh cancel
+context so Stop cannot poison the next turn. The existing 15-second tool
 straggler grace applies to owned work. A turn whose owned work cannot converge
 is represented as `recovery_required`; late work cannot resume that turn or
-commit a newer runtime generation.
+commit a newer runtime generation. The Runtime binds the turn-loop with an
+exact generation so an old Controller unbind cannot clear a replacement's
+control.
 
 Ask, approval, Plan, recovery, and MCP decisions use `PendingPromptOwner` as one
 registry. Every identity binds prompt id, kind, turn, and runtime epoch. Resolve
@@ -105,7 +112,7 @@ single drain chain. The physical `Store` owns the JSONL bytes, the writer lease,
 and the rebuildable offset index. The handle exposes no projection, operation
 table, or accepted commit list, so business state cannot be reconstructed from
 disk layout. `Session.PrepareBatch` copies the payload, validates the schema, and
-computes the operation digest before any activity gate is taken; the digest
+computes the operation digest before the commit lock is taken; the digest
 covers only caller-supplied fields, so retrying one logical batch stays
 idempotent. `Session.CommitPrepared` then performs the idempotency check,
 sequence assignment, whole-batch append, and projection swap under one short
@@ -127,9 +134,13 @@ attach can only withdraw the caller's own grant. Controllers receive a
 cannot close the shared writer or cancel an active turn. The last binding marks an idle
 Runtime for retirement; an active Runtime finishes under host ownership and is
 retired afterward. Prepare failures and stale cleanup callbacks can discard
-only the exact candidate or instance they own. Cancellation reaches the
-immutable activity handle without first taking the Runtime or persistence
-lock, so its receipt does not wait for a commit, observer, or disk operation.
+only the exact candidate or instance they own. Cancellation reaches the bound
+turn-loop without first taking the Runtime or persistence lock, so its receipt
+does not wait for a commit, observer, or disk operation. Session event
+commits require only that the current Controller still holds the write lease;
+Stop does not revoke `history/replace`, `turn/end`, interaction wrap-up, or
+diagnostic writes. Session accept is first; the compatibility ledger and
+frontend projection advance only after Session receives the batch.
 
 `Append` means the live session accepted a fact. It validates the whole batch,
 assigns sequences, retains an immutable copy, updates the in-memory projection,

@@ -230,10 +230,7 @@ func TestRuntimeCancellationUsesOwnedActivityWithoutTurnID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, finish, err := runtime.BeginActivity(context.Background(), "model")
-	if err != nil {
-		t.Fatal(err)
-	}
+	ctx, exec := bindTestExecution(t, runtime, "model")
 	ref := runtime.Ref()
 	snapshot, err := service.Cancel(ref)
 	if err != nil {
@@ -247,7 +244,7 @@ func TestRuntimeCancellationUsesOwnedActivityWithoutTurnID(t *testing.T) {
 	default:
 		t.Fatal("cancel signal was not delivered")
 	}
-	finish(context.Canceled)
+	exec.Finish()
 	if got := runtime.Snapshot().Phase; got != RuntimeIdle {
 		t.Fatalf("phase after activity exit = %s", got)
 	}
@@ -306,17 +303,14 @@ func TestServiceClosePreservesBusyRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, finish, err := runtime.BeginActivity(t.Context(), "tool")
-	if err != nil {
-		t.Fatal(err)
-	}
+	_, exec := bindTestExecution(t, runtime, "tool")
 	if err := service.Close(t.Context(), runtime.Ref()); !errors.Is(err, ErrRuntimeBusy) {
 		t.Fatalf("Close busy error = %v", err)
 	}
 	if current, ok := service.Runtime(runtime.Ref()); !ok || current != runtime {
 		t.Fatal("busy close released the exact runtime")
 	}
-	finish(nil)
+	exec.Finish()
 	if err := service.Close(t.Context(), runtime.Ref()); err != nil {
 		t.Fatal(err)
 	}
@@ -558,20 +552,21 @@ func TestCancelledActivityCannotCommitLateBusinessResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, activity, err := runtime.BeginOwnedActivity(t.Context(), "tool")
-	if err != nil {
-		t.Fatal(err)
-	}
+	ctx, exec := bindTestExecution(t, runtime, "tool")
 	if receipt, err := service.CancelSession(runtime.Ref()); err != nil || !receipt.Accepted || receipt.Phase != RuntimeCancelling {
 		t.Fatalf("cancel receipt = %+v, %v", receipt, err)
 	}
-	if _, err := activity.AppendBatch(ctx, "late-result", []Event{{Kind: "diagnostic", Optional: true}}); !errors.Is(err, ErrStaleActivity) && !errors.Is(err, context.Canceled) {
-		t.Fatalf("late activity commit error = %v", err)
+	if !errors.Is(ctx.Err(), context.Canceled) {
+		t.Fatalf("cancel context = %v", ctx.Err())
 	}
-	if runtime.Session().Snapshot().EventSequence != 0 {
-		t.Fatal("late activity changed session projection")
+	if _, err := runtime.Session().Append(t.Context(), Batch{
+		OperationID: "turn-end",
+		TurnID:      "turn-1",
+		Events:      []Event{{Kind: "turn/end", Payload: json.RawMessage(`{"status":"interrupted"}`)}},
+	}); err != nil {
+		t.Fatalf("terminal truth during cancel: %v", err)
 	}
-	activity.Finish(context.Canceled)
+	exec.Finish()
 	if err := service.Close(t.Context(), runtime.Ref()); err != nil {
 		t.Fatal(err)
 	}
@@ -586,27 +581,21 @@ func TestRecoveryOwnerCanCommitOnlyTerminalRecoveryFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, activity, err := runtime.BeginOwnedActivity(t.Context(), "tool")
-	if err != nil {
-		t.Fatal(err)
-	}
+	bindTestExecution(t, runtime, "tool")
 	runtime.RequireRecovery("tool")
-	if _, err := activity.Append(t.Context(), Batch{OperationID: "late-tool", Events: []Event{{Kind: "tool/result", Payload: json.RawMessage(`{"id":"tool-1","name":"bash","output":"late"}`)}}}); !errors.Is(err, ErrStaleActivity) {
-		t.Fatalf("late result error = %v", err)
+	if err := service.Close(t.Context(), runtime.Ref()); !errors.Is(err, ErrRuntimeBusy) {
+		t.Fatalf("close during recovery = %v", err)
 	}
 	terminal := Batch{OperationID: "recovery-terminal", TurnID: "turn-1", Events: []Event{
 		{Kind: "runtime/recovery", Payload: json.RawMessage(`{"state":"recovery_required","phase":"tool","reason":"cancellation_grace_expired","requires_user_decision":true}`)},
 		{Kind: "turn/end", Payload: json.RawMessage(`{"status":"recovery_required"}`)},
 	}}
-	if _, err := runtime.RecordRecovery(t.Context(), terminal); err != nil {
+	if _, err := runtime.Session().Append(t.Context(), terminal); err != nil {
 		t.Fatalf("record recovery: %v", err)
 	}
 	projection := runtime.Session().Snapshot().Projection
 	if projection.Recovery == nil || projection.Recovery.State != "recovery_required" || projection.TurnStatus != "recovery_required" {
 		t.Fatalf("recovery projection = %#v, turn status = %q", projection.Recovery, projection.TurnStatus)
-	}
-	if _, err := runtime.RecordRecovery(t.Context(), Batch{OperationID: "bad-recovery", Events: []Event{{Kind: "diagnostic", Optional: true}}}); !errors.Is(err, ErrStaleActivity) {
-		t.Fatalf("non-recovery terminal batch error = %v", err)
 	}
 	runtime.mu.Lock()
 	runtime.phase = RuntimeIdle

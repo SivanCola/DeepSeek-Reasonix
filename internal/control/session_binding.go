@@ -34,9 +34,11 @@ func bindInitialSessionRuntime(opts Options) (*session.Runtime, *session.ClientB
 func (c *Controller) releaseSessionRuntimeBinding(service *session.Service) {
 	c.v3BindingMu.Lock()
 	binding := c.sessionBinding
+	runtime := c.sessionRuntime
 	c.sessionBinding = nil
 	c.sessionRuntime = nil
 	c.v3BindingMu.Unlock()
+	c.unbindExecutionControl(runtime)
 	if binding != nil {
 		if err := binding.Release(context.Background()); err != nil {
 			slog.Warn("controller: release exclusive v3 binding", "err", err)
@@ -329,6 +331,9 @@ func (c *Controller) publishSessionRuntime(candidate *session.Runtime, prepared 
 	if err := c.restoreSessionDomainProjection(projection); err != nil {
 		return nil, err
 	}
+	c.mu.Lock()
+	oldGen := c.turns.generation
+	c.mu.Unlock()
 	c.v3BindingMu.Lock()
 	old := c.sessionRuntime
 	oldBinding := c.sessionBinding
@@ -336,6 +341,10 @@ func (c *Controller) publishSessionRuntime(candidate *session.Runtime, prepared 
 	c.sessionBinding = binding
 	c.exclusiveSession = true
 	c.v3BindingMu.Unlock()
+	c.bindExecutionControl()
+	if old != nil && old != candidate {
+		old.UnbindExecution(oldGen)
+	}
 	c.mu.Lock()
 	// Legacy paths are import inputs only. Retaining one as the live path lets
 	// unrelated compatibility helpers recreate sidecars beside a read-only

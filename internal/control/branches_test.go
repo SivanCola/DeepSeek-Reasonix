@@ -10,6 +10,7 @@ import (
 	"reasonix/internal/agent"
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
+	"reasonix/internal/session"
 	"reasonix/internal/store"
 	"reasonix/internal/tool"
 )
@@ -314,7 +315,7 @@ func TestSubmitBranchEmitsErrorNoticeWhileRunning(t *testing.T) {
 	c.SetSessionPath(agent.NewSessionPath(c.sessionDir, "test"))
 
 	c.mu.Lock()
-	c.running = true
+	c.turns.phase = session.RuntimeRunning
 	c.mu.Unlock()
 
 	c.Submit("/branch experiment")

@@ -9,6 +9,7 @@ import (
 	"reasonix/internal/agent"
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
+	"reasonix/internal/session"
 )
 
 // TestCompactRefusedWhileRunning locks in the same guard Rewind/Branch have:
@@ -27,7 +28,7 @@ func TestCompactRefusedWhileRunning(t *testing.T) {
 	})
 
 	c.mu.Lock()
-	c.running = true
+	c.turns.phase = session.RuntimeRunning
 	c.mu.Unlock()
 
 	err := c.Compact(context.Background(), "")

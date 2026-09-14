@@ -379,18 +379,24 @@ func (c *Controller) appendSessionEventLocked(ctx context.Context, e event.Event
 		}
 		return nil
 	}
-	projection := store.ExecutionSnapshot().Projection
+	snapshot := store.ExecutionSnapshot()
+	projection := snapshot.Projection
 	if projection.Recovery != nil && projection.Recovery.State == "recovery_required" && e.Kind != event.TurnDone {
-		// The cancelled activity no longer owns business-state mutation. Its
-		// eventual return is observed by the runtime watchdog; late semantic
-		// output must never reactivate tools, interactions, Goal, or Todo.
+		// Recovery has sealed business-state mutation. The watchdog observes
+		// the uncooperative worker; late semantic output must never reactivate
+		// tools, interactions, Goal, or Todo.
 		return nil
+	}
+	if e.TurnID == "" {
+		if _, turnID, active := c.currentTurnToken(); active {
+			e.TurnID = turnID
+		}
 	}
 	events, err := c.v3EventsFor(e, projection)
 	if err != nil || len(events) == 0 {
 		return err
 	}
-	op := fmt.Sprintf("runtime:%s:%d:%d", e.TurnID, e.Sequence, e.Kind)
+	op := fmt.Sprintf("runtime:%s:%d:%d", e.TurnID, snapshot.EventSequence+1, e.Kind)
 	_, err = c.appendSessionBatch(ctx, store, session.Batch{OperationID: op, TurnID: e.TurnID, Events: events})
 	if err != nil {
 		return fmt.Errorf("%w: %w", turnevent.ErrTurnLedgerUnavailable, err)

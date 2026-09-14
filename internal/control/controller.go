@@ -307,23 +307,20 @@ type Controller struct {
 
 	// mu guards the run state; every critical section under it is short and
 	// non-blocking.
-	mu                sync.Mutex
-	cancel            context.CancelFunc
-	activeDone        chan struct{}
-	running           bool
-	finishing         bool // TurnDone is still being delivered; park a replacement turn
-	finishingBoundary turnFinishingBoundary
-	canceling         bool
+	mu sync.Mutex
+	// turns is the sole execution authority: phase, current cancel/done/token,
+	// and the FIFO pending queue.
+	turns turnLoop
+	// executionGeneration is the Runtime BindExecution generation for this
+	// controller. Unbind uses the exact value so a rebuilt controller cannot
+	// clear the replacement's control.
+	executionGeneration atomic.Uint64
 	// closed marks the controller as terminally torn down (close() ran). It
 	// seals turn admission: without it, a submit arriving AFTER close cleared
 	// the parked queue — but while a still-running turn's TurnDone delivery
 	// was in flight — would park again and then start against freed resources
 	// when the window closed.
 	closed bool
-	// parkedTurns holds turn bodies that arrived during the finishing window,
-	// FIFO. finishGuardedTurn starts the oldest one as it closes the window
-	// (see runGuarded/finishGuardedTurn); close() discards any remainder.
-	parkedTurns []func(ctx context.Context) error
 	// rotating is set under mu while NewSession/ClearSession swap the executor
 	// session out. Checking running once and then swapping later leaves a
 	// TOCTOU window: a turn can start (running=false at check time) during the
@@ -409,8 +406,6 @@ type controllerSessionBinding struct {
 	sessionBinding   *session.ClientBinding
 	exclusiveSession bool
 	v3BindingMu      sync.RWMutex
-	v3ActivityMu     sync.Mutex
-	v3Activity       *session.Activity
 }
 
 type controllerPromptRouting struct {
@@ -821,6 +816,7 @@ func New(opts Options) *Controller {
 		runtimeOwner:                      runtimeOwner,
 		goalDriverControl:                 goalDriverControl{ctx: goalDriverCtx, cancel: goalDriverCancel},
 		approval:                          newApprovalManager(opts.Policy, ToolApprovalAsk, opts.ApprovalTimeout),
+		turns:                             turnLoop{phase: session.RuntimeIdle},
 	}
 	c.initializeOwnedResources(opts)
 	return c
@@ -883,6 +879,7 @@ func (c *Controller) initializeOwnedResources(opts Options) {
 	// must never affect the agent pipeline. The session id is resolved lazily
 	// because the session path is only fixed once the first turn begins.
 	c.initializeTaskRecorder(opts.TaskStore)
+	c.bindExecutionControl()
 	c.initializeRuntimeState()
 }
 
@@ -1133,181 +1130,6 @@ func (c *Controller) rebindCheckpoints(sessionPath string) {
 
 // commands (frontend → controller)
 
-// spawnGuardedTurn launches an admitted turn body plus its autosave companion.
-// The caller must already have claimed admission (running=true) under c.mu.
-func (c *Controller) spawnGuardedTurn(ctx context.Context, cancel context.CancelFunc, body func(ctx context.Context) error, goalRound *goalRoundReservation) {
-	ctx, completion := withGuardedTurnCompletion(ctx)
-	runtimeCtx, runtimeActivity, runtimeErr := c.beginSessionRuntimeActivity(ctx, "turn")
-	if runtimeErr != nil {
-		go func() {
-			defer cancel()
-			c.finishGuardedTurn(runtimeErr, completion)
-			c.finishGoalRoundActivity(goalRound)
-		}()
-		return
-	}
-	ctx = runtimeCtx
-	body = c.prepareTurnAdmissionWithGoalRound(body, goalRound)
-	c.liveness.reset(time.Now())
-	c.autosaveWG.Go(func() {
-		c.autosaveWhileRunning(ctx)
-	})
-	go func() {
-		defer cancel()
-		defer func() {
-			c.finishSessionRuntimeActivity(runtimeActivity)
-			c.finishGoalRoundActivity(goalRound)
-			c.kickGoalDriver()
-		}()
-		defer func() {
-			if r := recover(); r != nil {
-				err := fmt.Errorf("internal error: %v", r)
-				goalRound.setResult(err, false)
-				c.finishGuardedTurn(err, completion)
-			}
-		}()
-		err := body(ctx)
-		if goalRound != nil {
-			goalRound.setResult(err, errors.Is(ctx.Err(), context.Canceled) && c.CancelRequested())
-		}
-		c.finishGuardedTurn(explainError(err), completion)
-	}()
-}
-
-func (c *Controller) cancellationGrace() time.Duration {
-	if c != nil && c.testCancelGrace > 0 {
-		return c.testCancelGrace
-	}
-	return 15 * time.Second
-}
-
-// finishGuardedTurn keeps admission closed while TurnDone is delivered. The
-// sink fan-out may detach per-turn transports; allowing a replacement turn in
-// after running=false but before that fan-out completed let the old completion
-// clear or inherit the replacement turn's transport.
-//
-// When the window closes, the oldest parked turn (if any) is started under the
-// SAME critical section that clears finishing: opening the gate first and then
-// re-admitting would let an unrelated submit slip in ahead and bounce the
-// parked turn back to a drop. Remaining parked turns drain one per
-// finishGuardedTurn, preserving FIFO order. Rotation cannot interleave here:
-// beginRotation refuses while running or finishing, and the drain flips
-// finishing directly into running.
-func (c *Controller) finishGuardedTurn(err error, completion *guardedTurnCompletion) {
-	c.memory.clearAutoRemember()
-	c.mu.Lock()
-	cancelRequested := c.canceling
-	c.running = false
-	if c.activeDone != nil {
-		close(c.activeDone)
-		c.activeDone = nil
-	}
-	// A live controller keeps admission closed until TurnDone fan-out finishes.
-	// Close has already sealed admission permanently, so a late completion must
-	// not resurrect a finishing state after teardown.
-	c.finishing = !c.closed
-	c.finishingBoundary.begin(c.finishing)
-	c.cancel = nil
-	// Keep cancelling visible through TurnDone fan-out; clearing it here creates
-	// a finishing-only window before Stop reaches its durable terminal event.
-	// A closed controller has no live surface and may clear immediately.
-	if c.closed {
-		c.canceling = false
-	}
-	c.mu.Unlock()
-
-	c.refreshRuntimeState(event.Event{})
-	defer func() {
-		c.mu.Lock()
-		c.finishing = false
-		c.canceling = false
-		c.finishingBoundary.end()
-		if c.closed {
-			c.mu.Unlock()
-			c.refreshRuntimeState(event.Event{})
-			return
-		}
-		// Preserve queued input after an uncooperative activity, but do not run it
-		// in a process whose previous effects can no longer be proven.
-		if ledger := c.turnEventLedger(); ledger != nil && ledger.CurrentStatus() == event.TurnRecoveryRequired {
-			c.mu.Unlock()
-			c.refreshRuntimeState(event.Event{})
-			return
-		}
-		if len(c.parkedTurns) == 0 {
-			c.mu.Unlock()
-			// No parked compatibility body: admit the next durable inbox item.
-			c.maybeDispatchInbox()
-			c.refreshRuntimeState(event.Event{})
-			return
-		}
-		next := c.parkedTurns[0]
-		c.parkedTurns = c.parkedTurns[1:]
-		ctx, cancel := context.WithCancel(extension.ContextWithRuntimeOwner(context.Background(), c.runtimeOwner))
-		c.cancel = cancel
-		c.activeDone = make(chan struct{})
-		c.running = true
-		c.canceling = false
-		c.mu.Unlock()
-		c.spawnGuardedTurn(ctx, cancel, next, nil)
-		c.refreshRuntimeState(event.Event{})
-	}()
-	c.inbox.mu.Lock()
-	// Prefer a single representative id for the wire event (first active).
-	// Full multi-item ack happens in onInboxTurnDone via activeItemIDs.
-	activeInboxID := ""
-	for id := range c.inbox.activeItemIDs {
-		activeInboxID = id
-		break
-	}
-	c.inbox.mu.Unlock()
-	done := event.Event{
-		Kind:           event.TurnDone,
-		Err:            err,
-		Cancelled:      cancelRequested,
-		Outcome:        turnOutcome(err),
-		CheckpointTurn: c.validatedCheckpointTurn(completion),
-		Receipt:        c.executor.CompletionReceipt(),
-		ItemID:         activeInboxID,
-	}
-	if done.CheckpointTurn != nil {
-		changes := completion.checkpoint.store.FreezeTurnChanges(*done.CheckpointTurn)
-		if done.Receipt == nil && (len(changes.Files) > 0 || len(changes.Reasons) > 0) {
-			done.Receipt = &event.CompletionReceipt{AssessmentKind: "facts", Verdict: "unknown"}
-		}
-		if done.Receipt != nil {
-			// Detach the executor's receipt before adding host-owned file facts.
-			receipt := *done.Receipt
-			receipt.Diff = changes.Summary()
-			receipt.Interrupted = cancelRequested
-			done.Receipt = &receipt
-		}
-	}
-	done.Receipt = bindCompletionLogSources(done.Receipt, c.History())
-	done = c.applyTurnDoneProtocol(done, cancelRequested)
-	c.applyToolRecoveryTurnStatus(&done, completion)
-	var readErr *agent.IncompleteReadError
-	if errors.As(err, &readErr) {
-		done.ReadPause = readErr.Pause
-	}
-	done.Diagnostic = provider.DiagnoseFailure(err)
-	done.Detail = provider.FailureDiagnosticDetail(done.Diagnostic)
-	if !cancelRequested {
-		done.ProtocolRecovery = c.executor.PendingProtocolRecovery()
-	}
-	var readinessErr *agent.FinalReadinessError
-	if errors.As(err, &readinessErr) {
-		done.Readiness = &event.FinalReadiness{Attempts: readinessErr.Attempts, Missing: append([]string(nil), readinessErr.Missing...)}
-	}
-	// Ack active durable items before exposing TurnDone. Frontends commonly
-	// refresh the inbox from that event and must not observe already-consumed
-	// steers in the completed turn. Dispatch still waits for finishing to clear.
-	c.onInboxTurnDone()
-	c.sink.Emit(done)
-}
-
-// Send starts a turn with an uncomposed message. The controller applies
-// plan-mode, memory, and background-job framing inside the async turn path.
 func (c *Controller) Send(input string) {
 	c.SendWithRaw(input, input)
 }
@@ -2212,7 +2034,7 @@ func (c *Controller) RunSubagentProfile(ctx context.Context, name, task string, 
 func (c *Controller) beginRotation() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.running || c.finishing {
+	if c.bodyActiveLocked() || c.finalizingLocked() {
 		return errTurnRunningRotation
 	}
 	if c.rotating {
@@ -2226,7 +2048,7 @@ func (c *Controller) beginRotation() error {
 func (c *Controller) CancelRequested() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.canceling
+	return c.cancelRequestedLocked()
 }
 
 // PendingPrompt reports whether the current turn is blocked waiting for a user
@@ -2501,7 +2323,7 @@ func (c *Controller) refreshInteractiveGate() {
 func (c *Controller) TrySteer(text string) bool {
 	c.mu.Lock()
 	exec := c.executor
-	running := c.running
+	running := c.bodyActiveLocked()
 	c.mu.Unlock()
 	return running && exec != nil && exec.Steer(text)
 }
@@ -2605,7 +2427,7 @@ func (c *Controller) answerQuestionCheckedLocked(id string, answers []event.AskA
 		// back to the model and trusting it not to ask again (#6869).
 		if !askAnswersHaveSelection(answers) {
 			c.mu.Lock()
-			activeTurn := c.cancel != nil
+			activeTurn := c.turns.cancel != nil
 			c.mu.Unlock()
 			if activeTurn {
 				c.cancelLocked()
@@ -5284,22 +5106,21 @@ func (c *Controller) close(fireSessionEnd bool, jobsMode closeJobsMode) {
 	c.closeOnce.Do(func() {
 		c.mu.Lock()
 		started := c.startedOnce
-		cancel := c.cancel
+		cancel := c.turns.cancel
 		// Seal turn admission and drop anything already parked: a parked turn
 		// must not start against a controller that is being torn down, and
 		// without the closed flag a submit landing after this critical
 		// section (while a running turn's TurnDone delivery is still in
 		// flight) would park again and start after teardown.
 		c.closed = true
-		c.parkedTurns = nil
-		// A finishing-only controller no longer needs the delivery gate because
-		// closed seals every admission path. Keep running truthful until the
-		// foreground goroutine actually exits; clearing it here would report idle
-		// while tools and prompt waiters were still live.
-		c.finishing = false
-		c.finishingBoundary.end()
+		c.turns.pending = nil
+		c.turns.wake = false
+		c.turns.phase = session.RuntimeClosed
+		c.turns.finishingBound.end()
 		if cancel != nil {
-			c.canceling = true
+			c.turns.cancelRequested = true
+		} else {
+			c.turns.cancelRequested = false
 		}
 		c.mu.Unlock()
 		if cancel != nil {

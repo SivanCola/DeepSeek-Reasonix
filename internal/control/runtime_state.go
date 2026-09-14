@@ -115,7 +115,7 @@ func (c *Controller) refreshRuntimeStateAttempt(e event.Event, attempt int) {
 		return
 	} // construction has not finished
 	c.mu.Lock()
-	running, finishing, closed, cancelling, path := c.running, c.finishing, c.closed, c.canceling, c.sessionPath
+	running, finishing, closed, cancelling, path := c.bodyActiveLocked(), c.finalizingLocked(), c.closed, c.cancelRequestedLocked(), c.sessionPath
 	c.mu.Unlock()
 	_, v3Runtime, exclusiveSession := c.v3Binding()
 	var v3RuntimeSnapshot session.RuntimeSnapshot
@@ -293,6 +293,8 @@ func setRuntimePhase(next *event.RuntimeStateSnapshot, exclusiveSession bool, v3
 			next.Phase = "executing"
 		case session.RuntimeCancelling:
 			next.Phase = "cancelling"
+		case session.RuntimeFinalizing:
+			next.Phase = "finishing"
 		case session.RuntimeRecoveryRequired:
 			next.Phase = "recovery_required"
 		case session.RuntimeClosed:
@@ -357,5 +359,5 @@ func setRuntimeRecovery(next *event.RuntimeStateSnapshot, v3Snapshot session.Sna
 func (c *Controller) runtimeBoundaryStable(running, finishing, closed, cancelling bool, path string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return running == c.running && finishing == c.finishing && closed == c.closed && cancelling == c.canceling && path == c.sessionPath
+	return running == c.bodyActiveLocked() && finishing == c.finalizingLocked() && closed == c.closed && cancelling == c.cancelRequestedLocked() && path == c.sessionPath
 }

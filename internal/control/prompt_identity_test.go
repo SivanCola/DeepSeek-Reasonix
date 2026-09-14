@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"reasonix/internal/event"
+	"reasonix/internal/session"
 )
 
 func TestResolvePromptExactRejectsStaleTurnBeforeDispatch(t *testing.T) {
@@ -217,8 +218,8 @@ func TestControllerCancelSignalsTurnWhilePromptAnswererIsBlocked(t *testing.T) {
 
 	turnCtx, cancelTurn := context.WithCancel(context.Background())
 	c.mu.Lock()
-	c.cancel = cancelTurn
-	c.running = true
+	c.turns.cancel = cancelTurn
+	c.turns.phase = session.RuntimeRunning
 	c.mu.Unlock()
 
 	id := PromptIdentity{PromptID: "p-controller-blocked", TurnID: "turn-1", Kind: PromptApproval}
@@ -254,8 +255,8 @@ func TestControllerCancelSignalsTurnWhilePromptAnswererIsBlocked(t *testing.T) {
 	close(releaseAnswer)
 	<-resolved
 	c.mu.Lock()
-	c.running = false
-	c.cancel = nil
+	c.turns.phase = session.RuntimeIdle
+	c.turns.cancel = nil
 	c.mu.Unlock()
 }
 

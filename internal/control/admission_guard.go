@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"reasonix/internal/event"
-	"reasonix/internal/extension"
+	"reasonix/internal/session"
 )
 
 // admissionResult classifies what runGuarded did with a turn body.
@@ -69,29 +69,39 @@ func (c *Controller) admitGuardedTurn(body func(ctx context.Context) error, park
 		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "input was not accepted: the session is being switched — please resend"})
 		return turnDroppedRotating
 	}
-	if c.running {
-		if parkWhileRunning || c.canceling {
-			c.parkedTurns = append(c.parkedTurns, body)
+	if c.turns.phase == session.RuntimeRecoveryRequired {
+		c.mu.Unlock()
+		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: ErrRecoveryRequired.Error()})
+		return turnDroppedWriteAuthority
+	}
+	kind := queuedUser
+	if goalRound != nil {
+		kind = queuedGoal
+	}
+	item := queuedTurn{kind: kind, body: body, onStart: onStart, goalRound: goalRound}
+	switch c.turns.phase {
+	case session.RuntimeRunning:
+		if parkWhileRunning || c.turns.cancelRequested {
+			c.queueTurnLocked(item)
 			c.mu.Unlock()
 			return turnParked
 		}
 		c.mu.Unlock()
 		return turnDroppedRunning
-	}
-	if c.finishing {
+	case session.RuntimeCancelling:
+		c.queueTurnLocked(item)
+		c.mu.Unlock()
+		return turnParked
+	case session.RuntimeFinalizing:
 		if !parkWhileFinishing {
 			c.mu.Unlock()
 			return turnDroppedRunning
 		}
-		c.parkedTurns = append(c.parkedTurns, body)
+		c.queueTurnLocked(item)
 		c.mu.Unlock()
 		return turnParked
 	}
-	ctx, cancel := context.WithCancel(extension.ContextWithRuntimeOwner(context.Background(), c.runtimeOwner))
-	c.cancel = cancel
-	c.activeDone = make(chan struct{})
-	c.running = true
-	c.canceling = false
+	ctx, cancel := c.startTurnLocked(item)
 	c.mu.Unlock()
 	if onStart != nil {
 		onStart()

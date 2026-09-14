@@ -368,7 +368,7 @@ func (s *Service) releaseBinding(ctx context.Context, runtime *Runtime) error {
 	s.mu.Unlock()
 	if count <= 1 {
 		var flushErr error
-		if runtime.current.Load() == nil {
+		if !runtime.executionBusy() {
 			_, flushErr = runtime.session.Flush(ctx)
 		}
 		s.scheduleIdleRetirement(runtime)
@@ -395,7 +395,7 @@ func (s *Service) scheduleIdleRetirement(runtime *Runtime) {
 		s.mu.Unlock()
 		return
 	}
-	if runtime.current.Load() != nil {
+	if runtime.executionBusy() {
 		s.mu.Unlock()
 		return
 	}
@@ -453,7 +453,7 @@ func (s *Service) removeIdleCacheLocked(runtime *Runtime, stop bool) {
 func (s *Service) retireIfUnbound(ctx context.Context, runtime *Runtime) error {
 	s.mu.Lock()
 	s.removeIdleCacheLocked(runtime, false)
-	if s.active[runtime.ref] != runtime || s.bindings[runtime] != 0 || !s.retireIdle[runtime] || runtime.current.Load() != nil {
+	if s.active[runtime.ref] != runtime || s.bindings[runtime] != 0 || !s.retireIdle[runtime] || runtime.executionBusy() {
 		s.mu.Unlock()
 		return nil
 	}

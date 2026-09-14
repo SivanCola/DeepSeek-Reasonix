@@ -50,7 +50,7 @@ func TestSteerFallbackParksWhileRunning(t *testing.T) {
 	c.Steer("queued while exiting")
 
 	c.mu.Lock()
-	parked := len(c.parkedTurns)
+	parked := len(c.turns.pending)
 	c.mu.Unlock()
 	if parked != 1 {
 		t.Fatalf("steer fallback should park while running, parked=%d", parked)

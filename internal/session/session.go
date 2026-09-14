@@ -340,7 +340,7 @@ func (s *Session) CommitPrepared(prepared PreparedBatch) (Commit, error) {
 }
 
 // AppendBatch is the convenience form used by callers that do not need to
-// separate validation from the activity commit gate.
+// separate validation from the commit.
 func (s *Session) AppendBatch(ctx context.Context, operationID string, events []Event) (Commit, error) {
 	return s.Append(ctx, Batch{OperationID: operationID, Events: events})
 }

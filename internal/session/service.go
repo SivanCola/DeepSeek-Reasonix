@@ -39,6 +39,7 @@ const (
 	RuntimeIdle             RuntimePhase = "idle"
 	RuntimeRunning          RuntimePhase = "running"
 	RuntimeCancelling       RuntimePhase = "cancelling"
+	RuntimeFinalizing       RuntimePhase = "finalizing"
 	RuntimeRecoveryRequired RuntimePhase = "recovery_required"
 	RuntimeClosed           RuntimePhase = "closed"
 )
@@ -60,9 +61,9 @@ type CancelReceipt struct {
 	Phase            RuntimePhase `json:"phase"`
 }
 
-// Runtime is the sole owner of a live Session and its write handle. It owns
-// transient activity and cancellation; persisted running events never create
-// a Runtime after process restart.
+// Runtime is the sole owner of a live Session and its write handle. Execution
+// lifecycle lives in the bound turn-loop; persisted running events never
+// create a Runtime after process restart.
 type Runtime struct {
 	ref     SessionRef
 	epoch   string
@@ -72,32 +73,18 @@ type Runtime struct {
 	// refers to the exact instance it published.
 	instance string
 
-	mu         sync.Mutex
-	phase      RuntimePhase
-	activity   string
-	revision   atomic.Uint64
-	activityID uint64
-	current    atomic.Pointer[Activity]
-	closeDone  chan struct{}
-	closeErr   error
-}
-
-// Activity is a generation-bound permit. Agent and tool work commit business
-// events through it so a cancelled or replaced activity cannot publish a late
-// result into the session. Diagnostic logging uses a separate non-business
-// channel and does not regain this permit.
-type Activity struct {
-	runtime       *Runtime
-	id            uint64
-	name          string
-	cancel        context.CancelFunc
-	stopped       atomic.Bool
-	done          chan struct{}
-	doneOnce      sync.Once
-	superviseOnce sync.Once
-	// commitGate fences the final eligibility check and the in-memory commit
-	// against cancellation without making Cancel wait for a storage lock.
-	commitGate sync.RWMutex
+	mu       sync.Mutex
+	phase    RuntimePhase
+	activity string
+	revision atomic.Uint64
+	// execution is the generation-scoped turn-loop. Cancel loads it without
+	// taking mu so Stop never waits on a commit or persistence lock.
+	execution atomic.Pointer[executionBinding]
+	lastGen   atomic.Uint64
+	bindGen   atomic.Uint64
+	canceling atomic.Bool
+	closeDone chan struct{}
+	closeErr  error
 }
 
 func newRuntime(ref SessionRef, session *Session) *Runtime {
@@ -133,7 +120,7 @@ func (r *Runtime) ExecutionSnapshot() RuntimeSnapshot {
 func (r *Runtime) activitySnapshot() RuntimeSnapshot {
 	r.mu.Lock()
 	phase := r.phase
-	if current := r.current.Load(); current != nil && current.stopped.Load() && phase == RuntimeRunning {
+	if r.canceling.Load() && phase == RuntimeRunning {
 		phase = RuntimeCancelling
 	}
 	state := RuntimeSnapshot{Ref: r.ref, Epoch: r.epoch, ActivityRevision: r.revision.Load(), Phase: phase, Activity: r.activity}
@@ -141,182 +128,26 @@ func (r *Runtime) activitySnapshot() RuntimeSnapshot {
 	return state
 }
 
-// BeginActivity establishes cancellation ownership before any turn event or
-// downstream work starts. finish only affects the exact activity generation.
-func (r *Runtime) BeginActivity(parent context.Context, name string) (context.Context, func(error), error) {
-	ctx, activity, err := r.BeginOwnedActivity(parent, name)
-	if err != nil {
-		return nil, nil, err
-	}
-	return ctx, activity.Finish, nil
-}
-
-func (r *Runtime) BeginOwnedActivity(parent context.Context, name string) (context.Context, *Activity, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.phase == RuntimeRecoveryRequired {
-		return nil, nil, ErrRecoveryRequired
-	}
-	if r.phase == RuntimeClosed {
-		return nil, nil, osClosedError()
-	}
-	if r.phase != RuntimeIdle {
-		return nil, nil, ErrRuntimeBusy
-	}
-	if parent == nil {
-		parent = context.Background()
-	}
-	ctx, cancel := context.WithCancel(parent)
-	r.phase, r.activity = RuntimeRunning, name
-	r.activityID++
-	r.revision.Add(1)
-	activity := &Activity{runtime: r, id: r.activityID, name: name, cancel: cancel, done: make(chan struct{})}
-	r.current.Store(activity)
-	return ctx, activity, nil
-}
-
-func (a *Activity) AppendBatch(ctx context.Context, operationID string, events []Event) (Commit, error) {
-	return a.Append(ctx, Batch{OperationID: operationID, Events: events})
-}
-
-// Append preserves the complete logical batch, including its turn identity,
-// while fencing the commit against the exact activity generation.
-//
-// Validation and hashing run outside the runtime lock so they can never delay
-// cancellation. Only the final eligibility check and the in-memory commit hold
-// the activity commit gate; the physical write-behind is asynchronous.
-func (a *Activity) Append(ctx context.Context, batch Batch) (Commit, error) {
-	if a == nil || a.runtime == nil {
-		return Commit{}, ErrStaleActivity
-	}
-	if a.stopped.Load() {
-		return Commit{}, ErrStaleActivity
-	}
-	if err := ctx.Err(); err != nil {
-		return Commit{}, err
-	}
-	runtime := a.runtime
-	prepared, err := runtime.session.PrepareBatchContext(ctx, batch.OperationID, batch)
-	if err != nil {
-		return Commit{}, err
-	}
-	defer prepared.Release()
-	a.commitGate.RLock()
-	defer a.commitGate.RUnlock()
-	runtime.mu.Lock()
-	if runtime.current.Load() != a || runtime.activityID != a.id {
-		runtime.mu.Unlock()
-		return Commit{}, ErrStaleActivity
-	}
-	if a.stopped.Load() && !activityClosureBatch(batch) {
-		runtime.mu.Unlock()
-		return Commit{}, ErrStaleActivity
-	}
-	if runtime.phase != RuntimeRunning && runtime.phase != RuntimeCancelling {
-		runtime.mu.Unlock()
-		return Commit{}, ErrStaleActivity
-	}
-	runtime.mu.Unlock()
-	return runtime.session.CommitPrepared(prepared)
-}
-
-func activityClosureBatch(batch Batch) bool {
-	if len(batch.Events) == 0 {
-		return false
-	}
-	for _, event := range batch.Events {
-		switch event.Kind {
-		case "turn/end", "interaction/resolved", "runtime/recovery", "assistant/attempt", "diagnostic":
-		default:
-			return false
-		}
-	}
-	return true
-}
-
-func (a *Activity) Finish(_ error) {
-	if a == nil || a.runtime == nil {
-		return
-	}
-	a.doneOnce.Do(func() { close(a.done) })
-	runtime := a.runtime
-	a.stop()
-	runtime.mu.Lock()
-	if runtime.current.Load() != a || runtime.activityID != a.id || (runtime.phase != RuntimeRunning && runtime.phase != RuntimeCancelling) {
-		runtime.mu.Unlock()
-		return
-	}
-	runtime.current.Store(nil)
-	runtime.activity = ""
-	runtime.phase = RuntimeIdle
-	runtime.revision.Add(1)
-	owner := runtime.owner
-	runtime.mu.Unlock()
-	if owner != nil {
-		_ = owner.closeIfUnbound(context.Background(), runtime)
-	}
-}
-
-func (a *Activity) stop() bool {
-	if a == nil || !a.stopped.CompareAndSwap(false, true) {
-		return false
-	}
-	a.cancel()
-	a.runtime.revision.Add(1)
-	return true
-}
-
-// superviseCancellation belongs to the activity rather than any client. This
-// preserves recovery isolation when Stop arrives through Serve or another
-// host entry point without a live UI controller.
-func (a *Activity) superviseCancellation() {
-	if a == nil || a.runtime == nil {
-		return
-	}
-	a.superviseOnce.Do(func() {
-		go func() {
-			timer := time.NewTimer(15 * time.Second)
-			defer timer.Stop()
-			select {
-			case <-a.done:
-				return
-			case <-timer.C:
-			}
-			a.runtime.requireRecoveryFor(a)
-		}()
-	})
-}
-
-// Cancel reaches the immutable activity permit without acquiring the runtime
-// mutex. A commit may be blocked below that mutex or in a persistence adapter;
-// neither is allowed to delay delivery of the cancellation signal.
+// Cancel forwards Stop to the bound turn-loop without taking the runtime
+// mutex. An unbound runtime is already idle.
 func (r *Runtime) Cancel() bool {
-	activity := r.current.Load()
-	if activity == nil {
+	exec := r.loadExecution()
+	if exec == nil || exec.control == nil {
 		return false
 	}
-	activity.stop()
-	activity.superviseCancellation()
+	if !exec.control.Cancel() {
+		return false
+	}
+	r.canceling.Store(true)
 	if r.mu.TryLock() {
-		defer r.mu.Unlock()
-		if r.current.Load() == activity && r.phase == RuntimeRunning {
+		if r.phase == RuntimeRunning {
 			r.phase = RuntimeCancelling
+			r.activity = "cancelling"
+			r.revision.Add(1)
 		}
+		r.mu.Unlock()
 	}
 	return true
-}
-
-func (r *Runtime) requireRecoveryFor(activity *Activity) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.current.Load() != activity || r.activityID != activity.id || !activity.stopped.Load() {
-		return
-	}
-	r.current.Store(nil)
-	r.activityID++
-	r.phase = RuntimeRecoveryRequired
-	r.activity = activity.name
-	r.revision.Add(1)
 }
 
 func (r *Runtime) RequireRecovery(activity string) {
@@ -325,51 +156,9 @@ func (r *Runtime) RequireRecovery(activity string) {
 	if r.phase == RuntimeClosed {
 		return
 	}
-	if current := r.current.Swap(nil); current != nil {
-		current.stop()
-	}
-	r.activityID++
 	r.phase = RuntimeRecoveryRequired
 	r.activity = activity
 	r.revision.Add(1)
-}
-
-// RecordRecovery appends terminal recovery facts after RequireRecovery has
-// revoked the activity permit. It cannot be used by a stale worker to publish
-// a tool result or another business-state transition.
-func (r *Runtime) RecordRecovery(ctx context.Context, batch Batch) (Commit, error) {
-	r.mu.Lock()
-	if r.phase != RuntimeRecoveryRequired || !recoveryClosureBatch(batch) {
-		r.mu.Unlock()
-		return Commit{}, ErrStaleActivity
-	}
-	r.mu.Unlock()
-	if err := ctx.Err(); err != nil {
-		return Commit{}, err
-	}
-	prepared, err := r.session.PrepareBatchContext(ctx, batch.OperationID, batch)
-	if err != nil {
-		return Commit{}, err
-	}
-	defer prepared.Release()
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.phase != RuntimeRecoveryRequired || !recoveryClosureBatch(batch) {
-		return Commit{}, ErrStaleActivity
-	}
-	return r.session.CommitPrepared(prepared)
-}
-
-func recoveryClosureBatch(batch Batch) bool {
-	if !activityClosureBatch(batch) {
-		return false
-	}
-	for _, event := range batch.Events {
-		if event.Kind == "runtime/recovery" {
-			return true
-		}
-	}
-	return false
 }
 
 func (r *Runtime) close(ctx context.Context) error {
@@ -380,14 +169,13 @@ func (r *Runtime) close(ctx context.Context) error {
 		<-done
 		return r.closeErr
 	}
-	if r.phase == RuntimeRunning || r.phase == RuntimeCancelling || r.phase == RuntimeRecoveryRequired {
+	if r.phase.busy() && r.loadExecution() != nil {
 		r.mu.Unlock()
 		return ErrRuntimeBusy
 	}
 	// Seal admission in the same critical section as the idle check. The
 	// irreversible close has one uncancellable result for every caller.
 	r.closeDone = make(chan struct{})
-	r.current.Store(nil)
 	r.phase = RuntimeClosed
 	r.activity = ""
 	r.revision.Add(1)

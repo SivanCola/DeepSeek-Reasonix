@@ -5,7 +5,7 @@ import (
 	"errors"
 
 	"reasonix/internal/event"
-	"reasonix/internal/extension"
+	"reasonix/internal/session"
 )
 
 // runSynchronousTurn owns the blocking transport lifecycle. Durable steer
@@ -23,59 +23,43 @@ func (c *Controller) runSynchronousTurn(
 	if ledger := c.turnEventLedger(); ledger != nil && ledger.CurrentStatus() == event.TurnRecoveryRequired {
 		return ErrRecoveryRequired
 	}
-	ctx, cancel := context.WithCancel(extension.ContextWithRuntimeOwner(ctx, c.RuntimeOwner()))
+	parent := ctx
 	c.mu.Lock()
 	// Finishing is part of the gate: TurnDone is still fanning out. Closed
 	// seals a torn-down controller. Blocking callers get an error rather than
 	// parking because they already own and enforce the request boundary.
-	if c.running || c.finishing || c.rotating || c.closed {
+	if c.bodyActiveLocked() || c.finalizingLocked() || c.rotating || c.closed || c.recoveryRequiredLocked() {
 		c.mu.Unlock()
-		cancel()
 		return ErrTurnRunning
 	}
 	if c.rejectDrainingGenerationLocked() {
 		c.mu.Unlock()
-		cancel()
 		c.emitDrainingNotice()
 		return ErrRuntimeDraining
 	}
-	c.cancel = cancel
-	c.activeDone = make(chan struct{})
-	c.running = true
-	c.canceling = false
+	ctx, cancel := c.startTurnLocked(queuedTurn{})
 	c.mu.Unlock()
-	c.refreshRuntimeState(event.Event{})
-	runtimeCtx, runtimeActivity, runtimeErr := c.beginSessionRuntimeActivity(ctx, "turn")
-	if runtimeErr != nil {
-		finish := func() {
-			c.mu.Lock()
-			c.running = false
-			if c.activeDone != nil {
-				close(c.activeDone)
-				c.activeDone = nil
-			}
-			c.cancel = nil
-			c.canceling = false
-			c.mu.Unlock()
-			c.refreshRuntimeState(event.Event{})
-			cancel()
-		}
-		finish()
-		return runtimeErr
+	if parent != nil {
+		stop := context.AfterFunc(parent, func() { c.signalTurnCancel() })
+		defer stop()
 	}
-	ctx = runtimeCtx
+	c.refreshRuntimeState(event.Event{})
 	finish := func() {
 		c.mu.Lock()
-		c.running = false
-		if c.activeDone != nil {
-			close(c.activeDone)
-			c.activeDone = nil
+		if c.turns.done != nil {
+			close(c.turns.done)
+			c.turns.done = nil
 		}
-		c.cancel = nil
-		c.canceling = false
+		c.turns.cancel = nil
+		c.turns.cancelRequested = false
+		if !c.closed && c.turns.phase != session.RuntimeRecoveryRequired {
+			c.turns.lastToken = c.turns.token
+			c.turns.phase = session.RuntimeIdle
+			c.turns.turnID = ""
+			c.noteExecutionLocked(session.RuntimeIdle, "")
+		}
 		c.mu.Unlock()
 		c.refreshRuntimeState(event.Event{})
-		c.finishSessionRuntimeActivity(runtimeActivity)
 		c.kickGoalDriver()
 		cancel()
 	}
