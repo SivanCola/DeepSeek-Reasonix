@@ -73,11 +73,12 @@ func (a *App) resumeCanonicalSessionForTranscript(tab *WorkspaceTab, ctrl contro
 		if err := current.Snapshot(); err != nil {
 			return HistoryPage{}, err
 		}
-		target, err := service.Query().Snapshot(a.bootContext(), ref)
+		binding, err := service.EnsureExecution(a.bootContext(), ref)
 		if err != nil {
 			return HistoryPage{}, err
 		}
-		targetModel := strings.TrimSpace(target.Projection.ModelRef)
+		defer func() { _ = binding.Release(a.bootContext()) }()
+		targetModel := strings.TrimSpace(binding.Runtime().StateSnapshot().Session.Projection.ModelRef)
 		if targetModel != "" {
 			current, err = a.replaceControllerForSessionOpenLocked(tab, current, service, ref, targetModel)
 			if err != nil {

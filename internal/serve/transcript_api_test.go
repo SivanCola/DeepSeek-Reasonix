@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/config"
@@ -187,23 +188,65 @@ func TestCanonicalSessionHistoryHTTPUsesAuthorizedContentRanges(t *testing.T) {
 	defer ctrl.Close()
 	server := httptest.NewServer(New(ctrl, bc, config.ServeConfig{}).Handler())
 	defer server.Close()
-	response, err := http.Get(server.URL + "/session-history/page?sessionId=canonical&limit=10")
+	openResponse, err := http.Get(server.URL + "/session/open?sessionId=canonical")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
+	defer openResponse.Body.Close()
+	var openView canonical.SessionOpenView
+	if err := json.NewDecoder(openResponse.Body).Decode(&openView); err != nil || openResponse.StatusCode != http.StatusOK || len(openView.Recent.Entries) != 1 {
+		t.Fatalf("open status=%d view=%+v err=%v", openResponse.StatusCode, openView, err)
+	}
 	var page canonical.MessageHistoryPage
-	if err := json.NewDecoder(response.Body).Decode(&page); err != nil || response.StatusCode != http.StatusOK || len(page.Messages) != 1 || page.Messages[0].ContentRef == nil {
-		t.Fatalf("history status=%d page=%+v err=%v", response.StatusCode, page, err)
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		response, requestErr := http.Get(server.URL + "/session-history/page?sessionId=canonical&limit=10")
+		if requestErr != nil {
+			t.Fatal(requestErr)
+		}
+		decodeErr := json.NewDecoder(response.Body).Decode(&page)
+		_ = response.Body.Close()
+		if decodeErr != nil || response.StatusCode != http.StatusOK {
+			t.Fatalf("history status=%d page=%+v err=%v", response.StatusCode, page, decodeErr)
+		}
+		if page.Status == "ready" {
+			break
+		}
+		if page.Status != "preparing" || time.Now().After(deadline) {
+			t.Fatalf("history preparation = %+v", page)
+		}
 	}
-	searchResponse, err := http.Get(server.URL + "/session-history/search?sessionId=canonical&q=range&limit=10")
+	if len(page.Messages) != 1 || page.Messages[0].ContentRef == nil {
+		t.Fatalf("history page=%+v", page)
+	}
+	locationResponse, err := http.Get(server.URL + "/session-history/locate?sessionId=canonical&messageId=large&snapshot=" + fmt.Sprint(page.SnapshotSequence))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer searchResponse.Body.Close()
+	defer locationResponse.Body.Close()
+	var location canonical.MessageLocation
+	if err := json.NewDecoder(locationResponse.Body).Decode(&location); err != nil || locationResponse.StatusCode != http.StatusOK || location.Status != "ready" || location.Cursor == "" {
+		t.Fatalf("location status=%d response=%+v err=%v", locationResponse.StatusCode, location, err)
+	}
 	var search canonical.SearchHistoryPage
-	if err := json.NewDecoder(searchResponse.Body).Decode(&search); err != nil || searchResponse.StatusCode != http.StatusOK || len(search.Hits) != 1 || search.Hits[0].MessageID != "large" {
-		t.Fatalf("search status=%d page=%+v err=%v", searchResponse.StatusCode, search, err)
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		response, requestErr := http.Get(server.URL + "/session-history/search?sessionId=canonical&q=range&limit=10")
+		if requestErr != nil {
+			t.Fatal(requestErr)
+		}
+		decodeErr := json.NewDecoder(response.Body).Decode(&search)
+		_ = response.Body.Close()
+		if decodeErr != nil || response.StatusCode != http.StatusOK {
+			t.Fatalf("search status=%d page=%+v err=%v", response.StatusCode, search, decodeErr)
+		}
+		if search.Status == "ready" {
+			break
+		}
+		if search.Status != "preparing" || time.Now().After(deadline) {
+			t.Fatalf("search preparation = %+v", search)
+		}
+	}
+	if len(search.Hits) != 1 || search.Hits[0].MessageID != "large" {
+		t.Fatalf("search page=%+v", search)
 	}
 	request, _ := json.Marshal(sessionHistoryContentRequest{Ref: *page.Messages[0].ContentRef, Offset: 0, Length: 32})
 	contentResponse, err := http.Get(server.URL + "/session-history/content?sessionId=canonical&request=" + url.QueryEscape(string(request)))

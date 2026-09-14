@@ -155,11 +155,18 @@ func TestRemoteCanonicalSessionHistoryUsesNegotiatedIdentity(t *testing.T) {
 			t.Errorf("sessionId = %q", got)
 		}
 		switch r.URL.Path {
+		case "/session/open":
+			_ = json.NewEncoder(w).Encode(session.SessionOpenView{SnapshotSequence: 9, Recent: session.RecentSnapshot{Entries: []session.PersistentMessage{{MessageID: "m1", Role: "user"}}}})
 		case "/session-history/page":
 			if r.URL.Query().Get("cursor") != "next" || r.URL.Query().Get("limit") != "7" {
 				t.Errorf("page query = %q", r.URL.RawQuery)
 			}
 			_ = json.NewEncoder(w).Encode(session.MessageHistoryPage{Messages: []session.PersistentMessage{{MessageID: "m1", Role: "user", ContentRef: &ref}}, SnapshotSequence: 9})
+		case "/session-history/locate":
+			if r.URL.Query().Get("messageId") != "m1" || r.URL.Query().Get("snapshot") != "9" {
+				t.Errorf("locate query = %q", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(session.MessageLocation{Status: "ready", MessageID: "m1", SnapshotSequence: 9, Cursor: "located"})
 		case "/session-history/content":
 			var request struct {
 				Ref    sessioncontent.Ref `json:"ref"`
@@ -184,11 +191,19 @@ func TestRemoteCanonicalSessionHistoryUsesNegotiatedIdentity(t *testing.T) {
 	}))
 	defer server.Close()
 	app, tab := remoteTranscriptFixture(server)
-	tab.capabilities = map[string]bool{serveCapabilitySessionContentV1: true}
+	tab.capabilities = map[string]bool{serveCapabilitySessionContentV1: true, serveCapabilitySessionReadV2: true}
 	tab.session.sessionID = "canonical"
+	view, err := app.RemoteSessionOpenForTab(tab.id)
+	if err != nil || view.SnapshotSequence != 9 || len(view.Recent.Entries) != 1 {
+		t.Fatalf("open = %+v, %v", view, err)
+	}
 	page, err := app.RemoteSessionHistoryPageForTab(tab.id, "next", 7)
 	if err != nil || page.SnapshotSequence != 9 || len(page.Messages) != 1 {
 		t.Fatalf("page = %+v, %v", page, err)
+	}
+	location, err := app.RemoteLocateSessionMessageForTab(tab.id, "m1", 9)
+	if err != nil || location.Status != "ready" || location.Cursor != "located" {
+		t.Fatalf("location = %+v, %v", location, err)
 	}
 	chunk, err := app.RemoteSessionHistoryContentForTab(tab.id, ref, 0)
 	if err != nil || chunk.Data != base64.StdEncoding.EncodeToString([]byte("big")) || !chunk.Done {

@@ -1,10 +1,18 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, writeFile, copyFile, rm } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, writeFile, copyFile, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { build, preview, loadConfigFromFile } from "vite";
+import {
+  collectTranscriptPerformance,
+  decideTranscriptPerformance,
+  formatPerformanceSummary,
+  installTranscriptPerformanceObserver,
+  measureTranscriptPerformance,
+  percentile,
+} from "./transcript-performance.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 process.env.PLAYWRIGHT_BROWSERS_PATH = !process.env.PLAYWRIGHT_BROWSERS_PATH || process.env.PLAYWRIGHT_BROWSERS_PATH === ".pw-browsers"
@@ -24,6 +32,7 @@ await build({ ...config, configFile: false, root, logLevel: "error",
 const server = await preview({ configFile: false, root, logLevel: "error", build: { outDir }, preview: { host: "127.0.0.1", port: 0 } });
 const address = server.httpServer.address();
 const reports = [];
+const mode = process.env.REASONIX_TRANSCRIPT_MODE ?? (process.env.REASONIX_TRANSCRIPT_NATIVE_THUMB === "1" ? "native-scrollbar" : "headless-reader");
 try {
   for (const [name, engine] of Object.entries(process.env.CHAT_BROWSER === "electron" ? { electron: _electron } : process.env.CHAT_BROWSER === "webkit" ? { webkit } : process.env.CHAT_BROWSER === "chromium" ? { chromium } : { chromium, webkit })) {
     let electronApp;
@@ -38,26 +47,29 @@ try {
     const report = { browser: name, complete: false, samples: [], errors: [],
       version: browser?.version() ?? await electronApp.evaluate(() => process.versions.electron),
       platform: process.platform, arch: process.arch };
+    const writeAttempt = (scenario, attempt, decision = null) => writeFile(path.join(evidence, `${scenario}-attempt-${attempt.attempt}.json`), JSON.stringify({
+      browser: report.browser,
+      version: report.version,
+      platform: report.platform,
+      arch: report.arch,
+      mode,
+      ...attempt,
+      decision,
+    }, null, 2));
     reports.push(report);
     try {
       const page = electronApp ? await electronApp.firstWindow() : await browser.newPage({ viewport: { width: 1280, height: 900 } });
       const errors = report.errors;
       await page.addInitScript(() => { window.chatWrites = []; window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = write => { window.chatWrites.push(write); if (window.chatWrites.length > 100) window.chatWrites.shift(); }; });
-      await page.addInitScript(() => {
-        window.chatMetrics = { inputs: [], tasks: [], longTaskSupported: PerformanceObserver.supportedEntryTypes.includes("longtask") };
-        if (PerformanceObserver.supportedEntryTypes.includes("longtask")) new PerformanceObserver(list => window.chatMetrics.tasks.push(...list.getEntries().map(entry => entry.duration))).observe({ type: "longtask" });
-        document.addEventListener("keydown", event => {
-          if (!event.target.matches("textarea.composer__input")) return;
-          const start = performance.now(); requestAnimationFrame(() => requestAnimationFrame(() => window.chatMetrics.inputs.push(performance.now() - start)));
-        }, true);
-      });
+      await installTranscriptPerformanceObserver(page);
       page.on("pageerror", error => { errors.push(error.message); console.error(error.stack); });
       page.on("console", message => { if (/Maximum update depth|ResizeObserver loop/.test(message.text())) errors.push(message.text()); });
       await page.goto(url);
       await page.locator(".chat-column .md h3").last().waitFor();
       await page.evaluate(() => document.fonts.ready);
       const scroll = page.locator(".chat-flow-scroll");
-      const frame = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      const settleFrames = target => target.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      const frame = () => settleFrames(page);
       const navigate = async key => {
         const mark = page.locator(`[data-nav-turn="${key}"]`);
         await mark.focus(); await mark.press("Enter");
@@ -175,36 +187,67 @@ try {
       await page.keyboard.press("Escape");
       assert.equal(await page.locator('[role="dialog"]').count(), 0);
       assert.ok(await page.locator(".dsh-ToolRow-inspectButton").last().evaluate(el => el === document.activeElement), "drawer restores trigger focus after removing inert");
-      const samples = report.samples;
       const input = page.locator("textarea.composer__input:not(.composer__input--measure)");
-      const percentile = values => [...values].sort((a, b) => a - b)[Math.max(0, Math.ceil(values.length * 0.95) - 1)] ?? 0;
+      assert.deepEqual(errors, [], "browser errors before performance sampling");
+      report.performance = [];
       for (const turns of [240, 1000]) {
-        const started = Date.now();
-        await page.evaluate(count => { window.chatMetrics.inputs = []; window.chatMetrics.tasks = []; window.chatFixture.reset(count); }, turns);
-        await page.locator(`[data-chat-anchor-key="u${Math.max(0, turns - 60)}"][data-chat-kind="user"]`).waitFor();
-        const pages = [];
-        for (let loaded = 60; loaded < turns; loaded += 60) {
-          const pageStart = Date.now();
-          await page.evaluate(() => window.chatFixture.older());
-          const nextLoaded = Math.min(turns, loaded + 60);
-          await page.locator(`[data-chat-anchor-key="u${turns - nextLoaded}"][data-chat-kind="user"]`).waitFor();
-          await frame(); pages.push(Date.now() - pageStart);
+        const scenario = `${name}-${mode}-${turns}`;
+        let attempts = [];
+        let firstTraceActive = true;
+        await page.context().tracing.start({ screenshots: true, snapshots: true });
+        try {
+          const collected = await collectTranscriptPerformance(async attempt => {
+            if (attempt === 1) {
+              const first = await measureTranscriptPerformance({ page, turns, attempt, frame: settleFrames, errors });
+              await writeAttempt(scenario, first);
+              return first;
+            }
+            if (attempt === 2) {
+              await page.screenshot({ path: path.join(evidence, `${scenario}-first-limit-exceedance.png`) });
+              await page.context().tracing.stop({ path: path.join(evidence, `${scenario}-first-limit-exceedance.zip`) });
+              firstTraceActive = false;
+            }
+            assert.ok(browser, "bounded transcript retry requires an isolated browser context");
+            const retryErrors = [];
+            const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+            const retryPage = await context.newPage();
+            await installTranscriptPerformanceObserver(retryPage);
+            retryPage.on("pageerror", error => { retryErrors.push(error.message); console.error(error.stack); });
+            retryPage.on("console", message => { if (/Maximum update depth|ResizeObserver loop/.test(message.text())) retryErrors.push(message.text()); });
+            await context.tracing.start({ screenshots: true, snapshots: true });
+            try {
+              await retryPage.goto(url);
+              await retryPage.locator(".chat-column .md h3").last().waitFor();
+              await retryPage.evaluate(() => document.fonts.ready);
+              const sample = await measureTranscriptPerformance({ page: retryPage, turns, attempt, frame: settleFrames, errors: retryErrors });
+              await writeAttempt(scenario, sample);
+              await context.tracing.stop();
+              return sample;
+            } catch (error) {
+              await context.tracing.stop({ path: path.join(evidence, `${scenario}-attempt-${attempt}-functional-failure.zip`) });
+              throw error;
+            } finally {
+              await context.close();
+            }
+          });
+          attempts = collected.attempts;
+          if (firstTraceActive) {
+            await page.context().tracing.stop();
+            firstTraceActive = false;
+          }
+        } catch (error) {
+          if (firstTraceActive) await page.context().tracing.stop({ path: path.join(evidence, `${scenario}-functional-failure.zip`) });
+          await writeFile(path.join(evidence, `${scenario}-failure.json`), JSON.stringify({ error: String(error), attempts }, null, 2));
+          throw error;
         }
-        await frame();
-        const mountedMs = Date.now() - started;
-        assert.equal(await page.locator(".transcript__window-item").count(), 0);
-        await input.fill("");
-        await page.evaluate(() => window.chatFixture.tick(0));
-        for (let i = 0; i < 30; i++) { await page.evaluate(i => window.chatFixture.tick(i), i); await input.press("a"); }
-        await frame();
-        assert.equal(await input.inputValue(), "a".repeat(30));
-        const metrics = await page.evaluate(() => window.chatMetrics);
-        assert.ok(metrics.inputs.length >= 30);
-        const inputP95 = percentile(metrics.inputs), longTaskMax = Math.max(0, ...metrics.tasks);
-        samples.push({ turns, mountedMs, pages, inputP95, longTaskMax: metrics.longTaskSupported ? longTaskMax : null, ...metrics, dom: await page.locator("*").count() });
-        assert.ok(inputP95 <= 200, `${turns} turns input P95 ${inputP95}`);
-        assert.ok(longTaskMax <= 500, `${turns} turns longest task ${longTaskMax}`);
-        assert.equal(await page.locator('[data-chat-kind="user"]').count(), turns, `${turns} turns fully mounted`);
+        const decision = decideTranscriptPerformance(attempts);
+        for (const attempt of attempts) await writeAttempt(scenario, attempt, decision);
+        report.samples.push(...attempts);
+        report.performance.push({ turns, decision, attempts });
+        assert.ok(decision.passed, `${turns} turns ${decision.status}: ${JSON.stringify({
+          longTaskMedians: decision.medians,
+          inputP95Median: decision.inputP95Median,
+        })}`);
         await page.evaluate(() => window.chatFixture.settle());
       }
       await frame();
@@ -319,9 +362,25 @@ try {
       report.weatherRows = weatherRows;
       assert.deepEqual(errors, []);
       Object.assign(report, { complete: true, expanded, switches, switchP95: percentile(switches), heapGrowth, anchorDrift: topAfter - anchor.top, prependDrift: topPrepended - anchor.top });
-      console.log(JSON.stringify(report));
+      console.log(JSON.stringify({
+        ...report,
+        samples: report.samples.map(sample => ({
+          ...sample,
+          phases: Object.fromEntries(Object.entries(sample.phases).map(([phase, value]) => [phase, { ...value, longTasks: undefined }])),
+          inputs: undefined,
+        })),
+        performance: report.performance.map(sample => ({ turns: sample.turns, decision: sample.decision, attempts: sample.attempts.length })),
+      }));
     } catch (error) {
       report.failure = String(error); throw error;
     } finally { await browser?.close(); await electronApp?.close(); }
   }
-} finally { await server.httpServer.close(); await writeFile(path.join(evidence, `${process.env.CHAT_BROWSER ?? "browsers"}-results.json`), JSON.stringify(reports, null, 2)); await rm(outDir, { recursive: true, force: true }); }
+} finally {
+  await server.httpServer.close();
+  await writeFile(path.join(evidence, `${process.env.CHAT_BROWSER ?? "browsers"}-results.json`), JSON.stringify(reports, null, 2));
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    const lines = reports.flatMap(report => (report.performance ?? []).map(sample => formatPerformanceSummary(report.browser, sample.turns, sample.decision, sample.attempts)));
+    if (lines.length) await appendFile(process.env.GITHUB_STEP_SUMMARY, `\n### Transcript performance (${mode})\n\n${lines.join("\n")}\n`);
+  }
+  await rm(outDir, { recursive: true, force: true });
+}

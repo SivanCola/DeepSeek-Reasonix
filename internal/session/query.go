@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"reasonix/internal/provider"
 )
@@ -13,15 +14,23 @@ import (
 // an attached runtime when one exists and otherwise opens only a read handle;
 // querying cold history never constructs an Agent or acquires writer ownership.
 type Query struct {
-	hostID      string
-	persistence SessionPersistence
-	service     *Service
-	rebuildMu   sync.Mutex
-	rebuilding  map[string]struct{}
-	generation  map[string]uint64
-	rebuildCtx  context.Context
-	rebuildStop context.CancelFunc
-	rebuildSlot chan struct{}
+	hostID        string
+	persistence   SessionPersistence
+	service       *Service
+	rebuildMu     sync.Mutex
+	rebuilding    map[string]struct{}
+	generation    map[string]uint64
+	rebuildCtx    context.Context
+	rebuildStop   context.CancelFunc
+	rebuildSlot   chan struct{}
+	indexMu       sync.Mutex
+	indexLocks    map[string]*sync.Mutex
+	contentMu     sync.Mutex
+	contentGrants map[string]time.Time
+	searchMu      sync.Mutex
+	searchBuilds  map[string]*searchPreparation
+	historyMu     sync.Mutex
+	historyBuilds map[string]*historyPreparation
 }
 
 func (s *Service) Query() *Query {
@@ -37,8 +46,76 @@ func newQuery(hostID string, persistence SessionPersistence, service *Service) *
 		hostID: hostID, persistence: persistence, service: service,
 		rebuilding: map[string]struct{}{}, generation: map[string]uint64{}, rebuildCtx: rebuildCtx,
 		rebuildStop: rebuildStop, rebuildSlot: make(chan struct{}, 2),
+		indexLocks:    map[string]*sync.Mutex{},
+		contentGrants: map[string]time.Time{},
+		searchBuilds:  map[string]*searchPreparation{},
+		historyBuilds: map[string]*historyPreparation{},
 	}
 	return query
+}
+
+func contentGrantKey(sessionID, storageGeneration, digest string, bytes int64, indexDigest string) string {
+	return sessionID + "\x00" + storageGeneration + "\x00" + digest + "\x00" + fmt.Sprint(bytes) + "\x00" + indexDigest
+}
+
+func (q *Query) storageGeneration(sessionID string) string {
+	filesystem, ok := q.persistence.(*FilesystemPersistence)
+	if !ok {
+		return ""
+	}
+	dir := filepath.Join(filesystem.Root, sessionID)
+	manifest, err := readStoredManifest(filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		return ""
+	}
+	identity, err := readStorageIdentity(dir, manifest)
+	if err != nil {
+		return ""
+	}
+	return identity.Generation
+}
+
+func (q *Query) authorizeContentForGeneration(sessionID, generation, digest string, bytes int64, indexDigest string) {
+	if generation == "" {
+		return
+	}
+	q.contentMu.Lock()
+	defer q.contentMu.Unlock()
+	now := time.Now()
+	for key, expiry := range q.contentGrants {
+		if !expiry.After(now) {
+			delete(q.contentGrants, key)
+		}
+	}
+	q.contentGrants[contentGrantKey(sessionID, generation, digest, bytes, indexDigest)] = now.Add(15 * time.Minute)
+}
+
+func (q *Query) contentAuthorized(sessionID, digest string, bytes int64, indexDigest string) bool {
+	generation := q.storageGeneration(sessionID)
+	if generation == "" {
+		return false
+	}
+	q.contentMu.Lock()
+	defer q.contentMu.Unlock()
+	key := contentGrantKey(sessionID, generation, digest, bytes, indexDigest)
+	expiry, ok := q.contentGrants[key]
+	if !ok || !expiry.After(time.Now()) {
+		delete(q.contentGrants, key)
+		return false
+	}
+	return true
+}
+
+func (q *Query) projectionLock(kind, sessionID string) *sync.Mutex {
+	key := kind + "\x00" + sessionID
+	q.indexMu.Lock()
+	defer q.indexMu.Unlock()
+	lock := q.indexLocks[key]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		q.indexLocks[key] = lock
+	}
+	return lock
 }
 
 // Close stops catalog work owned by this query. Individual List callers do not

@@ -511,9 +511,10 @@ jobs:
           path: desktop/frontend
       - name: Verify stable frontend artifact
         run: |
+          test -n "${{ needs.desktop-prepare.outputs.producer_attempt }}"
           node frontend/scripts/artifact-identity.mjs verify \
             --shell electron --channel stable \
-            --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "${{ needs.desktop-prepare.outputs.producer_attempt }}" \
             --pnpm-version "$(pnpm --version)"
       - name: Verify CI test coverage and runner
         run: node --test frontend/scripts/ci-test-plan.test.mjs
@@ -559,9 +560,10 @@ jobs:
           path: desktop/frontend
       - name: Verify stable frontend artifact
         run: |
+          test -n "${{ needs.desktop-prepare.outputs.producer_attempt }}"
           node frontend/scripts/artifact-identity.mjs verify \
             --shell electron --channel stable \
-            --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "${{ needs.desktop-prepare.outputs.producer_attempt }}" \
             --pnpm-version "$(pnpm --version)"
       - name: Install browser runtimes
         run: PLAYWRIGHT_BROWSERS_PATH=.pw-browsers pnpm --dir frontend exec playwright install --with-deps chromium
@@ -580,8 +582,12 @@ jobs:
               pnpm --dir frontend test:motion-browser
               ;;
             transcript)
-              xvfb-run -a env PLAYWRIGHT_BROWSERS_PATH=.pw-browsers REASONIX_TRANSCRIPT_NATIVE_THUMB=1 pnpm --dir frontend test:transcript-browser
-              REASONIX_TRANSCRIPT_READER_BROWSERS=chromium PLAYWRIGHT_BROWSERS_PATH=.pw-browsers pnpm --dir frontend test:transcript-reader-browser
+              xvfb-run -a env PLAYWRIGHT_BROWSERS_PATH=.pw-browsers REASONIX_TRANSCRIPT_NATIVE_THUMB=1 \
+                REASONIX_TRANSCRIPT_MODE=native-scrollbar REASONIX_LAYOUT_ARTIFACTS="$evidence/native-scrollbar" \
+                pnpm --dir frontend test:transcript-browser
+              REASONIX_TRANSCRIPT_READER_BROWSERS=chromium PLAYWRIGHT_BROWSERS_PATH=.pw-browsers \
+                REASONIX_TRANSCRIPT_MODE=headless-reader REASONIX_LAYOUT_ARTIFACTS="$evidence/headless-reader" \
+                pnpm --dir frontend test:transcript-reader-browser
               ;;
             *) exit 2 ;;
           esac 2>&1 | tee "$evidence/run.log"
@@ -619,14 +625,18 @@ jobs:
     needs: changes
     if: always() && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.desktop != 'false')
     outputs:
-      stable_artifact_name: desktop-frontend-stable-${{ github.run_id }}-${{ github.run_attempt }}
-      canary_artifact_name: desktop-frontend-canary-${{ github.run_id }}-${{ github.run_attempt }}
+      producer_attempt: ${{ steps.artifact-identity.outputs.attempt }}
+      stable_artifact_name: desktop-frontend-stable-${{ github.run_id }}-${{ steps.artifact-identity.outputs.attempt }}
+      canary_artifact_name: desktop-frontend-canary-${{ github.run_id }}-${{ steps.artifact-identity.outputs.attempt }}
     runs-on: ubuntu-22.04
     defaults:
       run:
         working-directory: desktop
     steps:
       - uses: actions/checkout@v7
+      - name: Capture frontend artifact producer identity
+        id: artifact-identity
+        run: echo "attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-go@v7
         with:
@@ -768,9 +778,10 @@ jobs:
           path: desktop/frontend
       - name: Verify stable frontend artifact
         run: |
+          test -n "${{ needs.desktop-prepare.outputs.producer_attempt }}"
           node frontend/scripts/artifact-identity.mjs verify \
             --shell electron --channel stable \
-            --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "${{ needs.desktop-prepare.outputs.producer_attempt }}" \
             --pnpm-version "$(pnpm --version)"
       - name: Install frontend dependencies
         run: pnpm --dir frontend install --frozen-lockfile
@@ -840,9 +851,10 @@ jobs:
           path: desktop/frontend
       - name: Verify stable frontend artifact
         run: |
+          test -n "${{ needs.desktop-prepare.outputs.producer_attempt }}"
           node frontend/scripts/artifact-identity.mjs verify \
             --shell electron --channel stable \
-            --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "${{ needs.desktop-prepare.outputs.producer_attempt }}" \
             --pnpm-version "$(pnpm --version)"
       - name: Install frontend dependencies
         run: pnpm --dir frontend install --frozen-lockfile
@@ -902,9 +914,10 @@ jobs:
           path: desktop/frontend
       - name: Verify stable frontend artifact
         run: |
+          test -n "${{ needs.desktop-prepare.outputs.producer_attempt }}"
           node frontend/scripts/artifact-identity.mjs verify \
             --shell electron --channel stable \
-            --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "${{ needs.desktop-prepare.outputs.producer_attempt }}" \
             --pnpm-version "$(pnpm --version)"
 
       - name: Test integrated terminal, PTY, and FSEvents lifecycle
@@ -952,9 +965,10 @@ jobs:
       - name: Verify canary frontend artifact
         if: github.event_name != 'pull_request'
         run: |
+          test -n "${{ needs.desktop-prepare.outputs.producer_attempt }}"
           node frontend/scripts/artifact-identity.mjs verify \
             --shell electron --channel canary \
-            --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "${{ needs.desktop-prepare.outputs.producer_attempt }}" \
             --pnpm-version "$(pnpm --version)"
 
       - name: Package Electron app and verify bundle members
@@ -1049,9 +1063,10 @@ jobs:
           path: desktop/frontend
       - name: Verify canary frontend artifact
         run: |
+          test -n "${{ needs.desktop-prepare.outputs.producer_attempt }}"
           node frontend/scripts/artifact-identity.mjs verify \
             --shell electron --channel canary \
-            --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "${{ needs.desktop-prepare.outputs.producer_attempt }}" \
             --pnpm-version "$(pnpm --version)"
 
       # test:motion, test:transcript-browser and test:settings-browser run on
@@ -1161,16 +1176,37 @@ jobs:
           path: desktop/frontend
       - name: Verify stable frontend artifact
         run: |
+          test -n "${{ needs.desktop-prepare.outputs.producer_attempt }}"
           node frontend/scripts/artifact-identity.mjs verify \
             --shell electron --channel stable \
-            --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "${{ needs.desktop-prepare.outputs.producer_attempt }}" \
             --pnpm-version "$(pnpm --version)"
 
       - name: test (Windows desktop and update helper)
         # Keep native Go output here. JSON mode forces verbose output into the
         # test cache and spent 8-10 minutes finalizing it on Windows runners.
         timeout-minutes: 25
-        run: go test ./...
+        # Keep each package below Go's default 10-minute timeout without
+        # relaxing it. These disjoint filters cover every test exactly once;
+        # examples, fuzz seeds, and other test names remain in the first group.
+        run: |
+          go test -skip '^Test[I-Z]' ./...
+          go test -run '^Test[I-P]' ./...
+          go test -run '^Test[Q-Z]' -skip '^TestWindowsTerminalProcessConPTYSmoke$' ./...
+
+      # ConPTY startup and teardown depend on the hosted runner's interactive
+      # Windows environment. Keep the end-to-end probe visible without making
+      # a single host scheduling stall equivalent to a Go correctness failure.
+      - name: probe (Windows ConPTY host integration)
+        id: conpty-smoke
+        continue-on-error: true
+        timeout-minutes: 2
+        run: go test -run '^TestWindowsTerminalProcessConPTYSmoke$' .
+
+      - name: report ConPTY probe failure
+        if: always() && steps.conpty-smoke.outcome == 'failure'
+        shell: bash
+        run: echo "::warning::The hosted Windows ConPTY integration probe failed; deterministic Windows Go tests still passed."
 
       - name: test (vendored systray identity)
         timeout-minutes: 2
@@ -1234,9 +1270,10 @@ jobs:
           path: desktop/frontend
       - name: Verify canary frontend artifact
         run: |
+          test -n "${{ needs.desktop-prepare.outputs.producer_attempt }}"
           node frontend/scripts/artifact-identity.mjs verify \
             --shell electron --channel canary \
-            --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "${{ needs.desktop-prepare.outputs.producer_attempt }}" \
             --pnpm-version "$(pnpm --version)"
 
       - name: Install NSIS

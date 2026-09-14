@@ -92,8 +92,11 @@ func TestExclusiveControllerUsesBoundSessionIdentityAndWritesNoLegacyTranscript(
 		t.Fatalf("event-derived history = %#v", got)
 	}
 	c.Close()
-	if _, ok := service.Runtime(ref); ok {
-		t.Fatal("terminal controller close left runtime registered")
+	if cached, ok := service.Runtime(ref); !ok || cached != runtime {
+		t.Fatal("terminal controller close did not retain the idle runtime")
+	}
+	if err := service.Close(t.Context(), ref); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -248,15 +251,22 @@ func TestExclusiveControllerNewPublishesFreshIdentityAndKeepsOldHistory(t *testi
 	if !ok || ref.SessionID == "old-session" {
 		t.Fatalf("new identity = %+v, ok=%v", ref, ok)
 	}
-	if _, ok := service.Runtime(session.SessionRef{HostID: "desktop", SessionID: "old-session"}); ok {
-		t.Fatal("old runtime remained published")
+	oldRef := session.SessionRef{HostID: "desktop", SessionID: "old-session"}
+	if cached, ok := service.Runtime(oldRef); !ok || cached != runtime {
+		t.Fatal("old runtime was not retained for quick switching")
 	}
 	read, err := persistence.Open("old-session", session.ReadOnly)
 	if err != nil {
 		t.Fatalf("old history was removed by NewSession: %v", err)
 	}
 	_ = read.Close(t.Context())
+	if err := service.Close(t.Context(), oldRef); err != nil {
+		t.Fatal(err)
+	}
 	c.Close()
+	if err := service.Close(t.Context(), ref); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestExclusiveControllerOpenMissingKeepsCurrentExactRuntime(t *testing.T) {

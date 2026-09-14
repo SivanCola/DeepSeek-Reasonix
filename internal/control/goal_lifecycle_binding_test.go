@@ -76,7 +76,7 @@ func TestExclusiveControllerLoadsGoalFromV3Projection(t *testing.T) {
 		t.Fatal(err)
 	}
 	exec := agent.New(nil, tool.NewRegistry(), agent.NewSession("system"), agent.Options{}, event.Discard)
-	c := New(Options{Executor: exec, Sink: event.Discard, SessionService: service, SessionRuntime: runtime, ExclusiveSession: true})
+	c := newOwnedTestController(t, Options{Executor: exec, Sink: event.Discard, SessionService: service, SessionRuntime: runtime, ExclusiveSession: true})
 	t.Cleanup(func() { c.Close() })
 	view, loadErr := c.goalLifecycleView()
 	if loadErr != nil {
@@ -101,7 +101,7 @@ func TestColdRestoredGoalComposeIncludesRecoverableGoalContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	exec := agent.New(nil, tool.NewRegistry(), agent.NewSession("system"), agent.Options{}, event.Discard)
-	c := New(Options{Executor: exec, Sink: event.Discard, SessionService: service, SessionRuntime: runtime, ExclusiveSession: true})
+	c := newOwnedTestController(t, Options{Executor: exec, Sink: event.Discard, SessionService: service, SessionRuntime: runtime, ExclusiveSession: true})
 	t.Cleanup(c.Close)
 
 	composed := c.Compose("continue")
@@ -122,7 +122,7 @@ func TestGoalLifecycleMutationAppendsToActiveV3Session(t *testing.T) {
 		t.Fatal(err)
 	}
 	exec := agent.New(nil, tool.NewRegistry(), agent.NewSession("system"), agent.Options{}, event.Discard)
-	c := New(Options{Executor: exec, Sink: event.Discard, SessionService: service, SessionRuntime: runtime, ExclusiveSession: true})
+	c := newOwnedTestController(t, Options{Executor: exec, Sink: event.Discard, SessionService: service, SessionRuntime: runtime, ExclusiveSession: true})
 	t.Cleanup(func() { c.Close() })
 	ctx, activity, err := c.beginSessionRuntimeActivity(t.Context(), "turn")
 	if err != nil {
@@ -161,7 +161,7 @@ func TestGoalLifecycleMutationRejectsStaleRuntimeAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	exec := agent.New(nil, tool.NewRegistry(), agent.NewSession("system"), agent.Options{}, event.Discard)
-	c := New(Options{Executor: exec, Sink: event.Discard, SessionService: service, SessionRuntime: runtime, ExclusiveSession: true})
+	c := newOwnedTestController(t, Options{Executor: exec, Sink: event.Discard, SessionService: service, SessionRuntime: runtime, ExclusiveSession: true})
 	t.Cleanup(func() { c.Close() })
 	_, err = c.CreateGoal(t.Context(), goaldomain.CreateRequest{Objective: "ship"}, tool.GoalAuthority{
 		Source: tool.GoalSourceDirectHuman, SessionID: "another-session", RuntimeEpoch: "old", ActivityID: 1,
@@ -184,7 +184,7 @@ func TestModelCannotResumeUserPausedGoal(t *testing.T) {
 		t.Fatal(err)
 	}
 	exec := agent.New(nil, tool.NewRegistry(), agent.NewSession("system"), agent.Options{}, event.Discard)
-	c := New(Options{Executor: exec, Sink: event.Discard, SessionService: service, SessionRuntime: runtime, ExclusiveSession: true})
+	c := newOwnedTestController(t, Options{Executor: exec, Sink: event.Discard, SessionService: service, SessionRuntime: runtime, ExclusiveSession: true})
 	t.Cleanup(c.Close)
 	ctx, activity, err := c.beginSessionRuntimeActivity(t.Context(), "turn")
 	if err != nil {

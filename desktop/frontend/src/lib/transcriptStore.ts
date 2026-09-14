@@ -1,37 +1,7 @@
-// transcriptStore is the per-session record store behind the transcript view
-// (Phase C of the session-switch/history refactor). It replaces the old
-// "convert a whole HistoryPage on every call" flow with windowed paging over
-// HistorySliceForTab:
-//
-//   - Records keyed by stable backend entryId, kept sorted by (order, entryId)
-//     and merged a page at a time (replace / prepend / append) — no full
-//     re-sort on each op; pages are contiguous suffixes/prefixes.
-//   - Item projection derives Item ids from entryIds, so ids stay stable
-//     across page merges (the old h<startTurn>-<seq> scheme renumbered every
-//     item on prepend). Cross-page tool call/result pairs merge exactly like
-//     the single-shot historyMessagesToItems conversion: a result row that
-//     paged in before its call converts standalone first and is folded into
-//     the call's tool item (same item id: the toolCallId) when the call's
-//     page arrives.
-//   - Weighted LRU: at most maxResidentSessions sessions keep records
-//     resident; history body bytes and the parsed-markdown cache each have a
-//     byte budget. Sessions whose tab is active, running, or mid-turn are
-//     pinned out of eviction. Eviction only releases memory — records are
-//     re-fetchable from the backend via HistorySliceForTab.
-//   - Generation binding: every in-flight slice/content request carries the
-//     session generation it started under. Switching away, evicting, or
-//     starting a newer load bumps the generation; late responses are
-//     discarded (desktop bridge calls are not abortable).
-//   - Lazy content: entries carrying refs[] keep preview text inline;
-//     requestFullContent fetches and assembles HistoryContentForTab chunks on
-//     demand (and automatically for refs in the newest page). A stale chunk
-//     marks the ref stale and keeps the preview.
-//
-// Rendering consumes the store through TranscriptProjection (items + paging
-// state); useController dispatches projections into per-tab reducer state.
+// Bounded transcript records with stable ids, lazy content, generation-aware paging, and weighted LRU eviction.
 import { asArray } from "./array";
 import { historicalResultNotice } from "./completionResultState";
-import { app } from "./bridge";
+import { canonicalHistoryContent, canonicalHistorySlice, canonicalMessage, resolvedHistoryField } from "./canonicalTranscriptBackend";
 import { noteHistoryPage, registerTranscriptCacheDiagnostics } from "./sessionDiagnostics";
 import { TranscriptMarkdownCache, type ParsedMarkdownValue } from "./transcriptMarkdownCache";
 export type { ParsedMarkdownValue } from "./transcriptMarkdownCache";
@@ -347,6 +317,15 @@ function convertRecord(
 function applyResolvedField(rec: TranscriptRecord, ref: HistoryContentRef, data: string): boolean {
   const m = rec.message;
   switch (ref.field) {
+    case "canonicalMessage": {
+      const bytes = Uint8Array.from(data, character => character.charCodeAt(0));
+      const decoded = canonicalMessage(
+        { messageId: rec.entryId, position: rec.turn, version: 1, role: m.role, eventSequence: 0, visibleTurn: rec.turn },
+        JSON.parse(new TextDecoder().decode(bytes)),
+      );
+      rec.message = { ...m, ...decoded };
+      return true;
+    }
     case "content": rec.message = { ...m, content: data }; return true;
     case "reasoning": rec.message = { ...m, reasoning: data }; return true;
     case "submitText": rec.message = { ...m, submitText: data }; return true;
@@ -830,6 +809,20 @@ export class TranscriptStore {
         const projection = await this.loadLatest(tabId, sessionPath, options);
         return projection ? { ...projection, kind: "reload", prependItems: [], removeIds: [] } : undefined;
       }
+      if (slice.source === "locator-reset") {
+        this.replaceRecords(session, asArray<HistoryEntry>(slice.entries));
+        session.nextCursor = slice.nextCursor ?? "";
+        session.hasOlder = Boolean(slice.hasOlder);
+        session.totalTurns = slice.totalTurns ?? 0;
+        session.startTurn = slice.startTurn ?? 0;
+        session.endTurn = slice.endTurn ?? 0;
+        session.revision = slice.revision ?? 0;
+        session.revisionKnown = sliceRevisionKnown(slice);
+        session.digest = slice.digest ?? "";
+        this.enforceBudgets();
+        if (this.sessions.get(key) !== session) return undefined;
+        return { ...this.projectionOf(session), kind: "reload", prependItems: [], removeIds: [] };
+      }
       if (!this.sameFingerprint(session, slice)) {
         // A backend that raced a rewrite may return a fresh page instead of a
         // stale marker. Never prepend rows from a different canonical state.
@@ -889,7 +882,7 @@ export class TranscriptStore {
 
   hasContentReference(tabId: string, entryId: string, field: string): boolean {
     entryId = resolveTranscriptEntryAlias(this.sessions.values(), tabId, entryId);
-    return Boolean(this.sessionForEntry(tabId, entryId)?.byId.get(entryId)?.refs.some(ref => ref.field === field));
+    return Boolean(this.sessionForEntry(tabId, entryId)?.byId.get(entryId)?.refs.some(ref => ref.field === field || ref.field === "canonicalMessage"));
   }
 
   /** Detached legacy tool reads use the exact call reference, not a field-only
@@ -901,11 +894,21 @@ export class TranscriptStore {
     const entryId = [...session.contributions].find(([, items]) => items.some(candidate => candidate.id === item.id))?.[0];
     const record = entryId && session.byId.get(entryId);
     if (!record) return undefined;
-    const calls = record.message.toolCalls ?? [];
-    const callIndex = calls.findIndex((call, index) => itemIdForToolCall(call.id, `he:${record.entryId}:tc${index}`) === item.id);
-    const call = calls[callIndex];
+    let calls = record.message.toolCalls ?? [];
+    let callIndex = calls.findIndex((call, index) => itemIdForToolCall(call.id, `he:${record.entryId}:tc${index}`) === item.id);
+    let call = calls[callIndex];
     const resultId = session.matchTables.get(record.entryId)?.get(callIndex);
-    const result = resultId ? session.byId.get(resultId) : record.message.role === "tool" ? record : undefined;
+    let result = resultId ? session.byId.get(resultId) : record.message.role === "tool" ? record : undefined;
+    if (record.refs.some(ref => ref.field === "canonicalMessage")) {
+      await this.requestFullContent(tabId, record.entryId, "content");
+      calls = record.message.toolCalls ?? [];
+      callIndex = calls.findIndex((candidate, index) => itemIdForToolCall(candidate.id, `he:${record.entryId}:tc${index}`) === item.id);
+      call = calls[callIndex];
+      result = resultId ? session.byId.get(resultId) : record.message.role === "tool" ? record : undefined;
+    }
+    if (result?.refs.some(ref => ref.field === "canonicalMessage")) {
+      await this.requestFullContent(tabId, result.entryId, "content");
+    }
     const generation = session.generation;
     const refs = [
       ...record.refs.filter(ref => call && ref.toolCallId === call.id && (ref.field === "toolArguments" || ref.field === "toolDiff")),
@@ -938,7 +941,7 @@ export class TranscriptStore {
     const rec = session?.byId.get(entryId);
     if (!session || !rec) return undefined;
     if (rec.resolved?.[field]) return rec.resolved[field];
-    const ref = rec.refs.find((candidate) => candidate.field === field);
+    const ref = rec.refs.find((candidate) => candidate.field === field || candidate.field === "canonicalMessage");
     if (!ref) return undefined;
     const pendingKey = `${entryId}${field}`;
     // Dedupe only within the same generation: a request started before a
@@ -964,10 +967,12 @@ export class TranscriptStore {
       const previousBytes = rec.bytes;
       rec.bytes = recordBytes(rec.message);
       session.bodyBytes += rec.bytes - previousBytes;
-      rec.resolved = { ...rec.resolved, [field]: data };
+      const resolvedValue = ref.field === "canonicalMessage" ? resolvedHistoryField(rec.message, field) : data;
+      if (resolvedValue === undefined) return undefined;
+      rec.resolved = { ...rec.resolved, [field]: resolvedValue };
       this.reconvertAndNotify(session, rec);
       this.enforceBudgets();
-      return data;
+      return resolvedValue;
     })();
     const entry = { generation, promise: request };
     const release = () => {
@@ -1019,9 +1024,6 @@ export class TranscriptStore {
     return this.markdown.size();
   }
 
-  // ── subscriptions ─────────────────────────────────────────────────────────
-
-  /** Notified when a record's projected items change (content resolution). */
   subscribe(tabId: string, listener: (change: TranscriptContentChange) => void): () => void {
     let set = this.listeners.get(tabId);
     if (!set) {
@@ -1043,15 +1045,13 @@ let singleton: TranscriptStore | undefined;
 export function getTranscriptStore(): TranscriptStore {
   if (!singleton) {
     singleton = new TranscriptStore({
-      HistorySliceForTab: (tabID, req) => app.HistorySliceForTab(tabID, req),
-      HistoryContentForTab: (tabID, ref, chunkIndex) => app.HistoryContentForTab(tabID, ref, chunkIndex),
+      HistorySliceForTab: (tabID, req) => canonicalHistorySlice(tabID, req),
+      HistoryContentForTab: canonicalHistoryContent,
     });
   }
   return singleton;
 }
 
-// Diagnostics provider: cache weights flow to the crash/perf context without
-// crash.ts importing this module's bridge-backed graph.
 registerTranscriptCacheDiagnostics(() =>
   singleton?.stats() ?? {
     residentSessions: 0,

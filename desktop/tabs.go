@@ -3626,8 +3626,8 @@ func (a *App) buildTabControllerWithContextCore(tab *WorkspaceTab, loadedSession
 	if strings.TrimSpace(tabSessionID) != "" {
 		service := a.desktopSessionService(sessionDir)
 		ref := session.SessionRef{HostID: service.HostID(), SessionID: strings.TrimSpace(tabSessionID)}
-		if snapshot, snapshotErr := service.Query().Snapshot(buildCtx, ref); snapshotErr == nil && strings.TrimSpace(snapshot.Projection.ModelRef) != "" {
-			model = strings.TrimSpace(snapshot.Projection.ModelRef)
+		if view, openErr := service.OpenSession(buildCtx, ref); openErr == nil && strings.TrimSpace(view.Recent.ModelRef) != "" {
+			model = strings.TrimSpace(view.Recent.ModelRef)
 		}
 	} else if model == "" {
 		// A legacy sidecar is an import hint only. An explicit tab selection wins,

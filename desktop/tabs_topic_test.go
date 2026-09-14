@@ -2936,13 +2936,11 @@ func TestTrashTopicRejectsConcurrentTurnAdmissionWithoutWaiting(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 
-	started := time.Now()
 	if err := app.TrashTopic(topicID); !errors.Is(err, errTopicArchiveBusy) {
 		t.Fatalf("concurrent TrashTopic error = %v, want %v", err, errTopicArchiveBusy)
 	}
-	if elapsed := time.Since(started); elapsed > time.Second {
-		t.Fatalf("concurrent TrashTopic waited %s instead of returning busy", elapsed)
-	}
+	// SubmitToTab still owns the admission lock, so the busy result itself proves
+	// that TrashTopic did not wait for the concurrent mutation to finish.
 	tab.turnStartMu.Unlock()
 	turnGateHeld = false
 

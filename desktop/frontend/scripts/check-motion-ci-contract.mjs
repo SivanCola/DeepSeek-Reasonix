@@ -12,6 +12,7 @@ const appSource = readFileSync(resolve(repoRoot, "desktop/frontend/src/App.tsx")
 const bridgeSource = readFileSync(resolve(repoRoot, "desktop/frontend/src/lib/bridge.ts"), "utf8");
 const desktopMainSource = readFileSync(resolve(repoRoot, "desktop/main.go"), "utf8");
 const transcriptScrollBenchSource = readFileSync(resolve(repoRoot, "desktop/frontend/bench/chat-transcript.mjs"), "utf8");
+const transcriptPerformanceSource = readFileSync(resolve(repoRoot, "desktop/frontend/bench/transcript-performance.mjs"), "utf8");
 
 function jobBody(name) {
   const match = workflow.match(new RegExp(`\\n  ${name}:\\n([\\s\\S]*?)(?=\\n  [a-z][a-z0-9-]*:|$)`));
@@ -176,11 +177,20 @@ for (const required of ["chat-transcript.mjs"]) {
 }
 for (const required of [
   "stream anchor drift", "prepend anchor drift", "native selection survives stream settlement",
-  "inputP95 <= 200", "longTaskMax <= 500", "percentile(switches) <= 300",
+  "percentile(switches) <= 300",
   "heapGrowth <= 20 * 1024 * 1024", "settled layout queue converges",
 ]) {
   if (!transcriptScrollBenchSource.includes(required)) {
     throw new Error(`motion-ci-contract: transcript scroll browser gate must retain block-kernel assertion ${required}`);
+  }
+}
+for (const required of [
+  "INPUT_P95_LIMIT_MS = 200", "LONG_TASK_LIMIT_MS = 500", "attempts.length === 3",
+  "attempt.inputP95 > INPUT_P95_LIMIT_MS", "inputP95Median",
+  "passed-after-bounded-retry", "failed-sustained-regression",
+]) {
+  if (!transcriptPerformanceSource.includes(required)) {
+    throw new Error(`motion-ci-contract: transcript performance gate must retain ${required}`);
   }
 }
 

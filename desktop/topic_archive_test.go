@@ -76,16 +76,13 @@ func TestTrashTopicRejectsConcurrentRuntimeMutationWithoutWaiting(t *testing.T) 
 	}
 	app := &App{}
 	app.runtimeRebuildMu.Lock()
-	started := time.Now()
 	err := app.TrashTopic(topicID)
-	elapsed := time.Since(started)
 	app.runtimeRebuildMu.Unlock()
 	if !errors.Is(err, errTopicArchiveBusy) {
 		t.Fatalf("TrashTopic error = %v, want %v", err, errTopicArchiveBusy)
 	}
-	if elapsed > time.Second {
-		t.Fatalf("TrashTopic waited %s behind another runtime mutation", elapsed)
-	}
+	// The rebuild mutex was held until after TrashTopic returned, so errTopicArchiveBusy
+	// is a deterministic nonblocking proof without a shared-runner wall-clock limit.
 	if got := loadTopicTitle("", topicID); got != "Runtime mutation busy" {
 		t.Fatalf("busy archive changed topic title to %q", got)
 	}

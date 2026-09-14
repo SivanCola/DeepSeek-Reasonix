@@ -4,6 +4,7 @@
 // host.invoke through it, and mutating the table between calls is observed
 // immediately (mirroring how the retired window.go seam behaved).
 import type { AppBindings } from "../lib/bridge";
+import { makeMockSessionReaderBindings } from "../lib/sessionReaderBridge";
 import type { NativePerformanceActions, ProcessDiagnosticsSnapshot } from "../lib/processDiagnostics";
 import type { DesktopBrowserHost } from "../lib/browserHost";
 import type { BrowserControlApi, BrowserControlState, ChromeImportOutcome, ReasonixDesktopHost } from "../lib/desktopHost";
@@ -76,6 +77,7 @@ export interface DesktopHostStub {
 
 export function installDesktopHostStub(commands: object, options: DesktopHostStubOptions = {}): DesktopHostStub {
   const ref = { current: commands as Record<string, unknown> };
+  const readerFallback = () => Object.prototype.hasOwnProperty.call(ref.current, "SessionOpenForTab") || typeof ref.current.TranscriptSnapshotForTab === "function" ? {} : makeMockSessionReaderBindings();
   const events = new Map<string, Set<(...data: unknown[]) => void>>();
   const host: ReasonixDesktopHost = {
     kind: "electron",
@@ -84,14 +86,15 @@ export function installDesktopHostStub(commands: object, options: DesktopHostStu
       digest: "sha256:test",
       // Live view: tests mutating the command table between calls must be seen.
       get commands() {
-        return Object.keys(ref.current).filter((name) => typeof ref.current[name] === "function");
+        return [...new Set([...Object.keys(ref.current), ...Object.keys(readerFallback())])]
+          .filter((name) => typeof ref.current[name] === "function" || name in readerFallback());
       },
     },
     platform: { os: "darwin", arch: "arm64", versions: {} },
     invoke: (method, args) => {
-      const fn = ref.current[method];
+      const fn = ref.current[method] ?? (readerFallback() as Record<string, unknown>)[method];
       if (typeof fn !== "function") return Promise.reject(new Error(`unstubbed desktop command ${method}`));
-      return Promise.resolve((fn as (...a: unknown[]) => unknown)(...args));
+      return Promise.resolve((fn as (...a: unknown[]) => unknown).apply(ref.current, args));
     },
     on: (name, cb) => {
       let set = events.get(name);
