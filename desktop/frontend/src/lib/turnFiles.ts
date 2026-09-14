@@ -1,4 +1,5 @@
 import type { Item } from "./useController";
+import { fileIdentity } from "./filePaths";
 
 type ToolItem = Extract<Item, { kind: "tool" }>;
 export type TurnFileOperation = "written" | "modified";
@@ -18,18 +19,7 @@ const MUTATION_PATHS: Record<string, { field: string; operation: TurnFileOperati
   move_file: { field: "destination_path", operation: "written" },
 };
 
-export function fileIdentity(path: string): string {
-  const slash = path.trim().replaceAll("\\", "/");
-  const prefix = slash.startsWith("/") ? "/" : "";
-  const segments: string[] = [];
-  for (const part of slash.split("/")) {
-    if (!part || part === ".") continue;
-    if (part === ".." && segments.length && segments[segments.length - 1] !== "..") segments.pop();
-    else if (part !== ".." || !prefix) segments.push(part);
-  }
-  return `${prefix}${segments.join("/")}`;
-}
-
+export { fileIdentity };
 /** Derive file facts only from successful native mutation tools. */
 export function deriveTurnFiles(calls: readonly ToolItem[]): TurnFileView[] {
   const files = new Map<string, TurnFileView>();

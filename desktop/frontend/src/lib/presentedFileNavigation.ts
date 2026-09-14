@@ -8,7 +8,10 @@ import { beginFileNavigation, cancelFileNavigation } from "./fileNavigationLifet
 type ResourceBase = { hostId: string; tabId: string; path: string };
 export type FileResourceRef =
   | (ResourceBase & { source: "presented"; toolCallId: string })
-  | (ResourceBase & { source: "workspace"; toolCallId: string });
+  | (ResourceBase & { source: "workspace"; toolCallId: string })
+  // A path the answer named and the host verified. It carries no tool call: the
+  // host re-resolves it on every action instead of trusting this reference.
+  | (ResourceBase & { source: "reference" });
 
 export type PresentedFileAction = "preview" | "browser" | "reveal-tree" | "source" | "open-native" | "reveal-native" | "save-copy";
 export type PresentedFileRequest = { id: number; ref: FileResourceRef; action: "preview" | "reveal-tree" | "source"; dockTabId: string; signal: AbortSignal; acceptNavigation: () => boolean };
@@ -90,10 +93,12 @@ async function openBrowser(ref: FileResourceRef) {
 
 export async function resolveFileResourcePath(ref: FileResourceRef): Promise<string> {
   if (ref.hostId !== "local") {
+    if (ref.source === "reference") return ref.path;
     return ref.source === "presented"
       ? app.ResolveRemotePresentedPathForTab(ref.tabId, ref.hostId, ref.toolCallId, ref.path)
       : app.ResolveRemoteWorkspacePathForTab(ref.tabId, ref.hostId, ref.toolCallId, ref.path);
   }
+  if (ref.source === "reference") return app.ResolveReferencePathForTab(ref.tabId, ref.path);
   return ref.source === "presented"
     ? app.ResolvePresentedPathForTab(ref.tabId, ref.toolCallId, ref.path)
     : app.ResolveWorkspacePathForTab(ref.tabId, ref.path);
@@ -122,21 +127,25 @@ export async function performResourceAction(ref: FileResourceRef, action: Presen
     case "open-native":
       cancelFileNavigation();
       if (ref.hostId !== "local") throw new Error("This remote host does not expose a desktop opener");
+      if (ref.source === "reference") return app.OpenReferencePathForTab(ref.tabId, ref.path);
       return ref.source === "presented"
         ? app.OpenPresentedPathForTab(ref.tabId, ref.toolCallId, ref.path)
         : app.OpenWorkspacePathForTab(ref.tabId, ref.path);
     case "reveal-native":
       cancelFileNavigation();
       if (ref.hostId !== "local") throw new Error("This remote host does not expose a desktop file manager");
+      if (ref.source === "reference") return app.RevealReferencePathForTab(ref.tabId, ref.path);
       return ref.source === "presented"
         ? app.RevealPresentedPathForTab(ref.tabId, ref.toolCallId, ref.path)
         : app.RevealWorkspacePathForTab(ref.tabId, ref.path);
     case "save-copy":
       cancelFileNavigation();
       if (ref.hostId !== "local") {
+        if (ref.source === "reference") throw new Error("This remote host does not expose a file transfer for an answer reference");
         if (ref.source === "presented") await app.SaveRemotePresentedFileAs(ref.tabId, ref.hostId, ref.toolCallId, ref.path);
         else await app.SaveRemoteFileAs(ref.hostId, await resolveFileResourcePath(ref));
-      } else if (ref.source === "presented") await app.SavePresentedPathAsForTab(ref.tabId, ref.toolCallId, ref.path);
+      } else if (ref.source === "reference") await app.SaveReferencePathAsForTab(ref.tabId, ref.path);
+      else if (ref.source === "presented") await app.SavePresentedPathAsForTab(ref.tabId, ref.toolCallId, ref.path);
       else await app.SaveWorkspacePathAsForTab(ref.tabId, ref.path);
   }
 }

@@ -75,7 +75,11 @@ export class DockNavigation {
         const reveal = incoming.revealPathRequest;
         const resources = { ...next.navigationResources };
         delete resources[reveal.path];
-        resources[reveal.path] = { toolCallId: reveal.toolCallId, source: reveal.source };
+        resources[reveal.path] = {
+          toolCallId: reveal.toolCallId,
+          source: reveal.source,
+          ...(reveal.reference ? { reference: true } : {}),
+        };
         next.navigationResources = Object.fromEntries(Object.entries(resources).slice(-5));
       }
     } else if (switched) occurrence.snapshot = { ...emptyDockRequests, navigationSignal: occurrence.controller.signal, navigationResources: occurrence.snapshot.navigationResources };
