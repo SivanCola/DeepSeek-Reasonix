@@ -107,7 +107,7 @@ export async function canonicalHistorySlice(tabId: string, req: HistorySliceRequ
   if (cursor === "") {
     const view = await openSession(tabId);
     const recent = asArray<PersistentMessage>(view.recent.entries);
-    if (view.storageGeneration || recent.length > 0) {
+    if (view.recent) {
       const entries = entriesFor(recent, view.snapshotSequence);
       const turns = entries.map(entry => entry.turn).filter(turn => turn > 0);
       const startTurn = turns.length > 0 ? Math.min(...turns) : 0;

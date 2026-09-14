@@ -48,6 +48,9 @@ assert.equal(limited.entries.length, 1);
 assert.equal(limited.hasOlder, true, "a byte-limited recent window still exposes older history");
 assert.ok(limited.nextCursor);
 assert.equal(limited.revisionKnown, false, "zero sequence does not invent a durable fingerprint");
+stub.commands.SessionOpenForTab = async () => ({ ...view, storageGeneration: "", recent: { ...view.recent, storageGeneration: "", entries: [] } });
+const empty = await canonicalHistorySlice("tab-1", { cursor: "" });
+assert.equal(empty.entries.length, 0, "an empty recent snapshot does not require a locator read");
 stub.uninstall();
 dom.window.close();
 
