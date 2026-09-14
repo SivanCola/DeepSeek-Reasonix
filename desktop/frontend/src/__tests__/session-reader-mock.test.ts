@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { canonicalMessage } from "../lib/canonicalTranscriptBackend";
+import { JSDOM } from "jsdom";
+import { canonicalHistorySlice, canonicalMessage } from "../lib/canonicalTranscriptBackend";
+import { installDesktopHostStub } from "./desktopHostStub";
 import { mockHistoryContentField, mockHistorySlice } from "../lib/bridgeHistoryFixtures";
 import { makeMockSessionReaderBindings } from "../lib/sessionReaderBridge";
 import type { HistoryContentRef, HistoryMessage, HistorySliceRequest } from "../lib/types";
@@ -35,5 +37,18 @@ const hydrated = canonicalMessage(persistent, JSON.parse(decoded));
 assert.equal(hydrated.messageId, persistent.messageId, "hydration keeps the stable message identity");
 assert.ok(hydrated.content.includes(marker));
 assert.equal(hydrated.reasoning, "complete reasoning");
+
+const dom = new JSDOM("", { url: "http://localhost/" });
+globalThis.window = dom.window as unknown as Window & typeof globalThis;
+const stub = installDesktopHostStub({ SessionOpenForTab: async () => ({
+  ...view, recent: { ...view.recent, entries: [{ ...view.recent.entries[0], position: 50, visibleTurn: 4 }] },
+}) });
+const limited = await canonicalHistorySlice("tab-1", { cursor: "" });
+assert.equal(limited.entries.length, 1);
+assert.equal(limited.hasOlder, true, "a byte-limited recent window still exposes older history");
+assert.ok(limited.nextCursor);
+assert.equal(limited.revisionKnown, false, "zero sequence does not invent a durable fingerprint");
+stub.uninstall();
+dom.window.close();
 
 console.log("PASS protocol 7 mock sessions preserve benchmark history and lazy hydration");

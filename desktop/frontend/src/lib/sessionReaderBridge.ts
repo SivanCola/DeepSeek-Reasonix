@@ -80,13 +80,15 @@ export function makeMockSessionReaderBindings(): SessionReaderBindings {
   const search = (): SearchHistoryPage => ({ hits: [], snapshotSequence: 0, coverageSequence: 0, status: "preparing", hasMore: false });
   return {
     async SessionHistoryPageForTab(this: MockSessionReaderHost, tabID, cursor, limit) {
-      const [history, slice] = await Promise.all([this.HistoryForTab?.(tabID) ?? [], this.HistorySliceForTab(tabID, { cursor, entries: limit, turns: limit })]);
-      return { messages: persistentMessages(slice, history), snapshotSequence: 0, coverageSequence: 0, status: "ready", totalTurns: slice.totalTurns, generation: "mock", nextCursor: slice.nextCursor, hasMore: slice.hasOlder };
+      const slice = await this.HistorySliceForTab(tabID, { cursor, entries: limit, turns: limit });
+      const history = slice.entries.some(entry => entry.refs?.length) ? await this.HistoryForTab?.(tabID) ?? [] : [];
+      return { messages: persistentMessages(slice, history), snapshotSequence: slice.revision, coverageSequence: slice.revision, status: "ready", totalTurns: slice.totalTurns, generation: slice.digest ?? "", nextCursor: slice.nextCursor, hasMore: slice.hasOlder };
     },
     async SessionOpenForTab(this: MockSessionReaderHost, tabID) {
-      const [history, slice] = await Promise.all([this.HistoryForTab?.(tabID) ?? [], this.HistorySliceForTab(tabID, { cursor: "", entries: 100, turns: 100 })]);
+      const slice = await this.HistorySliceForTab(tabID, { cursor: "", entries: 100, turns: 100 });
+      const history = slice.entries.some(entry => entry.refs?.length) ? await this.HistoryForTab?.(tabID) ?? [] : [];
       const entries = persistentMessages(slice, history);
-      return { session: { hostId: "local", sessionId: tabID }, storageGeneration: "mock", snapshotSequence: 0, acceptedSequence: 0, durableSequence: 0, recent: { version: 1, sessionId: tabID, storageGeneration: "mock", durableSequence: 0, totalTurns: slice.totalTurns, entries }, recovery: "ready", history: "ready", search: "preparing", canExecute: true };
+      return { session: { hostId: "local", sessionId: tabID }, storageGeneration: slice.digest, snapshotSequence: slice.revision, acceptedSequence: slice.revision, durableSequence: slice.revision, recent: { version: 1, sessionId: tabID, storageGeneration: slice.digest ?? "", durableSequence: slice.revision, totalTurns: slice.totalTurns, entries }, recovery: "ready", history: "ready", search: "preparing", canExecute: true };
     },
     async SessionHistoryContentForTab(this: MockSessionReaderHost, tabID, ref, offset) {
       const index = Number(ref.digest.replace("mock-canonical:", ""));

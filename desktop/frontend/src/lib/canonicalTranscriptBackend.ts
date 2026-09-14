@@ -111,12 +111,12 @@ export async function canonicalHistorySlice(tabId: string, req: HistorySliceRequ
       const entries = entriesFor(recent, view.snapshotSequence);
       const turns = entries.map(entry => entry.turn).filter(turn => turn > 0);
       const startTurn = turns.length > 0 ? Math.min(...turns) : 0;
-      const hasOlder = recent.length >= 100 && startTurn > 1;
+      const hasOlder = startTurn > 1 || (recent[0]?.position ?? 0) > 0;
       return {
         entries, nextCursor: hasOlder ? locatorResetCursor : "", hasOlder,
         totalTurns: view.recent.totalTurns > 0 ? view.recent.totalTurns : (turns.length > 0 ? Math.max(...turns) : 0),
         startTurn, endTurn: turns.length > 0 ? Math.max(...turns) : 0, stale: false,
-        revision: view.snapshotSequence, revisionKnown: true,
+        revision: view.snapshotSequence, revisionKnown: view.snapshotSequence > 0,
         digest: view.storageGeneration ?? view.recent.storageGeneration, source: "recent",
       };
     }
@@ -132,7 +132,7 @@ export async function canonicalHistorySlice(tabId: string, req: HistorySliceRequ
     totalTurns: page.totalTurns ?? (turns.length > 0 ? Math.max(...turns) : 0),
     startTurn: turns.length > 0 ? Math.min(...turns) : 0,
     endTurn: turns.length > 0 ? Math.max(...turns) : 0, stale: false,
-    revision: page.snapshotSequence, revisionKnown: true, digest: page.generation,
+    revision: page.snapshotSequence, revisionKnown: page.snapshotSequence > 0, digest: page.generation,
     source: reset ? "locator-reset" : "locator",
   };
 }
