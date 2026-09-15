@@ -68,7 +68,6 @@ import {
 import { loadLayoutSize, loadOptionalLayoutSize } from "../lib/layoutPreferences";
 import {
   RIGHT_DOCK_PREVIEW_DEFAULT_WIDTH,
-  defaultCreationRightDockTreeWidth,
   defaultRightDockTreeWidth,
 } from "../store/layout";
 import type {
@@ -143,7 +142,6 @@ export function WorkspacePanel({
   dockTreeWidth,
   dockPreviewWidth,
   onRestoreDockWidths,
-  creationMode = false,
   completionSummary,
   turnStartAt = 0,
 }: {
@@ -179,7 +177,6 @@ export function WorkspacePanel({
   dockTreeWidth?: number;
   dockPreviewWidth?: number;
   onRestoreDockWidths?: (treeWidth: number, previewWidth: number) => void;
-  creationMode?: boolean;
   completionSummary?: WireCompletionSummary;
   turnStartAt?: number;
 }) {
@@ -257,10 +254,8 @@ export function WorkspacePanel({
   const selectedGeneration = fileRecord?.generation ?? 0;
   const selectedFilePath = selectedEntry?.resource.path ?? null;
   const selectedPath = viewMode === "changed" ? selectedChangePath : selectedFilePath;
-  // Both creation and regular workspaces use the same three-layer change view;
-  // keep the prop in the seam for older callers while making history collapsed
-  // by default everywhere.
-  const groupedChangesLayout = creationMode !== false || viewMode === "changed";
+  // Change history starts collapsed; the changed view keeps it expanded.
+  const groupedChangesLayout = viewMode === "changed";
   const [gitHistoryResource, setGitHistoryResource] = useState(() => emptyKeyedResource<GitCommitView[]>());
   const [changeDetailResource, setChangeDetailResource] = useState(() => emptyKeyedResource<WorkspaceChangeDetailView>());
   const [expandedCommit, setExpandedCommit] = useState<string | null>(null);
@@ -433,7 +428,7 @@ export function WorkspacePanel({
     onRestoreDockWidths?.(
       remembered?.dockTreeWidth ?? loadLayoutSize(
         "rightDockTreeWidth",
-        creationMode ? defaultCreationRightDockTreeWidth() : defaultRightDockTreeWidth(),
+        defaultRightDockTreeWidth(),
       ),
       remembered?.dockPreviewWidth ?? loadLayoutSize("rightDockPreviewWidth", RIGHT_DOCK_PREVIEW_DEFAULT_WIDTH),
     );
@@ -449,7 +444,7 @@ export function WorkspacePanel({
         if (tree) tree.scrollTop = remembered?.scrollTop ?? 0;
       });
     }
-  }, [creationMode, legacyTreeWidth, onRestoreDockWidths, workspaceMemoryKey, workspaceMemoryVisitId]);
+  }, [legacyTreeWidth, onRestoreDockWidths, workspaceMemoryKey, workspaceMemoryVisitId]);
 
   useEffect(() => {
     if (memoryRestorePendingRef.current) return;

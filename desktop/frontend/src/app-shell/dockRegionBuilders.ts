@@ -9,7 +9,7 @@ import type { WorkspaceVerificationRevealRequest } from "../components/Workspace
 import type { WorkspaceDockRegionProps } from "./WorkspaceDockRegion";
 import type { AppBottomRegionsProps } from "./AppBottomRegions";
 import type { RightDockMode } from "../store/layout";
-import { defaultCreationRightDockTreeWidth, defaultRightDockTreeWidth, TERMINAL_DEFAULT_HEIGHT, TERMINAL_MIN_HEIGHT } from "../store/layout";
+import { defaultRightDockTreeWidth, TERMINAL_DEFAULT_HEIGHT, TERMINAL_MIN_HEIGHT } from "../store/layout";
 
 type ShellGeometry = ReturnType<typeof useShellGeometry>;
 type WorkspacePanelApi = ReturnType<typeof useWorkspacePanelCommands>;
@@ -22,7 +22,6 @@ type StatusBarProps = NonNullable<AppBottomRegionsProps["status"]>;
 
 export function buildWorkspaceDockProps(input: {
   surface: { renderable: boolean; overlay: boolean; gridOpen: boolean };
-  creation: boolean;
   showContext: boolean;
   remote: boolean;
   t: Translator;
@@ -46,15 +45,12 @@ export function buildWorkspaceDockProps(input: {
   onOpenInTerminal: WorkspaceDockRegionProps["workspace"]["onOpenInTerminal"];
 }): WorkspaceDockRegionProps {
   const { surface, geometry, panels } = input;
-  const workspacePanelResetWidth = input.creation
-    ? defaultCreationRightDockTreeWidth()
-    : defaultRightDockTreeWidth();
+  const workspacePanelResetWidth = defaultRightDockTreeWidth();
   const workspacePanelResizeMinWidth = workspacePanelAriaMinWidth(geometry.workspacePanelMinWidth, geometry.workspacePanelRenderWidth);
   return {
     visible: surface.renderable,
     overlay: surface.overlay,
     mode: input.mode,
-    creation: input.creation,
     showContext: input.showContext,
     t: input.t,
     onPickEntry: panels.openDockEntry,
@@ -79,7 +75,7 @@ export function buildWorkspaceDockProps(input: {
       completionSummary: input.completionSummary, turnStartAt: input.turnStartAt,
       sessionPath: input.meta?.sessionPath, onDismissTurnResult: input.verification.closeTurnResult,
       verificationRevealRequest: input.verification.verificationRevealRequest,
-      showViewTabs: false, creationMode: input.creation,
+      showViewTabs: false,
     },
     resizer: surface.gridOpen ? {
       min: workspacePanelResizeMinWidth,

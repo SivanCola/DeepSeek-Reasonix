@@ -28,7 +28,6 @@ export type ChatPaneTranscriptInput = {
   controllerReady: boolean;
   hydratePlaceholderActive: boolean;
   clearContextPending: boolean;
-  creation: boolean;
   emptyHero?: boolean;
   availability: SessionAvailability;
   rewind: {

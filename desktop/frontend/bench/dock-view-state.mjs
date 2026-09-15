@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { startPreviewServer } from "./vite-preview-server.mjs";
-import { chooseAppLayout, selectSession } from "./app-page-actions.mjs";
+import { selectSession } from "./app-page-actions.mjs";
 
 const frontendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 process.env.PLAYWRIGHT_BROWSERS_PATH = !process.env.PLAYWRIGHT_BROWSERS_PATH || process.env.PLAYWRIGHT_BROWSERS_PATH === ".pw-browsers"
@@ -68,7 +68,6 @@ try {
   assert.equal(await page.getByPlaceholder("Filter files…", { exact: true }).inputValue(), "mod", "restart restores filtering");
   await tabs.nth(0).click();
   assert.equal(await page.evaluate(selected), "README.md", "restart keeps the other view independent");
-  await chooseAppLayout(page, "Creation", "app--creation");
   await page.locator('.project-tree__folder-main:has(svg.lucide-cloud)').click();
   await page.locator('.project-tree__topic-main:has-text("Remote demo session")').click();
   await page.locator(".remote-surface--ready").waitFor();

@@ -104,7 +104,7 @@ function installDom() {
 
 export async function renderWorkspace(
   changes: WorkspaceChangesView,
-  options: { creationMode?: boolean; history?: GitCommitView[]; detail?: WorkspaceChangeDetailView; completionSummary?: WireCompletionSummary } = {},
+  options: { history?: GitCommitView[]; detail?: WorkspaceChangeDetailView; completionSummary?: WireCompletionSummary } = {},
 ) {
   resetWorkspaceTreeMemoryForTests();
   setFileNavigationOwner(null);
@@ -138,7 +138,6 @@ export async function renderWorkspace(
           cwd="/repo"
           maximized={false}
           initialViewMode="changed"
-          creationMode={options.creationMode}
           completionSummary={options.completionSummary}
           onClose={() => {}}
           onToggleMaximized={() => {}}

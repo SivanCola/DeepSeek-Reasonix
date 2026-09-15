@@ -171,7 +171,7 @@ export function useAppSessionComposition(input: AppSessionCompositionInput) {
     ensureBlankSurface,
   } = runtime.navigation;
   const {
-    setTransientOverlayDismissSignal, managementActive, desktopLayoutStyle,
+    setTransientOverlayDismissSignal, managementActive,
     windowsFramelessChrome, rightDockMode,
     workspacePanelOpen, workspacePanelMaximized, liveTerminalHeight, setLiveWorkspacePanelRenderWidth,
     setRightDockTreeWidth, terminalPanelOpen, setSettingsTarget, enterConversation,
@@ -591,7 +591,7 @@ export function useAppSessionComposition(input: AppSessionCompositionInput) {
   const workspacePanelCommands = useWorkspacePanelCommands({
     sessionId: activeTabId ?? "",
     workspaceRoot: activeTab?.workspaceRoot ?? state.meta?.cwd ?? "",
-    creation: desktopLayoutStyle === "creation", visible: surfaceWorkspacePanelRenderable,
+    visible: surfaceWorkspacePanelRenderable,
     closeOverlays: closeTransientOverlays, clearLiveWidth: setLiveWorkspacePanelRenderWidth,
     availableWidth: workspacePanelAvailableWidth, clampTreeWidth: rightDockTreeWidthClamp, setTreeWidth: setRightDockTreeWidth,
     gridOpen: surfaceWorkspacePanelGridOpen,

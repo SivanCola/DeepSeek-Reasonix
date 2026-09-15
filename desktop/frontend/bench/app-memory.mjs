@@ -7,7 +7,7 @@ import { once } from "node:events";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startPreviewServer } from "./vite-preview-server.mjs";
-import { chooseAppLayout, readActiveSessionLabel, selectSession } from "./app-page-actions.mjs";
+import { readActiveSessionLabel, selectSession } from "./app-page-actions.mjs";
 import { attributeRetention, buildIdentity, evidenceIntegrity, retainedCohorts, screeningBlockers, summarizeHeap } from "./app-memory-evidence.mjs";
 import { completeShard, memoryProtocol, protocolSamples, verifyIdentity, MEMORY_FIXTURES } from "./app-memory-shards.mjs";
 
@@ -69,7 +69,7 @@ async function selectFixture(page, fixture) {
   // Sample a resting page, not a hover card whose 350ms timer races hydration.
   await timings.measure("navigation.pointer", () => page.mouse.move(0, 0));
   await timings.measure("navigation.ready", () => page.waitForFunction(({ label, marker }) => {
-    const activeLabel = document.querySelector('.workspace-browser__session-open[aria-current="page"] strong, .project-tree__topic--active .project-tree__topic-label')?.textContent ?? "";
+    const activeLabel = document.querySelector('.project-tree__topic--active .project-tree__topic-label')?.textContent ?? "";
     const transcript = document.querySelector(".transcript");
     return activeLabel.includes(label)
       && transcript?.dataset.transcriptHydrating === "false"
@@ -150,11 +150,8 @@ async function runProcess(index) {
     await selectFixture(page, fixtures.full);
     await enterSafety(page);
     await selectFixture(page, fixtures.full);
-    for (const [label, className] of [["Creation", "app--creation"], ["Workbench", "app--workbench"]]) {
-      await chooseAppLayout(page, label, className);
-      await page.mouse.move(0, 0);
-      await settleFrames(page);
-    }
+    await page.mouse.move(0, 0);
+    await settleFrames(page);
     // Baseline and checkpoints share a post-navigation resting state. Layout
     // controls can still own transient listeners immediately after closing, so
     // one early reading can sit above the resting value and make every later

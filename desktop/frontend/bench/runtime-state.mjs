@@ -5,7 +5,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
-import { chooseAppLayout, selectSession } from "./app-page-actions.mjs";
+import { selectSession } from "./app-page-actions.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 process.env.PLAYWRIGHT_BROWSERS_PATH = path.join(root, ".pw-browsers");
 const { chromium } = await import("playwright");
@@ -93,7 +93,6 @@ try {
   await publish("idle");
   await page.locator(".composer-run-strip").waitFor({ state: "hidden" });
   check(await page.locator(".runtime-activity-indicator").count() === 0, "last job completion clears project activity");
-  await chooseAppLayout(page, "Creation", "app--creation");
   await page.locator('.project-tree__folder-main:has(svg.lucide-cloud)').click();
   await page.locator('.project-tree__topic-main:has-text("Remote demo session")').click();
   await page.locator(".remote-surface--ready").waitFor();

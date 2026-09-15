@@ -247,7 +247,7 @@ async function coldOpenOnce(browser) {
 async function waitForSessionVisible(page, tab, timeoutMs = 15_000) {
   await page.waitForFunction(
     ({ label, marker }) => {
-      const active = document.querySelector('.workspace-browser__session-open[aria-current="page"] strong, .project-tree__topic--active .project-tree__topic-label');
+      const active = document.querySelector('.project-tree__topic--active .project-tree__topic-label');
       if (!active || !active.textContent?.includes(label)) return false;
       const transcript = document.querySelector(".transcript");
       return Boolean(transcript && transcript.textContent?.includes(marker));
