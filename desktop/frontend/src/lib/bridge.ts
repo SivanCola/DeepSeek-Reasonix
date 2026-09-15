@@ -7,6 +7,10 @@ import type {
   ChatFileReferenceResult,
   DesktopCommandName,
   MarkdownSVGView,
+  SessionArchitectureDiagnostics,
+  SessionRef,
+  WorkspaceSessionPage,
+  WorkspaceSnapshot,
 } from "../generated/desktopContract.generated";
 import type { InvocationRequest } from "./invocationDisplay";
 import type { FollowupBindings } from "./pendingFollowup";
@@ -215,6 +219,20 @@ interface DesktopWindowState {
 // AppBindings is the hand-written React-to-Go contract. _CheckGeneratedBindings
 // catches generated methods missing here; update this interface and typecheck.
 export interface AppBindings extends ForkTargetsBindings, ToolRecoveryBindings, ModelSettingsBindings, SessionCatalogBindings, ProjectTreeOrganizationBindings, HistoryCatalogBindings, TaskCatalogBindings, BlankProjectBindings, QualityFloorBindings, SessionTitleBindings, ScrollDiagnosticBindings, RemoteProjectBindings, MCPAppBindings, PinnedContextBindings, FollowupBindings, TranscriptProtocolBindings, SessionReaderBindings {
+  GetWorkspaceSnapshot(): Promise<WorkspaceSnapshot>;
+  CreateSession(workspaceId: string): Promise<SessionRef>;
+  ForkSession(ref: SessionRef, turnBoundary: string): Promise<SessionRef>;
+  ListWorkspaceSessions(workspaceId: string, query: string, cursor: string, limit: number, includeArchived: boolean): Promise<WorkspaceSessionPage>;
+  OpenSession(ref: SessionRef): Promise<HistoryPage>;
+  ReadSessionHistory(ref: SessionRef, cursor: string, limit: number): Promise<HistoryPage>;
+  RenameCanonicalSession(ref: SessionRef, title: string): Promise<void>;
+  ArchiveCanonicalSession(ref: SessionRef): Promise<void>;
+  RestoreCanonicalSession(ref: SessionRef): Promise<void>;
+  MoveWorkspaceSession(workspaceId: string, sessionId: string, beforeSessionId: string): Promise<void>;
+  RenameWorkspace(workspaceId: string, title: string): Promise<void>;
+  SetWorkspaceVisible(workspaceId: string, visible: boolean): Promise<void>;
+  MoveWorkspace(workspaceId: string, beforeWorkspaceId: string): Promise<void>;
+  GetSessionArchitectureDiagnostics(): Promise<SessionArchitectureDiagnostics>;
   Platform(): Promise<string>;
   MinimiseMainWindow(): Promise<void>;
   ToggleMaximiseMainWindow(): Promise<void>;
@@ -2246,9 +2264,53 @@ function makeMockApp(): AppBindings {
       mockTabs = mockTabs.map((tab, index) => (index === 0 ? { ...tab, label } : tab));
     }
   };
+  const mockArchivedSessionIDs = new Set<string>();
+  const mockSessionIDForNode = (node: ProjectNode) => (node.topicId || node.key || "mock-session").replace(/[^a-zA-Z0-9._-]/g, "-");
+  const mockWorkspaceID = (node: ProjectNode) => node.kind === "global_folder" ? "global" : `project-${(node.root || node.key).replace(/[^a-zA-Z0-9._-]/g, "-")}`;
+  const mockWorkspaceSnapshot = (): WorkspaceSnapshot => ({
+    generation: 1,
+    workspaces: mockProjectTreeForDisplay().filter((node) => node.kind === "project" || node.kind === "global_folder").map((node) => ({
+      id: mockWorkspaceID(node), root: node.root || "", title: node.label,
+      sessionIds: projectChildren(node).map(mockSessionIDForNode), visible: true, createdAt: 0, updatedAt: 0,
+    })),
+    archivedSessionIds: [...mockArchivedSessionIDs], pendingCreates: [],
+  });
   return {
     ...makeMockSessionCatalogBindings(cloneProjectTree),
     ...makeMockBlankProjectBindings(),
+    async GetWorkspaceSnapshot() { return mockWorkspaceSnapshot(); },
+    async CreateSession(_workspaceId: string) { return { hostId: "local", sessionId: `mock-${Date.now()}` }; },
+    async ForkSession(_ref: SessionRef, _turnBoundary: string) { return { hostId: "local", sessionId: `mock-fork-${Date.now()}` }; },
+    async ListWorkspaceSessions(workspaceId: string, query: string, _cursor: string, limit: number, includeArchived: boolean) {
+      const parent = mockProjectTreeForDisplay().find((node) => mockWorkspaceID(node) === workspaceId);
+      const needle = query.trim().toLowerCase();
+      const sessions = projectChildren(parent ?? { key: "", kind: "global_folder", label: "", children: [] }).map((node) => {
+        const sessionId = mockSessionIDForNode(node), isArchived = mockArchivedSessionIDs.has(sessionId);
+        return {
+          ref: { hostId: "local", sessionId }, workspaceId, title: node.label, preview: node.preview || "", turns: node.turns || 0,
+          createdAt: node.createdAt || 0, updatedAt: node.lastActivityAt || 0, blank: !node.turns && !node.preview,
+          archived: isArchived, running: Boolean(node.running), metadataStatus: "ready", health: "healthy",
+        };
+      }).filter((row) => (includeArchived || !row.archived) && (!needle || `${row.title}\n${row.preview}`.toLowerCase().includes(needle))).slice(0, limit);
+      return { sessions, registryGeneration: 1 };
+    },
+    async OpenSession(_ref: SessionRef) { return { messages: [], startTurn: 0, endTurn: 0, totalTurns: 0, hasOlder: false }; },
+    async ReadSessionHistory(_ref: SessionRef, _cursor: string, _limit: number) { return { messages: [], startTurn: 0, endTurn: 0, totalTurns: 0, hasOlder: false }; },
+    async RenameCanonicalSession(_ref: SessionRef, _title: string) {},
+    async ArchiveCanonicalSession(ref: SessionRef) { mockArchivedSessionIDs.add(ref.sessionId); },
+    async RestoreCanonicalSession(ref: SessionRef) { mockArchivedSessionIDs.delete(ref.sessionId); },
+    async MoveWorkspaceSession(_workspaceId: string, _sessionId: string, _beforeSessionId: string) {},
+    async RenameWorkspace(_workspaceId: string, _title: string) {},
+    async SetWorkspaceVisible(_workspaceId: string, _visible: boolean) {},
+    async MoveWorkspace(_workspaceId: string, _beforeWorkspaceId: string) {},
+    async GetSessionArchitectureDiagnostics() {
+      return {
+        session_headers_total: 0, workspace_members_total: 0, unassigned_sessions: 0,
+        migration_pending: 0, migration_failed: 0, migration_completed: 0,
+        projection_pending: 0, projection_failed: 0, pending_create_recovered: 0,
+        prune_blocked_persistence: 0,
+      };
+    },
     async MinimiseMainWindow() {
       console.info("mock MinimiseMainWindow");
     },

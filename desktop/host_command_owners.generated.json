@@ -552,6 +552,20 @@
       ]
     }
   },
+  "ArchiveCanonicalSession": {
+    "domain": "desktop/session_workspace_api.go",
+    "owner": "App.ArchiveCanonicalSession",
+    "sources": [
+      "desktop/session_workspace_api.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.ArchiveCanonicalSession",
+      "inputs": [
+        "ref"
+      ]
+    }
+  },
   "AttachDropped": {
     "domain": "desktop/app.go",
     "owner": "App.AttachDropped",
@@ -1496,6 +1510,20 @@
       ]
     }
   },
+  "CreateSession": {
+    "domain": "desktop/session_workspace_api.go",
+    "owner": "App.CreateSession",
+    "sources": [
+      "desktop/session_workspace_api.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.CreateSession",
+      "inputs": [
+        "workspaceID"
+      ]
+    }
+  },
   "CreateSubagentProfile": {
     "domain": "desktop/subagents_app.go",
     "owner": "App.CreateSubagentProfile",
@@ -2213,6 +2241,21 @@
       ]
     }
   },
+  "ForkSession": {
+    "domain": "desktop/session_workspace_api.go",
+    "owner": "App.ForkSession",
+    "sources": [
+      "desktop/session_workspace_api.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.ForkSession",
+      "inputs": [
+        "ref",
+        "turnBoundary"
+      ]
+    }
+  },
   "ForkTargetsForTab": {
     "domain": "desktop/fork_targets.go",
     "owner": "App.ForkTargetsForTab",
@@ -2423,6 +2466,18 @@
       "inputs": []
     }
   },
+  "GetSessionArchitectureDiagnostics": {
+    "domain": "desktop/session_workspace_api.go",
+    "owner": "App.GetSessionArchitectureDiagnostics",
+    "sources": [
+      "desktop/session_workspace_api.go"
+    ],
+    "scope": {
+      "kind": "owner-state",
+      "resolver": "App.GetSessionArchitectureDiagnostics",
+      "inputs": []
+    }
+  },
   "GetSessionCatalogStatus": {
     "domain": "desktop/session_catalog_runtime.go",
     "owner": "App.GetSessionCatalogStatus",
@@ -2513,6 +2568,18 @@
       "inputs": [
         "key"
       ]
+    }
+  },
+  "GetWorkspaceSnapshot": {
+    "domain": "desktop/session_workspace_api.go",
+    "owner": "App.GetWorkspaceSnapshot",
+    "sources": [
+      "desktop/session_workspace_api.go"
+    ],
+    "scope": {
+      "kind": "owner-state",
+      "resolver": "App.GetWorkspaceSnapshot",
+      "inputs": []
     }
   },
   "GetWorktreeStatus": {
@@ -3278,6 +3345,24 @@
       "inputs": []
     }
   },
+  "ListWorkspaceSessions": {
+    "domain": "desktop/session_workspace_api.go",
+    "owner": "App.ListWorkspaceSessions",
+    "sources": [
+      "desktop/session_workspace_api.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.ListWorkspaceSessions",
+      "inputs": [
+        "workspaceID",
+        "queryText",
+        "cursor",
+        "limit",
+        "includeArchived"
+      ]
+    }
+  },
   "ListWorkspaces": {
     "domain": "desktop/app.go",
     "owner": "App.ListWorkspaces",
@@ -3675,6 +3760,37 @@
       ]
     }
   },
+  "MoveWorkspace": {
+    "domain": "desktop/session_workspace_api.go",
+    "owner": "App.MoveWorkspace",
+    "sources": [
+      "desktop/session_workspace_api.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.MoveWorkspace",
+      "inputs": [
+        "workspaceID",
+        "beforeWorkspaceID"
+      ]
+    }
+  },
+  "MoveWorkspaceSession": {
+    "domain": "desktop/session_workspace_api.go",
+    "owner": "App.MoveWorkspaceSession",
+    "sources": [
+      "desktop/session_workspace_api.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.MoveWorkspaceSession",
+      "inputs": [
+        "workspaceID",
+        "sessionID",
+        "beforeSessionID"
+      ]
+    }
+  },
   "NeedsOnboarding": {
     "domain": "desktop/app.go",
     "owner": "App.NeedsOnboarding",
@@ -3888,6 +4004,20 @@
       "inputs": [
         "hostID",
         "workspace"
+      ]
+    }
+  },
+  "OpenSession": {
+    "domain": "desktop/session_workspace_api.go",
+    "owner": "App.OpenSession",
+    "sources": [
+      "desktop/session_workspace_api.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.OpenSession",
+      "inputs": [
+        "ref"
       ]
     }
   },
@@ -4441,6 +4571,22 @@
       "inputs": [
         "hostID",
         "path"
+      ]
+    }
+  },
+  "ReadSessionHistory": {
+    "domain": "desktop/session_workspace_api.go",
+    "owner": "App.ReadSessionHistory",
+    "sources": [
+      "desktop/session_workspace_api.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.ReadSessionHistory",
+      "inputs": [
+        "ref",
+        "cursor",
+        "limit"
       ]
     }
   },
@@ -5183,6 +5329,21 @@
       ]
     }
   },
+  "RenameCanonicalSession": {
+    "domain": "desktop/session_workspace_api.go",
+    "owner": "App.RenameCanonicalSession",
+    "sources": [
+      "desktop/session_workspace_api.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.RenameCanonicalSession",
+      "inputs": [
+        "ref",
+        "title"
+      ]
+    }
+  },
   "RenameProject": {
     "domain": "desktop/tabs.go",
     "owner": "App.RenameProject",
@@ -5304,6 +5465,21 @@
       "resolver": "App.RenameTopic",
       "inputs": [
         "topicID",
+        "title"
+      ]
+    }
+  },
+  "RenameWorkspace": {
+    "domain": "desktop/session_workspace_api.go",
+    "owner": "App.RenameWorkspace",
+    "sources": [
+      "desktop/session_workspace_api.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.RenameWorkspace",
+      "inputs": [
+        "workspaceID",
         "title"
       ]
     }
@@ -5808,6 +5984,20 @@
       "inputs": [
         "tabID",
         "archivePath"
+      ]
+    }
+  },
+  "RestoreCanonicalSession": {
+    "domain": "desktop/session_workspace_api.go",
+    "owner": "App.RestoreCanonicalSession",
+    "sources": [
+      "desktop/session_workspace_api.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.RestoreCanonicalSession",
+      "inputs": [
+        "ref"
       ]
     }
   },
@@ -8126,6 +8316,21 @@
       "resolver": "App.SetWebSearchModel",
       "inputs": [
         "ref"
+      ]
+    }
+  },
+  "SetWorkspaceVisible": {
+    "domain": "desktop/session_workspace_api.go",
+    "owner": "App.SetWorkspaceVisible",
+    "sources": [
+      "desktop/session_workspace_api.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.SetWorkspaceVisible",
+      "inputs": [
+        "workspaceID",
+        "visible"
       ]
     }
   },

@@ -1081,6 +1081,29 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/session_workspace_api.go",
+      "name": "ArchiveCanonicalSession",
+      "owner": "App.ArchiveCanonicalSession",
+      "params": [
+        {
+          "kind": "object",
+          "ref": "session.SessionRef"
+        }
+      ],
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "ref"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.ArchiveCanonicalSession"
+      },
+      "sources": [
+        "desktop/session_workspace_api.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/app.go",
       "name": "AttachDropped",
       "owner": "App.AttachDropped",
@@ -2771,6 +2794,32 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/session_workspace_api.go",
+      "name": "CreateSession",
+      "owner": "App.CreateSession",
+      "params": [
+        {
+          "kind": "string"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "session.SessionRef"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "workspaceID"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.CreateSession"
+      },
+      "sources": [
+        "desktop/session_workspace_api.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/subagents_app.go",
       "name": "CreateSubagentProfile",
       "owner": "App.CreateSubagentProfile",
@@ -4157,6 +4206,37 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/session_workspace_api.go",
+      "name": "ForkSession",
+      "owner": "App.ForkSession",
+      "params": [
+        {
+          "kind": "object",
+          "ref": "session.SessionRef"
+        },
+        {
+          "kind": "string"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "session.SessionRef"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "ref",
+          "turnBoundary"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.ForkSession"
+      },
+      "sources": [
+        "desktop/session_workspace_api.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/fork_targets.go",
       "name": "ForkTargetsForTab",
       "owner": "App.ForkTargetsForTab",
@@ -4530,6 +4610,26 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/session_workspace_api.go",
+      "name": "GetSessionArchitectureDiagnostics",
+      "owner": "App.GetSessionArchitectureDiagnostics",
+      "params": [],
+      "result": {
+        "kind": "object",
+        "ref": "main.SessionArchitectureDiagnostics"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [],
+        "kind": "owner-state",
+        "resolver": "App.GetSessionArchitectureDiagnostics"
+      },
+      "sources": [
+        "desktop/session_workspace_api.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/session_catalog_runtime.go",
       "name": "GetSessionCatalogStatus",
       "owner": "App.GetSessionCatalogStatus",
@@ -4692,6 +4792,26 @@
       },
       "sources": [
         "desktop/session_catalog_runtime.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/session_workspace_api.go",
+      "name": "GetWorkspaceSnapshot",
+      "owner": "App.GetWorkspaceSnapshot",
+      "params": [],
+      "result": {
+        "kind": "object",
+        "ref": "main.WorkspaceSnapshot"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [],
+        "kind": "owner-state",
+        "resolver": "App.GetWorkspaceSnapshot"
+      },
+      "sources": [
+        "desktop/session_workspace_api.go"
       ]
     },
     {
@@ -6159,6 +6279,48 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/session_workspace_api.go",
+      "name": "ListWorkspaceSessions",
+      "owner": "App.ListWorkspaceSessions",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "integer"
+        },
+        {
+          "kind": "boolean"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.WorkspaceSessionPage"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "workspaceID",
+          "queryText",
+          "cursor",
+          "limit",
+          "includeArchived"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.ListWorkspaceSessions"
+      },
+      "sources": [
+        "desktop/session_workspace_api.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/app.go",
       "name": "ListWorkspaces",
       "owner": "App.ListWorkspaces",
@@ -6905,6 +7067,62 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/session_workspace_api.go",
+      "name": "MoveWorkspace",
+      "owner": "App.MoveWorkspace",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        }
+      ],
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "workspaceID",
+          "beforeWorkspaceID"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.MoveWorkspace"
+      },
+      "sources": [
+        "desktop/session_workspace_api.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/session_workspace_api.go",
+      "name": "MoveWorkspaceSession",
+      "owner": "App.MoveWorkspaceSession",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        }
+      ],
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "workspaceID",
+          "sessionID",
+          "beforeSessionID"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.MoveWorkspaceSession"
+      },
+      "sources": [
+        "desktop/session_workspace_api.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/app.go",
       "name": "NeedsOnboarding",
       "owner": "App.NeedsOnboarding",
@@ -7290,6 +7508,33 @@
       },
       "sources": [
         "desktop/remote_app.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/session_workspace_api.go",
+      "name": "OpenSession",
+      "owner": "App.OpenSession",
+      "params": [
+        {
+          "kind": "object",
+          "ref": "session.SessionRef"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.HistoryPage"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "ref"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.OpenSession"
+      },
+      "sources": [
+        "desktop/session_workspace_api.go"
       ]
     },
     {
@@ -8318,6 +8563,41 @@
       },
       "sources": [
         "desktop/remote_app.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/session_workspace_api.go",
+      "name": "ReadSessionHistory",
+      "owner": "App.ReadSessionHistory",
+      "params": [
+        {
+          "kind": "object",
+          "ref": "session.SessionRef"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "integer"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.HistoryPage"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "ref",
+          "cursor",
+          "limit"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.ReadSessionHistory"
+      },
+      "sources": [
+        "desktop/session_workspace_api.go"
       ]
     },
     {
@@ -9661,6 +9941,33 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/session_workspace_api.go",
+      "name": "RenameCanonicalSession",
+      "owner": "App.RenameCanonicalSession",
+      "params": [
+        {
+          "kind": "object",
+          "ref": "session.SessionRef"
+        },
+        {
+          "kind": "string"
+        }
+      ],
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "ref",
+          "title"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.RenameCanonicalSession"
+      },
+      "sources": [
+        "desktop/session_workspace_api.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/tabs.go",
       "name": "RenameProject",
       "owner": "App.RenameProject",
@@ -9888,6 +10195,32 @@
       },
       "sources": [
         "desktop/tabs.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/session_workspace_api.go",
+      "name": "RenameWorkspace",
+      "owner": "App.RenameWorkspace",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        }
+      ],
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "workspaceID",
+          "title"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.RenameWorkspace"
+      },
+      "sources": [
+        "desktop/session_workspace_api.go"
       ]
     },
     {
@@ -10850,6 +11183,29 @@
       },
       "sources": [
         "desktop/app.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/session_workspace_api.go",
+      "name": "RestoreCanonicalSession",
+      "owner": "App.RestoreCanonicalSession",
+      "params": [
+        {
+          "kind": "object",
+          "ref": "session.SessionRef"
+        }
+      ],
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "ref"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.RestoreCanonicalSession"
+      },
+      "sources": [
+        "desktop/session_workspace_api.go"
       ]
     },
     {
@@ -14993,6 +15349,32 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/session_workspace_api.go",
+      "name": "SetWorkspaceVisible",
+      "owner": "App.SetWorkspaceVisible",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "boolean"
+        }
+      ],
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "workspaceID",
+          "visible"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.SetWorkspaceVisible"
+      },
+      "sources": [
+        "desktop/session_workspace_api.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/settings_app.go",
       "name": "Settings",
       "owner": "App.Settings",
@@ -17420,7 +17802,7 @@
     "topic:activation",
     "updater:progress"
   ],
-  "protocolVersion": 8,
+  "protocolVersion": 9,
   "types": {
     "agent.ToolRecoveryStatistics": {
       "fields": [
@@ -32557,6 +32939,70 @@
         }
       ]
     },
+    "main.SessionArchitectureDiagnostics": {
+      "fields": [
+        {
+          "name": "session_headers_total",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "workspace_members_total",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "unassigned_sessions",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "migration_pending",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "migration_failed",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "migration_completed",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "projection_pending",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "projection_failed",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "pending_create_recovered",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "prune_blocked_persistence",
+          "type": {
+            "kind": "integer"
+          }
+        }
+      ]
+    },
     "main.SessionCatalogStatus": {
       "fields": [
         {
@@ -34011,6 +34457,13 @@
           }
         },
         {
+          "name": "workspaceId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
           "name": "workspaceName",
           "type": {
             "kind": "string"
@@ -34085,6 +34538,17 @@
           "optional": true,
           "type": {
             "kind": "string"
+          }
+        },
+        {
+          "name": "session",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "session.SessionRef"
+            },
+            "kind": "nullable"
           }
         },
         {
@@ -35972,6 +36436,34 @@
         }
       ]
     },
+    "main.WorkspacePendingCreate": {
+      "fields": [
+        {
+          "name": "operationId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "workspaceId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "sessionId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "createdAt",
+          "type": {
+            "kind": "integer"
+          }
+        }
+      ]
+    },
     "main.WorkspaceRevisionView": {
       "fields": [
         {
@@ -35985,6 +36477,212 @@
           "name": "WatchState",
           "type": {
             "kind": "string"
+          }
+        }
+      ]
+    },
+    "main.WorkspaceSessionPage": {
+      "fields": [
+        {
+          "name": "sessions",
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "main.WorkspaceSessionSummary"
+            },
+            "kind": "array"
+          }
+        },
+        {
+          "name": "nextCursor",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "registryGeneration",
+          "type": {
+            "kind": "integer"
+          }
+        }
+      ]
+    },
+    "main.WorkspaceSessionSummary": {
+      "fields": [
+        {
+          "name": "ref",
+          "type": {
+            "kind": "object",
+            "ref": "session.SessionRef"
+          }
+        },
+        {
+          "name": "workspaceId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "title",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "preview",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "turns",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "createdAt",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "updatedAt",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "modelRef",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "parentSessionId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "blank",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "archived",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "running",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "metadataStatus",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "health",
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
+    "main.WorkspaceSnapshot": {
+      "fields": [
+        {
+          "name": "generation",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "workspaces",
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "main.WorkspaceSummary"
+            },
+            "kind": "array"
+          }
+        },
+        {
+          "name": "archivedSessionIds",
+          "type": {
+            "elem": {
+              "kind": "string"
+            },
+            "kind": "array"
+          }
+        },
+        {
+          "name": "pendingCreates",
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "main.WorkspacePendingCreate"
+            },
+            "kind": "array"
+          }
+        }
+      ]
+    },
+    "main.WorkspaceSummary": {
+      "fields": [
+        {
+          "name": "id",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "root",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "title",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "sessionIds",
+          "type": {
+            "elem": {
+              "kind": "string"
+            },
+            "kind": "array"
+          }
+        },
+        {
+          "name": "visible",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "createdAt",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "updatedAt",
+          "type": {
+            "kind": "integer"
           }
         }
       ]

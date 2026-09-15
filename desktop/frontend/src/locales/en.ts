@@ -3440,6 +3440,20 @@ export const en = {
   "mock.changedFile2Prompt": "Record project context",
   "mock.changedFile1Path": "docs/dev-standard.md",
   "mock.changedFile2Path": ".reasonix/project.md",
+  "workspaceBrowser.search": "Search sessions",
+  "workspaceBrowser.back": "Back to sessions",
+  "workspaceBrowser.archived": "Archived",
+  "workspaceBrowser.loading": "Loading sessions…",
+  "workspaceBrowser.workspace": "Workspace",
+  "workspaceBrowser.newSession": "New session",
+  "workspaceBrowser.noMessages": "No messages",
+  "workspaceBrowser.indexing": "Indexing…",
+  "workspaceBrowser.running": "Running",
+  "workspaceBrowser.restore": "Restore session",
+  "workspaceBrowser.archive": "Archive session",
+  "workspaceBrowser.noArchived": "No archived sessions",
+  "workspaceBrowser.empty": "No sessions yet",
+  "workspaceBrowser.create": "Create session in workspace",
 };
 
 export type DictKey = keyof typeof en;
