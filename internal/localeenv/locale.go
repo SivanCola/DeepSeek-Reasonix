@@ -4,11 +4,12 @@ package localeenv
 
 import (
 	"context"
-	"os/exec"
 	"runtime"
 	"strings"
 	"sync"
 	"time"
+
+	"reasonix/internal/proc"
 )
 
 var hostDefault = sync.OnceValue(discoverUTF8)
@@ -51,7 +52,7 @@ func discoverUTF8() string {
 	// PATH. Do not invent a locale that a minimal Linux image lacks.
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "/usr/bin/locale", "-a")
+	cmd := proc.CommandContext(ctx, "/usr/bin/locale", "-a")
 	cmd.Env = []string{"LC_ALL=C", "PATH=/usr/bin:/bin"}
 	output, err := cmd.Output()
 	if err != nil {
