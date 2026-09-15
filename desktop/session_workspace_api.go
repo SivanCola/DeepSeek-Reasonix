@@ -473,12 +473,16 @@ func (a *App) ReadSessionHistory(ref session.SessionRef, cursor string, limit in
 }
 
 // OpenSession installs exactly ref into the current local surface. It first
-// proves the target history is readable; a missing or damaged identity never
-// creates an empty replacement and never clears the currently visible log.
+// proves the target identity and workspace exist; a missing or damaged identity
+// never creates an empty replacement and never clears the currently visible log.
+// History bodies are loaded after the runtime commits so a live writer is not
+// snapshotted on the navigation goroutine.
 func (a *App) OpenSession(ref session.SessionRef) (HistoryPage, error) {
 	navigationSequence := a.desktopSessions.navigationSeq.Add(1)
-	page, err := a.ReadSessionHistory(ref, "", defaultHistoryPageTurns)
-	if err != nil {
+	if err := validateLocalSessionRef(ref); err != nil {
+		return HistoryPage{}, err
+	}
+	if _, err := a.desktopSessionService("").Query().Stat(a.bootContext(), ref); err != nil {
 		return HistoryPage{}, err
 	}
 	if a.desktopSessions.navigationSeq.Load() != navigationSequence {
@@ -495,7 +499,7 @@ func (a *App) OpenSession(ref session.SessionRef) (HistoryPage, error) {
 	// is navigation, so publish ready only after the exact target commits and
 	// let every frontend owner re-read its metadata and history.
 	a.emitReady(a.bootContext(), tab.ID)
-	return page, nil
+	return HistoryPage{Messages: []HistoryMessage{}}, nil
 }
 
 func (a *App) RenameCanonicalSession(ref session.SessionRef, title string) error {

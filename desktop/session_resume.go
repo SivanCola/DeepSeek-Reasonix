@@ -87,26 +87,37 @@ func (a *App) resumeCanonicalSessionForTranscript(tab *WorkspaceTab, ctrl contro
 		return HistoryPage{}, control.ErrTurnRunning
 	}
 	if currentRef, bound := identity.SessionRef(); !bound || currentRef != ref {
-		if err := current.Snapshot(); err != nil {
-			return HistoryPage{}, err
+		reattached := false
+		if a.attachExistingSessionRuntime(tab, sessionRoute(ref.SessionID), a.ctx) {
+			if next := a.controllerForTab(tab); next != nil {
+				if next != current {
+					retireReplacedController(current, next)
+				}
+				current, reattached = next, true
+			}
 		}
-		binding, err := service.EnsureExecution(a.bootContext(), ref)
-		if err != nil {
-			return HistoryPage{}, err
-		}
-		defer func() { _ = binding.Release(a.bootContext()) }()
-		targetModel := strings.TrimSpace(binding.Runtime().StateSnapshot().Session.Projection.ModelRef)
-		if targetModel != "" {
-			current, err = a.replaceControllerForSessionOpenLocked(tab, current, service, ref, targetModel, wantedNavigation)
+		if !reattached {
+			if err := current.Snapshot(); err != nil {
+				return HistoryPage{}, err
+			}
+			binding, err := service.EnsureExecution(a.bootContext(), ref)
 			if err != nil {
 				return HistoryPage{}, err
 			}
-		} else {
-			if wantedNavigation != 0 && a.desktopSessions.navigationSeq.Load() != wantedNavigation {
-				return HistoryPage{}, errSessionNavigationSuperseded
-			}
-			if _, err := identity.OpenSession(a.bootContext(), ref); err != nil {
-				return HistoryPage{}, err
+			defer func() { _ = binding.Release(a.bootContext()) }()
+			targetModel := strings.TrimSpace(binding.Runtime().StateSnapshot().Session.Projection.ModelRef)
+			if targetModel != "" {
+				current, err = a.replaceControllerForSessionOpenLocked(tab, current, service, ref, targetModel, wantedNavigation)
+				if err != nil {
+					return HistoryPage{}, err
+				}
+			} else {
+				if wantedNavigation != 0 && a.desktopSessions.navigationSeq.Load() != wantedNavigation {
+					return HistoryPage{}, errSessionNavigationSuperseded
+				}
+				if _, err := identity.OpenSession(a.bootContext(), ref); err != nil {
+					return HistoryPage{}, err
+				}
 			}
 		}
 	}

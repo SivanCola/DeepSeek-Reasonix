@@ -222,6 +222,9 @@ func (a *App) verifyCanonicalTabRegistryBeforePrune(tab *WorkspaceTab) error {
 }
 
 func (a *App) persistHiddenTabBeforePrune(id string, tab *WorkspaceTab) error {
+	if tab != nil && tab.hasActiveRuntimeWork() {
+		return nil
+	}
 	if err := a.snapshotTab(tab); err != nil {
 		a.desktopSessions.pruneBlockedPersistence.Add(1)
 		slog.Warn("desktop: snapshot before pruning hidden tab failed", "tab", id, "err", err)
