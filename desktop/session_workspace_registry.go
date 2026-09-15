@@ -32,7 +32,10 @@ type desktopSessionState struct {
 }
 
 func newDesktopSessionState() desktopSessionState {
-	return desktopSessionState{workspaceState: workspacestate.NewStore(config.DesktopWorkspaceStatePath())}
+	return desktopSessionState{
+		root:           config.DesktopSessionStoreDir(),
+		workspaceState: workspacestate.NewStore(config.DesktopWorkspaceStatePath()),
+	}
 }
 
 func (a *App) initializeDesktopSessionRoot() {

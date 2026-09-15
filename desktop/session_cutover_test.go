@@ -193,13 +193,17 @@ func TestDesktopV3CatalogResumeRenameAndDeleteUseSessionIdentity(t *testing.T) {
 	dir := desktopSessionDir(root)
 	service := app.desktopSessionService(dir)
 
-	first, err := service.Create(t.Context(), session.CreateOptions{SessionID: "first-v3"})
+	first, err := service.Create(t.Context(), session.CreateOptions{
+		SessionID: "first-v3", CWD: root, Origin: session.SessionOriginNew,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	appendSessionTestModel(t, first, "first-model", model)
 	appendSessionTestMessage(t, first, "first-message", provider.Message{ID: "user-first", Role: provider.RoleUser, Content: "first conversation"})
-	second, err := service.Create(t.Context(), session.CreateOptions{SessionID: "second-v3"})
+	second, err := service.Create(t.Context(), session.CreateOptions{
+		SessionID: "second-v3", CWD: root, Origin: session.SessionOriginNew,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

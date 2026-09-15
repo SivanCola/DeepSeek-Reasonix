@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"reasonix/internal/control"
@@ -25,6 +26,8 @@ type forkTargetsStubController struct {
 	createName     string
 	createOp       string
 	creates        int
+	service        *session.Service
+	cwd            string
 }
 
 // RuntimeStatus reports a turn in flight when running is set, so a scenario can
@@ -43,7 +46,24 @@ func (c *forkTargetsStubController) ForkTargets() (session.ForkTargetSet, error)
 func (c *forkTargetsStubController) CreateForkSession(request session.ForkRequest, name string) (string, error) {
 	c.creates++
 	c.createTurn, c.createBoundary, c.createName, c.createOp = request.TurnID, request.BoundarySequence, name, request.OperationID
+	if c.createErr == nil && c.service != nil {
+		var runtime *session.Runtime
+		runtime, c.createErr = c.service.Create(context.Background(), session.CreateOptions{
+			SessionID: c.childID, CWD: c.cwd, ParentSessionID: request.Source.SessionID, Origin: session.SessionOriginFork,
+		})
+		if c.createErr == nil {
+			c.createErr = c.service.Close(context.Background(), runtime.Ref())
+		}
+	}
 	return c.childID, c.createErr
+}
+
+func enableForkTargetPersistence(t *testing.T, app *App, ctrl *forkTargetsStubController) {
+	t.Helper()
+	app.desktopSessions.root = filepath.Join(t.TempDir(), "desktop-sessions-v5", "by-id")
+	ctrl.service = app.desktopSessionService("")
+	ctrl.cwd = globalWorkspaceRoot()
+	t.Cleanup(app.closeSessionServices)
 }
 
 func (c *forkTargetsStubController) UsesExclusiveSession() bool { return true }
@@ -206,6 +226,7 @@ func TestCreateForkForTabOpensChildInNewTab(t *testing.T) {
 	}
 	app := NewApp()
 	app.setTestCtrl(ctrl, "")
+	enableForkTargetPersistence(t, app, ctrl)
 	app.tabs["test"].SessionID = "source-1"
 	app.tabs["test"].Scope = "global"
 	app.tabs["test"].TopicTitle = "Source topic"
@@ -255,6 +276,7 @@ func TestCreateForkForTabKeepsChildWhenTabAttachFails(t *testing.T) {
 	}
 	app := NewApp()
 	app.setTestCtrl(ctrl, "")
+	enableForkTargetPersistence(t, app, ctrl)
 	app.tabs["test"].SessionID = "source-1"
 	app.tabs["test"].Scope = "global"
 	app.tabs["test"].TopicTitle = "Source topic"
@@ -399,6 +421,7 @@ func TestCreateForkForTabReopensCompletedOperationAfterAttachFailure(t *testing.
 	ctrl := &forkTargetsStubController{tabScopedActionController: newTabScopedActionController(), childID: "recovered-child"}
 	app := NewApp()
 	app.setTestCtrl(ctrl, "")
+	enableForkTargetPersistence(t, app, ctrl)
 	app.tabs["test"].Scope = "global"
 	app.tabs["test"].SessionID = "source-1"
 	anchor := ForkAnchorView{SourceHostID: "host-1", SourceSessionID: "source-1", TurnID: "turn", BoundarySequence: 9}

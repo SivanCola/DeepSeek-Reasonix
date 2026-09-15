@@ -4,8 +4,26 @@ import (
 	"path/filepath"
 	"testing"
 
+	"reasonix/internal/config"
 	"reasonix/internal/session"
 )
+
+func TestNewAppPinsDesktopV5SessionRootBeforeStartup(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := NewApp()
+	t.Cleanup(app.closeSessionServices)
+
+	legacyDir := filepath.Join(t.TempDir(), "project", "sessions")
+	if got, want := app.desktopSessions.root, config.DesktopSessionStoreDir(); !sameDesktopPath(got, want) {
+		t.Fatalf("desktop session root = %q, want v5 root %q", got, want)
+	}
+	if sameDesktopPath(app.desktopSessions.root, desktopSessionRoot(legacyDir)) {
+		t.Fatal("desktop App regressed to a legacy-derived canonical root before startup")
+	}
+	if app.desktopSessionService(legacyDir) == nil {
+		t.Fatal("desktop session service is nil")
+	}
+}
 
 func TestDesktopSessionServiceIsSharedAcrossWorkspaces(t *testing.T) {
 	app := NewApp()
