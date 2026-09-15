@@ -11,7 +11,7 @@ import (
 
 func fileImageMessages(n int) []provider.Message {
 	msgs := make([]provider.Message, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		msgs = append(msgs, provider.Message{
 			ID:      fmt.Sprintf("u%d", i),
 			Role:    provider.RoleUser,

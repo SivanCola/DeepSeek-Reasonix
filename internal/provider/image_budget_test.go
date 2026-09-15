@@ -59,7 +59,7 @@ func TestRequiredImageOffloadSkipsOffloadedAndCountsBase64(t *testing.T) {
 
 func TestCheckRetainedImagesCountQuantum(t *testing.T) {
 	msgs := make([]Message, 0, MaxImagesPerRequest+1)
-	for i := 0; i < MaxImagesPerRequest+1; i++ {
+	for i := range MaxImagesPerRequest + 1 {
 		msgs = append(msgs, Message{
 			ID: fmt.Sprintf("u%d", i), Role: RoleUser,
 			Images: []string{"file-api-" + strings.Repeat("a", 8)},
@@ -77,7 +77,7 @@ func TestCheckRetainedImagesCountQuantum(t *testing.T) {
 
 func TestCheckRetainedImagesNineInlineImagesFit(t *testing.T) {
 	msgs := make([]Message, 0, 9)
-	for i := 0; i < 9; i++ {
+	for i := range 9 {
 		msgs = append(msgs, Message{
 			ID: fmt.Sprintf("u%d", i), Role: RoleUser,
 			Images: []string{"data:image/png;base64,AA=="},

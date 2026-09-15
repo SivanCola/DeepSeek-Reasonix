@@ -55,16 +55,10 @@ func longEdgeDimensions(srcW, srcH, longEdge int) (int, int) {
 		return 1, 1
 	}
 	if srcW >= srcH {
-		h := int(math.Round(float64(srcH) * float64(longEdge) / float64(srcW)))
-		if h < 1 {
-			h = 1
-		}
+		h := max(int(math.Round(float64(srcH)*float64(longEdge)/float64(srcW))), 1)
 		return longEdge, h
 	}
-	w := int(math.Round(float64(srcW) * float64(longEdge) / float64(srcH)))
-	if w < 1 {
-		w = 1
-	}
+	w := max(int(math.Round(float64(srcW)*float64(longEdge)/float64(srcH))), 1)
 	return w, longEdge
 }
 
