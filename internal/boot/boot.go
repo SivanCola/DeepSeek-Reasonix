@@ -753,8 +753,9 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	// provider-visible surface is narrowed later via SetProviderVisibleTools.
 	addBuiltins(reg, enabledBuiltins, writeRoots, writeRootSet, bashSpec, bashTimeout, searchSpec, stderr, root, proxySpec, forbidReadRoots, readPathResolver, sessionGuard, managedConfig, opts.FileOverlay, opts.TerminalRunner, sessionTemp, fileWriteReceipt)
 	addWebSearch(reg, cfg, entry, proxySpec, sink)
-	if opts.BrowserExecutor != nil {
-		for _, t := range browser.Tools(opts.BrowserExecutor) {
+	browserExec, closeBrowser := browserBackend(opts.BrowserExecutor, cfg.Browser, writeRoots)
+	if browserExec != nil {
+		for _, t := range browser.Tools(browserExec) {
 			reg.Add(t)
 		}
 	}
@@ -2041,7 +2042,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	if runtimeSet != nil && runtimeSet.Len() > 0 {
 		_ = extension.TrackWatcher(runtimeSet.Scope(), "skill-catalogs", func() error { skillCleanup(); return nil })
 	}
-	cleanup = wireRuntimeScopeCleanup(runtimeSet, cleanup, opts.SharedHost, pluginHost, lspMgr, opts.SessionTemp)
+	cleanup = wireRuntimeScopeCleanup(runtimeSet, cleanup, opts.SharedHost, pluginHost, lspMgr, opts.SessionTemp, closeBrowser)
 	ctrl.SetExtensions(extensionDispatcher)
 	if extensionMgr == nil {
 		extUIHub = nil
