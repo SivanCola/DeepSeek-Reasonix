@@ -24,6 +24,8 @@ export function WorkspaceSessionBrowser() {
   const [query, setQuery] = useState("");
   const [archived, setArchived] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [showAll, setShowAll] = useState<Set<string>>(new Set());
+  const [activeSessionId, setActiveSessionId] = useState("");
   const [loading, setLoading] = useState(true);
   const openSequence = useRef(0);
 
@@ -31,13 +33,15 @@ export function WorkspaceSessionBrowser() {
     if (typeof app.GetWorkspaceSnapshot !== "function") return;
     setLoading(true);
     try {
-      const next = await app.GetWorkspaceSnapshot();
+      const [next, tabs] = await Promise.all([app.GetWorkspaceSnapshot(), app.ListTabs()]);
       const loaded = await Promise.all(next.workspaces.filter((workspace) => workspace.visible).map(async (workspace) => {
         const page = await app.ListWorkspaceSessions(workspace.id, query, "", 200, archived);
         return [workspace.id, page.sessions] as const;
       }));
       setSnapshot(next);
       setRows(Object.fromEntries(loaded));
+      const active = tabs.find((tab) => tab.active && !tab.remote);
+      setActiveSessionId(active?.session?.sessionId || active?.sessionId || "");
       setExpanded((current) => current.size > 0 ? current : new Set(next.workspaces.filter((workspace) => workspace.visible).map((workspace) => workspace.id)));
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error), "error");
@@ -83,7 +87,10 @@ export function WorkspaceSessionBrowser() {
       {visibleWorkspaces.map((workspace) => {
         const open = expanded.has(workspace.id);
         const workspaceRows = rows[workspace.id] ?? [];
-        const shown = workspaceSessionsForDisplay(workspaceRows, Boolean(query), archived);
+        const allVisible = workspaceRows.filter((row) => archived ? row.archived : !row.archived);
+        const canShowMore = !archived && !query && allVisible.filter((row) => !row.blank).length > 5;
+        const showingAll = showAll.has(workspace.id);
+        const shown = workspaceSessionsForDisplay(workspaceRows, Boolean(query) || showingAll, archived);
         return (
           <section className="workspace-browser__workspace" key={workspace.id}>
             <div className="workspace-browser__workspace-heading">
@@ -100,8 +107,9 @@ export function WorkspaceSessionBrowser() {
               </button>
             </div>
             {open && shown.map((session) => (
-              <div className="workspace-browser__session" key={session.ref.sessionId} data-health={session.health}>
-                <button className="workspace-browser__session-open" type="button" onClick={() => void openSession(session)}>
+              <div className={`workspace-browser__session${activeSessionId === session.ref.sessionId ? " workspace-browser__session--active" : ""}`} key={session.ref.sessionId} data-health={session.health} data-session-id={session.ref.sessionId}>
+                <button className="workspace-browser__session-open" type="button" data-session-id={session.ref.sessionId}
+                  aria-current={activeSessionId === session.ref.sessionId ? "page" : undefined} onClick={() => void openSession(session)}>
                   <MessageSquare size={13} aria-hidden="true" />
                   <span><strong>{session.title || session.preview || t("workspaceBrowser.newSession")}</strong><small>{session.preview || (session.metadataStatus === "ready" ? t("workspaceBrowser.noMessages") : t("workspaceBrowser.indexing"))}</small></span>
                   {session.running && <i aria-label={t("workspaceBrowser.running")} />}
@@ -112,6 +120,13 @@ export function WorkspaceSessionBrowser() {
                 </button>
               </div>
             ))}
+            {open && canShowMore && (
+              <button className="workspace-browser__show-more" type="button" onClick={() => setShowAll((current) => {
+                const next = new Set(current);
+                if (next.has(workspace.id)) next.delete(workspace.id); else next.add(workspace.id);
+                return next;
+              })}>{showingAll ? t("common.collapse") : t("projectTree.loadMore")}</button>
+            )}
             {open && shown.length === 0 && <div className="workspace-browser__empty">{archived ? t("workspaceBrowser.noArchived") : t("workspaceBrowser.empty")}</div>}
           </section>
         );

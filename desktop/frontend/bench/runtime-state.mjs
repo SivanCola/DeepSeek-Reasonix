@@ -5,6 +5,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
+import { chooseAppLayout, selectSession } from "./app-page-actions.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 process.env.PLAYWRIGHT_BROWSERS_PATH = path.join(root, ".pw-browsers");
 const { chromium } = await import("playwright");
@@ -19,7 +20,7 @@ try {
   await page.goto("http://127.0.0.1:4668/?mock=bench&bench=1");
   const input = page.locator("textarea.composer__input:not([aria-hidden=true])");
   await input.waitFor();
-  await page.locator('.project-tree__topic-main:has-text("bench:small-6t")').click();
+  await selectSession(page, "bench:small-6t");
   await page.waitForFunction(() => document.querySelector(".transcript")?.textContent?.includes("ASYNC LAYOUT EXPANSION COMPLETE"));
   await page.evaluate(async () => {
     const { app, onRemoteTabOpened, onRemoteTabUpdated } = await import("/src/lib/bridge.ts");
@@ -92,6 +93,7 @@ try {
   await publish("idle");
   await page.locator(".composer-run-strip").waitFor({ state: "hidden" });
   check(await page.locator(".project-tree__folder-active-indicator").count() === 0, "last job completion clears project activity");
+  await chooseAppLayout(page, "Creation", "app--creation");
   await page.locator('.project-tree__folder-main:has(svg.lucide-cloud)').click();
   await page.locator('.project-tree__topic-main:has-text("Remote demo session")').click();
   await page.locator(".remote-surface--ready").waitFor();
@@ -124,7 +126,7 @@ try {
     && !document.querySelector('.remote-surface .transcript')?.textContent?.includes("runtime missing completion fixture"));
   check(await page.locator(".remote-surface").getByText("runtime missing completion fixture", { exact: true }).count() === 0,
     "trusted idle without turn_done settles the real transcript and reconciles durable history");
-  await page.locator('.project-tree__topic-main:has-text("bench:geometry")').click();
+  await selectSession(page, "bench:geometry");
   await page.waitForFunction(() => document.querySelector(".transcript")?.textContent?.includes("Geometry contract fixture complete."));
   check(await page.locator(".remote-surface").count() === 0, "local switch retains ownership after remote runtime frames");
   check(errors.length === 0, "runtime scenarios produce no browser errors: " + errors.join("; "));

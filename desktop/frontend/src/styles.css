@@ -33,6 +33,7 @@
 .workspace-browser__workspace-create:hover { color: var(--fg); }
 .workspace-browser__session { display: flex; align-items: center; border-radius: 7px; }
 .workspace-browser__session:hover { background: var(--sidebar-hover); }
+.workspace-browser__session--active { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .workspace-browser__session-open { display: grid; min-width: 0; flex: 1; grid-template-columns: 14px minmax(0, 1fr) 7px; align-items: center; gap: 7px; border: 0; background: transparent; padding: 6px 5px 6px 17px; color: inherit; text-align: left; }
 .workspace-browser__session-open span { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
 .workspace-browser__session-open strong, .workspace-browser__session-open small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -42,6 +43,8 @@
 .workspace-browser__session-action { opacity: 0; border: 0; background: transparent; padding: 6px; color: var(--fg-faint); }
 .workspace-browser__session:hover .workspace-browser__session-action, .workspace-browser__session-action:focus-visible { opacity: 1; }
 .workspace-browser__empty { display: flex; align-items: center; gap: 6px; padding: 8px 17px; color: var(--fg-faint); font-size: 11px; }
+.workspace-browser__show-more { width: 100%; border: 0; background: transparent; padding: 5px 17px; color: var(--fg-faint); font-size: 11px; text-align: left; }
+.workspace-browser__show-more:hover { color: var(--fg); }
 
 :root {
   color-scheme: dark;

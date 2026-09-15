@@ -37,6 +37,7 @@ import { existsSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import http from "node:http";
+import { selectSession } from "./app-page-actions.mjs";
 
 const frontendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 // Keep the browser download inside the repo when the caller did not pin one.
@@ -246,7 +247,7 @@ async function coldOpenOnce(browser) {
 async function waitForSessionVisible(page, tab, timeoutMs = 15_000) {
   await page.waitForFunction(
     ({ label, marker }) => {
-      const active = document.querySelector(".project-tree__topic--active .project-tree__topic-label");
+      const active = document.querySelector('.workspace-browser__session-open[aria-current="page"] strong, .project-tree__topic--active .project-tree__topic-label');
       if (!active || !active.textContent?.includes(label)) return false;
       const transcript = document.querySelector(".transcript");
       return Boolean(transcript && transcript.textContent?.includes(marker));
@@ -258,7 +259,7 @@ async function waitForSessionVisible(page, tab, timeoutMs = 15_000) {
 
 async function switchTo(page, tab) {
   const startedAt = await page.evaluate(() => performance.now());
-  await page.click(`.project-tree__topic-main:has-text("${tab.label}")`);
+  await selectSession(page, tab.label);
   await waitForSessionVisible(page, tab);
   const settledAt = await page.evaluate(() => performance.now());
   return settledAt - startedAt;

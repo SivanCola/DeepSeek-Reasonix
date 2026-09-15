@@ -568,6 +568,7 @@ export interface TabMeta extends RemoteTabMetaFields {
   tabType?: "session" | "file";
   scope: string;
   workspaceRoot: string;
+  workspaceId?: string;
   workspaceName: string;
   workspacePath?: string;
   gitBranch?: string;
@@ -575,6 +576,8 @@ export interface TabMeta extends RemoteTabMetaFields {
   topicId: string;
   topicTitle: string;
   sessionPath?: string;
+  sessionId?: string;
+  session?: { hostId: string; sessionId: string } | null;
   sessionRevision?: number;
   sessionDigest?: string;
   sessionGeneration?: number;

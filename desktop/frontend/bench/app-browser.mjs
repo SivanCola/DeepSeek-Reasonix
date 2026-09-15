@@ -3,7 +3,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startPreviewServer } from "./vite-preview-server.mjs";
-import { chooseAppLayout } from "./app-page-actions.mjs";
+import { chooseAppLayout, selectSession } from "./app-page-actions.mjs";
 
 const frontendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 process.env.PLAYWRIGHT_BROWSERS_PATH = !process.env.PLAYWRIGHT_BROWSERS_PATH || process.env.PLAYWRIGHT_BROWSERS_PATH === ".pw-browsers"
@@ -39,16 +39,15 @@ try {
   page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.goto(`http://127.0.0.1:${port}/?mock=bench&bench=1&app-lifecycle-probe=1`, { waitUntil: "domcontentloaded" });
   await page.locator("textarea.composer__input:not([aria-hidden=true])").waitFor();
-  await page.locator(".project-tree").waitFor();
+  await page.locator(".workspace-browser, .project-tree").first().waitFor();
   await page.evaluate(() => {
     window.__appBrowserIdentity = {
       composer: document.querySelector("textarea.composer__input:not([aria-hidden=true])"),
-      projectTree: document.querySelector(".project-tree"),
       sidebar: document.querySelector(".sidebar"),
     };
   });
   const composer = page.locator("textarea.composer__input:not([aria-hidden=true])");
-  await page.locator('.project-tree__topic-main:has-text("bench:small-6t")').click();
+  await selectSession(page, "bench:small-6t");
   await page.waitForFunction(() => document.querySelector('.transcript')?.textContent?.includes('ASYNC LAYOUT EXPANSION COMPLETE'));
   await composer.fill("layout-owned draft");
   // Raw Markdown fallbacks become parsed DOM asynchronously. History preservation
@@ -101,7 +100,6 @@ try {
 
   const identities = await page.evaluate(() => ({
     composer: window.__appBrowserIdentity.composer === document.querySelector("textarea.composer__input:not([aria-hidden=true])"),
-    projectTree: window.__appBrowserIdentity.projectTree === document.querySelector(".project-tree"),
     sidebar: window.__appBrowserIdentity.sidebar === document.querySelector(".sidebar"),
     workspace: window.__appBrowserIdentity.workspace === document.querySelector('.workspace-panel'),
     workspaceTree: window.__appBrowserIdentity.workspaceTree === document.querySelector('.workspace-tree'),
@@ -122,12 +120,11 @@ try {
   assert(await closedTerminal.count() === 1, "closed warm terminal remains mounted and hidden");
   assert(await page.locator('.terminal-drawer-resizer[tabindex="-1"]').count() === 1, "closed warm terminal is inert and leaves keyboard navigation");
 
-  await page.locator('.project-tree__topic-main:has-text("bench:geometry")').click();
+  await selectSession(page, "bench:geometry");
   await page.waitForFunction(() => document.querySelector(".transcript")?.textContent?.includes("Geometry contract fixture complete."));
-  await page.locator('.project-tree__topic-main:has-text("bench:small-6t")').click();
+  await selectSession(page, "bench:small-6t");
   await page.waitForFunction(() => document.querySelector(".transcript")?.textContent?.includes("ASYNC LAYOUT EXPANSION COMPLETE"));
   const afterSwitch = await page.evaluate(() => ({
-    projectTree: window.__appBrowserIdentity.projectTree === document.querySelector(".project-tree"),
     workspace: window.__appBrowserIdentity.workspace === document.querySelector('.workspace-panel'),
     workspaceTree: window.__appBrowserIdentity.workspaceTree === document.querySelector('.workspace-tree'),
     preview: window.__appBrowserIdentity.preview === document.querySelector('.workspace-preview__body'),
@@ -135,12 +132,12 @@ try {
     subscriptions: window.__reasonixAppLifecycle?.snapshot().activeSubscriptions,
     operations: window.__reasonixAppLifecycle?.snapshot().activeOperations,
   }));
-  assert(afterSwitch.projectTree, "same-project session switching preserves the Sidebar project tree (not WorkspacePanel)");
   assert(afterSwitch.workspace && afterSwitch.workspaceTree && afterSwitch.preview && afterSwitch.selectedFile === 'README.md',
     'same-project session switching preserves actual WorkspacePanel, tree, preview DOM and selected file');
   assert(afterSwitch.subscriptions === 6, `the six AppRuntimeEffects subscriptions remain singular (${afterSwitch.subscriptions})`);
   assert(afterSwitch.operations === 0, "instrumented operation owners report zero active operations (not yet all App operations)");
 
+  await chooseLayout(page, "Creation", "app--creation");
   await page.locator('.project-tree__folder-main:has(svg.lucide-cloud)').click();
   await page.locator('.project-tree__topic-main:has-text("Remote demo session")').click();
   await page.locator('.remote-surface--ready').waitFor();
@@ -152,7 +149,7 @@ try {
   await page.waitForFunction(() => document.querySelector('textarea.composer__input:not([aria-hidden=true])')?.disabled === false);
   assert(await page.locator('.remote-surface').count() === 1, "global New Session stays on the remote workspace instead of opening a local blank");
   assert(await page.evaluate(() => window.__appBrowserIdentity.composer === document.querySelector('textarea.composer__input:not([aria-hidden=true])')), "local/remote navigation and remote New Session preserve the Composer DOM identity");
-  await page.locator('.project-tree__topic-main:has-text("bench:geometry")').click();
+  await selectSession(page, "bench:geometry");
   await page.waitForFunction(() => document.querySelector('.transcript')?.textContent?.includes('Geometry contract fixture complete.'));
   assert(await page.locator('.remote-surface').count() === 0, "subsequent local navigation owns the surface; remote events do not reclaim it");
   const sentText = 'App source-bound submission fixture';

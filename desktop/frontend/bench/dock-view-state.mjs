@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { startPreviewServer } from "./vite-preview-server.mjs";
+import { chooseAppLayout, selectSession } from "./app-page-actions.mjs";
 
 const frontendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 process.env.PLAYWRIGHT_BROWSERS_PATH = !process.env.PLAYWRIGHT_BROWSERS_PATH || process.env.PLAYWRIGHT_BROWSERS_PATH === ".pw-browsers"
@@ -20,7 +21,7 @@ try {
   page.on("pageerror", error => errors.push(error.message));
   await page.goto(url + "/?mock=bench&bench=1&app-lifecycle-probe=1");
   await page.locator("textarea.composer__input:not([aria-hidden=true])").waitFor();
-  await page.locator('.project-tree__topic-main:has-text("bench:small-6t")').click();
+  await selectSession(page, "bench:small-6t");
   // The benchmark fixture hydrates this session asynchronously. Wait for the
   // authoritative session snapshot before mutating dock state, otherwise the
   // late hydrate can replace the empty-state picker while Playwright clicks it.
@@ -67,11 +68,12 @@ try {
   assert.equal(await page.getByPlaceholder("Filter files…", { exact: true }).inputValue(), "mod", "restart restores filtering");
   await tabs.nth(0).click();
   assert.equal(await page.evaluate(selected), "README.md", "restart keeps the other view independent");
+  await chooseAppLayout(page, "Creation", "app--creation");
   await page.locator('.project-tree__folder-main:has(svg.lucide-cloud)').click();
   await page.locator('.project-tree__topic-main:has-text("Remote demo session")').click();
   await page.locator(".remote-surface--ready").waitFor();
   assert.equal(await tabs.count(), 0, "other project does not inherit local dock tabs");
-  await page.locator('.project-tree__topic-main:has-text("bench:small-6t")').click();
+  await selectSession(page, "bench:small-6t");
   await page.locator('[data-workspace-path="README.md"]').waitFor();
   assert.equal(await tabs.count(), 2);
   assert.equal(await page.evaluate(selected), "README.md", "returning to the project restores its view");

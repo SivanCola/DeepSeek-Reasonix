@@ -252,7 +252,7 @@ func TestDesktopV3CatalogResumeRenameAndDeleteUseSessionIdentity(t *testing.T) {
 	}
 }
 
-func TestDesktopV3ResumeUnavailableModelFallsBackOnSameSession(t *testing.T) {
+func TestDesktopSessionRefOpenFallsBackAndPublishesHydrationReady(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	model, fallbackModel := configureSwitchableDefaultModels(t)
 	app := NewApp()
@@ -293,8 +293,13 @@ func TestDesktopV3ResumeUnavailableModelFallsBackOnSameSession(t *testing.T) {
 		}
 	})
 
-	if _, err := app.ResumeSessionForTab(tab.ID, sessionRoute(target.Ref().SessionID)); err != nil {
+	readySignals := 0
+	app.readyHook = func() { readySignals++ }
+	if _, err := app.OpenSession(target.Ref()); err != nil {
 		t.Fatal(err)
+	}
+	if readySignals != 1 {
+		t.Fatalf("SessionRef open ready signals = %d, want 1", readySignals)
 	}
 	if tab.Ctrl == ctrl || tab.SessionID != target.Ref().SessionID || tab.SessionPath != "" || tab.Ctrl.ModelRef() != fallbackModel {
 		t.Fatalf("fallback binding: replaced=%v session=%q path=%q model=%q", tab.Ctrl != ctrl, tab.SessionID, tab.SessionPath, tab.Ctrl.ModelRef())

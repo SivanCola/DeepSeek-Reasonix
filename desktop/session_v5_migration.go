@@ -176,7 +176,7 @@ func (a *App) migrateDesktopSessionsV5(ctx context.Context) error {
 	return joined
 }
 
-func (a *App) migrateCanonicalStore(ctx context.Context, source desktopMigrationSource) error {
+func (a *App) migrateCanonicalStore(ctx context.Context, source desktopMigrationSource) (retErr error) {
 	if _, err := os.Stat(source.root); os.IsNotExist(err) {
 		return nil
 	} else if err != nil {
@@ -186,7 +186,7 @@ func (a *App) migrateCanonicalStore(ctx context.Context, source desktopMigration
 	if err != nil {
 		return err
 	}
-	defer old.CloseAll(context.Background())
+	defer func() { retErr = errors.Join(retErr, old.CloseAll(context.Background())) }()
 	infos, err := listAllCanonicalSessionInfo(ctx, old.Query())
 	if err != nil {
 		return err
@@ -289,7 +289,7 @@ func (a *App) migrateLegacyDirectory(ctx context.Context, source desktopMigratio
 	return joined
 }
 
-func (a *App) migrateLegacySession(ctx context.Context, path string, source desktopMigrationSource, workspaceID string) error {
+func (a *App) migrateLegacySession(ctx context.Context, path string, source desktopMigrationSource, workspaceID string) (retErr error) {
 	digest := sha256.Sum256([]byte(canonicalRuntimeRoot(path)))
 	key := hex.EncodeToString(digest[:])
 	if err := updateDesktopMigrationLedger(key, "", "pending", ""); err != nil {
@@ -304,7 +304,7 @@ func (a *App) migrateLegacySession(ctx context.Context, path string, source desk
 	if err != nil {
 		return err
 	}
-	defer stage.CloseAll(context.Background())
+	defer func() { retErr = errors.Join(retErr, stage.CloseAll(context.Background())) }()
 	runtime, result, err := stage.ContinueImported(ctx, path, "")
 	if err != nil {
 		_ = updateDesktopMigrationLedger(key, "", "failed", "legacy_import")

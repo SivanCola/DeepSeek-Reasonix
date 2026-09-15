@@ -97,7 +97,7 @@ func readSessionHeader(dir, sessionID string) (SessionHeader, bool, error) {
 	}
 	var header SessionHeader
 	if err := json.Unmarshal(body, &header); err != nil {
-		return SessionHeader{}, true, fmt.Errorf("%w: decode session header: %v", ErrDamagedStore, err)
+		return SessionHeader{}, true, fmt.Errorf("%w: decode session header: %w", ErrDamagedStore, err)
 	}
 	if header.SchemaVersion != SessionHeaderSchemaVersion {
 		return SessionHeader{}, true, fmt.Errorf("%w: session header version %d", ErrUnsupportedVersion, header.SchemaVersion)

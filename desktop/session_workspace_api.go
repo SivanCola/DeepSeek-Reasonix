@@ -212,10 +212,7 @@ func (a *App) ListWorkspaceSessions(workspaceID, queryText, cursor string, limit
 	if start > len(rows) {
 		start = len(rows)
 	}
-	end := start + limit
-	if end > len(rows) {
-		end = len(rows)
-	}
+	end := min(start+limit, len(rows))
 	page := WorkspaceSessionPage{
 		Sessions:           append([]WorkspaceSessionSummary(nil), rows[start:end]...),
 		RegistryGeneration: state.Generation,
@@ -494,6 +491,10 @@ func (a *App) OpenSession(ref session.SessionRef) (HistoryPage, error) {
 	if _, err := a.resumeCanonicalSessionForTranscript(tab, ctrl, sessionRoute(ref.SessionID), defaultHistoryPageTurns, false, navigationSequence); err != nil {
 		return HistoryPage{}, err
 	}
+	// runtime:rebuilt intentionally has no reload semantics. SessionRef opening
+	// is navigation, so publish ready only after the exact target commits and
+	// let every frontend owner re-read its metadata and history.
+	a.emitReady(a.bootContext(), tab.ID)
 	return page, nil
 }
 

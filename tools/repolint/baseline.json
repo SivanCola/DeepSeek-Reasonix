@@ -4,7 +4,7 @@
     "commented-code": 0,
     "complexity": 1873,
     "essay": 1927,
-    "file-size": 99706,
+    "file-size": 99729,
     "function-size": 8076,
     "layering": 1,
     "marker": 0,
@@ -135,7 +135,7 @@
       "file-size": 177
     },
     "desktop/frontend/src/lib/bridge.ts": {
-      "file-size": 4892
+      "file-size": 4912
     },
     "desktop/frontend/src/lib/crash.ts": {
       "file-size": 98
@@ -144,7 +144,7 @@
       "file-size": 256
     },
     "desktop/frontend/src/lib/types.ts": {
-      "file-size": 1615
+      "file-size": 1618
     },
     "desktop/frontend/src/lib/useController.ts": {
       "file-size": 4156

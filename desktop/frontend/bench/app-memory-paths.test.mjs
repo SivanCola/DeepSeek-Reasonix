@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { memoryAffected, memoryMode } from "./app-memory-paths.mjs";
+
+const benchDir = path.dirname(fileURLToPath(import.meta.url));
 test("all frontend consumers, configuration and tests trigger the soak", () => {
   for (const path of ["desktop/frontend/src/App.tsx", "desktop/frontend/src/lib/types.ts", "desktop/frontend/pnpm-lock.yaml", "desktop/frontend/bench/fixture.json", ".github/workflows/app-memory.yml"])
     assert.equal(memoryAffected([path]), true, path);
@@ -24,4 +29,11 @@ test("ordinary frontend changes use the short screen and lifecycle changes use t
   assert.equal(memoryMode(["desktop/frontend/src/lib/subscriptionScope.ts"]), "full");
   assert.equal(memoryMode(["docs/guide.md"]), "off");
   assert.equal(memoryMode(["shared/new-loader.js"]), "full");
+});
+
+test("local session benchmarks navigate through the shared layout-independent contract", () => {
+  for (const name of ["app-memory.mjs", "app-browser.mjs", "composer-transcript-stability.mjs", "dock-view-state.mjs", "run.mjs", "runtime-state.mjs"]) {
+    const source = readFileSync(path.join(benchDir, name), "utf8");
+    assert.doesNotMatch(source, /project-tree__topic-main:has-text\(["'`]bench:/, name);
+  }
 });

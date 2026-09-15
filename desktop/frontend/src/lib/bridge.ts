@@ -927,9 +927,11 @@ export function onRuntimeRebuilt(cb: (tabId?: string, runtimeEpoch?: string) => 
 export function onReady(cb: (tabId?: string) => void): () => void {
   const off = hostEvents("agent:ready", (tabId?: unknown) => cb(typeof tabId === "string" ? tabId : undefined));
   if (off) return off;
-  // In dev mock, fire immediately since there's no real boot sequence.
+  // The browser mock has no native event bridge, but SessionRef navigation
+  // still needs the same reload semantics as the desktop host.
+  mockReadyListeners.add(cb);
   cb();
-  return () => {};
+  return () => mockReadyListeners.delete(cb);
 }
 
 export function onProjectTreeChanged(cb: () => void): () => void {
@@ -962,6 +964,11 @@ export function onTabMeta(cb: (event: TabMetaRefreshEvent) => void): () => void 
 
 const mockTopicActivationListeners = new Set<(event: TopicActivationEvent) => void>();
 const mockTabMetaListeners = new Set<(event: TabMetaRefreshEvent) => void>();
+const mockReadyListeners = new Set<(tabId?: string) => void>();
+
+function emitMockReady(tabId?: string): void {
+  mockReadyListeners.forEach((listener) => listener(tabId));
+}
 
 export function __emitMockTopicActivation(event: TopicActivationEvent): void {
   mockTopicActivationListeners.forEach((listener) => listener(event));
@@ -2294,7 +2301,20 @@ function makeMockApp(): AppBindings {
       }).filter((row) => (includeArchived || !row.archived) && (!needle || `${row.title}\n${row.preview}`.toLowerCase().includes(needle))).slice(0, limit);
       return { sessions, registryGeneration: 1 };
     },
-    async OpenSession(_ref: SessionRef) { return { messages: [], startTurn: 0, endTurn: 0, totalTurns: 0, hasOlder: false }; },
+    async OpenSession(ref: SessionRef) {
+      if (ref.hostId !== "local") throw new Error(`unsupported mock session host: ${ref.hostId}`);
+      const parent = mockProjectTreeForDisplay().find((candidate) => projectChildren(candidate).some((node) => mockSessionIDForNode(node) === ref.sessionId));
+      const node = parent && projectChildren(parent).find((candidate) => mockSessionIDForNode(candidate) === ref.sessionId);
+      if (!parent || !node?.topicId) throw new Error(`mock session not found: ${ref.sessionId}`);
+      const tab = await this.ActivateTopic(parent.kind === "global_folder" ? "global" : "project", parent.root || "", node.topicId, "");
+      const workspaceId = mockWorkspaceID(parent);
+      const session = { hostId: "local", sessionId: ref.sessionId } as SessionRef;
+      mockTabs = mockTabs.map((candidate) => candidate.id === tab.id
+        ? { ...candidate, workspaceId, sessionId: ref.sessionId, session }
+        : candidate);
+      emitMockReady(tab.id);
+      return this.HistoryPageForTab(tab.id, 0, 60);
+    },
     async ReadSessionHistory(_ref: SessionRef, _cursor: string, _limit: number) { return { messages: [], startTurn: 0, endTurn: 0, totalTurns: 0, hasOlder: false }; },
     async RenameCanonicalSession(_ref: SessionRef, _title: string) {},
     async ArchiveCanonicalSession(ref: SessionRef) { mockArchivedSessionIDs.add(ref.sessionId); },

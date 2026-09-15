@@ -4,6 +4,7 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startPreviewServer } from "./vite-preview-server.mjs";
+import { selectSession } from "./app-page-actions.mjs";
 
 const frontendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 process.env.PLAYWRIGHT_BROWSERS_PATH = !process.env.PLAYWRIGHT_BROWSERS_PATH || process.env.PLAYWRIGHT_BROWSERS_PATH === ".pw-browsers"
@@ -153,9 +154,9 @@ try {
   page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.goto(url, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => !document.querySelector(".startup-splash"), undefined, { timeout: 30_000 });
-  await page.click('.project-tree__topic-main:has-text("bench:tools-38t")');
+  await selectSession(page, "bench:tools-38t");
   await page.waitForFunction(() => (
-    document.querySelector(".project-tree__topic--active .project-tree__topic-label")?.textContent?.includes("bench:tools-38t")
+    document.querySelector('.workspace-browser__session-open[aria-current="page"] strong, .project-tree__topic--active .project-tree__topic-label')?.textContent?.includes("bench:tools-38t")
       && document.querySelector(".transcript")?.textContent?.includes("pkg-41/mod.go")
   ), undefined, { timeout: 30_000 });
   await page.waitForFunction(() => !document.querySelector(".transcript-navigation-overlay"), undefined, { timeout: 30_000 });
