@@ -106,6 +106,14 @@ func main() {
 	}
 }
 
+// releaseCapacityService drops the query cache together with the writer lease
+// and recovery store. Closing the query alone leaves recovery-v1.bolt open, and
+// Windows refuses to remove a directory that still holds it.
+func releaseCapacityService(service *session.Service) {
+	service.Query().Close()
+	_ = service.CloseAll(context.Background())
+}
+
 func run(ctx context.Context, cfg config) (result report, err error) {
 	if err := validateConfig(cfg); err != nil {
 		return report{}, err
@@ -182,7 +190,7 @@ func run(ctx context.Context, cfg config) (result report, err error) {
 	if err != nil {
 		return report{}, err
 	}
-	defer second.Query().Close()
+	defer releaseCapacityService(second)
 	openStarted := time.Now()
 	binding, err := second.Open(ctx, ref)
 	if err != nil {
