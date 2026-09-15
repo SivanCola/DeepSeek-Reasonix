@@ -104,8 +104,9 @@ func (b bash) runPersistent(ctx context.Context, p bashParams, sh sandbox.Shell,
 	// The session-private temporary directory must reach the sandbox profile,
 	// not just the child environment: the spec that sets TMPDIR/GOCACHE must
 	// also bind (Linux) or allow (Seatbelt) that directory.
-	launch := sandbox.PrepareArgs(b.specForCall(ctx), persistentshell.InteractiveArgv(sh), prepared.SessionTemp)
-	if b.specForCall(ctx).Enforce() && !launch.Wrapped {
+	spec := b.specForCall(ctx)
+	launch := sandbox.PrepareArgs(spec, persistentshell.InteractiveArgv(sh), prepared.SessionTemp)
+	if spec.Enforce() && !launch.Wrapped {
 		ex := shellrun.DescriptorFromShell(sh)
 		ex.State = tool.ShellStateNotRun
 		ex.FailurePhase = tool.ShellPhaseLaunch
