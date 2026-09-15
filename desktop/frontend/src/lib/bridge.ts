@@ -2306,14 +2306,38 @@ function makeMockApp(): AppBindings {
       const parent = mockProjectTreeForDisplay().find((candidate) => projectChildren(candidate).some((node) => mockSessionIDForNode(node) === ref.sessionId));
       const node = parent && projectChildren(parent).find((candidate) => mockSessionIDForNode(candidate) === ref.sessionId);
       if (!parent || !node?.topicId) throw new Error(`mock session not found: ${ref.sessionId}`);
-      const tab = await this.ActivateTopic(parent.kind === "global_folder" ? "global" : "project", parent.root || "", node.topicId, "");
+      const tab = mockTabs.find((candidate) => candidate.active) ?? mockTabs[0];
+      if (!tab) throw new Error("mock workspace is not ready");
+      // SessionRef navigation rebinds the existing local surface. Do not route
+      // it through the legacy Topic activator: that swaps tab ids, so the
+      // frontend correctly rejects the resulting ready event as belonging to
+      // a different surface and never hydrates the selected transcript.
+      pruneMockTabsTo(tab.id);
       const workspaceId = mockWorkspaceID(parent);
       const session = { hostId: "local", sessionId: ref.sessionId } as SessionRef;
-      mockTabs = mockTabs.map((candidate) => candidate.id === tab.id
-        ? { ...candidate, workspaceId, sessionId: ref.sessionId, session }
-        : candidate);
-      emitMockReady(tab.id);
-      return this.HistoryPageForTab(tab.id, 0, 60);
+      const scope = parent.kind === "global_folder" ? "global" : "project";
+      const workspaceRoot = parent.root || (scope === "global" ? globalWorkspaceRoot : "");
+      const rebound: TabMeta = {
+        ...mockTabs[0],
+        scope,
+        workspaceRoot,
+        workspaceId,
+        workspaceName: parent.label,
+        workspacePath: workspaceRoot,
+        topicId: node.topicId,
+        topicTitle: topicLabel(node.topicId, node.label),
+        sessionPath: `/mock/sessions/${node.topicId}.jsonl`,
+        sessionId: ref.sessionId,
+        session,
+        projectColor: node.projectColor || parent.projectColor,
+        ready: true,
+        running: mockTopicRunsInScenario(node.topicId),
+        active: true,
+        cwd: workspaceRoot,
+      };
+      mockTabs = [rebound];
+      emitMockReady(rebound.id);
+      return this.HistoryPageForTab(rebound.id, 0, 60);
     },
     async ReadSessionHistory(_ref: SessionRef, _cursor: string, _limit: number) { return { messages: [], startTurn: 0, endTurn: 0, totalTurns: 0, hasOlder: false }; },
     async RenameCanonicalSession(_ref: SessionRef, _title: string) {},
