@@ -66,7 +66,7 @@ var ProjectionKinds = map[string]bool{
 	"plan/state": true, "goal/state": true, "session/title": true, "session/config": true,
 	"model/context-replace": true, "history/replace": true,
 	"compaction": true, "runtime/recovery": true, "legacy/import": true,
-	"diagnostic": true,
+	"diagnostic": true, EventImageOffload: true,
 }
 
 var PrototypeProjectionKinds = func() map[string]bool {
@@ -140,6 +140,8 @@ func applyProjectionCommit(projection *Projection, commit Commit) error {
 			err = projectGoalState(projection, commit, ev)
 		case "diagnostic":
 			err = projectDiagnostic(projection, commit, ev)
+		case EventImageOffload:
+			err = projectImageOffload(projection, ev)
 		case "turn/end":
 			err = projectTurnEnd(projection, commit, ev)
 		}
