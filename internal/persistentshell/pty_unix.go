@@ -30,7 +30,9 @@ func startPTY(argv []string, dir string, env []string) (ptyConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	go cmd.Wait()
+	// Reap the shell without blocking: its exit surfaces to callers as a read
+	// error on the master side, so the wait status itself carries no decision.
+	go func() { _ = cmd.Wait() }()
 	return &unixPTY{file: file, cmd: cmd}, nil
 }
 

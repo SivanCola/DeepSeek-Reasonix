@@ -6,11 +6,19 @@ import (
 	"strings"
 	"time"
 
+	"mvdan.cc/sh/v3/syntax"
+
 	"reasonix/internal/persistentshell"
 	"reasonix/internal/sandbox"
+	"reasonix/internal/shellparse"
 	"reasonix/internal/shellrun"
 	"reasonix/internal/tool"
 )
+
+// shellResetNotice tells the model that session shell state is gone. Without it
+// the model keeps issuing relative paths against a working directory that the
+// reset already discarded.
+const shellResetNotice = "The persistent shell was reset; the next bash call starts from the workspace with a fresh working directory and environment."
 
 func persistEnv(env []string) []string {
 	return applyEnvOverrides(env, []string{
@@ -29,11 +37,33 @@ func (b bash) persistentManager(ctx context.Context) *persistentshell.Manager {
 	return b.persistent
 }
 
+// hasBackgroundStatement reports an explicit `&` background operator. A session
+// shell outlives the call, so its background children are neither reaped by
+// #3702's process-group cleanup nor kept out of the next command's output: both
+// contracts only hold in a one-shot process, so such commands stay there.
+func hasBackgroundStatement(command string) bool {
+	file, err := shellparse.ParseBash(command)
+	if err != nil {
+		return false
+	}
+	background := false
+	syntax.Walk(file, func(node syntax.Node) bool {
+		if stmt, ok := node.(*syntax.Stmt); ok && stmt.Background {
+			background = true
+		}
+		return !background
+	})
+	return background
+}
+
 func (b bash) shouldUsePersistent(ctx context.Context, p bashParams) bool {
 	if p.RunInBackground || p.PreserveBackgroundProcesses {
 		return false
 	}
 	if len(p.AdditionalWriteDirs) > 0 || strings.TrimSpace(p.SandboxPermissions) != "" {
+		return false
+	}
+	if hasBackgroundStatement(p.Command) {
 		return false
 	}
 	m := b.persistentManager(ctx)
@@ -53,37 +83,43 @@ func rejectPowerShellChaining(ex *tool.ShellExecution, start time.Time, sh sandb
 		"conditional chaining, or issue the commands as separate calls"), true
 }
 
-func (b bash) tryPersistent(ctx context.Context, p bashParams, sh sandbox.Shell, cmdEnv []string, wrapped bool, start time.Time, ex *tool.ShellExecution) (tool.DetailedResult, error, bool) {
-	out, runEx, err, used := b.runPersistent(ctx, p, sh, cmdEnv)
+func (b bash) tryPersistent(ctx context.Context, p bashParams, sh sandbox.Shell, prepared sandbox.Prepared, cmdEnv []string, start time.Time, ex *tool.ShellExecution) (tool.DetailedResult, error, bool) {
+	out, runEx, err, used := b.runPersistent(ctx, p, sh, prepared, cmdEnv)
 	if !used {
 		return tool.DetailedResult{}, nil, false
 	}
 	mergeRunInto(ex, runEx)
 	ex.DurationMs = time.Since(start).Milliseconds()
 	return tool.DetailedResult{
-		Output:    b.appendWriteHints(ctx, out, err, p, wrapped),
+		Output:    b.appendWriteHints(ctx, out, err, p, prepared.Wrapped),
 		Execution: ex,
 	}, err, true
 }
 
-func (b bash) runPersistent(ctx context.Context, p bashParams, sh sandbox.Shell, cmdEnv []string) (string, *tool.ShellExecution, error, bool) {
+func (b bash) runPersistent(ctx context.Context, p bashParams, sh sandbox.Shell, prepared sandbox.Prepared, cmdEnv []string) (string, *tool.ShellExecution, error, bool) {
 	if !b.shouldUsePersistent(ctx, p) {
 		return "", nil, nil, false
 	}
 	m := b.persistentManager(ctx)
-	spec := b.specForCall(ctx)
-	argv, wrapped := sandbox.CommandArgs(spec, persistentshell.InteractiveArgv(sh))
-	if spec.Enforce() && !wrapped {
-		return "", nil, fmt.Errorf("%s", sandbox.UnavailableMessage()), true
+	// The session-private temporary directory must reach the sandbox profile,
+	// not just the child environment: the spec that sets TMPDIR/GOCACHE must
+	// also bind (Linux) or allow (Seatbelt) that directory.
+	launch := sandbox.PrepareArgs(b.specForCall(ctx), persistentshell.InteractiveArgv(sh), prepared.SessionTemp)
+	if b.specForCall(ctx).Enforce() && !launch.Wrapped {
+		ex := shellrun.DescriptorFromShell(sh)
+		ex.State = tool.ShellStateNotRun
+		ex.FailurePhase = tool.ShellPhaseLaunch
+		ex.MutationRisk = tool.ShellMutationNotStarted
+		return "", ex, fmt.Errorf("%s", sandbox.UnavailableMessage()), true
 	}
-	var progress func(string)
+	var progress = shellrun.NewProgressWriter(nil)
 	if emit, ok := tool.ProgressFrom(ctx); ok {
-		progress = emit
+		progress = shellrun.NewProgressWriter(emit)
 	}
 	res := m.Run(ctx, persistentshell.Request{
-		Argv:     argv,
+		Argv:     launch.Argv,
 		Dir:      b.workDir,
-		Env:      cmdEnv,
+		Env:      applyEnvOverrides(cmdEnv, launch.EnvOverrides),
 		Command:  p.Command,
 		Timeout:  b.foregroundTimeout(),
 		Shell:    sh,
@@ -119,5 +155,9 @@ func (b bash) runPersistent(ctx context.Context, p bashParams, sh sandbox.Shell,
 	default:
 		ex.MutationRisk = tool.ShellMutationUnknown
 	}
-	return res.Output, ex, res.Err, true
+	out := res.Output
+	if res.Reset {
+		out = appendSessionDataHint(out, shellResetNotice)
+	}
+	return out, ex, res.Err, true
 }

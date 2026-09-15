@@ -136,3 +136,74 @@ func TestBashPersistentSkipsBackgroundAndWriteEscalation(t *testing.T) {
 		t.Fatalf("additional_write_dirs must not reuse persistent cwd, got %q", out)
 	}
 }
+
+// A foreground command that backgrounds a child stays on the one-shot path:
+// only there does #3702's process-group reap run, and only there can the
+// child's later output not land inside the next command's result.
+func TestBashPersistentSkipsBackgroundOperator(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX persistent bash")
+	}
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	b := persistentBash(t, dir)
+	ctx := fullAccessBashTestContext(t.Context())
+	if _, err := b.Execute(ctx, argsJSON(t, map[string]any{"command": "cd sub"})); err != nil {
+		t.Fatalf("cd: %v", err)
+	}
+	// A backgrounding command must not observe the persistent cwd.
+	out, err := b.Execute(ctx, argsJSON(t, map[string]any{"command": "(sleep 0) & wait; pwd"}))
+	if err != nil {
+		t.Fatalf("background pwd: %v (%q)", err, out)
+	}
+	got := strings.TrimSpace(out)
+	if resolved, rerr := filepath.EvalSymlinks(got); rerr == nil {
+		got = resolved
+	}
+	wantSub, _ := filepath.EvalSymlinks(sub)
+	if got == wantSub {
+		t.Fatalf("a backgrounding command must run one-shot, got %q", out)
+	}
+}
+
+func TestHasBackgroundStatement(t *testing.T) {
+	cases := map[string]bool{
+		"sleep 1 &":                  true,
+		"npm run dev &":              true,
+		"(while true; do :; done) &": true,
+		"sleep 1":                    false,
+		"echo 'a & b'":               false,
+		"grep -n 'x && y' file":      false,
+		"a && b":                     false,
+	}
+	for command, want := range cases {
+		if got := hasBackgroundStatement(command); got != want {
+			t.Fatalf("hasBackgroundStatement(%q)=%v want %v", command, got, want)
+		}
+	}
+}
+
+// The persistent launch must carry the session-private temporary directory into
+// the sandbox profile, not only into the child environment: the same spec sets
+// TMPDIR/GOCACHE, so a profile without that directory denies every write
+// through them.
+func TestBashPersistentLaunchCarriesSessionTemp(t *testing.T) {
+	sessionTemp := t.TempDir()
+	spec := sandbox.Spec{Mode: "enforce", WriteRoots: []string{t.TempDir()}}
+	launch := sandbox.PrepareArgs(spec, persistentshell.InteractiveArgv(sandbox.ResolveShell("", "", nil)), sessionTemp)
+	if launch.SessionTemp != sessionTemp {
+		t.Fatalf("session temp %q not carried into the launch", launch.SessionTemp)
+	}
+	if len(launch.EnvOverrides) == 0 {
+		t.Fatal("session temp env overrides missing")
+	}
+	if !launch.Wrapped {
+		t.Skip("no OS sandbox backend on this host")
+	}
+	if !strings.Contains(strings.Join(launch.Argv, " "), sessionTemp) {
+		t.Fatalf("sandbox argv does not reference the session temp dir: %v", launch.Argv)
+	}
+}

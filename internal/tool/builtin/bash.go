@@ -236,7 +236,7 @@ func (b bash) ExecuteDetailed(ctx context.Context, args json.RawMessage) (tool.D
 	argv, wrapped := prepared.Argv, prepared.Wrapped
 	cmdEnv := applyEnvOverrides(bashCommandEnv(ctx), prepared.EnvOverrides)
 
-	if res, err, used := b.tryPersistent(ctx, p, sh, persistEnv(cmdEnv), wrapped, start, ex); used {
+	if res, err, used := b.tryPersistent(ctx, p, sh, prepared, persistEnv(cmdEnv), start, ex); used {
 		return res, err
 	}
 

@@ -6,12 +6,18 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 )
 
 const (
-	readyToken          = "REASONIX_SHELL_READY"
-	maxPersistentOutput = 10 << 20
+	readyToken = "REASONIX_SHELL_READY"
+	// markerOverlap is how much already-scanned output is re-examined with the
+	// next PTY read so a marker split across two reads is still found. It must
+	// exceed the longest marker plus its status digits and terminator.
+	markerOverlap = 96
+	// preStartCap bounds what is retained while waiting for the start marker.
+	// Only echoed wrapper source and stray output from a previous command's
+	// background child can appear there, and none of it is model-visible.
+	preStartCap = 64 << 10
 )
 
 func newMarkerID() string {
@@ -26,9 +32,49 @@ func posixQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
+// ansiCQuote renders s as a POSIX $'...' literal with no raw control bytes, so
+// a multi-line command still travels as ONE physical input line. An interactive
+// shell echoes PS2 for an embedded newline before it runs the buffer, which
+// would put prompt bytes and wrapper source into model-visible output — and a
+// PTY line discipline is not a reliable carrier for arbitrary control bytes.
+func ansiCQuote(s string) string {
+	var b strings.Builder
+	b.Grow(len(s) + 8)
+	b.WriteString("$'")
+	for i := range len(s) {
+		c := s[i]
+		switch c {
+		case '\\':
+			b.WriteString(`\\`)
+		case '\'':
+			b.WriteString(`\'`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\t':
+			b.WriteString(`\t`)
+		default:
+			if c < 0x20 || c == 0x7f {
+				// Octal escapes are the portable $'...' form; \xHH is not
+				// available in every POSIX shell this package can drive.
+				b.WriteString(`\`)
+				b.WriteString(strconv.FormatUint(uint64(c), 8))
+				continue
+			}
+			b.WriteByte(c)
+		}
+	}
+	b.WriteString("'")
+	return b.String()
+}
+
 func posixSetupScript() string {
 	return strings.Join([]string{
-		"stty -echo 2>/dev/null || true",
+		// -onlcr stops the line discipline rewriting \n as \r\n and emitting a
+		// stray extra \r under output pressure, which normalisation would turn
+		// into a blank line. The sanitizer covers hosts that reject it.
+		"stty -echo -onlcr 2>/dev/null || stty -echo 2>/dev/null || true",
 		"unset PROMPT_COMMAND",
 		"PS1=",
 		"PS2=",
@@ -38,10 +84,16 @@ func posixSetupScript() string {
 	}, "; ") + "\n"
 }
 
+// posixCommandScript wraps one command. Everything is one physical line, the
+// status marker is printed by its own printf (so it is found even when the
+// command's own output has no trailing newline), and stdin is /dev/null so a
+// command that prompts fails the same way it did under one-shot execution
+// instead of blocking the session shell until the deadline.
 func posixCommandScript(command, start, end string) string {
 	return "printf '%s\\n' " + posixQuote(start) +
-		"; eval " + posixQuote(command) +
-		"\nprintf '%s%d\\n' " + posixQuote(end) + " $?\n"
+		"; eval -- " + ansiCQuote(command) + " </dev/null" +
+		"; __rx_status=$?" +
+		"; printf '%s%s\\n' " + posixQuote(end) + ` "$__rx_status"` + "\n"
 }
 
 func powerShellSetupScript() string {
@@ -49,6 +101,10 @@ func powerShellSetupScript() string {
 		"Write-Output " + powershellSingleQuote(readyToken) + "\n"
 }
 
+// powerShellCommandScript mirrors posixCommandScript. PSReadLine has no
+// `stty -echo` equivalent, so the submitted line is echoed back; the markers
+// are still unambiguous because completion requires status digits immediately
+// after the end nonce and the echo continues with a quote character.
 func powerShellCommandScript(command, start, end string) string {
 	encoded := hex.EncodeToString([]byte(command))
 	return strings.Join([]string{
@@ -60,7 +116,9 @@ func powerShellCommandScript(command, start, end string) string {
 		"$global:LASTEXITCODE=0",
 		"Invoke-Expression $__rx_cmd",
 		"if ($null -eq $global:LASTEXITCODE) { $__rx_code = $(if ($?) { 0 } else { 1 }) } else { $__rx_code = [int]$global:LASTEXITCODE }",
-		"Write-Output ($__rx_end + $__rx_code)",
+		// A preceding command that left the cursor mid-line must not merge with
+		// the status marker: start it on a line of its own.
+		"Write-Output (\"`n\" + $__rx_end + $__rx_code)",
 	}, "; ") + "\n"
 }
 
@@ -68,89 +126,71 @@ func powershellSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
+// normalizePTY collapses terminal line endings. A run of carriage returns
+// before a newline is one line break: the line discipline can emit \r\r\n under
+// output pressure, and mapping each \r to \n would inject blank lines into
+// model-visible output. A standalone \r (progress bars) still becomes a break.
 func normalizePTY(s string) string {
-	s = strings.ReplaceAll(s, "\r\n", "\n")
-	s = strings.ReplaceAll(s, "\r", "\n")
-	return s
+	if !strings.ContainsRune(s, '\r') {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\r' {
+			b.WriteByte(s[i])
+			continue
+		}
+		for i+1 < len(s) && s[i+1] == '\r' {
+			i++
+		}
+		if i+1 < len(s) && s[i+1] == '\n' {
+			continue // the \n itself is written on the next iteration
+		}
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
-func hasReady(buf string) bool {
-	return linePresent(normalizePTY(buf), readyToken)
+// readyLine reports whether the shell printed the ready token. The echoed setup
+// source contains the token too, so completion requires the token to end its
+// own line; the echo continues with a quote character.
+func readyLine(buf string) bool {
+	return strings.Contains(normalizePTY(buf), readyToken+"\n")
 }
 
+// parseStatus reads the exit status that must follow an end marker. It requires
+// digits terminated by a newline, which is what makes echoed wrapper source
+// unable to fabricate a completion.
+func parseStatus(after string) (int, bool) {
+	line, _, ok := strings.Cut(after, "\n")
+	if !ok || line == "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(line)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+// extractOutput finds a completed command in text. The markers are matched as
+// substrings rather than whole lines: a command whose output does not end in a
+// newline leaves the status marker mid-line, and requiring a line start there
+// is what used to hang such a command until its deadline.
 func extractOutput(buf, start, end string) (body string, code int, ok bool) {
 	text := normalizePTY(buf)
-	startIdx := indexLine(text, start)
-	if startIdx < 0 {
-		return "", 0, false
-	}
-	after := text[startIdx+len(start):]
-	after = strings.TrimPrefix(after, "\n")
-	endIdx := indexLinePrefix(after, end)
+	endIdx := strings.LastIndex(text, end)
 	if endIdx < 0 {
 		return "", 0, false
 	}
-	body = after[:endIdx]
-	if strings.HasSuffix(body, "\n") {
-		body = strings.TrimSuffix(body, "\n")
-	}
-	rest := after[endIdx:]
-	line, _, _ := strings.Cut(rest, "\n")
-	digits := strings.TrimPrefix(line, end)
-	n, err := strconv.Atoi(digits)
-	if err != nil {
+	status, ok := parseStatus(text[endIdx+len(end):])
+	if !ok {
 		return "", 0, false
 	}
-	return body, n, true
-}
-
-func linePresent(text, line string) bool {
-	return indexLine(text, line) >= 0
-}
-
-func indexLine(text, line string) int {
-	if text == line {
-		return 0
+	body = text[:endIdx]
+	if startIdx := strings.LastIndex(body, start+"\n"); startIdx >= 0 {
+		body = body[startIdx+len(start)+1:]
 	}
-	if strings.HasPrefix(text, line+"\n") {
-		return 0
-	}
-	needle := "\n" + line
-	if i := strings.Index(text, needle+"\n"); i >= 0 {
-		return i + 1
-	}
-	if strings.HasSuffix(text, needle) {
-		return len(text) - len(line)
-	}
-	return -1
-}
-
-func indexLinePrefix(text, prefix string) int {
-	if strings.HasPrefix(text, prefix) {
-		return 0
-	}
-	needle := "\n" + prefix
-	if i := strings.Index(text, needle); i >= 0 {
-		return i + 1
-	}
-	return -1
-}
-
-func boundOutput(s string) string {
-	if len(s) <= maxPersistentOutput {
-		return s
-	}
-	keep := maxPersistentOutput / 8
-	if keep > 64<<10 {
-		keep = 64 << 10
-	}
-	head := s[:maxPersistentOutput-keep]
-	for !utf8.RuneStart(head[len(head)-1]) && len(head) > 0 {
-		head = head[:len(head)-1]
-	}
-	tail := s[len(s)-keep:]
-	for !utf8.RuneStart(tail[0]) && len(tail) > 1 {
-		tail = tail[1:]
-	}
-	return head + "\n\n...[shell output truncated at 10 MiB; showing the final 64 KiB]...\n\n" + tail
+	return strings.TrimSuffix(body, "\n"), status, true
 }

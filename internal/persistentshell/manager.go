@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -28,23 +29,29 @@ const (
 
 // Request is one foreground command to run in the session-scoped PTY.
 type Request struct {
-	Argv     []string
-	Dir      string
-	Env      []string
-	Command  string
-	Timeout  time.Duration
-	Shell    sandbox.Shell
-	Progress func(string)
+	Argv    []string
+	Dir     string
+	Env     []string
+	Command string
+	Timeout time.Duration
+	Shell   sandbox.Shell
+	// Progress receives live output chunks. Callers pass the shared capped
+	// writer; this package does not re-implement the live-output bound.
+	Progress io.Writer
 }
 
 // Result is the structured outcome of one persistent-shell command.
 type Result struct {
-	Output       string
-	ExitCode     int
-	TimedOut     bool
-	Canceled     bool
-	ShellDied    bool
-	Started      bool
+	Output    string
+	ExitCode  int
+	TimedOut  bool
+	Canceled  bool
+	ShellDied bool
+	Started   bool
+	// Reset reports that the shell was retired, so the next command starts from
+	// the workspace with a fresh directory and environment. The model is told,
+	// because it otherwise keeps reasoning about a cwd that no longer exists.
+	Reset        bool
 	State        string
 	FailurePhase string
 	Err          error
@@ -67,6 +74,7 @@ type session struct {
 	fp          string
 	powerShell  bool
 	closed      bool
+	san         sanitizer
 	pendingRead chan readChunkResult
 }
 
@@ -175,6 +183,7 @@ func (m *Manager) Run(ctx context.Context, req Request) Result {
 	res := sess.run(ctx, req)
 	if res.ShellDied || res.TimedOut || res.Canceled {
 		m.drop(sess)
+		res.Reset = true
 	}
 	return res
 }
@@ -287,7 +296,10 @@ func startSession(req Request, fp string) (*session, error) {
 		return nil, err
 	}
 	var buf strings.Builder
-	if err := s.readUntil(ctx, &buf, func(s string) bool { return hasReady(s) }); err != nil {
+	if err := s.pump(ctx, func(text string) bool {
+		buf.WriteString(text)
+		return readyLine(buf.String())
+	}); err != nil {
 		s.close()
 		return nil, fmt.Errorf("persistent shell startup: %w", err)
 	}
@@ -337,7 +349,9 @@ func (s *session) run(ctx context.Context, req Request) Result {
 
 	id := newMarkerID()
 	start := "REASONIX_START_" + id
-	end := "REASONIX_END_" + id
+	// The status digits must follow the end marker immediately, so echoed
+	// wrapper source can never fabricate a completion.
+	end := "REASONIX_END_" + id + ":"
 	script := posixCommandScript(req.Command, start, end)
 	if s.powerShell {
 		script = powerShellCommandScript(req.Command, start, end)
@@ -353,38 +367,25 @@ func (s *session) run(ctx context.Context, req Request) Result {
 		}
 	}
 
-	var buf strings.Builder
-	var lastEmit int
-	err := s.readUntil(runCtx, &buf, func(all string) bool {
-		_, _, ok := extractOutput(all, start, end)
-		if req.Progress != nil {
-			body, _, ready := extractOutput(all, start, end)
-			if !ready {
-				text := normalizePTY(all)
-				if i := indexLine(text, start); i >= 0 {
-					body = strings.TrimPrefix(text[i+len(start):], "\n")
-				}
-			}
-			if len(body) > lastEmit {
-				req.Progress(body[lastEmit:])
-				lastEmit = len(body)
-			}
-		}
-		return ok
+	capt := newCapture(start, end, req.Progress)
+	err := s.pump(runCtx, func(text string) bool {
+		capt.push(text)
+		return capt.done
 	})
-	output := boundOutput(buf.String())
-	body, code, ok := extractOutput(output, start, end)
-	res := Result{Output: body, ExitCode: code, Started: true}
-	if ok {
-		if code != 0 {
+	if capt.done {
+		res := Result{Output: capt.body(), ExitCode: capt.exitCode, Started: true}
+		if capt.exitCode != 0 {
 			res.State = tool.ShellStateFailed
 			res.FailurePhase = tool.ShellPhaseExecution
-			res.Err = fmt.Errorf("exit status %d", code)
+			res.Err = fmt.Errorf("exit status %d", capt.exitCode)
 		} else {
 			res.State = tool.ShellStateCompleted
 		}
 		return res
 	}
+	// No status marker: whatever the command printed before it stopped is the
+	// only evidence the model gets, so it is reported rather than discarded.
+	res := Result{Output: capt.partial(), Started: true}
 	switch {
 	case ctx.Err() != nil && errors.Is(ctx.Err(), context.Canceled):
 		res.Canceled = true
@@ -422,14 +423,11 @@ func (s *session) markClosed() {
 	}
 }
 
-func (s *session) readUntil(ctx context.Context, buf *strings.Builder, done func(string) bool) error {
+// pump feeds sanitized PTY reads to step until it reports completion. Each read
+// is handed over once, so the cost of a command is linear in its output rather
+// than quadratic in a re-scanned transcript.
+func (s *session) pump(ctx context.Context, step func(string) bool) error {
 	for {
-		if done(buf.String()) {
-			return nil
-		}
-		if buf.Len() > maxPersistentOutput*2 {
-			return errors.New("persistent shell output exceeded cap before completion")
-		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -437,11 +435,11 @@ func (s *session) readUntil(ctx context.Context, buf *strings.Builder, done func
 			if !ok {
 				return errors.New("persistent shell reader closed")
 			}
-			if len(chunk.data) > 0 {
-				buf.Write(chunk.data)
+			if len(chunk.data) > 0 && step(s.san.push(chunk.data)) {
+				return nil
 			}
 			if chunk.err != nil {
-				if done(buf.String()) {
+				if text := s.san.flush(); text != "" && step(text) {
 					return nil
 				}
 				return chunk.err
