@@ -70,6 +70,7 @@ export function setMockTranscriptMetadata(tab: string, meta: { turnId?: string; 
   mockMetadata.set(tab, { ...mockMetadata.get(tab), ...meta });
 }
 let mockSubscription = 0;
+let mockMessage = 0;
 export function publishMockTranscriptEvent(event: WireEvent): void {
   if (event.tabId) {
     const tab = event.tabId;
@@ -77,7 +78,7 @@ export function publishMockTranscriptEvent(event: WireEvent): void {
     if (event.runtimeEpoch && epoch && event.runtimeEpoch !== epoch) return;
     if (event.kind === "turn_started") setMockTranscriptMetadata(tab, { running: true });
     if (event.kind === "text" || event.kind === "reasoning") {
-      const active = mockActive.get(tab) ?? { id: event.messageId ?? `mock-active:${tab}`, text: "", reasoning: "" };
+      const active = mockActive.get(tab) ?? { id: event.messageId ?? `mock-active:${tab}:${++mockMessage}`, text: "", reasoning: "" };
       if (event.kind === "text") active.text += event.text ?? ""; else active.reasoning += event.text ?? "";
       mockActive.set(tab, active);
       event = { ...event, messageId: active.id, attemptId: active.id };

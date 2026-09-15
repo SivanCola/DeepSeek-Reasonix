@@ -166,6 +166,11 @@ export function installDesktopHostStub(commands: object, options: DesktopHostStu
     emit(name, ...data) {
       if (name === "runtime:rebuilt" && data[0] && data[1]) setMockTranscriptMetadata(String(data[0]), { runtime: { epoch: String(data[1]) } });
       if (name === "agent:event" && data[0]) publishMockTranscriptEvent(data[0] as import("../lib/types").WireEvent);
+      const remote = /^remote-tab:(.+):event$/.exec(name);
+      if (remote && data[0]) {
+        const event = data[0] as import("../lib/types").WireEvent & { reasoning?: string };
+        publishMockTranscriptEvent({ ...event, tabId: remote[1], text: event.kind === "reasoning" ? event.reasoning ?? event.text : event.text });
+      }
       for (const cb of [...(events.get(name) ?? [])]) cb(...data);
     },
     replaceCommands(next) {
