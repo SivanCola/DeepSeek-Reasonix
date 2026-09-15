@@ -463,7 +463,6 @@ func NewApp() *App {
 		runtimeByID:          map[string]*desktopSessionRuntime{},
 		runtimeBySessionKey:  map[string]*desktopSessionRuntime{},
 		sessionServices:      map[string]*session.Service{},
-		desktopSessionRoot:   config.DesktopSessionStoreDir(),
 		workspaceState:       workspacestate.NewStore(config.DesktopWorkspaceStatePath()),
 		catalogReconcileJobs: map[string]*desktopCatalogReconcileJob{},
 		detachedSessions:     map[string]*WorkspaceTab{},
@@ -505,6 +504,11 @@ func (a *App) Platform() string {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.shuttingDown.Store(false)
+	a.sessionServicesMu.Lock()
+	if len(a.sessionServices) == 0 {
+		a.desktopSessionRoot = config.DesktopSessionStoreDir()
+	}
+	a.sessionServicesMu.Unlock()
 	// Only the process that claimed the pre-shell diagnostics lock consumes
 	// lifecycle evidence.
 	initializeLifecycleDiagnostics(a)
@@ -757,6 +761,10 @@ func (a *App) restoreOrBuildTabs() {
 				tab = a.createTabEntryWithID("global", globalTabWorkspaceRoot(), entry.TopicID, id)
 			}
 			tab.model = entry.Model
+			tab.WorkspaceID = strings.TrimSpace(entry.WorkspaceID)
+			if tab.WorkspaceID == "" {
+				tab.WorkspaceID = desktopWorkspaceID(entry.Scope, entry.WorkspaceRoot)
+			}
 			tab.effort = cloneStringPtr(entry.Effort)
 			// Legacy role fields remain readable, but the retired setting no
 			// longer changes restored-session behavior.
@@ -863,6 +871,7 @@ func (a *App) createTabEntryWithID(scope, workspaceRoot, topicID, id string) *Wo
 		ID:               id,
 		Scope:            scope,
 		WorkspaceRoot:    workspaceRoot,
+		WorkspaceID:      desktopWorkspaceID(scope, workspaceRoot),
 		TopicID:          topicID,
 		TopicTitle:       topicTitleForTab(scope, workspaceRoot, topicID),
 		topicTitleSource: loadTopicTitleSource(topicTitleRoot(scope, workspaceRoot), topicID),

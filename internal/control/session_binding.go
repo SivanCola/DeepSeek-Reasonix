@@ -53,11 +53,17 @@ func (c *Controller) releaseSessionRuntimeBinding(service *session.Service) {
 // allocate one. Publication happens only after the initial event batch is
 // accepted, so failure leaves the currently-bound session usable.
 func (c *Controller) BindFreshSession(ctx context.Context, sessionID string) (session.SessionRef, error) {
+	return c.BindFreshSessionWithOptions(ctx, session.CreateOptions{SessionID: sessionID})
+}
+
+// BindFreshSessionWithOptions creates a fresh identity with immutable host
+// ownership metadata before publishing the runtime.
+func (c *Controller) BindFreshSessionWithOptions(ctx context.Context, options session.CreateOptions) (session.SessionRef, error) {
 	service, _, _ := c.v3Binding()
 	if c == nil || service == nil || c.executor == nil {
 		return session.SessionRef{}, errors.New("v3 session service is unavailable")
 	}
-	prepared, err := service.PrepareCreate(ctx, session.CreateOptions{SessionID: sessionID})
+	prepared, err := service.PrepareCreate(ctx, options)
 	if err != nil {
 		return session.SessionRef{}, err
 	}

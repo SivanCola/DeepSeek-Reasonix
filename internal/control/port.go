@@ -59,6 +59,13 @@ type IdentityLifecycle interface {
 	ContinuePrototypeSession(context.Context, string) (session.SessionRef, error)
 }
 
+// IdentityCreateLifecycle is the header-aware creation extension used by the
+// Desktop Workspace registry. Other frontends may continue using
+// IdentityLifecycle.BindFreshSession while they do not own Workspace metadata.
+type IdentityCreateLifecycle interface {
+	BindFreshSessionWithOptions(context.Context, session.CreateOptions) (session.SessionRef, error)
+}
+
 // TurnControl covers driving a model turn and observing its run state: the
 // various submit/run entry points, cancellation, steering, and status reads.
 type TurnControl interface {

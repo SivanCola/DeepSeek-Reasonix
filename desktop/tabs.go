@@ -72,6 +72,7 @@ type WorkspaceTab struct {
 	ID                  string                   // stable random id
 	Scope               string                   // "project" | "global"
 	WorkspaceRoot       string                   // project root dir (empty for global)
+	WorkspaceID         string                   // stable Workspace registry identity
 	SharedHostKey       string                   // opaque key for the shared plugin host (set by buildTabController)
 	TopicID             string                   // topic within the project
 	TopicTitle          string                   // display title
@@ -619,6 +620,7 @@ func cloneDetachedRuntimeTab(tab *WorkspaceTab, key, path string) *WorkspaceTab 
 		ID:                       detachedRuntimeTabID(key),
 		Scope:                    tab.Scope,
 		WorkspaceRoot:            tab.WorkspaceRoot,
+		WorkspaceID:              tab.WorkspaceID,
 		SharedHostKey:            tab.SharedHostKey,
 		TopicID:                  tab.TopicID,
 		TopicTitle:               tab.TopicTitle,
@@ -2112,6 +2114,7 @@ func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 		ID:                tab.ID,
 		Scope:             tab.Scope,
 		WorkspaceRoot:     tab.WorkspaceRoot,
+		WorkspaceID:       tab.WorkspaceID,
 		WorkspaceName:     workspaceName(tab.WorkspaceRoot),
 		WorkspacePath:     tab.WorkspaceRoot,
 		TopicID:           tab.TopicID,
@@ -2140,6 +2143,9 @@ func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 		Active:            active,
 		Cwd:               tab.WorkspaceRoot,
 		IsolatedWorktree:  floor.isolated,
+	}
+	if strings.TrimSpace(tab.SessionID) != "" {
+		m.Session = &session.SessionRef{HostID: "local", SessionID: strings.TrimSpace(tab.SessionID)}
 	}
 	switch tab.Scope {
 	case "global":
@@ -3752,6 +3758,7 @@ func (a *App) buildTabControllerWithContextCore(tab *WorkspaceTab, loadedSession
 	identity, usesExclusiveV3 := ctrl.(control.IdentityLifecycle)
 	if usesExclusiveV3 && identity.UsesExclusiveSession() {
 		var ref session.SessionRef
+		var workspaceID string
 		var bindErr error
 		switch {
 		case strings.TrimSpace(tabSessionID) != "":
@@ -3767,10 +3774,13 @@ func (a *App) buildTabControllerWithContextCore(tab *WorkspaceTab, loadedSession
 			} else if !os.IsNotExist(statErr) {
 				bindErr = statErr
 			} else {
-				ref, bindErr = identity.BindFreshSession(buildCtx, "")
+				ref, workspaceID, bindErr = a.bindFreshDesktopSession(buildCtx, tabScope, tabWorkspaceRoot, identity)
 			}
 		default:
-			ref, bindErr = identity.BindFreshSession(buildCtx, "")
+			ref, workspaceID, bindErr = a.bindFreshDesktopSession(buildCtx, tabScope, tabWorkspaceRoot, identity)
+		}
+		if bindErr == nil && workspaceID == "" {
+			workspaceID, bindErr = a.attachDesktopSession(buildCtx, tabScope, tabWorkspaceRoot, ref)
 		}
 		if bindErr != nil {
 			a.recordTabStartupFailure(tab, buildGeneration, appCtx, friendlySessionLoadError(bindErr))
@@ -3786,6 +3796,7 @@ func (a *App) buildTabControllerWithContextCore(tab *WorkspaceTab, loadedSession
 		}
 		tab.SessionID = ref.SessionID
 		tab.SessionPath = ""
+		tab.WorkspaceID = workspaceID
 		a.mu.Unlock()
 		tab.replaceTelemetry(tabTelemetrySnapshot{}, sessionRuntimeKey(remoteSessionIDRoutePrefix+ref.SessionID))
 	} else if dir := ctrl.SessionDir(); dir != "" {

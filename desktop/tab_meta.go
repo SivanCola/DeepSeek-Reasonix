@@ -1,12 +1,16 @@
 package main
 
-import goaldomain "reasonix/internal/goal"
+import (
+	goaldomain "reasonix/internal/goal"
+	"reasonix/internal/session"
+)
 
 // TabMeta is the frontend-facing shape of one tab.
 type TabMeta struct {
 	ID               string        `json:"id"`
 	Scope            string        `json:"scope"`
 	WorkspaceRoot    string        `json:"workspaceRoot"`
+	WorkspaceID      string        `json:"workspaceId,omitempty"`
 	WorkspaceName    string        `json:"workspaceName"`
 	WorkspacePath    string        `json:"workspacePath,omitempty"`
 	GitBranch        string        `json:"gitBranch,omitempty"`
@@ -17,15 +21,16 @@ type TabMeta struct {
 	// ForkTargetsSupported reports whether this tab can fork a turn into an
 	// independent child session. False for a local tab and for a remote serve
 	// before its handshake; always emitted, so absence never means "unsupported".
-	ForkTargetsSupported bool   `json:"forkTargetsSupported"`
-	TopicID              string `json:"topicId"`
-	TopicTitle           string `json:"topicTitle"`
-	SessionPath          string `json:"sessionPath,omitempty"`
-	SessionID            string `json:"sessionId,omitempty"`
-	SessionRevision      int64  `json:"sessionRevision,omitempty"`
-	SessionDigest        string `json:"sessionDigest,omitempty"`
-	SessionGeneration    uint64 `json:"sessionGeneration,omitempty"`
-	ReadOnly             bool   `json:"readOnly,omitempty"`
+	ForkTargetsSupported bool                `json:"forkTargetsSupported"`
+	TopicID              string              `json:"topicId"`
+	TopicTitle           string              `json:"topicTitle"`
+	SessionPath          string              `json:"sessionPath,omitempty"`
+	SessionID            string              `json:"sessionId,omitempty"`
+	Session              *session.SessionRef `json:"session,omitempty"`
+	SessionRevision      int64               `json:"sessionRevision,omitempty"`
+	SessionDigest        string              `json:"sessionDigest,omitempty"`
+	SessionGeneration    uint64              `json:"sessionGeneration,omitempty"`
+	ReadOnly             bool                `json:"readOnly,omitempty"`
 	// TakenOver marks a local or remote tab spectating a session whose writer is
 	// on the other side of a cooperative handoff.
 	TakenOver         bool               `json:"takenOver,omitempty"`
