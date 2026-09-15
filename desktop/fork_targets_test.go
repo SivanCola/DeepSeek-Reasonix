@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"path/filepath"
 	"testing"
 
 	"reasonix/internal/control"
@@ -60,10 +59,9 @@ func (c *forkTargetsStubController) CreateForkSession(request session.ForkReques
 
 func enableForkTargetPersistence(t *testing.T, app *App, ctrl *forkTargetsStubController) {
 	t.Helper()
-	app.desktopSessions.root = filepath.Join(t.TempDir(), "desktop-sessions-v5", "by-id")
+	pinDesktopSessionRoot(t, app)
 	ctrl.service = app.desktopSessionService("")
 	ctrl.cwd = globalWorkspaceRoot()
-	t.Cleanup(app.closeSessionServices)
 }
 
 func (c *forkTargetsStubController) UsesExclusiveSession() bool { return true }

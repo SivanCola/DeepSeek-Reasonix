@@ -25,10 +25,22 @@ func TestNewAppPinsDesktopV5SessionRootBeforeStartup(t *testing.T) {
 	}
 }
 
+// pinDesktopSessionRoot points the canonical store at a disposable root and
+// registers the service close after that root's own RemoveAll. t.Cleanup is
+// LIFO, so registering in the other order removes the directory while the
+// service still holds its writer lease and recovery database: POSIX allows
+// unlinking open files, Windows fails the test during cleanup.
+func pinDesktopSessionRoot(t *testing.T, app *App) string {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "desktop-sessions-v5", "by-id")
+	app.desktopSessions.root = root
+	t.Cleanup(app.closeSessionServices)
+	return root
+}
+
 func TestDesktopSessionServiceIsSharedAcrossWorkspaces(t *testing.T) {
 	app := NewApp()
-	t.Cleanup(app.closeSessionServices)
-	app.desktopSessions.root = filepath.Join(t.TempDir(), "desktop-sessions-v5", "by-id")
+	pinDesktopSessionRoot(t, app)
 
 	first := app.desktopSessionService(filepath.Join(t.TempDir(), "project-a", "sessions"))
 	second := app.desktopSessionService(filepath.Join(t.TempDir(), "project-b", "sessions"))
