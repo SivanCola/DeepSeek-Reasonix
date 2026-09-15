@@ -121,3 +121,22 @@ func TestCatalogRejectsOldDisplayProjection(t *testing.T) {
 		t.Fatal("old truncated preview was reused")
 	}
 }
+
+func TestMessagePreviewDoesNotExposeHostProtocolBeforeHydration(t *testing.T) {
+	message := provider.Message{Role: provider.RoleUser, Origin: provider.MessageOriginHost,
+		Content: "<session-context version=\"1\">" + strings.Repeat("environment", 4000) + "</session-context>", RawContent: "host-only metadata"}
+	if got := messagePreview(message); got != "" {
+		t.Fatalf("host preview = %q", got)
+	}
+	message.Origin = provider.MessageOriginUser
+	message.RawContent = "用户引用的上下文"
+	if got := messagePreview(message); got != message.RawContent {
+		t.Fatalf("authored preview = %q", got)
+	}
+	message.Origin = ""
+	message.RawContent = ""
+	message.Content = "<session-context version=\"1\">\nThis host-generated snapshot supersedes every earlier session-context snapshot.\n" + strings.Repeat("environment", 4000)
+	if got := messagePreview(message); got != "" {
+		t.Fatalf("legacy host preview = %q", got)
+	}
+}

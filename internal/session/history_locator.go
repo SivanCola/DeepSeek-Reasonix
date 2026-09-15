@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	historyIndexVersion     = 6
+	historyIndexVersion     = 7
 	HistoryPageDefaultLimit = 100
 	HistoryPageMaxLimit     = 500
 	HistoryPageMaxBytes     = 2 << 20

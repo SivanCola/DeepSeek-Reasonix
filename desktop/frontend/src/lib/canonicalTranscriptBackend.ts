@@ -2,6 +2,7 @@ import type { HistoryWindowPage, MessageHistoryPage, PersistentMessage } from ".
 import { asArray } from "./array";
 import { app } from "./bridge";
 import { HistoryPreparingError } from "./historyPreparation";
+import { canonicalUserDisplay } from "./canonicalUserDisplay";
 import type { HistoryContentChunk, HistoryContentRef, HistoryEntry, HistoryMessage, HistorySlice, HistorySliceRequest, HistoryWindowPageView, HistoryWindowRequestView, MemoryCitation } from "./types";
 
 function asWireObject(value: unknown): Record<string, unknown> {
@@ -36,10 +37,12 @@ export function canonicalMessage(message: PersistentMessage, body: unknown): His
     removed: typeof call.removed === "number" ? call.removed : undefined,
   }));
   const presented = asWireObject(raw.presented_files);
+  const role = Boolean(raw.local_only) ? "assistant" : String(raw.role ?? message.role);
+  const display = role === "user" ? canonicalUserDisplay(raw, message.preview ?? "") : { role, content: String(raw.content ?? raw.raw_content ?? message.preview ?? "") };
   return {
-    role: Boolean(raw.local_only) ? "assistant" : String(raw.role ?? message.role),
+    role: display.role,
     messageId: String(raw.id ?? message.messageId),
-    content: String(raw.content ?? raw.raw_content ?? message.preview ?? ""),
+    content: display.content,
     reasoning: typeof raw.reasoning_content === "string" ? raw.reasoning_content : undefined,
     createdAt: typeof raw.createdAt === "number" ? raw.createdAt : undefined,
     workDurationMs: typeof raw.workDurationMs === "number" ? raw.workDurationMs : undefined,

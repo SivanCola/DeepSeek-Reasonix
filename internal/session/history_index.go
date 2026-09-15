@@ -611,11 +611,21 @@ func insertContentRef(ctx context.Context, state *historyBuildState, ref session
 }
 
 func messagePreview(message provider.Message) string {
+	// Reference-only history rows have no origin field until hydrated. Never
+	// publish host protocol text in that temporary user-message preview.
+	if agent.IsHostGeneratedUserMessage(message) {
+		return ""
+	}
 	preview := strings.TrimSpace(message.Content)
 	if message.Role == provider.RoleUser {
 		// Derive display text before truncating; a truncated injected block can
 		// no longer be separated from the user's request.
 		preview = agent.UserMessageText(message)
+		if message.Origin == "" && strings.TrimSpace(message.RawContent) == "" {
+			if body, ok := strings.CutPrefix(preview, `<session-context version="1">`); ok && strings.HasPrefix(strings.TrimSpace(body), "This host-generated snapshot supersedes every earlier session-context snapshot.") {
+				return ""
+			}
+		}
 	} else if preview == "" {
 		preview = strings.TrimSpace(message.RawContent)
 	}

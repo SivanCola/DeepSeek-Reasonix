@@ -325,6 +325,14 @@ try {
       await page.waitForTimeout(1000);
       const writesAfterIdle = await page.evaluate(() => window.chatWrites.at(-1)?.transaction);
       assert.equal(writesAfterIdle, writesBeforeIdle, "settled layout queue converges");
+      await page.evaluate(() => window.chatFixture.authored());
+      await page.getByText("我是 Reasonix。", { exact: true }).waitFor();
+      const authoredText = await page.locator(".chat-column").innerText();
+      assert.match(authoredText, /你是谁/);
+      assert.match(authoredText, /旧会话问题/);
+      assert.match(authoredText, /<response-language>用户引用的 XML<\/response-language>/);
+      assert.doesNotMatch(authoredText, /private environment|internal policy|legacy internal route|session-context|capability-route/);
+      await page.screenshot({ path: path.join(evidence, `${name}-authored-chat.png`) });
       await page.evaluate(() => window.chatFixture.weather());
       await page.locator('[data-chat-anchor-key="weather-final"] table').waitFor();
       const presented = page.locator('.presented-files');

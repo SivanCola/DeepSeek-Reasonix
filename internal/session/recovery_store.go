@@ -23,10 +23,9 @@ import (
 	"reasonix/internal/sessioncontent"
 )
 
-// Version 3 derives catalog and recent-message previews from authored text.
-// Older checkpoints may contain truncated host wrappers; rebuild from the
-// durable log because those previews cannot recover the original request.
-const recoveryProjectionVersion = 3
+// Version 4 suppresses host protocol text in reference-only message previews.
+// Older projections are disposable and rebuild from the unchanged durable log.
+const recoveryProjectionVersion = 4
 
 const (
 	recoveryFormatVersion = 1
