@@ -8,9 +8,8 @@ import (
 // The shared background-index budget stays at two concurrent build tasks.
 // Slots are handed out by priority: user-requested history pages and recovery
 // win before search, and both win before catalog/prefetch metadata work.
-// Catalog metadata keeps its historical drop-on-full semantics through
-// tryAcquire — a dropped rebuild is re-triggered by the next read path that
-// observes a non-ready status.
+// Catalog workers wait at prefetch priority; saturated slots never discard
+// pending session metadata work.
 type rebuildPriority int
 
 const (

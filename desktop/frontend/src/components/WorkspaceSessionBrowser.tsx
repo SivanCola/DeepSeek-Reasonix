@@ -6,6 +6,7 @@ import { useI18n } from "../lib/i18n";
 import { useToast } from "../lib/toast";
 import "./WorkspaceSessionBrowser.css";
 import { topicActivityDateLabel, topicActivityLabel } from "../lib/projectTreeTopic";
+import { retainPreparedSessionLabels, sessionIsBlank, sessionMetadataPending } from "../lib/workspaceSessionPresentation";
 
 // Workspace activity comes from the runtime store, not from the session rows:
 // a background job keeps a workspace active after its turn goes idle, and the
@@ -21,12 +22,13 @@ export function workspaceSessionsForDisplay(rows: WorkspaceSessionSummary[], sea
   if (archived) return rows.filter((row) => row.archived);
   const visible = rows.filter((row) => !row.archived);
   if (searching) return visible;
-  const ordinary = visible.filter((row) => !row.blank).slice(0, 5);
-  const provisional = visible.find((row) => row.blank && row.running);
+  const ordinary = visible.filter((row) => !sessionIsBlank(row)).slice(0, 5);
+  const provisional = visible.find((row) => sessionIsBlank(row) && row.running);
   return provisional ? [...ordinary, provisional] : ordinary;
 }
 
-export function WorkspaceSessionBrowser({ archived = false, onOpenSession, onCreateSession }: {
+export function WorkspaceSessionBrowser({ active = true, archived = false, onOpenSession, onCreateSession }: {
+  active?: boolean;
   archived?: boolean;
   onOpenSession: (ref: WorkspaceSessionSummary["ref"]) => Promise<void>;
   onCreateSession?: (workspace: WorkspaceSnapshot["workspaces"][number]) => Promise<void>;
@@ -40,6 +42,7 @@ export function WorkspaceSessionBrowser({ archived = false, onOpenSession, onCre
   const [showAll, setShowAll] = useState<Set<string>>(new Set());
   const [activeSessionId, setActiveSessionId] = useState("");
   const [loading, setLoading] = useState(true);
+  const [refreshFailed, setRefreshFailed] = useState(false);
   const openSequence = useRef(0);
   const reloadSequence = useRef(0);
   const draggedWorkspace = useRef("");
@@ -59,21 +62,36 @@ export function WorkspaceSessionBrowser({ archived = false, onOpenSession, onCre
       }));
       if (sequence !== reloadSequence.current) return;
       setSnapshot(next);
-      setRows(Object.fromEntries(loaded));
+      setRows(previous => Object.fromEntries(loaded.map(([id, sessions]) => [id, retainPreparedSessionLabels(sessions, previous[id] ?? [])])));
+      setRefreshFailed(false);
       const active = tabs.find((tab) => tab.active && !tab.remote);
       setActiveSessionId(active?.session?.sessionId || active?.sessionId || "");
       setExpanded((current) => current.size > 0 ? current : new Set(next.workspaces.filter((workspace) => workspace.visible).map((workspace) => workspace.id)));
     } catch (error) {
-      if (sequence === reloadSequence.current) showToast(error instanceof Error ? error.message : String(error), "error");
+      if (sequence === reloadSequence.current) {
+        setRefreshFailed(true);
+        showToast(error instanceof Error ? error.message : String(error), "error");
+      }
     } finally {
       if (sequence === reloadSequence.current) setLoading(false);
     }
   }, [archived, query, showToast]);
 
   useEffect(() => {
+    if (!active) return;
     void reload();
-    return onProjectTreeChanged(() => void reload());
-  }, [reload]);
+    const unsubscribe = onProjectTreeChanged(() => void reload());
+    return () => { unsubscribe(); ++reloadSequence.current; };
+  }, [active, reload]);
+
+  useEffect(() => {
+    if (!active || loading || refreshFailed || !Object.values(rows).some(group => group.some(sessionMetadataPending))) return;
+    const timer = setTimeout(() => void reload(), 1000);
+    return () => clearTimeout(timer);
+  }, [active, loading, refreshFailed, rows, reload]);
+
+  const label = (session: WorkspaceSessionSummary) => session.title || session.preview ||
+    t(sessionMetadataPending(session) ? "workspaceBrowser.loading" : session.metadataStatus === "failed" ? "history.failedLoadHistory" : "workspaceBrowser.newSession");
 
   const visibleWorkspaces = useMemo(() => snapshot?.workspaces.filter((workspace) => archived || workspace.visible) ?? [], [snapshot, archived]);
   const mutate = async (task: () => Promise<void>) => {
@@ -101,11 +119,13 @@ export function WorkspaceSessionBrowser({ archived = false, onOpenSession, onCre
         <input aria-label={t("workspaceBrowser.search")} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("workspaceBrowser.search")} />
       </div>
       {loading && !snapshot && <div className="workspace-browser__empty"><LoaderCircle className="spin" size={14} /> {t("workspaceBrowser.loading")}</div>}
+      {refreshFailed &&
+        <button className="workspace-browser__show-more" disabled={loading} onClick={() => void reload()}>{t("common.retry")}</button>}
       {visibleWorkspaces.map((workspace) => {
         const open = expanded.has(workspace.id);
         const workspaceRows = rows[workspace.id] ?? [];
         const allVisible = workspaceRows.filter((row) => archived ? row.archived : !row.archived);
-        const canShowMore = !archived && !query && allVisible.filter((row) => !row.blank).length > 5;
+        const canShowMore = !archived && !query && allVisible.filter((row) => !sessionIsBlank(row)).length > 5;
         const showingAll = showAll.has(workspace.id);
         const shown = workspaceSessionsForDisplay(workspaceRows, Boolean(query) || showingAll, archived);
         return (
@@ -157,10 +177,10 @@ export function WorkspaceSessionBrowser({ archived = false, onOpenSession, onCre
             {open && shown.map((session) => (
               <div className={`workspace-browser__session${activeSessionId === session.ref.sessionId ? " workspace-browser__session--active" : ""}`} key={session.ref.sessionId} data-health={session.health} data-session-id={session.ref.sessionId}>
                 <button className="workspace-browser__session-open" type="button" data-session-id={session.ref.sessionId}
-                  title={[session.title || session.preview || t("workspaceBrowser.newSession"), topicActivityDateLabel(session.updatedAt || session.createdAt)].filter(Boolean).join("\n")}
+                  title={[label(session), topicActivityDateLabel(session.updatedAt || session.createdAt)].filter(Boolean).join("\n")}
                   aria-current={activeSessionId === session.ref.sessionId ? "page" : undefined} onClick={() => void openSession(session)}>
                   <MessageSquare size={13} aria-hidden="true" />
-                  <strong className="workspace-browser__session-label">{session.title || session.preview || t("workspaceBrowser.newSession")}</strong>
+                  <strong className="workspace-browser__session-label">{label(session)}</strong>
                   <span className="workspace-browser__session-time" aria-hidden="true">{topicActivityLabel(session.updatedAt || session.createdAt, t, true)}</span>
                   {session.running && <i aria-label={t("workspaceBrowser.running")} />}
                 </button>

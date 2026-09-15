@@ -14,25 +14,28 @@ import (
 // an attached runtime when one exists and otherwise opens only a read handle;
 // querying cold history never constructs an Agent or acquires writer ownership.
 type Query struct {
-	hostID        string
-	persistence   SessionPersistence
-	service       *Service
-	rebuildMu     sync.Mutex
-	rebuilding    map[string]struct{}
-	generation    map[string]uint64
-	rebuildCtx    context.Context
-	rebuildStop   context.CancelFunc
-	rebuildWG     sync.WaitGroup
-	closed        bool
-	slots         *rebuildSlots
-	indexMu       sync.Mutex
-	indexLocks    map[string]*sync.Mutex
-	contentMu     sync.Mutex
-	contentGrants map[string]time.Time
-	searchMu      sync.Mutex
-	searchBuilds  map[string]*searchPreparation
-	historyMu     sync.Mutex
-	historyBuilds map[string]*historyPreparation
+	hostID           string
+	persistence      SessionPersistence
+	service          *Service
+	rebuildMu        sync.Mutex
+	rebuilding       map[string]struct{}
+	metadataQueue    []metadataRebuildTask
+	metadataWorkers  int
+	metadataFailures map[string]error
+	generation       map[string]uint64
+	rebuildCtx       context.Context
+	rebuildStop      context.CancelFunc
+	rebuildWG        sync.WaitGroup
+	closed           bool
+	slots            *rebuildSlots
+	indexMu          sync.Mutex
+	indexLocks       map[string]*sync.Mutex
+	contentMu        sync.Mutex
+	contentGrants    map[string]time.Time
+	searchMu         sync.Mutex
+	searchBuilds     map[string]*searchPreparation
+	historyMu        sync.Mutex
+	historyBuilds    map[string]*historyPreparation
 }
 
 func (s *Service) Query() *Query {
@@ -47,7 +50,8 @@ func newQuery(hostID string, persistence SessionPersistence, service *Service) *
 	query := &Query{
 		hostID: hostID, persistence: persistence, service: service,
 		rebuilding: map[string]struct{}{}, generation: map[string]uint64{}, rebuildCtx: rebuildCtx,
-		rebuildStop: rebuildStop, slots: newRebuildSlots(2),
+		metadataFailures: map[string]error{},
+		rebuildStop:      rebuildStop, slots: newRebuildSlots(2),
 		indexLocks:    map[string]*sync.Mutex{},
 		contentGrants: map[string]time.Time{},
 		searchBuilds:  map[string]*searchPreparation{},
@@ -230,6 +234,13 @@ func (q *Query) enrichInfo(info *SessionInfo) {
 		}
 	}
 	if info.Codec == Codec && info.MetadataStatus != MetadataReady {
+		q.rebuildMu.Lock()
+		failure := q.metadataFailures[info.SessionID]
+		q.rebuildMu.Unlock()
+		if failure != nil {
+			info.MetadataStatus, info.Error = MetadataFailed, failure.Error()
+			return
+		}
 		q.scheduleMetadataRebuild(info.SessionID)
 	}
 }
@@ -253,17 +264,53 @@ func (q *Query) scheduleMetadataRebuild(sessionID string) {
 		return
 	}
 	q.rebuilding[sessionID] = struct{}{}
+	delete(q.metadataFailures, sessionID)
 	generation := q.generation[sessionID]
-	// Prefetch-class metadata rebuilds keep drop-on-full semantics; the next
-	// read that observes a non-ready status re-triggers the schedule.
-	if !q.slots.tryAcquire() {
-		delete(q.rebuilding, sessionID)
-		q.rebuildMu.Unlock()
-		return
+	q.metadataQueue = append(q.metadataQueue, metadataRebuildTask{sessionID, generation})
+	if q.metadataWorkers < 2 {
+		q.metadataWorkers++
+		q.rebuildWG.Add(1)
+		go q.runMetadataRebuilds()
 	}
-	q.rebuildWG.Add(1)
 	q.rebuildMu.Unlock()
-	go q.rebuildCatalogMetadata(sessionID, generation)
+}
+
+type metadataRebuildTask struct {
+	sessionID  string
+	generation uint64
+}
+
+// Keep a deduplicated ID queue, not one goroutine per session. Workers wait
+// behind user history/recovery work and continue without another List call.
+func (q *Query) runMetadataRebuilds() {
+	defer q.rebuildWG.Done()
+	for {
+		q.rebuildMu.Lock()
+		if q.closed || len(q.metadataQueue) == 0 {
+			q.metadataWorkers--
+			if q.closed {
+				q.metadataQueue = nil
+				clear(q.rebuilding)
+			}
+			q.rebuildMu.Unlock()
+			return
+		}
+		task := q.metadataQueue[0]
+		q.metadataQueue[0] = metadataRebuildTask{}
+		q.metadataQueue = q.metadataQueue[1:]
+		q.rebuildMu.Unlock()
+		if err := q.slots.acquire(q.rebuildCtx, rebuildPriorityPrefetch); err != nil {
+			continue
+		}
+		err := q.rebuildCatalogMetadata(task.sessionID, task.generation)
+		q.slots.release()
+		q.rebuildMu.Lock()
+		if err != nil && q.generation[task.sessionID] == task.generation {
+			q.metadataFailures[task.sessionID] = err
+		}
+		delete(q.rebuilding, task.sessionID)
+		q.rebuildMu.Unlock()
+	}
 }
 
 // invalidateCatalog fences every metadata task scheduled for an older session
@@ -275,43 +322,37 @@ func (q *Query) invalidateCatalog(sessionID string) {
 	}
 	q.rebuildMu.Lock()
 	q.generation[sessionID]++
+	delete(q.metadataFailures, sessionID)
 	q.rebuildMu.Unlock()
 }
 
-func (q *Query) rebuildCatalogMetadata(sessionID string, generation uint64) {
-	defer q.rebuildWG.Done()
-	defer q.slots.release()
-	defer func() {
-		q.rebuildMu.Lock()
-		delete(q.rebuilding, sessionID)
-		q.rebuildMu.Unlock()
-	}()
+func (q *Query) rebuildCatalogMetadata(sessionID string, generation uint64) error {
 	filesystem, ok := q.persistence.(*FilesystemPersistence)
 	if !ok {
-		return
+		return nil
 	}
 	handle, err := q.persistence.Open(sessionID, ReadOnly)
 	if err != nil {
-		return
+		return err
 	}
 	defer handle.Close(context.WithoutCancel(q.rebuildCtx))
 	sessionDir := filepath.Join(filesystem.Root, sessionID)
 	cacheDir := filepath.Join(filesystem.Root, ".query-cache", filepath.Base(sessionID))
 	manifest, err := readManifest(filepath.Join(sessionDir, "manifest.json"))
 	if err != nil {
-		return
+		return err
 	}
 	metadata, err := reduceCatalogMetadata(q.rebuildCtx, handle, manifest)
 	if err != nil {
-		return
+		return err
 	}
 	q.rebuildMu.Lock()
 	defer q.rebuildMu.Unlock()
 	if q.rebuildCtx.Err() != nil || q.generation[sessionID] != generation {
-		return
+		return nil
 	}
 	// Hold the generation boundary through publication. Deletion invalidates
 	// before it moves the directory, so it either wins first or waits until this
 	// exact-incarnation cache is completely written and then removes it.
-	_ = writeCatalogMetadataForSession(cacheDir, sessionDir, metadata)
+	return writeCatalogMetadataForSession(cacheDir, sessionDir, metadata)
 }

@@ -144,15 +144,23 @@ func rebuildCatalogMetadata(ctx context.Context, handle eventPageReader, cacheDi
 }
 
 func reduceCatalogMetadata(ctx context.Context, handle eventPageReader, manifest Manifest) (catalogMetadata, error) {
-	projection := Projection{}
+	reducer := catalogReducer{}
+	if stream, ok := handle.(interface {
+		scanCatalog(context.Context, func(Commit) error) error
+	}); ok {
+		if err := stream.scanCatalog(ctx, reducer.apply); err != nil {
+			return catalogMetadata{}, err
+		}
+		return reducer.metadata(manifest), nil
+	}
 	var cursor uint64
 	for {
-		page, err := handle.Read(ctx, cursor, 1000)
+		page, err := handle.Read(ctx, cursor, 32)
 		if err != nil {
 			return catalogMetadata{}, err
 		}
 		for _, commit := range page.Commits {
-			if err := applyProjectionCommit(&projection, commit); err != nil {
+			if err := reducer.apply(commit); err != nil {
 				return catalogMetadata{}, err
 			}
 		}
@@ -164,7 +172,7 @@ func reduceCatalogMetadata(ctx context.Context, handle eventPageReader, manifest
 		}
 		cursor = page.Next
 	}
-	return metadataFromProjection(manifest, projection.CommittedSequence, projection), nil
+	return reducer.metadata(manifest), nil
 }
 
 // writeCatalogMetadataForSession stamps the cache with the exact durable bytes

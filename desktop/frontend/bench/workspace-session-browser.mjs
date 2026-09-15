@@ -37,6 +37,8 @@ try {
       blank: false, archived: false, running: false, metadataStatus: "ready", health: "ready",
     }));
     window.sidebarCalls = [];
+    window.metadataPending = false;
+    window.sidebarListReads = 0;
     let workspaces = [
       { id: "global", title: "shared-amazon-appointment-system", root: "", visible: true },
       { id: "project-a", title: "Project A", root: "/a", visible: true },
@@ -47,7 +49,10 @@ try {
       GetLocale: async () => "zh",
       GetWorkspaceSnapshot: async () => ({ generation: 1, workspaces: [...workspaces], archivedSessionIds: [], pendingCreates: [] }),
       ListTabs: async () => [{ active: true, sessionId: "session-0" }],
-      ListWorkspaceSessions: async (id, query, _cursor, _limit, archived) => ({ sessions: rows.filter(row => row.workspaceId === id && row.archived === archived && `${row.title} ${row.preview}`.includes(query)) }),
+      ListWorkspaceSessions: async (id, query, _cursor, _limit, archived) => {
+        window.sidebarListReads++;
+        return { sessions: rows.filter(row => row.workspaceId === id && row.archived === archived && `${row.title} ${row.preview}`.includes(query)).map(row => window.metadataPending ? { ...row, title: "", preview: "", blank: true, metadataStatus: "pending" } : row) };
+      },
       MoveWorkspace: async (id, before) => {
         if (window.failWorkspaceMove) throw new Error("Workspace order could not be saved");
         window.workspaceMoves.push([id, before]);
@@ -63,6 +68,10 @@ try {
     const { WorkspaceSessionBrowser } = await import("/src/components/WorkspaceSessionBrowser.tsx");
     const reactRoot = createRoot(document.getElementById("sidebar"));
     const navigation = { onOpenSession: async ref => { window.sidebarCalls.push(ref.sessionId); }, onCreateSession: async () => {} };
+    window.renderPendingMetadata = () => {
+      window.metadataPending = true;
+      reactRoot.render(React.createElement(LocaleProvider, null, React.createElement(ToastProvider, null, React.createElement(WorkspaceSessionBrowser, { ...navigation, key: "pending-metadata" }))));
+    };
     window.renderArchived = () => reactRoot.render(React.createElement(LocaleProvider, null, React.createElement(ToastProvider, null, React.createElement(WorkspaceSessionBrowser, { ...navigation, archived: true }))));
     reactRoot.render(React.createElement(LocaleProvider, null, React.createElement(ToastProvider, null, React.createElement(WorkspaceSessionBrowser, navigation))));
   });
@@ -167,6 +176,17 @@ try {
   await sidebar.locator(`.workspace-browser__session[data-session-id="${sessionId}"]`).waitFor();
   await integrated.locator(".trash-page__sections").getByRole("button", { name: /Deleted/ }).click();
   await integrated.locator(".history-page").getByRole("button", { name: "Delete permanently", exact: true }).waitFor();
+  await page.evaluate(() => window.renderPendingMetadata());
+  await page.locator(".workspace-browser__session-label").filter({ hasText: /正在加载会话|Loading sessions/ }).first().waitFor();
+  assert.equal(await page.locator(".workspace-browser__session-label").filter({ hasText: /^(新会话|New session)$/ }).count(), 0);
+  const callsBefore = await page.evaluate(() => window.sidebarCalls.length);
+  await page.evaluate(() => { window.metadataPending = false; });
+  await page.locator(".workspace-browser__session-label").filter({ hasText: "修复会话历史加载" }).first().waitFor();
+  assert.equal(await page.evaluate(() => window.sidebarCalls.length), callsBefore, "metadata recovery never opens a session");
+  const reads = await page.evaluate(() => window.sidebarListReads);
+  await page.waitForTimeout(1300);
+  assert.equal(await page.evaluate(() => window.sidebarListReads), reads, "ready metadata stops polling");
+  console.log("PASS pending history remains visible and recovers without clicks; ready state stops polling");
   console.log("PASS unified Trash entry: archive, restore to sidebar, switch back to deleted sessions");
   console.log("PASS compact sidebar: light/dark, 220/300px, title/time geometry, selection, open, expand, search, archive/restore");
 } finally {

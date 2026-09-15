@@ -13,14 +13,20 @@ import (
 
 func windowReady(t *testing.T, query *Query, ref SessionRef, req HistoryWindowRequest) HistoryWindowPage {
 	t.Helper()
+	page, err := waitHistoryWindow(t, query, ref, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return page
+}
+
+func waitHistoryWindow(t *testing.T, query *Query, ref SessionRef, req HistoryWindowRequest) (HistoryWindowPage, error) {
+	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		page, err := query.ReadHistoryWindow(t.Context(), ref, req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if page.Status != "preparing" {
-			return page
+		if err != nil || page.Status != "preparing" {
+			return page, err
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("window stayed preparing: %+v", page)

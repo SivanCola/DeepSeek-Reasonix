@@ -77,7 +77,7 @@ func TestHistoryRepairsPersistedMismatchedProgress(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = restarted.CloseAll(context.Background()) })
-	page, err := restarted.Query().ReadHistoryWindow(t.Context(), r.Ref(), HistoryWindowRequest{Anchor: "newest", Limit: 32})
+	page, err := waitHistoryWindow(t, restarted.Query(), r.Ref(), HistoryWindowRequest{Anchor: "newest", Limit: 32})
 	if err != nil || len(page.Messages) != 2 {
 		t.Fatalf("recovered window: status=%s messages=%d err=%v", page.Status, len(page.Messages), err)
 	}
@@ -141,7 +141,7 @@ func TestHistoryRepairDoesNotHideDamagedLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.Query().ReadHistoryWindow(t.Context(), r.Ref(), HistoryWindowRequest{Anchor: "newest"})
+	_, err = waitHistoryWindow(t, s.Query(), r.Ref(), HistoryWindowRequest{Anchor: "newest"})
 	if !errors.Is(err, ErrDamagedStore) {
 		t.Fatalf("corruption error=%v", err)
 	}

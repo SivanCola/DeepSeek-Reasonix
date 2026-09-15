@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 
@@ -136,23 +135,12 @@ func (q *Query) ReadHistoryWindow(ctx context.Context, ref SessionRef, req Histo
 	}
 
 	path := historyIndexPath(filesystem.Root, ref.SessionID)
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		preparation := q.prepareHistoryLocator(filesystem, ref.SessionID, path)
-		select {
-		case <-preparation.done:
-			if preparation.err != nil {
-				return HistoryWindowPage{Messages: []PersistentMessage{}, Status: "failed"}, preparation.err
-			}
-		default:
-			return HistoryWindowPage{Messages: []PersistentMessage{}, Status: "preparing"}, nil
-		}
-	}
-	lock := q.projectionLock("history", ref.SessionID)
-	lock.Lock()
-	err := ensureHistoryIndex(ctx, filesystem, ref.SessionID, path)
-	lock.Unlock()
+	ready, err := q.historyLocatorReady(ctx, filesystem, ref.SessionID, path)
 	if err != nil {
 		return HistoryWindowPage{}, err
+	}
+	if !ready {
+		return HistoryWindowPage{Messages: []PersistentMessage{}, Status: "preparing"}, nil
 	}
 	handle, err := projectiondb.Open(ctx, projectiondb.OpenOptions{Path: path, Migrations: historyMigrations, RequireDisk: true, MaxOpenConns: 1})
 	if err != nil {
