@@ -5,10 +5,13 @@ import (
 	"errors"
 )
 
-// CloseAll releases every unbound runtime owned by this service. Long-lived
-// hosts normally rely on idle retention; process shutdown and isolated tests
-// use this explicit boundary to release writer leases deterministically.
+// CloseAll releases every runtime this service still owns. A runtime a client
+// is still bound to is reported, not torn down underneath that client.
 func (s *Service) CloseAll(ctx context.Context) error {
+	return s.closeAll(ctx, false)
+}
+
+func (s *Service) closeAll(ctx context.Context, terminal bool) error {
 	if s == nil {
 		return nil
 	}
@@ -20,7 +23,7 @@ func (s *Service) CloseAll(ctx context.Context) error {
 	s.mu.Unlock()
 	var closeErr error
 	for _, runtime := range runtimes {
-		closeErr = errors.Join(closeErr, s.closeOwned(ctx, runtime, ""))
+		closeErr = errors.Join(closeErr, s.closeRuntime(ctx, runtime, "", terminal))
 	}
 	return closeErr
 }
@@ -29,6 +32,11 @@ func (s *Service) CloseAll(ctx context.Context) error {
 // share this service's persistence root. CloseAll intentionally remains the
 // runtime-only primitive; hosts and short-lived import services must use this
 // lifecycle boundary before releasing or removing the root directory.
+//
+// Because callers rely on that guarantee, Shutdown is terminal: a runtime a
+// client never unbound is still closed, so its writer lease and recovery
+// handles are released instead of surviving until process exit. The leaked
+// binding is reported rather than swallowed.
 func (s *Service) Shutdown(ctx context.Context) error {
 	if s == nil {
 		return nil
@@ -37,5 +45,5 @@ func (s *Service) Shutdown(ctx context.Context) error {
 	// a worker can open a recovery projection after CloseAll collected its
 	// runtime set and leave the Bolt handle behind during Windows cleanup.
 	s.query.Close()
-	return s.CloseAll(ctx)
+	return s.closeAll(ctx, true)
 }

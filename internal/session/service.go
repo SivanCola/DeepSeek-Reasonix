@@ -419,6 +419,14 @@ func (s *Service) Close(ctx context.Context, ref SessionRef) error {
 // instance grant. A delayed old disposer must never close its same-ID
 // successor, and a client-bound runtime is never torn down underneath it.
 func (s *Service) closeOwned(ctx context.Context, runtime *Runtime, instance string) error {
+	return s.closeRuntime(ctx, runtime, instance, false)
+}
+
+// closeRuntime adds the terminal variant Shutdown needs. Refusing a bound
+// runtime is right while the process keeps running, but at shutdown it would
+// strand the writer lease and recovery handles for the process lifetime, so
+// the final teardown releases them and still reports the leaked binding.
+func (s *Service) closeRuntime(ctx context.Context, runtime *Runtime, instance string, terminal bool) error {
 	if runtime == nil {
 		return ErrSessionNotRunning
 	}
@@ -428,25 +436,30 @@ func (s *Service) closeOwned(ctx context.Context, runtime *Runtime, instance str
 	if instance != "" && runtime.instance != instance {
 		return ErrSessionNotRunning
 	}
+	var leaked error
 	s.mu.Lock()
 	if timer := s.idleTimers[runtime]; timer != nil {
 		s.removeIdleCacheLocked(runtime, true)
 	}
 	if s.bindings[runtime] != 0 {
-		s.mu.Unlock()
-		return ErrRuntimeBound
+		if !terminal {
+			s.mu.Unlock()
+			return ErrRuntimeBound
+		}
+		delete(s.bindings, runtime)
+		leaked = fmt.Errorf("%w: %s", ErrRuntimeBound, runtime.ref.SessionID)
 	}
 	if s.active[runtime.ref] != runtime {
 		s.mu.Unlock()
-		return runtime.close(ctx)
+		return errors.Join(leaked, runtime.close(ctx))
 	}
 	if done := s.retiring[runtime]; done != nil {
 		s.mu.Unlock()
 		select {
 		case <-done:
-			return runtime.close(ctx)
+			return errors.Join(leaked, runtime.close(ctx))
 		case <-ctx.Done():
-			return ctx.Err()
+			return errors.Join(leaked, ctx.Err())
 		}
 	}
 	done := make(chan struct{})
@@ -464,7 +477,7 @@ func (s *Service) closeOwned(ctx context.Context, runtime *Runtime, instance str
 	}
 	close(done)
 	s.mu.Unlock()
-	return err
+	return errors.Join(leaked, err)
 }
 
 // Detach removes a runtime only if it is still the exact published instance.
