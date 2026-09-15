@@ -1,9 +1,11 @@
-import { Archive, ChevronDown, ChevronRight, History, LoaderCircle, MessageSquare, Plus, RotateCcw, Search } from "lucide-react";
+import { Archive, ChevronDown, ChevronRight, LoaderCircle, MessageSquare, Plus, RotateCcw, Search } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { WorkspaceSessionSummary, WorkspaceSnapshot } from "../generated/desktopContract.generated";
 import { app, onProjectTreeChanged } from "../lib/bridge";
 import { useI18n } from "../lib/i18n";
 import { useToast } from "../lib/toast";
+import "./WorkspaceSessionBrowser.css";
+import { topicActivityDateLabel, topicActivityLabel } from "../lib/projectTreeTopic";
 
 // Workspace activity comes from the runtime store, not from the session rows:
 // a background job keeps a workspace active after its turn goes idle, and the
@@ -24,37 +26,43 @@ export function workspaceSessionsForDisplay(rows: WorkspaceSessionSummary[], sea
   return provisional ? [...ordinary, provisional] : ordinary;
 }
 
-export function WorkspaceSessionBrowser() {
+export function WorkspaceSessionBrowser({ archived = false }: { archived?: boolean }) {
   const { showToast } = useToast();
   const { t } = useI18n();
   const [snapshot, setSnapshot] = useState<WorkspaceSnapshot | null>(null);
   const [rows, setRows] = useState<SessionRows>({});
   const [query, setQuery] = useState("");
-  const [archived, setArchived] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [showAll, setShowAll] = useState<Set<string>>(new Set());
   const [activeSessionId, setActiveSessionId] = useState("");
   const [loading, setLoading] = useState(true);
   const openSequence = useRef(0);
+  const reloadSequence = useRef(0);
+  const draggedWorkspace = useRef("");
+  const movingWorkspace = useRef(false);
+  const [dropTarget, setDropTarget] = useState<{ id: string; after: boolean } | null>(null);
+  const clearDrag = () => { draggedWorkspace.current = ""; setDropTarget(null); };
 
   const reload = useCallback(async () => {
     if (typeof app.GetWorkspaceSnapshot !== "function") return;
+    const sequence = ++reloadSequence.current;
     setLoading(true);
     try {
       const [next, tabs] = await Promise.all([app.GetWorkspaceSnapshot(), app.ListTabs()]);
-      const loaded = await Promise.all(next.workspaces.filter((workspace) => workspace.visible).map(async (workspace) => {
+      const loaded = await Promise.all(next.workspaces.filter((workspace) => archived || workspace.visible).map(async (workspace) => {
         const page = await app.ListWorkspaceSessions(workspace.id, query, "", 200, archived);
         return [workspace.id, page.sessions] as const;
       }));
+      if (sequence !== reloadSequence.current) return;
       setSnapshot(next);
       setRows(Object.fromEntries(loaded));
       const active = tabs.find((tab) => tab.active && !tab.remote);
       setActiveSessionId(active?.session?.sessionId || active?.sessionId || "");
       setExpanded((current) => current.size > 0 ? current : new Set(next.workspaces.filter((workspace) => workspace.visible).map((workspace) => workspace.id)));
     } catch (error) {
-      showToast(error instanceof Error ? error.message : String(error), "error");
+      if (sequence === reloadSequence.current) showToast(error instanceof Error ? error.message : String(error), "error");
     } finally {
-      setLoading(false);
+      if (sequence === reloadSequence.current) setLoading(false);
     }
   }, [archived, query, showToast]);
 
@@ -63,7 +71,7 @@ export function WorkspaceSessionBrowser() {
     return onProjectTreeChanged(() => void reload());
   }, [reload]);
 
-  const visibleWorkspaces = useMemo(() => snapshot?.workspaces.filter((workspace) => workspace.visible) ?? [], [snapshot]);
+  const visibleWorkspaces = useMemo(() => snapshot?.workspaces.filter((workspace) => archived || workspace.visible) ?? [], [snapshot, archived]);
   const mutate = async (task: () => Promise<void>) => {
     try {
       await task();
@@ -88,9 +96,6 @@ export function WorkspaceSessionBrowser() {
         <Search size={13} aria-hidden="true" />
         <input aria-label={t("workspaceBrowser.search")} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("workspaceBrowser.search")} />
       </div>
-      <button className="workspace-browser__archive-toggle" type="button" onClick={() => setArchived((value) => !value)}>
-        <History size={13} aria-hidden="true" />{archived ? t("workspaceBrowser.back") : t("workspaceBrowser.archived")}
-      </button>
       {loading && !snapshot && <div className="workspace-browser__empty"><LoaderCircle className="spin" size={14} /> {t("workspaceBrowser.loading")}</div>}
       {visibleWorkspaces.map((workspace) => {
         const open = expanded.has(workspace.id);
@@ -100,29 +105,59 @@ export function WorkspaceSessionBrowser() {
         const showingAll = showAll.has(workspace.id);
         const shown = workspaceSessionsForDisplay(workspaceRows, Boolean(query) || showingAll, archived);
         return (
-          <section className="workspace-browser__workspace" key={workspace.id}>
-            <div className="workspace-browser__workspace-heading">
-              <button className="workspace-browser__workspace-title" type="button" onClick={() => setExpanded((current) => {
+          <section className="workspace-browser__workspace" key={workspace.id} data-workspace-id={workspace.id}>
+            <div className="workspace-browser__workspace-heading"
+              data-drop={dropTarget?.id === workspace.id ? dropTarget.after ? "after" : "before" : undefined}
+              onDragOver={(event) => {
+                if (!draggedWorkspace.current || draggedWorkspace.current === workspace.id || archived || query.trim()) return;
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "move";
+                const rect = event.currentTarget.getBoundingClientRect();
+                setDropTarget({ id: workspace.id, after: event.clientY >= rect.top + rect.height / 2 });
+              }}
+              onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropTarget(null); }}
+              onDrop={(event) => {
+                const source = draggedWorkspace.current;
+                const rect = event.currentTarget.getBoundingClientRect();
+                const after = event.clientY >= rect.top + rect.height / 2;
+                clearDrag();
+                if (!source || source === workspace.id || movingWorkspace.current || archived || query.trim()) return;
+                event.preventDefault(); event.stopPropagation();
+                const ordered = snapshot?.workspaces.filter((item) => item.id !== source) ?? [];
+                const before = after ? ordered[ordered.findIndex((item) => item.id === workspace.id) + 1]?.id ?? "" : workspace.id;
+                movingWorkspace.current = true;
+                void mutate(() => app.MoveWorkspace(source, before)).finally(() => { movingWorkspace.current = false; });
+              }}>
+              <button className="workspace-browser__workspace-title" type="button" title={workspace.title || t("workspaceBrowser.workspace")} aria-expanded={open}
+                draggable={!archived && !query.trim()}
+                onDragStart={(event) => {
+                  if (movingWorkspace.current) { event.preventDefault(); return; }
+                  draggedWorkspace.current = workspace.id;
+                  event.dataTransfer.effectAllowed = "move";
+                  event.dataTransfer.setData("application/x-reasonix-workspace", workspace.id);
+                }} onDragEnd={clearDrag} onClick={() => setExpanded((current) => {
                 const next = new Set(current);
                 if (next.has(workspace.id)) next.delete(workspace.id); else next.add(workspace.id);
                 return next;
               })}>
-                {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}<span>{workspace.title || t("workspaceBrowser.workspace")}</span>
+                {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}<span className="workspace-browser__workspace-label">{workspace.title || t("workspaceBrowser.workspace")}</span>
                 <Suspense fallback={null}><RuntimeActivity target={{
                   scope: workspace.id === GLOBAL_WORKSPACE_ID ? "global" : "project", root: workspace.root,
                 }} /></Suspense>
               </button>
-              <button className="workspace-browser__workspace-create" type="button" aria-label={t("workspaceBrowser.create")}
+              {!archived && <button className="workspace-browser__workspace-create" type="button" aria-label={t("workspaceBrowser.create")}
                 onClick={() => void mutate(async () => { await app.CreateSession(workspace.id); })}>
                 <Plus size={13} />
-              </button>
+              </button>}
             </div>
             {open && shown.map((session) => (
               <div className={`workspace-browser__session${activeSessionId === session.ref.sessionId ? " workspace-browser__session--active" : ""}`} key={session.ref.sessionId} data-health={session.health} data-session-id={session.ref.sessionId}>
                 <button className="workspace-browser__session-open" type="button" data-session-id={session.ref.sessionId}
+                  title={[session.title || session.preview || t("workspaceBrowser.newSession"), topicActivityDateLabel(session.updatedAt || session.createdAt)].filter(Boolean).join("\n")}
                   aria-current={activeSessionId === session.ref.sessionId ? "page" : undefined} onClick={() => void openSession(session)}>
                   <MessageSquare size={13} aria-hidden="true" />
-                  <span><strong>{session.title || session.preview || t("workspaceBrowser.newSession")}</strong><small>{session.preview || (session.metadataStatus === "ready" ? t("workspaceBrowser.noMessages") : t("workspaceBrowser.indexing"))}</small></span>
+                  <strong className="workspace-browser__session-label">{session.title || session.preview || t("workspaceBrowser.newSession")}</strong>
+                  <span className="workspace-browser__session-time" aria-hidden="true">{topicActivityLabel(session.updatedAt || session.createdAt, t, true)}</span>
                   {session.running && <i aria-label={t("workspaceBrowser.running")} />}
                 </button>
                 <button className="workspace-browser__session-action" type="button" aria-label={archived ? t("workspaceBrowser.restore") : t("workspaceBrowser.archive")}

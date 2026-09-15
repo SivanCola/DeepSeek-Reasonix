@@ -1341,6 +1341,8 @@ export const zh: Record<DictKey, string> = {
   // 历史抽屉
   "history.title": "历史",
   "history.trashTitle": "回收站",
+  "history.deletedSection": "已删除",
+  "history.recoveryDescription": "管理已归档和已删除的会话。归档会话可恢复到列表；已删除会话可恢复或彻底删除。",
   "history.empty": "还没有已保存的会话。",
   "history.trashEmpty": "回收站为空。",
   "history.namePlaceholder": "会话名称…",

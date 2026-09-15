@@ -82,6 +82,7 @@ export function SidebarRegion(props: SidebarRegionProps) {
         {props.workbench ? (
           <nav className="sidebar__nav sidebar__nav--footer">
             <div className="sidebar__utility-row" aria-label={t("sidebar.utilityActions")}>
+              <UtilityButton label={t("sidebar.trash")} icon={<Trash2 size={16} />} onClick={props.onOpenTrash} />
               <UtilityButton label={t("heartbeat.scheduler")} icon={<AlarmClock size={16} />} onClick={props.onOpenAutomation} />
               <UtilityButton label={t("topbar.settings")} icon={<Settings size={16} />} onClick={() => props.onOpenSettings("general")} />
             </div>

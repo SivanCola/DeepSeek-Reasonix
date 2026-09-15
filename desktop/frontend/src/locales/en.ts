@@ -1340,6 +1340,8 @@ export const en = {
   // history drawer
   "history.title": "History",
   "history.trashTitle": "Trash",
+  "history.deletedSection": "Deleted",
+  "history.recoveryDescription": "Manage archived and deleted sessions. Restore archived sessions to the list; restore or permanently delete deleted sessions.",
   "history.empty": "No saved sessions yet.",
   "history.trashEmpty": "Trash is empty.",
   "history.namePlaceholder": "Session name…",

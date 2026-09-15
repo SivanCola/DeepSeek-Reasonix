@@ -22,6 +22,7 @@
     "test:mcp-app": "tsx src/__tests__/mcp-app-protocol.test.ts",
     "test:workspace": "tsx src/__tests__/keyed-resource.test.ts && tsx src/__tests__/workspace-tree-memory.test.ts && tsx src/__tests__/workspace-refresh-store.test.ts && tsx src/__tests__/workspace-selection-isolation.test.tsx && tsx src/__tests__/workspace-presented-pagination.test.tsx && tsx src/__tests__/workspace-changes-errors.test.tsx && tsx src/__tests__/workspace-turn-verification.test.tsx && tsx src/__tests__/workspace-preview-css.test.ts && tsx src/__tests__/workspace-media-release.test.ts && tsx src/__tests__/workspace-context-menu.test.tsx && tsx src/__tests__/workspace-resize-interaction.test.tsx && tsx src/__tests__/workspace-panel-swr-contract.test.ts",
     "test:settings-browser": "node bench/settings-layout.mjs",
+    "test:sidebar-browser": "node bench/workspace-session-browser.mjs",
     "test:settings-responsive": "tsx src/__tests__/settings-responsive-layout.test.ts",
     "test:stream": "tsx src/__tests__/raf-batch.test.ts && tsx src/__tests__/stream-delta-batch.test.ts && tsx src/__tests__/use-controller-stream-progress.test.ts",
     "test:motion": "node scripts/check-motion-ci-contract.mjs && node scripts/check-waapi-contract.mjs --self-test && tsx src/__tests__/native-motion.test.tsx && tsx src/__tests__/approval-animation.test.tsx",

@@ -1121,6 +1121,8 @@ export const zhTW: Record<DictKey, string> = {
   // 歷史抽屜
   "history.title": "歷史",
   "history.trashTitle": "回收站",
+  "history.deletedSection": "已刪除",
+  "history.recoveryDescription": "管理已封存和已刪除的會話。封存會話可還原至清單；已刪除會話可還原或永久刪除。",
   "history.empty": "還沒有已儲存的會話。",
   "history.trashEmpty": "回收站為空。",
   "history.namePlaceholder": "會話名稱…",

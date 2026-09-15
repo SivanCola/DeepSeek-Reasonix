@@ -28,7 +28,7 @@ import { providerIsConfigured, providerRequiresKey, removeProviderAccessesForMoc
 import { DEFAULT_STATUS_BAR_ITEMS } from "./statusBarItems";
 import { registerTrustedThemeBackgroundURLs } from "./themePack";
 import { modeHasAutoApproveTools, modeWithAutoApproveTools, modeWithPlan, normalizeCollaborationMode, normalizeMode, normalizeToolApprovalMode } from "./types";
-import { makeMockProjectTreeOrganizationBindings } from "./mockProjectTreeOrganization";
+import { makeMockProjectTreeOrganizationBindings, subscribeMockProjectTreeChanged, notifyMockProjectTreeChanged } from "./mockProjectTreeOrganization";
 import { decisionSurfaceMockFromInput, isLongDecisionOptionsMockInput } from "./decisionSurfaceMock";
 import { mockWorkspaceFile } from "./mockWorkspaceFile";
 import { mockAIRenameSession, type SessionTitleBindings } from "./mockSessionTitle";
@@ -935,7 +935,7 @@ export function onReady(cb: (tabId?: string) => void): () => void {
 }
 
 export function onProjectTreeChanged(cb: () => void): () => void {
-  return hostEvents("project-tree:changed", (payload?: unknown) => (payload as { reason?: unknown } | undefined)?.reason !== "runtime" && (payload as { reason?: unknown } | undefined)?.reason !== "catalog-v2" && cb()) ?? (() => {});
+  return hostEvents("project-tree:changed", (payload?: unknown) => (payload as { reason?: unknown } | undefined)?.reason !== "runtime" && (payload as { reason?: unknown } | undefined)?.reason !== "catalog-v2" && cb()) ?? subscribeMockProjectTreeChanged(cb);
 }
 
 // onTopicActivation subscribes to the "topic:activation" channel carrying the
@@ -2314,8 +2314,8 @@ function makeMockApp(): AppBindings {
     },
     async ReadSessionHistory(_ref: SessionRef, _cursor: string, _limit: number) { return { messages: [], startTurn: 0, endTurn: 0, totalTurns: 0, hasOlder: false }; },
     async RenameCanonicalSession(_ref: SessionRef, _title: string) {},
-    async ArchiveCanonicalSession(ref: SessionRef) { mockArchivedSessionIDs.add(ref.sessionId); },
-    async RestoreCanonicalSession(ref: SessionRef) { mockArchivedSessionIDs.delete(ref.sessionId); },
+    async ArchiveCanonicalSession(ref: SessionRef) { mockArchivedSessionIDs.add(ref.sessionId); notifyMockProjectTreeChanged(); },
+    async RestoreCanonicalSession(ref: SessionRef) { mockArchivedSessionIDs.delete(ref.sessionId); notifyMockProjectTreeChanged(); },
     async MoveWorkspaceSession(_workspaceId: string, _sessionId: string, _beforeSessionId: string) {},
     async RenameWorkspace(_workspaceId: string, _title: string) {},
     async SetWorkspaceVisible(_workspaceId: string, _visible: boolean) {},
