@@ -180,6 +180,7 @@ func incrementHistoryIndex(ctx context.Context, dir, path, sessionID string, rev
 	viewSequence := metadata.viewSequence
 	var buildErr error
 	err = scanV4CommitFileRefs(ctx, log, metadata.logSize, metadata.durableSequence+1, content, nil, func(_ int64, commit Commit) bool {
+		state.commitTurn, state.commitTime = commit.TurnID, commit.CreatedAt.UnixMilli()
 		state.transactions = append(state.transactions, []any{commit.ID, commit.FirstSequence, commit.LastSequence(), commit.OperationID, commit.OperationHash, commit.TurnID, commit.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")})
 		for _, event := range commit.Events {
 			if event.Kind == "history/replace" {
@@ -361,6 +362,7 @@ func populateHistoryIndex(ctx context.Context, db *sql.DB, log *os.File, content
 		return err
 	}
 	var durable uint64
+	var durableEnd int64
 	var viewSequence uint64
 	var buildErr error
 	chunkEvents := 0
@@ -384,6 +386,7 @@ func populateHistoryIndex(ctx context.Context, db *sql.DB, log *os.File, content
 		return beginChunk()
 	}
 	err := scanV4CommitFileRefs(ctx, log, 0, 1, content, nil, func(_ int64, commit Commit) bool {
+		state.commitTurn, state.commitTime = commit.TurnID, commit.CreatedAt.UnixMilli()
 		state.transactions = append(state.transactions, []any{commit.ID, commit.FirstSequence, commit.LastSequence(), commit.OperationID, commit.OperationHash, commit.TurnID, commit.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")})
 		for _, event := range commit.Events {
 			if event.Kind == "history/replace" {
@@ -416,6 +419,7 @@ func populateHistoryIndex(ctx context.Context, db *sql.DB, log *os.File, content
 				}
 			}
 		}
+		durableEnd, _ = log.Seek(0, 1)
 		return true
 	})
 	if err != nil {
@@ -431,7 +435,9 @@ func populateHistoryIndex(ctx context.Context, db *sql.DB, log *os.File, content
 	if err != nil {
 		return err
 	}
-	metadata := map[string]string{"session_id": sessionID, "log_size": fmt.Sprint(revision.Size), "log_mtime_ns": fmt.Sprint(revision.ModTimeNS), "storage_revision": fmt.Sprint(StorageRevision), "projection_version": fmt.Sprint(historyIndexVersion), "durable_sequence": fmt.Sprint(durable), "history_view_sequence": fmt.Sprint(viewSequence), "generation": generation}
+	// The scanner may observe appends after revisionOfLog. Pair the sequence
+	// with the end of the same completed batch, never the earlier file stat.
+	metadata := map[string]string{"session_id": sessionID, "log_size": fmt.Sprint(durableEnd), "log_mtime_ns": fmt.Sprint(revision.ModTimeNS), "storage_revision": fmt.Sprint(StorageRevision), "projection_version": fmt.Sprint(historyIndexVersion), "durable_sequence": fmt.Sprint(durable), "history_view_sequence": fmt.Sprint(viewSequence), "generation": generation}
 	for key, value := range metadata {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES(?,?)`, key, value); err != nil {
 			return err
@@ -496,6 +502,37 @@ func insertHistoryRows(ctx context.Context, tx *sql.Tx, prefix string, columns i
 }
 
 func indexMessageEvent(ctx context.Context, content *sessioncontent.Store, state *historyBuildState, event Event) error {
+	if state.commitTurn != "" && (event.Kind == "assistant/attempt" || event.Kind == "tool/call") {
+		payload := event.Payload
+		if event.PayloadRef != nil {
+			var err error
+			payload, err = resolveContentPayload(ctx, content, *event.PayloadRef)
+			if err != nil {
+				return err
+			}
+		}
+		var body struct {
+			ID     string `json:"id"`
+			Action string `json:"action"`
+		}
+		if err := json.Unmarshal(payload, &body); err != nil {
+			return err
+		}
+		if body.ID != "" && (event.Kind == "tool/call" || body.Action == "begin") {
+			_, err := state.tx.ExecContext(ctx, `INSERT OR IGNORE INTO turn_counts(turn_id,kind,id,sequence) VALUES(?,?,?,?)`, state.commitTurn, event.Kind, body.ID, event.Sequence)
+			return err
+		}
+	}
+	if state.commitTurn != "" {
+		switch event.Kind {
+		case "turn/start":
+			_, err := state.tx.ExecContext(ctx, `INSERT INTO turn_summaries(turn_id,start_sequence,started_at) VALUES(?,?,?) ON CONFLICT(turn_id) DO UPDATE SET start_sequence=excluded.start_sequence,started_at=excluded.started_at`, state.commitTurn, event.Sequence, state.commitTime)
+			return err
+		case "turn/end":
+			_, err := state.tx.ExecContext(ctx, `UPDATE turn_summaries SET end_sequence=?,ended_at=MAX(ended_at,?) WHERE turn_id=?`, event.Sequence, state.commitTime, state.commitTurn)
+			return err
+		}
+	}
 	if event.Kind != "message/complete" && event.Kind != "message/upsert" && event.Kind != "history/replace" && event.Kind != "legacy/import" {
 		return nil
 	}
@@ -514,6 +551,12 @@ func indexMessageEvent(ctx context.Context, content *sessioncontent.Store, state
 		}
 		if err := strictPayload(payload, &body); err != nil || body.Message == nil {
 			return damagedPayload(event, err)
+		}
+		message := body.Message
+		if state.commitTurn != "" && message.Role == provider.RoleAssistant && !message.LocalOnly && (strings.TrimSpace(message.Content) != "" || strings.TrimSpace(message.RawContent) != "") {
+			if _, err := state.tx.ExecContext(ctx, `UPDATE turn_summaries SET final_message_id=?,ended_at=MAX(ended_at,started_at+?) WHERE turn_id=?`, message.ID, message.WorkDurationMs, state.commitTurn); err != nil {
+				return err
+			}
 		}
 		return indexOneMessage(ctx, content, state, *body.Message, event.Sequence, event.Kind == "message/upsert")
 	case "history/replace":
@@ -548,12 +591,32 @@ func replaceIndexedMessages(ctx context.Context, content *sessioncontent.Store, 
 	state.positions = map[string]int64{}
 	state.turns = map[string]int{}
 	state.versions = map[string]int{}
+	legacyTurn := 0
+	var final *provider.Message
+	flushLegacyTurn := func() error {
+		if final == nil {
+			return nil
+		}
+		_, err := state.tx.ExecContext(ctx, `INSERT OR REPLACE INTO turn_summaries(turn_id,start_sequence,end_sequence,started_at,ended_at,final_message_id) VALUES(?,?,?,?,?,?)`, fmt.Sprintf("legacy:%d:%d", sequence, legacyTurn), sequence, sequence, 0, final.WorkDurationMs, final.ID)
+		return err
+	}
 	for _, message := range messages {
+		if message.Role == provider.RoleUser {
+			if err := flushLegacyTurn(); err != nil {
+				return err
+			}
+			legacyTurn++
+			final = nil
+		}
+		if message.Role == provider.RoleAssistant && !message.LocalOnly && (strings.TrimSpace(message.Content) != "" || strings.TrimSpace(message.RawContent) != "") {
+			copy := message
+			final = &copy
+		}
 		if err := indexOneMessage(ctx, content, state, message, sequence, false); err != nil {
 			return err
 		}
 	}
-	return nil
+	return flushLegacyTurn()
 }
 
 func indexOneMessage(ctx context.Context, content *sessioncontent.Store, state *historyBuildState, message provider.Message, sequence uint64, upsert bool) error {

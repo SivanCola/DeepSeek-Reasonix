@@ -840,6 +840,9 @@ export interface ChangedFileInfo {
 
 // Bound-method payloads (desktop/app.go).
 export interface HistoryMessage {
+  samplingCount?: number;
+  toolCount?: number;
+  turnFinal?: boolean;
 	historyTurn?: number;
 	recordId?: string;
 	attemptId?: string;

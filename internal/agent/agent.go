@@ -1432,6 +1432,13 @@ func (a *Agent) streamWithFrozen(ctx context.Context, turn int, sink event.Sink,
 	}
 	for {
 		var chunk provider.Chunk
+		// A provider may return buffered tokens after cancellation. Do not let
+		// select choose a ready chunk over an already cancelled context.
+		if ctx.Err() != nil {
+			stored, _ := finishReasoning()
+			usage = provider.UsageWithRequestAttemptCount(ctx, bestEffortStreamUsage(usage, text.Len(), reasoning.Len(), "interrupted"))
+			return collect(stored, ctx.Err())
+		}
 		select {
 		case <-ctx.Done():
 			stored, _ := finishReasoning()
@@ -1470,18 +1477,12 @@ func (a *Agent) streamWithFrozen(ctx context.Context, turn int, sink event.Sink,
 					// and what the closing Message event re-renders must agree.
 					display = finalReasoning
 				}
-				if finalText != "" || display != "" {
-					sink.Emit(event.Event{
-						Kind:      event.Message,
-						Text:      DisplayAssistantText(finalText),
-						Reasoning: display,
-					})
-				}
 				usage = provider.UsageWithRequestAttemptCount(ctx, usage)
 				// A clean terminal never reports partialToolStarted: the calls
 				// slice is now authoritative and the partial cards were merged.
 				return streamedTurn{
-					text: finalText, reasoning: finalReasoning, signature: finalSignature,
+					displayReasoning: display,
+					text:             finalText, reasoning: finalReasoning, signature: finalSignature,
 					reasoningID: meta.id, reasoningStatus: meta.status,
 					reasoningComplete: meta.complete,
 					reasoningState:    meta.state, thinkingBlocks: meta.blocks,
@@ -1628,7 +1629,7 @@ func upsertPartialToolCall(calls []provider.ToolCall, call provider.ToolCall) []
 	return append(calls, call)
 }
 
-func (a *Agent) recordInterruptedDisplay(text, reasoning string, calls []provider.ToolCall, pending bool, terminalErr error, workDurationMs int64) {
+func (a *Agent) recordInterruptedDisplay(text, reasoning string, calls []provider.ToolCall, pending bool, terminalErr error, workDurationMs int64, messageIDs ...string) {
 	displayCalls := make([]provider.ToolCall, 0, len(calls))
 	interrupted := make([]string, 0, len(calls))
 	notStarted := make([]provider.InterruptedToolSummary, 0, len(calls))
@@ -1652,7 +1653,12 @@ func (a *Agent) recordInterruptedDisplay(text, reasoning string, calls []provide
 		terminalStatus = "failed"
 		failureDiagnostic = provider.DiagnoseFailure(terminalErr)
 	}
-	_ = a.appendCommittedMessages(context.Background(), "interrupted-attempt", provider.Message{
+	var messageID string
+	if len(messageIDs) > 0 {
+		messageID = messageIDs[0]
+	}
+	err := a.appendCommittedMessages(context.Background(), "interrupted-attempt", provider.Message{
+		ID:               messageID,
 		Role:             provider.RoleTool,
 		Content:          text,
 		ReasoningContent: reasoning,
@@ -1671,6 +1677,11 @@ func (a *Agent) recordInterruptedDisplay(text, reasoning string, calls []provide
 			DroppedPartialReasoning: strings.TrimSpace(reasoning) != "",
 		},
 	})
+	if err != nil {
+		a.svc.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Code: "transcript_save_failed", Text: "Interrupted output could not be saved; displayed output is retained."})
+	} else if messageID != "" {
+		a.emitStreamAttempt(messageID, event.StreamAttemptCommit, 0, "interrupted", nil)
+	}
 }
 
 func (a *Agent) capturePrefixShape(schemas []provider.ToolSchema) PrefixShape {
@@ -1774,7 +1785,7 @@ func (a *Agent) emitResolvedToolDispatch(ctx context.Context, c provider.ToolCal
 			DisplayName:  c.Name,
 			TargetName:   c.ResolvedName,
 			CapabilityID: c.CapabilityID,
-		})
+		}, c.ID)
 	}
 	a.svc.sink.Emit(event.Event{Kind: event.ToolDispatch, MessageID: messageIdentity(ctx), Tool: event.Tool{
 		ID:           c.ID,

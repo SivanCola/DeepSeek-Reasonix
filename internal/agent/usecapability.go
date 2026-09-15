@@ -1444,14 +1444,20 @@ var (
 
 // EmitProxyAudit is a helper for frontends: returns a notice describing the
 // proxy name and real target for user audit trails.
-func EmitProxyAudit(sink event.Sink, resolved tool.ResolvedCall) {
+func EmitProxyAudit(sink event.Sink, resolved tool.ResolvedCall, callIDs ...string) {
 	if sink == nil || resolved.TargetName == "" {
 		return
 	}
+	callID := ""
+	if len(callIDs) > 0 {
+		callID = callIDs[0]
+	}
+	detail, _ := json.Marshal(map[string]string{"callId": callID, "capabilityId": resolved.CapabilityID, "target": resolved.TargetName})
 	sink.Emit(event.Event{
 		Kind:   event.Notice,
 		Level:  event.LevelInfo,
+		Code:   "capability_proxy_audit",
 		Text:   capabilityProxyNoticeText(resolved.DisplayName, resolved.TargetName),
-		Detail: resolved.CapabilityID,
+		Detail: string(detail),
 	})
 }

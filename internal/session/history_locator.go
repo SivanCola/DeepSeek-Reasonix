@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	historyIndexVersion     = 5
+	historyIndexVersion     = 7
 	HistoryPageDefaultLimit = 100
 	HistoryPageMaxLimit     = 500
 	HistoryPageMaxBytes     = 2 << 20
@@ -29,15 +29,19 @@ const (
 // deliberately separate from provider.Message: provider DTOs are materialized
 // only at model or compatibility boundaries.
 type PersistentMessage struct {
-	MessageID     string              `json:"messageId"`
-	Position      int64               `json:"position"`
-	Version       int                 `json:"version"`
-	Role          string              `json:"role"`
-	Preview       string              `json:"preview,omitempty"`
-	EventSequence uint64              `json:"eventSequence"`
-	VisibleTurn   int                 `json:"visibleTurn"`
-	Inline        json.RawMessage     `json:"inline,omitempty"`
-	ContentRef    *sessioncontent.Ref `json:"contentRef,omitempty"`
+	SamplingCount  *int                `json:"samplingCount,omitempty"`
+	ToolCount      *int                `json:"toolCount,omitempty"`
+	TurnFinal      bool                `json:"turnFinal,omitempty"`
+	TurnDurationMs int64               `json:"turnDurationMs,omitempty"`
+	MessageID      string              `json:"messageId"`
+	Position       int64               `json:"position"`
+	Version        int                 `json:"version"`
+	Role           string              `json:"role"`
+	Preview        string              `json:"preview,omitempty"`
+	EventSequence  uint64              `json:"eventSequence"`
+	VisibleTurn    int                 `json:"visibleTurn"`
+	Inline         json.RawMessage     `json:"inline,omitempty"`
+	ContentRef     *sessioncontent.Ref `json:"contentRef,omitempty"`
 }
 
 type MessageHistoryPage struct {
@@ -92,6 +96,8 @@ type historyCursor struct {
 }
 
 type historyBuildState struct {
+	commitTurn   string
+	commitTime   int64
 	nextPosition int64
 	visibleTurn  int
 	positions    map[string]int64
@@ -181,6 +187,16 @@ var historyMigrations = []projectiondb.Migration{{Version: 1, Apply: func(ctx co
 	// Revision 5 stops duplicating inline message bodies into search_text. The
 	// rebuild metadata version forces old indexes through an atomic rebuild.
 	_, err := tx.ExecContext(ctx, `SELECT 1`)
+	return err
+}}, {Version: 6, Apply: func(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `CREATE TABLE turn_summaries (turn_id TEXT PRIMARY KEY, start_sequence INTEGER NOT NULL DEFAULT 0, end_sequence INTEGER NOT NULL DEFAULT 0, started_at INTEGER NOT NULL DEFAULT 0, ended_at INTEGER NOT NULL DEFAULT 0, final_message_id TEXT NOT NULL DEFAULT '')`)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `CREATE INDEX turn_summaries_final ON turn_summaries(final_message_id)`)
+	return err
+}}, {Version: 7, Apply: func(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `CREATE TABLE turn_counts (turn_id TEXT NOT NULL, kind TEXT NOT NULL, id TEXT NOT NULL, sequence INTEGER NOT NULL, PRIMARY KEY(turn_id,kind,id))`)
 	return err
 }}}
 

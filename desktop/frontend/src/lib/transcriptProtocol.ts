@@ -67,6 +67,8 @@ export interface TranscriptReplayRequest { identity: TranscriptIdentity; after: 
 export interface TranscriptReplay extends TranscriptSnapshotBoundary, TurnEventReplayView {}
 
 export interface TranscriptProtocolBindings {
+  TranscriptFollowForTab(tabId: string, request: import("../generated/desktopContract.generated").FollowRequest): Promise<import("../generated/desktopContract.generated").TranscriptFollowResponse>;
+  RemoteTranscriptFollowForTab(tabId: string, request: import("../generated/desktopContract.generated").FollowRequest): Promise<import("../generated/desktopContract.generated").TranscriptFollowResponse>;
   TranscriptSnapshotForTab?(tabId: string, request: TranscriptPageRequest): Promise<TranscriptSnapshot>;
   TranscriptPageForTab?(tabId: string, request: TranscriptPageRequest): Promise<TranscriptSnapshot>;
   TranscriptContentForTab?(tabId: string, request: TranscriptContentRef & { offset: number }): Promise<TranscriptContentChunk>;

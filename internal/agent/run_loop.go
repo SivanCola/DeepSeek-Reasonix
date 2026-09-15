@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -20,6 +21,9 @@ import (
 // response without re-running any tool.
 type streamedTurn struct {
 	messageID          string
+	displayReasoning   string
+	settledAttemptID   string
+	settledAttempt     int
 	text               string
 	reasoning          string
 	signature          string
@@ -206,7 +210,7 @@ func (a *Agent) runToolLoop(ctx context.Context, state *turnRuntime) (runErr err
 			// Exhausted stream retries (or a non-retryable error): persist one
 			// bounded LocalOnly recovery record for the next real user message.
 			// Intermediate failed attempts never wrote session state.
-			a.recordInterruptedDisplay(text, reasoning, partialCalls, true, err, state.workDurationMs())
+			a.recordInterruptedDisplay(text, reasoning, partialCalls, true, err, state.workDurationMs(), streamed.messageID)
 			// A broken provider stream can otherwise look like a silent hang
 			// followed only by the generic interrupted-turn notice (#9560).
 			if code, msg := streamInterruptNotice(err); msg != "" {
@@ -231,7 +235,19 @@ func (a *Agent) runToolLoop(ctx context.Context, state *turnRuntime) (runErr err
 		assistant.ToolCalls = calls
 		assistant.WorkDurationMs = state.workDurationMs()
 		if err := a.appendCommittedMessages(ctx, "assistant-attempt", assistant); err != nil {
+			if errors.Is(err, context.Canceled) {
+				a.recordInterruptedDisplay(text, reasoning, partialCalls, true, err, state.workDurationMs(), streamed.messageID)
+			}
 			return err
+		}
+		// Publish settlement only after the complete message is accepted by
+		// the business log. Recovery must never observe an end without a result.
+		if streamed.text != "" || streamed.displayReasoning != "" {
+			a.svc.sink.Emit(event.Event{Kind: event.Message, MessageID: streamed.messageID, AttemptID: streamed.messageID,
+				Text: DisplayAssistantText(streamed.text), Reasoning: streamed.displayReasoning})
+		}
+		if streamed.settledAttemptID != "" {
+			a.emitStreamAttempt(streamed.settledAttemptID, event.StreamAttemptCommit, streamed.settledAttempt, "", nil)
 		}
 
 		if len(calls) == 0 {
