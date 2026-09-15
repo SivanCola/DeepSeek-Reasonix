@@ -6008,7 +6008,14 @@
       "name": "ci.yml/desktop-windows-go",
       "location": ".github/workflows/ci.yml",
       "class": "keep-business",
-      "owner": "desktop Go suite, split from the Electron leg"
+      "owner": "fail-closed aggregate for Windows desktop Go partitions"
+    },
+    {
+      "kind": "ci-job",
+      "name": "ci.yml/desktop-windows-go-group",
+      "location": ".github/workflows/ci.yml",
+      "class": "keep-business",
+      "owner": "isolated parallel Windows desktop Go test partitions"
     },
     {
       "kind": "ci-job",
