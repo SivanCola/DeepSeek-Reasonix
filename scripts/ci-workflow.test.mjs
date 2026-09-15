@@ -289,6 +289,12 @@ test("browser matrix preserves five entry points and fails closed through deskto
 
 test("Windows desktop Go partitions tests without verbose JSON cache overhead", () => {
   const windowsGo = job(ci, "desktop-windows-go-group");
+  const context = { github: { event_name: "pull_request" }, needs: {
+    "desktop-prepare": { result: "success" }, changes: { outputs: { native: "true" } },
+  } };
+  assert.equal(condition(windowsGo, context), true);
+  assert.equal(condition(windowsGo, { ...context, cancelled: () => true }), false,
+    "superseded Windows workers must release the workflow concurrency slot");
   assert.match(windowsGo, /run: node \.\.\/scripts\/desktop-windows-go-tests\.mjs \$\{\{ matrix.group \}\}/);
   const commands = windowsDesktopGroups.map(group => {
     const args = windowsDesktopTestArgs(group);

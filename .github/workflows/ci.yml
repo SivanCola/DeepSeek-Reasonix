@@ -1157,7 +1157,7 @@ jobs:
   # the sum, and a Go flake reruns only this job.
   desktop-windows-go-group:
     needs: [changes, desktop-prepare]
-    if: always() && needs.desktop-prepare.result == 'success' && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.native != 'false')
+    if: ${{ !cancelled() && needs.desktop-prepare.result == 'success' && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.native != 'false') }}
     runs-on: windows-latest
     # Independent runners prevent valid groups from consuming each other's
     # step deadline. Go retains its default per-package ten-minute timeout.
