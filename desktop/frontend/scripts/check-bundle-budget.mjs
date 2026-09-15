@@ -451,6 +451,8 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // SessionRef bridge methods, active-row identity and the mock hydration event
 // contract measure 2439.8 KiB. Extracting exact-tab mock rebinding from the
 // startup bridge measures 2439.6 KiB; retain 0.3 KiB bounded toolchain headroom.
-const rawInitialBudgetKiB = 2_439.9;
+// History preparation and cancellation across startup and paging add 884 B
+// (0.035%) to the 2498286 B base. Measured 2499170 B; retain 0.1 KiB headroom.
+const rawInitialBudgetKiB = 2_440.7;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

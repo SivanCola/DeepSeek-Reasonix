@@ -2713,7 +2713,7 @@ export function useController() {
               turns: HISTORY_PAGE_TURNS,
               preferResident: shouldPreferResidentHistory(resetSurface, options.preserveCachedHistory),
               expectedRevision: sessionRevision,
-              expectedDigest: sessionDigest,
+              expectedDigest: sessionDigest, current: stillCurrent,
             }),
           );
 
@@ -4192,7 +4192,7 @@ export function useController() {
           () => isNavigationIntentCurrent(navigationSeq) && sessionLoadCurrent(targetTabId, seq)))) return terminal("superseded");
       } else if (typeof app.SessionOpenForTab === "function") {
         ensureTranscriptSubscription(targetTabId);
-        const projection = await getTranscriptStore().loadLatest(targetTabId, path, { turns: HISTORY_PAGE_TURNS, preferResident: false });
+        const projection = await getTranscriptStore().loadLatest(targetTabId, path, { turns: HISTORY_PAGE_TURNS, preferResident: false, current: () => isNavigationIntentCurrent(navigationSeq) && sessionLoadCurrent(targetTabId, seq) });
         if (!projection || !isNavigationIntentCurrent(navigationSeq) || !sessionLoadCurrent(targetTabId, seq)) return terminal("superseded");
         dispatchTo(targetTabId, { type: "reset" });
         dispatchTo(targetTabId, historyReplaceAction(projection));
@@ -4249,7 +4249,7 @@ export function useController() {
           () => isNavigationIntentCurrent(navigationSeq) && sessionLoadCurrent(tabId, seq)))) return terminal("superseded");
       } else if (typeof app.SessionOpenForTab === "function") {
         ensureTranscriptSubscription(tabId);
-        const projection = await getTranscriptStore().loadLatest(tabId, path, { turns: HISTORY_PAGE_TURNS, preferResident: false });
+        const projection = await getTranscriptStore().loadLatest(tabId, path, { turns: HISTORY_PAGE_TURNS, preferResident: false, current: () => isNavigationIntentCurrent(navigationSeq) && sessionLoadCurrent(tabId, seq) });
         if (!projection || !isNavigationIntentCurrent(navigationSeq) || !sessionLoadCurrent(tabId, seq)) return terminal("superseded");
         dispatchTo(tabId, { type: "reset" });
         dispatchTo(tabId, historyReplaceAction(projection));
