@@ -1,7 +1,9 @@
 // Bounded transcript records with stable ids, lazy content, generation-aware paging, and weighted LRU eviction.
 import { asArray } from "./array";
 import { canonicalHistoryContent, canonicalHistorySlice, resolvedHistoryField } from "./canonicalTranscriptBackend";
-import { noteHistoryPage, registerTranscriptCacheDiagnostics } from "./sessionDiagnostics";
+import type { HistoryPreparationWait } from "./historyPreparation";
+import { fetchPreparedHistorySlice } from "./transcriptHistoryFetch";
+import { registerTranscriptCacheDiagnostics } from "./sessionDiagnostics";
 import { TranscriptMarkdownCache, type ParsedMarkdownValue } from "./transcriptMarkdownCache";
 export type { ParsedMarkdownValue } from "./transcriptMarkdownCache";
 import type { Item } from "./useController";
@@ -25,6 +27,8 @@ export interface TranscriptBackend {
 }
 
 export interface TranscriptStoreOptions {
+  /** Injectable preparation scheduler for deterministic lifecycle tests. */
+  preparationWait?: HistoryPreparationWait;
   /** Resident sessions with records (unpinned). Default 3. */
   maxResidentSessions?: number;
   /** Total inline history body bytes across resident sessions. Default 32MiB. */
@@ -36,6 +40,8 @@ export interface TranscriptStoreOptions {
   /** Entries grouped into one live-tail page before it becomes reclaimable. */
   windowPageEntries?: number;
 }
+
+type HistoryReadOptions = { turns?: number; entries?: number; bytes?: number; current?: () => boolean };
 
 export interface TranscriptProjection {
   items: Item[];
@@ -153,6 +159,7 @@ export class TranscriptStore {
     return this.contentResolvers.register(tabId, resolve, enabled);
   }
   private readonly backend: TranscriptBackend;
+  private readonly preparationWait?: HistoryPreparationWait;
   private readonly maxResidentSessions: number;
   private readonly historyBodyBudgetBytes: number;
   private readonly windowMaxPages: number;
@@ -166,6 +173,7 @@ export class TranscriptStore {
 
   constructor(backend: TranscriptBackend, options: TranscriptStoreOptions = {}) {
     this.backend = backend;
+    this.preparationWait = options.preparationWait;
     this.maxResidentSessions = Math.max(1, options.maxResidentSessions ?? DEFAULT_MAX_RESIDENT_SESSIONS);
     this.historyBodyBudgetBytes = Math.max(0, options.historyBodyBudgetBytes ?? DEFAULT_HISTORY_BODY_BUDGET);
     this.windowMaxPages = Math.max(1, options.windowMaxPages ?? DEFAULT_WINDOW_MAX_PAGES);
@@ -375,22 +383,8 @@ export class TranscriptStore {
 
   // fetchSlice times one backend page request and records the content-free
   // page stats (entries, inline bytes, duration, stale, read-path source).
-  private async fetchSlice(tabId: string, req: HistorySliceRequest): Promise<HistorySlice> {
-    const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
-    const slice = await this.backend.HistorySliceForTab(tabId, req);
-    const endedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
-    if (slice.error?.trim()) throw new Error(slice.error.trim());
-    const entries = asArray<HistoryEntry>(slice.entries);
-    let inlineBytes = 0;
-    for (const entry of entries) inlineBytes += recordBytes(entry.message);
-    noteHistoryPage({
-      entries: entries.length,
-      inlineBytes,
-      durationMs: Math.max(0, endedAt - startedAt),
-      stale: Boolean(slice.stale),
-      source: slice.source ?? "",
-    });
-    return slice;
+  private async fetchSlice(tabId: string, req: HistorySliceRequest, current: () => boolean): Promise<HistorySlice | undefined> {
+    return fetchPreparedHistorySlice(() => this.backend.HistorySliceForTab(tabId, req), current, this.preparationWait);
   }
 
   generationOf(tabId: string, sessionPath: string): number | undefined {
@@ -674,7 +668,7 @@ export class TranscriptStore {
   async loadLatest(
     tabId: string,
     sessionPath: string,
-    options: { turns?: number; entries?: number; bytes?: number; preferResident?: boolean; expectedRevision?: number; expectedDigest?: string } = {},
+    options: HistoryReadOptions & { preferResident?: boolean; expectedRevision?: number; expectedDigest?: string } = {},
   ): Promise<TranscriptProjection | undefined> {
     const key = sessionKeyFor(tabId, sessionPath);
     const existing = this.sessions.get(key);
@@ -693,13 +687,14 @@ export class TranscriptStore {
     this.touch(session);
 
     const { turns, entries, bytes } = options;
-    let slice = await this.fetchSlice(tabId, { cursor: "", turns, entries, bytes });
-    if (this.sessions.get(key) !== session || session.generation !== generation) return undefined;
+    const current = () => this.sessions.get(key) === session && session.generation === generation && (options.current?.() ?? true);
+    let slice = await this.fetchSlice(tabId, { cursor: "", turns, entries, bytes }, current);
+    if (!slice || !current()) return undefined;
     if (slice.stale) {
       // cursor "" cannot bind a stale identity, but a concurrent rewrite may
       // still report one — retry once against the settled revision.
-      slice = await this.fetchSlice(tabId, { cursor: "", turns, entries, bytes });
-      if (this.sessions.get(key) !== session || session.generation !== generation) return undefined;
+      slice = await this.fetchSlice(tabId, { cursor: "", turns, entries, bytes }, current);
+      if (!slice || !current()) return undefined;
     }
     const newestEntries = asArray<HistoryEntry>(slice.entries);
     this.replaceRecords(session, newestEntries);
@@ -728,7 +723,7 @@ export class TranscriptStore {
   async loadOlder(
     tabId: string,
     sessionPath: string,
-    options: { turns?: number; entries?: number; bytes?: number } = {},
+    options: HistoryReadOptions = {},
   ): Promise<LoadOlderResult | undefined> {
     const key = sessionKeyFor(tabId, sessionPath);
     const session = this.sessions.get(key);
@@ -741,9 +736,10 @@ export class TranscriptStore {
     if (!session.hasOlder || !session.nextCursor || session.olderInFlight) return undefined;
     session.olderInFlight = true;
     const generation = session.generation;
+    const { current: _current, ...budget } = options;
     try {
-      const slice = await this.fetchSlice(tabId, { cursor: session.nextCursor, ...options });
-      if (this.sessions.get(key) !== session || session.generation !== generation) return undefined;
+      const slice = await this.fetchSlice(tabId, { cursor: session.nextCursor, ...budget }, () => this.sessions.get(key) === session && session.generation === generation && (options.current?.() ?? true));
+      if (!slice || this.sessions.get(key) !== session || session.generation !== generation) return undefined;
       if (slice.stale) {
         const projection = await this.loadLatest(tabId, sessionPath, options);
         return projection ? { ...projection, kind: "reload", prependItems: [], removeIds: [] } : undefined;
@@ -798,7 +794,7 @@ export class TranscriptStore {
   async loadNewer(
     tabId: string,
     sessionPath: string,
-    options: { turns?: number; entries?: number; bytes?: number } = {},
+    options: HistoryReadOptions = {},
   ): Promise<LoadNewerResult | undefined> {
     const key = sessionKeyFor(tabId, sessionPath);
     const session = this.sessions.get(key);
@@ -806,9 +802,10 @@ export class TranscriptStore {
     if (!session.hasNewer || !session.newerCursor || session.newerInFlight) return undefined;
     session.newerInFlight = true;
     const generation = session.generation;
+    const { current: _current, ...budget } = options;
     try {
-      const slice = await this.fetchSlice(tabId, { cursor: session.newerCursor, newer: true, ...options });
-      if (this.sessions.get(key) !== session || session.generation !== generation) return undefined;
+      const slice = await this.fetchSlice(tabId, { cursor: session.newerCursor, newer: true, ...budget }, () => this.sessions.get(key) === session && session.generation === generation && (options.current?.() ?? true));
+      if (!slice || this.sessions.get(key) !== session || session.generation !== generation) return undefined;
       if (slice.stale || !this.sameFingerprint(session, slice)) {
         // A newer page from a rebuilt projection cannot be appended to the
         // window the reader is holding; the window keeps its position and the

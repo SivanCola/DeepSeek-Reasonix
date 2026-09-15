@@ -2289,7 +2289,6 @@ export type { ModelSettingsChange, ModelSettingsResult } from "./modelSettingsTy
 export interface DesktopStartupSettingsView {
   bot: BotSettingsView;
   desktopLanguage: string; // "" | "en" | "zh"; empty = auto
-  desktopLayoutStyle: string; // "workbench" | "creation"
   desktopTheme: string; // "auto" | "dark" | "light"
   desktopThemeStyle: string;
   desktopTerminalTheme: string; // "auto" follows app | "dark" | "light"

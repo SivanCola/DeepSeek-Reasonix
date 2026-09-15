@@ -29,7 +29,7 @@ const { dom, root, dockTabId } = await renderFilesWorkspace({
   ReadPresentedFileSourceForTab: async (_tab, _tool, path) => preview(path),
 });
 const props: WorkspaceDockRegionProps = {
-  visible: true, overlay: false, mode: "files", creation: false, showContext: false,
+  visible: true, overlay: false, mode: "files", showContext: false,
   t: key => key, onPickEntry: () => {}, remote: { onClose: () => {} }, context: {} as WorkspaceDockRegionProps["context"],
   workspace: { open: true, tabId: "tab-a", cwd: "/repo", maximized: false, onClose: () => {}, onToggleMaximized: () => {} },
   workspaceKey: "lifecycle", workspaceRoot: "/repo", fileNavigation: fileNavigationOwner(),

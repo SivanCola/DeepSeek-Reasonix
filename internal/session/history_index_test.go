@@ -177,7 +177,7 @@ func TestHistoryPageKeepsSnapshotAndAuthorizesReferencedContent(t *testing.T) {
 		t.Fatalf("first page = %+v", first)
 	}
 	appendMessage("four", "must not enter the fixed snapshot")
-	second, err := service.Query().HistoryPage(t.Context(), ref, first.NextCursor, 10)
+	second, err := waitHistoryPage(t, service.Query(), ref, first.NextCursor, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +292,7 @@ func TestHistoryLocatorGenerationSurvivesRebuildAndChangesOnReplacement(t *testi
 	if _, err := service.Query().HistoryPage(t.Context(), runtime.Ref(), "", 1); err != nil {
 		t.Fatal(err)
 	}
-	stale, err := service.Query().HistoryPage(t.Context(), runtime.Ref(), first.NextCursor, 1)
+	stale, err := waitHistoryPage(t, service.Query(), runtime.Ref(), first.NextCursor, 1)
 	if err != nil || stale.Status != "stale_cursor" {
 		t.Fatalf("cursor after replacement = %+v, %v", stale, err)
 	}
@@ -506,7 +506,7 @@ func TestHistoryIndexAdvancesInPlaceAfterAppend(t *testing.T) {
 	if _, err := runtime.Session().Flush(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	page, err := service.Query().HistoryPage(t.Context(), runtime.Ref(), "", 100)
+	page, err := waitHistoryPage(t, service.Query(), runtime.Ref(), "", 100)
 	if err != nil {
 		t.Fatal(err)
 	}

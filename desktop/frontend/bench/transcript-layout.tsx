@@ -9,7 +9,7 @@ import { installDesktopHostStub } from "../src/__tests__/desktopHostStub";
 import "../src/styles.css";
 
 type Options = {
-  layout: "creation" | "workbench";
+  layout: "workbench";
   width: "standard" | "full";
   sidebar: boolean;
   dock: boolean;
@@ -54,7 +54,7 @@ const commands = {
 function Fixture() {
   const t = useT();
   const [options, setOptions] = useState<Options>({
-    layout: "creation", width: "full", sidebar: true, dock: false, launcher: false, long: true, turns: 2, text: null, streaming: false, shell: false,
+    layout: "workbench", width: "full", sidebar: true, dock: false, launcher: false, long: true, turns: 2, text: null, streaming: false, shell: false,
   });
   const [revision, setRevision] = useState(0);
   const items = useMemo(() => Array.from({ length: options.turns }, (_, index): Item[] => [
@@ -81,12 +81,12 @@ function Fixture() {
     footerHeight: 100, invocationMetadata: undefined, surfaceCommitToken: undefined,
     liveStore: undefined, transcriptHydrating: false, navigationDataReady: true, readOnly: false,
     controllerReady: true, hydratePlaceholderActive: false, clearContextPending: false,
-    creation: options.layout === "creation", availability: { kind: "ready", source: "history" },
+    availability: { kind: "ready", source: "history" },
     rewind: { stateActive: false, committing: false },
   };
   return <div className={"app app--windows app--windows-frameless app--" + options.layout} data-fixture-revision={revision}>
     <div className={`layout${options.sidebar ? "" : " layout--sidebar-collapsed"}${options.dock ? " layout--workspace-open" : ""}`}
-      style={{ "--sidebar-expanded-width": options.layout === "creation" ? "236px" : "300px", "--workspace-width": "300px" } as CSSProperties}>
+      style={{ "--sidebar-expanded-width": "300px", "--workspace-width": "300px" } as CSSProperties}>
       <header className="topicbar">Transcript layout fixture</header>
       <aside className="sidebar">Sidebar</aside>
       <div className="chat-pane">

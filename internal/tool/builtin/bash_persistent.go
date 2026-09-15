@@ -2,6 +2,7 @@ package builtin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -108,7 +109,7 @@ func (b bash) runPersistent(ctx context.Context, p bashParams, sh sandbox.Shell,
 	// not just the child environment: the spec that sets TMPDIR/GOCACHE must
 	// also bind (Linux) or allow (Seatbelt) that directory.
 	spec := b.specForCall(ctx)
-	launch := sandbox.PrepareArgs(spec, persistentshell.InteractiveArgv(sh), prepared.SessionTemp)
+	launch := sandbox.PrepareShellArgs(spec, persistentshell.InteractiveArgv(sh), prepared.SessionTemp)
 	if spec.Enforce() && !launch.Wrapped {
 		ex := shellrun.DescriptorFromShell(sh)
 		ex.State = tool.ShellStateNotRun
@@ -120,6 +121,7 @@ func (b bash) runPersistent(ctx context.Context, p bashParams, sh sandbox.Shell,
 	if emit, ok := tool.ProgressFrom(ctx); ok {
 		progress = shellrun.NewProgressWriter(emit)
 	}
+	defer progress.Flush()
 	res := m.Run(ctx, persistentshell.Request{
 		Argv:     launch.Argv,
 		Dir:      b.workDir,
@@ -129,14 +131,19 @@ func (b bash) runPersistent(ctx context.Context, p bashParams, sh sandbox.Shell,
 		Shell:    sh,
 		Progress: progress,
 	})
-	if !res.Started && res.Err != nil {
-		return "", nil, nil, false
+	if !res.Started && res.Err != nil && !res.Reset {
+		var startup *persistentshell.StartupError
+		if !errors.As(res.Err, &startup) {
+			return "", nil, nil, false
+		}
 	}
 	ex := shellrun.DescriptorFromShell(sh)
 	ex.State = res.State
 	ex.FailurePhase = res.FailurePhase
 	code := res.ExitCode
-	ex.ExitCode = &code
+	if res.Started {
+		ex.ExitCode = &code
+	}
 	if res.State != tool.ShellStateCompleted && res.Output != "" {
 		ex.OutputTail = res.Output
 		if len(ex.OutputTail) > tool.OutputTailMaxBytes {

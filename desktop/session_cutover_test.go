@@ -209,6 +209,11 @@ func TestDesktopV3CatalogResumeRenameAndDeleteUseSessionIdentity(t *testing.T) {
 	}
 	appendSessionTestModel(t, second, "second-model", targetModel)
 	appendSessionTestMessage(t, second, "second-message", provider.Message{ID: "user-second", Role: provider.RoleUser, Content: "second conversation"})
+	for _, ref := range []session.SessionRef{first.Ref(), second.Ref()} {
+		if _, err := app.attachDesktopSession(t.Context(), "project", root, ref); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	ctrl, err := app.buildTabControllerBoot(app.ctx, boot.Options{Model: model, WorkspaceRoot: root, SessionDir: dir, Sink: event.Discard})
 	if err != nil {
@@ -275,12 +280,15 @@ func TestDesktopSessionRefOpenFallsBackAndPublishesHydrationReady(t *testing.T) 
 	}
 	appendSessionTestModel(t, source, "source-model", model)
 	appendSessionTestMessage(t, source, "source-message", provider.Message{ID: "source-user", Role: provider.RoleUser, Content: "source remains"})
-	target, err := service.Create(t.Context(), session.CreateOptions{SessionID: "resume-broken-target"})
+	target, err := service.Create(t.Context(), session.CreateOptions{SessionID: "resume-broken-target", CWD: root, Origin: session.SessionOriginNew})
 	if err != nil {
 		t.Fatal(err)
 	}
 	appendSessionTestModel(t, target, "target-model", "missing/model")
 	appendSessionTestMessage(t, target, "target-message", provider.Message{ID: "target-user", Role: provider.RoleUser, Content: "target restored"})
+	if _, err := app.attachDesktopSession(t.Context(), "project", root, target.Ref()); err != nil {
+		t.Fatal(err)
+	}
 
 	ctrl, err := app.buildTabControllerBoot(app.ctx, boot.Options{Model: model, WorkspaceRoot: root, SessionDir: dir, Sink: event.Discard})
 	if err != nil {

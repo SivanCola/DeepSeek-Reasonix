@@ -32,7 +32,6 @@ export type WorkspaceDockRegionProps = {
   visible: boolean;
   overlay: boolean;
   mode: RightDockMode;
-  creation: boolean;
   showContext: boolean;
   t: Translator;
   /** Opens (or activates) the dock view a tab-picker entry stands for. */
@@ -52,9 +51,9 @@ export type WorkspaceDockRegionProps = {
   };
 };
 
-/** Shared workbench/creation dock; layout variants change data, not component identity. */
+/** The right-hand dock shared by every workspace tab. */
 export function WorkspaceDockRegion(props: WorkspaceDockRegionProps) {
-  const { visible, overlay, mode, creation, showContext, t } = props;
+  const { visible, overlay, mode, showContext, t } = props;
   const firstFileTabId = useActivityBarStore(state => state.tabs.find(tab => tab.type === "file")?.id);
   const loadedRoot = useActivityBarStore(state => state.workspaceRoot);
   const activeTabId = useActivityBarStore(state => state.activeTabId);
@@ -72,7 +71,7 @@ export function WorkspaceDockRegion(props: WorkspaceDockRegionProps) {
     if (firstFileTabId) readWorkspaceTreeMemory(workspaceViewMemoryKey(props.workspaceKey, firstFileTabId, true));
     switch (tab.type) {
       case "context":
-        if (showContext && !creation) return <ContextPanel {...props.context} />;
+        if (showContext) return <ContextPanel {...props.context} />;
         return <WorkspacePanel key={`${props.workspaceKey}::${tab.id}`} {...props.workspace} {...requests}
           dockTabId={tab.id} fileNavigation={fileNavigation}
           workspaceMemoryKey={workspaceViewMemoryKey(props.workspaceKey, tab.id)} workspaceMemoryVisitId={0} />;

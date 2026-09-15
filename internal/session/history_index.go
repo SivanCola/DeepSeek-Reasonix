@@ -69,9 +69,12 @@ func ensureHistoryIndex(ctx context.Context, persistence *FilesystemPersistence,
 	if historyIndexCurrent(ctx, dir, path, sessionID, revision) {
 		return nil
 	}
-	if updated, err := incrementHistoryIndex(ctx, dir, path, sessionID, revision); updated || err != nil {
+	if updated, err := incrementHistoryIndex(ctx, dir, path, sessionID, revision); updated || (err != nil && !errors.Is(err, ErrDamagedStore)) {
 		return err
 	}
+	// A bad derived checkpoint is not proof that the authoritative log is bad.
+	// Rebuild validates the complete log before replacing the old index; genuine
+	// corruption still fails and leaves the previous index intact.
 	return rebuildHistoryIndex(ctx, dir, path, sessionID, revision)
 }
 
@@ -136,11 +139,15 @@ func incrementHistoryIndex(ctx context.Context, dir, path, sessionID string, rev
 	}
 	defer handle.DB.Close()
 	metadata, err := readHistoryIndexMetadata(ctx, handle.DB)
-	if err != nil || metadata.sessionID != sessionID || metadata.storageRevision != StorageRevision || metadata.projection != historyIndexVersion || metadata.logSize < 0 || metadata.logSize > revision.Size {
+	if err != nil {
 		return false, nil
 	}
-	if metadata.logSize == revision.Size {
-		return true, nil
+	generation, err := historyProjectionGeneration(dir, 0)
+	if err != nil {
+		return false, err
+	}
+	if !metadata.canIncrement(sessionID, revision, generation) {
+		return false, nil
 	}
 
 	manifest, err := readManifest(filepath.Join(dir, "manifest.json"))
@@ -175,11 +182,9 @@ func incrementHistoryIndex(ctx context.Context, dir, path, sessionID string, rev
 		}
 	}()
 	content := contentStoreForSessionDir(dir)
-	durable := metadata.durableSequence
-	durableEnd := metadata.logSize
 	viewSequence := metadata.viewSequence
 	var buildErr error
-	err = scanV4CommitFileRefs(ctx, log, metadata.logSize, metadata.durableSequence+1, content, nil, func(_ int64, commit Commit) bool {
+	progress, err := scanHistoryLog(ctx, log, metadata.logSize, metadata.durableSequence+1, revision.Size, content, func(commit Commit) bool {
 		state.transactions = append(state.transactions, []any{commit.ID, commit.FirstSequence, commit.LastSequence(), commit.OperationID, commit.OperationHash, commit.TurnID, commit.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")})
 		for _, event := range commit.Events {
 			if event.Kind == "history/replace" {
@@ -199,15 +204,16 @@ func incrementHistoryIndex(ctx context.Context, dir, path, sessionID string, rev
 				buildErr = err
 				return false
 			}
-			durable = event.Sequence
 		}
-		durableEnd, _ = log.Seek(0, 1)
 		return true
 	})
 	if err != nil || buildErr != nil {
 		return false, errors.Join(err, buildErr)
 	}
-	if durableEnd == metadata.logSize {
+	if err := validateHistoryLog(ctx, dir, log, generation); err != nil {
+		return false, err
+	}
+	if progress.end == metadata.logSize {
 		// An incomplete physical tail remains unpublished. A writer will preserve
 		// and repair it before the next append.
 		return true, nil
@@ -215,13 +221,10 @@ func incrementHistoryIndex(ctx context.Context, dir, path, sessionID string, rev
 	if err := flushHistoryBuildRows(ctx, tx, &state); err != nil {
 		return false, err
 	}
-	generation, err := historyProjectionGeneration(dir, viewSequence)
-	if err != nil {
-		return false, err
-	}
+	generation = strings.TrimSuffix(generation, ":0") + fmt.Sprintf(":%d", viewSequence)
 	values := map[string]string{
-		"log_size": fmt.Sprint(durableEnd), "log_mtime_ns": fmt.Sprint(revision.ModTimeNS),
-		"durable_sequence": fmt.Sprint(durable), "history_view_sequence": fmt.Sprint(viewSequence), "generation": generation,
+		"log_size": fmt.Sprint(progress.end), "log_mtime_ns": fmt.Sprint(progress.modTimeNS),
+		"durable_sequence": fmt.Sprint(progress.sequence), "history_view_sequence": fmt.Sprint(viewSequence), "generation": generation,
 	}
 	for key, value := range values {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value); err != nil {
@@ -321,6 +324,10 @@ func rebuildHistoryIndex(ctx context.Context, dir, path, sessionID string, revis
 }
 
 func populateHistoryIndex(ctx context.Context, db *sql.DB, log *os.File, content *sessioncontent.Store, dir, sessionID string, revision logRevision) error {
+	generation, err := historyProjectionGeneration(dir, 0)
+	if err != nil {
+		return err
+	}
 	// Keep SQLite's derived-data working set explicit. The history database
 	// may be many GiB, but neither its page cache nor temporary sort state
 	// belongs in the runtime's cumulative memory footprint.
@@ -328,16 +335,8 @@ func populateHistoryIndex(ctx context.Context, db *sql.DB, log *os.File, content
 	// index. Avoid WAL and durability work for that private file; Rebuild
 	// validates it before one atomic publish, and the event log remains the
 	// durable source if a crash leaves or corrupts the temporary database.
-	for _, pragma := range []string{
-		`PRAGMA journal_mode=OFF`,
-		`PRAGMA synchronous=OFF`,
-		`PRAGMA locking_mode=EXCLUSIVE`,
-		`PRAGMA cache_size=-8192`,
-		`PRAGMA temp_store=FILE`,
-	} {
-		if _, err := db.ExecContext(ctx, pragma); err != nil {
-			return err
-		}
+	if err := configureHistoryRebuild(ctx, db); err != nil {
+		return err
 	}
 	var tx *sql.Tx
 	state := historyBuildState{positions: map[string]int64{}, turns: map[string]int{}, versions: map[string]int{}}
@@ -360,7 +359,6 @@ func populateHistoryIndex(ctx context.Context, db *sql.DB, log *os.File, content
 	if err := beginChunk(); err != nil {
 		return err
 	}
-	var durable uint64
 	var viewSequence uint64
 	var buildErr error
 	chunkEvents := 0
@@ -383,7 +381,7 @@ func populateHistoryIndex(ctx context.Context, db *sql.DB, log *os.File, content
 		chunkEvents, chunkBytes = 0, 0
 		return beginChunk()
 	}
-	err := scanV4CommitFileRefs(ctx, log, 0, 1, content, nil, func(_ int64, commit Commit) bool {
+	progress, err := scanHistoryLog(ctx, log, 0, 1, revision.Size, content, func(commit Commit) bool {
 		state.transactions = append(state.transactions, []any{commit.ID, commit.FirstSequence, commit.LastSequence(), commit.OperationID, commit.OperationHash, commit.TurnID, commit.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")})
 		for _, event := range commit.Events {
 			if event.Kind == "history/replace" {
@@ -403,7 +401,6 @@ func populateHistoryIndex(ctx context.Context, db *sql.DB, log *os.File, content
 				buildErr = err
 				return false
 			}
-			durable = event.Sequence
 			chunkEvents++
 			chunkBytes += int64(len(event.Payload))
 			if event.PayloadRef != nil {
@@ -427,11 +424,11 @@ func populateHistoryIndex(ctx context.Context, db *sql.DB, log *os.File, content
 	if err := flushHistoryBuildRows(ctx, tx, &state); err != nil {
 		return err
 	}
-	generation, err := historyProjectionGeneration(dir, viewSequence)
-	if err != nil {
+	if err := validateHistoryLog(ctx, dir, log, generation); err != nil {
 		return err
 	}
-	metadata := map[string]string{"session_id": sessionID, "log_size": fmt.Sprint(revision.Size), "log_mtime_ns": fmt.Sprint(revision.ModTimeNS), "storage_revision": fmt.Sprint(StorageRevision), "projection_version": fmt.Sprint(historyIndexVersion), "durable_sequence": fmt.Sprint(durable), "history_view_sequence": fmt.Sprint(viewSequence), "generation": generation}
+	generation = strings.TrimSuffix(generation, ":0") + fmt.Sprintf(":%d", viewSequence)
+	metadata := map[string]string{"session_id": sessionID, "log_size": fmt.Sprint(progress.end), "log_mtime_ns": fmt.Sprint(progress.modTimeNS), "storage_revision": fmt.Sprint(StorageRevision), "projection_version": fmt.Sprint(historyIndexVersion), "durable_sequence": fmt.Sprint(progress.sequence), "history_view_sequence": fmt.Sprint(viewSequence), "generation": generation}
 	for key, value := range metadata {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES(?,?)`, key, value); err != nil {
 			return err
@@ -614,8 +611,22 @@ func insertContentRef(ctx context.Context, state *historyBuildState, ref session
 }
 
 func messagePreview(message provider.Message) string {
+	// Reference-only history rows have no origin field until hydrated. Never
+	// publish host protocol text in that temporary user-message preview.
+	if agent.IsHostGeneratedUserMessage(message) {
+		return ""
+	}
 	preview := strings.TrimSpace(message.Content)
-	if preview == "" {
+	if message.Role == provider.RoleUser {
+		// Derive display text before truncating; a truncated injected block can
+		// no longer be separated from the user's request.
+		preview = agent.UserMessageText(message)
+		if message.Origin == "" && strings.TrimSpace(message.RawContent) == "" {
+			if body, ok := strings.CutPrefix(preview, `<session-context version="1">`); ok && strings.HasPrefix(strings.TrimSpace(body), "This host-generated snapshot supersedes every earlier session-context snapshot.") {
+				return ""
+			}
+		}
+	} else if preview == "" {
 		preview = strings.TrimSpace(message.RawContent)
 	}
 	runes := []rune(preview)

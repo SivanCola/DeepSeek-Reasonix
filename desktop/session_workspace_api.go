@@ -190,11 +190,17 @@ func (a *App) ListWorkspaceSessions(workspaceID, queryText, cursor string, limit
 	}
 
 	service := a.desktopSessionService("")
-	infos, listErr := listAllCanonicalSessionInfo(context.Background(), service.Query())
 	archived := make(map[string]bool, len(state.ArchivedSessionIDs))
 	for _, id := range state.ArchivedSessionIDs {
 		archived[id] = true
 	}
+	ids := make([]string, 0, len(workspace.SessionIDs))
+	for _, id := range workspace.SessionIDs {
+		if includeArchived || !archived[id] {
+			ids = append(ids, id)
+		}
+	}
+	infos, listErr := listWorkspaceSessionInfo(context.Background(), service.Query(), ids)
 	needle := strings.ToLower(strings.TrimSpace(queryText))
 	rows := make([]WorkspaceSessionSummary, 0, len(workspace.SessionIDs))
 	for _, sessionID := range workspace.SessionIDs {
@@ -226,6 +232,34 @@ func (a *App) ListWorkspaceSessions(workspaceID, queryText, cursor string, limit
 	return page, nil
 }
 
+type workspaceSessionInfoReader interface {
+	Stat(context.Context, session.SessionRef) (session.SessionInfo, error)
+}
+
+// The registry already owns membership. Reading each workspace's own headers
+// avoids a complete catalog traversal for every workspace in a sidebar refresh.
+func listWorkspaceSessionInfo(ctx context.Context, reader workspaceSessionInfoReader, ids []string) (map[string]session.SessionInfo, error) {
+	infos := make(map[string]session.SessionInfo, len(ids))
+	seen := make(map[string]bool, len(ids))
+	var readErr error
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		info, err := reader.Stat(ctx, session.SessionRef{HostID: localDesktopHostID, SessionID: id})
+		if errors.Is(err, session.ErrSessionNotFound) {
+			continue
+		}
+		if err != nil {
+			readErr = errors.Join(readErr, err)
+			info = session.SessionInfo{SessionID: id, Error: err.Error(), MetadataStatus: session.MetadataFailed}
+		}
+		infos[id] = info
+	}
+	return infos, readErr
+}
+
 func listAllCanonicalSessionInfo(ctx context.Context, query *session.Query) (map[string]session.SessionInfo, error) {
 	infos := map[string]session.SessionInfo{}
 	if query == nil {
@@ -254,13 +288,13 @@ func workspaceSessionRow(workspaceID, sessionID string, info session.SessionInfo
 	ref := session.SessionRef{HostID: localDesktopHostID, SessionID: sessionID}
 	row := WorkspaceSessionSummary{
 		Ref: ref, WorkspaceID: workspaceID, Archived: archived,
-		Blank: true, MetadataStatus: "indexing", Health: "migrating",
+		MetadataStatus: "indexing", Health: "migrating",
 	}
 	if found {
 		row.Title, row.Preview, row.Turns = info.Title, info.Preview, info.Turns
 		row.CreatedAt, row.UpdatedAt = unixMillis(info.CreatedAt), unixMillis(info.UpdatedAt)
 		row.ModelRef, row.ParentSessionID = info.ModelRef, info.ParentSessionID
-		row.Blank = info.Turns == 0 && strings.TrimSpace(info.Preview) == ""
+		row.Blank = info.MetadataStatus == session.MetadataReady && info.Turns == 0 && strings.TrimSpace(info.Title) == "" && strings.TrimSpace(info.Preview) == ""
 		row.MetadataStatus = info.MetadataStatus
 		row.Health = "healthy"
 		if info.Error != "" {
@@ -473,19 +507,23 @@ func (a *App) ReadSessionHistory(ref session.SessionRef, cursor string, limit in
 }
 
 // OpenSession installs exactly ref into the current local surface. It first
-// proves the target history is readable; a missing or damaged identity never
-// creates an empty replacement and never clears the currently visible log.
+// proves the target identity and workspace exist; a missing or damaged identity
+// never creates an empty replacement and never clears the currently visible log.
+// History bodies are loaded after the runtime commits so a live writer is not
+// snapshotted on the navigation goroutine.
 func (a *App) OpenSession(ref session.SessionRef) (HistoryPage, error) {
 	navigationSequence := a.desktopSessions.navigationSeq.Add(1)
-	page, err := a.ReadSessionHistory(ref, "", defaultHistoryPageTurns)
-	if err != nil {
+	if err := validateLocalSessionRef(ref); err != nil {
+		return HistoryPage{}, err
+	}
+	if _, err := a.desktopSessionService("").Query().Stat(a.bootContext(), ref); err != nil {
 		return HistoryPage{}, err
 	}
 	if a.desktopSessions.navigationSeq.Load() != navigationSequence {
 		return HistoryPage{}, errSessionNavigationSuperseded
 	}
 	tab, ctrl := a.tabAndCtrlByID("")
-	if tab == nil || ctrl == nil {
+	if tab == nil {
 		return HistoryPage{}, errors.New("workspace is not ready")
 	}
 	if _, err := a.resumeCanonicalSessionForTranscript(tab, ctrl, sessionRoute(ref.SessionID), defaultHistoryPageTurns, false, navigationSequence); err != nil {
@@ -495,7 +533,7 @@ func (a *App) OpenSession(ref session.SessionRef) (HistoryPage, error) {
 	// is navigation, so publish ready only after the exact target commits and
 	// let every frontend owner re-read its metadata and history.
 	a.emitReady(a.bootContext(), tab.ID)
-	return page, nil
+	return HistoryPage{Messages: []HistoryMessage{}}, nil
 }
 
 func (a *App) RenameCanonicalSession(ref session.SessionRef, title string) error {

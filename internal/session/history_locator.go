@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -17,7 +16,7 @@ import (
 )
 
 const (
-	historyIndexVersion     = 5
+	historyIndexVersion     = 7
 	HistoryPageDefaultLimit = 100
 	HistoryPageMaxLimit     = 500
 	HistoryPageMaxBytes     = 2 << 20
@@ -227,23 +226,12 @@ func (q *Query) HistoryPage(ctx context.Context, ref SessionRef, cursor string, 
 	}
 	limit = min(limit, HistoryPageMaxLimit)
 	path := historyIndexPath(filesystem.Root, ref.SessionID)
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		preparation := q.prepareHistoryLocator(filesystem, ref.SessionID, path)
-		select {
-		case <-preparation.done:
-			if preparation.err != nil {
-				return MessageHistoryPage{Status: "failed"}, preparation.err
-			}
-		default:
-			return MessageHistoryPage{Messages: []PersistentMessage{}, Status: "preparing"}, nil
-		}
-	}
-	lock := q.projectionLock("history", ref.SessionID)
-	lock.Lock()
-	err := ensureHistoryIndex(ctx, filesystem, ref.SessionID, path)
-	lock.Unlock()
+	ready, err := q.historyLocatorReady(ctx, filesystem, ref.SessionID, path)
 	if err != nil {
 		return MessageHistoryPage{}, err
+	}
+	if !ready {
+		return MessageHistoryPage{Messages: []PersistentMessage{}, Status: "preparing"}, nil
 	}
 	handle, err := projectiondb.Open(ctx, projectiondb.OpenOptions{Path: path, Migrations: historyMigrations, RequireDisk: true, MaxOpenConns: 1})
 	if err != nil {
@@ -353,16 +341,12 @@ func (q *Query) LocateMessage(ctx context.Context, ref SessionRef, messageID str
 		return MessageLocation{}, errors.New("session: history locator requires filesystem persistence")
 	}
 	path := historyIndexPath(filesystem.Root, ref.SessionID)
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		q.prepareHistoryLocator(filesystem, ref.SessionID, path)
-		return MessageLocation{Status: "preparing", MessageID: messageID}, nil
-	}
-	lock := q.projectionLock("history", ref.SessionID)
-	lock.Lock()
-	err := ensureHistoryIndex(ctx, filesystem, ref.SessionID, path)
-	lock.Unlock()
+	ready, err := q.historyLocatorReady(ctx, filesystem, ref.SessionID, path)
 	if err != nil {
 		return MessageLocation{}, err
+	}
+	if !ready {
+		return MessageLocation{Status: "preparing", MessageID: messageID}, nil
 	}
 	handle, err := projectiondb.Open(ctx, projectiondb.OpenOptions{Path: path, Migrations: historyMigrations, RequireDisk: true, MaxOpenConns: 1})
 	if err != nil {
@@ -396,13 +380,32 @@ func (q *Query) LocateMessage(ctx context.Context, ref SessionRef, messageID str
 func (q *Query) prepareHistoryLocator(filesystem *FilesystemPersistence, sessionID, path string) *historyPreparation {
 	q.historyMu.Lock()
 	if current := q.historyBuilds[sessionID]; current != nil {
-		q.historyMu.Unlock()
-		return current
+		select {
+		case <-current.done:
+			if current.err != nil {
+				q.historyMu.Unlock()
+				return current
+			}
+			// A completed build may have been invalidated by a newer append.
+		default:
+			q.historyMu.Unlock()
+			return current
+		}
 	}
 	preparation := &historyPreparation{done: make(chan struct{})}
 	q.historyBuilds[sessionID] = preparation
 	q.historyMu.Unlock()
+	q.rebuildMu.Lock()
+	if q.closed {
+		q.rebuildMu.Unlock()
+		preparation.err = context.Canceled
+		close(preparation.done)
+		return preparation
+	}
+	q.rebuildWG.Add(1)
+	q.rebuildMu.Unlock()
 	go func() {
+		defer q.rebuildWG.Done()
 		// A user-requested history page or locate: highest slot priority.
 		if err := q.slots.acquire(q.rebuildCtx, rebuildPriorityUser); err != nil {
 			preparation.err = err

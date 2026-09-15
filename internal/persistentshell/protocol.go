@@ -32,11 +32,11 @@ func posixQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// ansiCQuote renders s as a POSIX $'...' literal with no raw control bytes, so
-// a multi-line command still travels as ONE physical input line. An interactive
-// shell echoes PS2 for an embedded newline before it runs the buffer, which
-// would put prompt bytes and wrapper source into model-visible output — and a
-// PTY line discipline is not a reliable carrier for arbitrary control bytes.
+// ansiCQuote renders s as an ASCII-only $'...' literal with no raw control bytes.
+// A PTY line discipline is not a reliable carrier for arbitrary control bytes.
+// Readline can interpret high bytes as editing keys in a C/unset locale before
+// the shell parses the literal. Escape bytes, not runes, to preserve the command
+// exactly without changing the user's locale or interactive editing settings.
 func ansiCQuote(s string) string {
 	var b strings.Builder
 	b.Grow(len(s) + 8)
@@ -55,11 +55,14 @@ func ansiCQuote(s string) string {
 		case '\t':
 			b.WriteString(`\t`)
 		default:
-			if c < 0x20 || c == 0x7f {
-				// Octal escapes are the portable $'...' form; \xHH is not
-				// available in every POSIX shell this package can drive.
-				b.WriteString(`\`)
-				b.WriteString(strconv.FormatUint(uint64(c), 8))
+			if c < 0x20 || c >= 0x7f {
+				// Octal escapes work across supported POSIX shells; \xHH does not.
+				// Three digits prevent a following command digit joining the escape
+				// (e.g. byte 1 followed by "70").
+				b.WriteByte('\\')
+				b.WriteByte('0' + (c >> 6))
+				b.WriteByte('0' + ((c >> 3) & 7))
+				b.WriteByte('0' + (c & 7))
 				continue
 			}
 			b.WriteByte(c)
@@ -84,15 +87,16 @@ func posixSetupScript() string {
 	}, "; ") + "\n"
 }
 
-// posixCommandScript wraps one command. Everything is one physical line, the
-// status marker is printed by its own printf (so it is found even when the
-// command's own output has no trailing newline), and stdin is /dev/null so a
-// command that prompts fails the same way it did under one-shot execution
-// instead of blocking the session shell until the deadline.
+// posixCommandScript frames a short command and detaches its stdin. Long
+// commands are staged with acknowledgements by commandStages instead.
 func posixCommandScript(command, start, end string) string {
+	return commandWordScript(ansiCQuote(command), start, end, "")
+}
+
+func commandWordScript(word, start, end, cleanup string) string {
 	return "printf '%s\\n' " + posixQuote(start) +
-		"; eval -- " + ansiCQuote(command) + " </dev/null" +
-		"; __rx_status=$?" +
+		"; eval -- " + word + " </dev/null" +
+		"; __rx_status=$?" + cleanup +
 		"; printf '%s%s\\n' " + posixQuote(end) + ` "$__rx_status"` + "\n"
 }
 

@@ -163,7 +163,9 @@ jobs:
         run: go build ./...
 
       - name: test
-        if: env.RUN_STEPS == 'true' && (runner.os == 'Linux' || github.event_name != 'pull_request')
+        # Windows full coverage belongs to the disjoint selectors below and
+        # the isolated jobs; running ./... here would execute every test twice.
+        if: env.RUN_STEPS == 'true' && (runner.os == 'Linux' || (runner.os == 'macOS' && github.event_name != 'pull_request'))
         env:
           # Run the prompt-cache prefix-stability guard (TestCacheHit*) in CI: a
           # regression there silently tanks the cache hit rate the project is
@@ -1147,20 +1149,23 @@ jobs:
         run: node electron/scripts/performance-smoke.mjs
 
   # The desktop Go suite shares nothing with the Electron and browser steps
-  # beyond a built frontend for go:embed. Serial partitions exceeded the
-  # shared 25-minute step budget before the last partition could finish.
-  # Isolated runners keep test globals separate and bound each partition
-  # without increasing the existing job, step, or Go test timeout.
+  # beyond a built frontend for go:embed, and it is the leg's longest step by
+  # far: the module that tests in 1.8 minutes on ubuntu takes ~17 on Windows,
+  # ~11 of them compiling and linking the cgo-heavy root package before a
+  # single test runs (GOCACHE restored, Defender excluded). Running it beside
+  # the Electron steps makes the leg's wall time the longer half rather than
+  # the sum, and a Go flake reruns only this job.
   desktop-windows-go-group:
     needs: [changes, desktop-prepare]
-    if: always() && needs.desktop-prepare.result == 'success' && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.native != 'false')
+    if: ${{ !cancelled() && needs.desktop-prepare.result == 'success' && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.native != 'false') }}
     runs-on: windows-latest
+    # Independent runners prevent valid groups from consuming each other's
+    # step deadline. Go retains its default per-package ten-minute timeout.
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      max-parallel: 4
       matrix:
-        group: [a-h, i-p, q-r, s-z]
+        group: [A-D, E-H, I-P, Q-Z]
     defaults:
       run:
         shell: bash
@@ -1213,52 +1218,33 @@ jobs:
             --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "${{ needs.desktop-prepare.outputs.producer_attempt }}" \
             --pnpm-version "$(pnpm --version)"
 
+      - name: Validate Windows test partition
+        run: node --test ../scripts/desktop-windows-go-tests.test.mjs
+
       - name: test (Windows desktop and update helper)
         # Keep native Go output here. JSON mode forces verbose output into the
         # test cache and spent 8-10 minutes finalizing it on Windows runners.
         timeout-minutes: 25
-        # Keep each package below Go's default 10-minute timeout without
-        # relaxing it. These disjoint filters cover every test exactly once;
-        # examples, fuzz seeds, and other test names remain in the first group.
-        env:
-          WINDOWS_TEST_GROUP: ${{ matrix.group }}
-        run: |
-          case "$WINDOWS_TEST_GROUP" in
-            a-h)
-              go test -skip '^Test[I-Z]' ./...
-              ;;
-            i-p)
-              go test -run '^Test[I-P]' ./...
-              ;;
-            q-r)
-              go test -run '^Test[Q-R]' ./...
-              ;;
-            s-z)
-              go test -run '^Test[S-Z]' -skip '^TestWindowsTerminalProcessConPTYSmoke$' ./...
-              ;;
-            *)
-              echo "Unknown Windows test group: $WINDOWS_TEST_GROUP" >&2
-              exit 1
-              ;;
-          esac
+        # The driver checks the current native inventory for unique ownership.
+        run: node ../scripts/desktop-windows-go-tests.mjs ${{ matrix.group }}
 
       # ConPTY startup and teardown depend on the hosted runner's interactive
       # Windows environment. Keep the end-to-end probe visible without making
       # a single host scheduling stall equivalent to a Go correctness failure.
       - name: probe (Windows ConPTY host integration)
-        if: matrix.group == 's-z'
+        if: matrix.group == 'Q-Z'
         id: conpty-smoke
         continue-on-error: true
         timeout-minutes: 2
         run: go test -run '^TestWindowsTerminalProcessConPTYSmoke$' .
 
       - name: report ConPTY probe failure
-        if: always() && steps.conpty-smoke.outcome == 'failure'
+        if: always() && matrix.group == 'Q-Z' && steps.conpty-smoke.outcome == 'failure'
         shell: bash
         run: echo "::warning::The hosted Windows ConPTY integration probe failed; deterministic Windows Go tests still passed."
 
       - name: test (vendored systray identity)
-        if: matrix.group == 's-z'
+        if: matrix.group == 'Q-Z'
         timeout-minutes: 2
         run: go test -timeout=60s fyne.io/systray
 
@@ -1504,6 +1490,7 @@ jobs:
             .github/workflows/release-verify-issues.yml \
             .github/workflows/docs-impact.yml \
             .github/workflows/ci.yml
+          node --test scripts/desktop-windows-go-tests.test.mjs
           node --test scripts/desktop-release-artifacts.test.mjs scripts/signpath-checkpoint.test.mjs scripts/ci-workflow.test.mjs scripts/notarize-desktop.test.mjs scripts/verify-windows-gui-subsystem.test.mjs scripts/windows-go-tests.test.mjs scripts/macos-go-tests.test.mjs
           bash scripts/release-workflows.test.sh
           node scripts/check-single-release-public-contract.mjs

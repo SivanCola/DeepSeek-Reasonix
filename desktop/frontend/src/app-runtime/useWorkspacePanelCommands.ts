@@ -10,7 +10,6 @@ import { useRemoteStore } from "../store/remote";
 type Input = {
   sessionId: string;
   workspaceRoot: string;
-  creation: boolean;
   visible: boolean;
   closeOverlays: () => void;
   clearLiveWidth: (width: null) => void;
@@ -165,9 +164,6 @@ export function useWorkspacePanelCommands(input: Input) {
   useLayoutEffect(() => {
     useLayoutStore.getState().setWorkspacePanelOpen(loadWorkspacePanelOpen(input.workspaceRoot));
   }, [input.workspaceRoot]);
-  useLayoutEffect(() => {
-    if (input.creation && mode === "context") useLayoutStore.getState().setRightDockMode("files");
-  }, [input.creation, mode]);
   // Keep the legacy mode mirror on the active tab's type.
   useEffect(() => {
     if (!activeTabType) return;
@@ -183,7 +179,7 @@ export function useWorkspacePanelCommands(input: Input) {
   // Remember the session after its first open-state decision so closing the
   // final tab remains a deliberate action until the user changes sessions.
   useLayoutEffect(() => {
-    if (!input.visible || !input.sessionId || input.creation) return;
+    if (!input.visible || !input.sessionId) return;
     const sessionKey = `${input.workspaceRoot}\u0000${input.sessionId}`;
     if (defaultTabSessionRef.current === sessionKey) return;
     if (!useLayoutStore.getState().workspacePanelOpen) return;
@@ -191,7 +187,7 @@ export function useWorkspacePanelCommands(input: Input) {
     const activity = useActivityBarStore.getState();
     if (activity.activeTabId) return;
     activity.openEntry("context", t(labelKeyForTab("context") as never));
-  }, [input.creation, input.sessionId, input.visible, input.workspaceRoot, t]);
+  }, [input.sessionId, input.visible, input.workspaceRoot, t]);
   useEffect(() => {
     if (!explorerOpen) return;
     openRightDockMode("remote");

@@ -3,10 +3,9 @@ package main
 import (
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
-	"reasonix/internal/config"
+	"reasonix/desktop/internal/workspacestate"
 	"reasonix/internal/control"
 	"reasonix/internal/session"
 )
@@ -58,13 +57,17 @@ func (a *App) continueLegacySessionForTranscript(tab *WorkspaceTab, ctrl control
 
 func (a *App) resumeCanonicalSessionForTranscript(tab *WorkspaceTab, ctrl control.SessionAPI, route string, limit int, includeHistory bool, navigationSequence ...uint64) (HistoryPage, error) {
 	identity, ok := ctrl.(control.IdentityLifecycle)
-	if !ok || !identity.UsesExclusiveSession() {
+	if ctrl != nil && (!ok || !identity.UsesExclusiveSession()) {
 		return HistoryPage{}, fmt.Errorf("session identity protocol is unavailable")
 	}
-	service := identity.SessionService()
+	service := a.desktopSessionService("")
 	ref, ok := sessionRefForRoute(service, route)
 	if !ok {
 		return HistoryPage{}, fmt.Errorf("invalid session identity")
+	}
+	workspace, err := a.canonicalSessionWorkspace(a.bootContext(), ref)
+	if err != nil {
+		return HistoryPage{}, err
 	}
 
 	a.runtimeRebuildMu.Lock()
@@ -80,37 +83,42 @@ func (a *App) resumeCanonicalSessionForTranscript(tab *WorkspaceTab, ctrl contro
 	}
 
 	current := a.controllerForTab(tab)
-	if current != ctrl || current == nil {
+	if current != ctrl {
 		return HistoryPage{}, fmt.Errorf("tab runtime changed while opening session")
 	}
-	if current.RuntimeStatus().Running || current.RuntimeStatus().PendingPrompt {
-		return HistoryPage{}, control.ErrTurnRunning
+	var currentRef session.SessionRef
+	if identity != nil {
+		currentRef, _ = identity.SessionRef()
 	}
-	if currentRef, bound := identity.SessionRef(); !bound || currentRef != ref {
-		if err := current.Snapshot(); err != nil {
-			return HistoryPage{}, err
+	workspaceChanged := canonicalWorkspaceChanged(a.tabRuntimeSnapshot(tab), workspace)
+	if current == nil || currentRef != ref || workspaceChanged {
+		if current != nil && !controllerHasActiveRuntimeWork(current) {
+			if err := current.Snapshot(); err != nil {
+				return HistoryPage{}, err
+			}
 		}
-		binding, err := service.EnsureExecution(a.bootContext(), ref)
+		adopted, err := a.reattachCanonicalSessionRuntime(tab, current, ref, workspace, wantedNavigation)
 		if err != nil {
 			return HistoryPage{}, err
 		}
-		defer func() { _ = binding.Release(a.bootContext()) }()
-		targetModel := strings.TrimSpace(binding.Runtime().StateSnapshot().Session.Projection.ModelRef)
-		if targetModel != "" {
-			current, err = a.replaceControllerForSessionOpenLocked(tab, current, service, ref, targetModel, wantedNavigation)
+		if adopted != nil {
+			current = adopted
+		} else {
+			binding, err := service.EnsureExecution(a.bootContext(), ref)
 			if err != nil {
 				return HistoryPage{}, err
 			}
-		} else {
-			if wantedNavigation != 0 && a.desktopSessions.navigationSeq.Load() != wantedNavigation {
-				return HistoryPage{}, errSessionNavigationSuperseded
-			}
-			if _, err := identity.OpenSession(a.bootContext(), ref); err != nil {
+			defer func() { _ = binding.Release(a.bootContext()) }()
+			targetModel := strings.TrimSpace(binding.Runtime().StateSnapshot().Session.Projection.ModelRef)
+			current, err = a.replaceControllerForSessionOpenLocked(tab, current, service, ref, targetModel, workspace, wantedNavigation)
+			if err != nil {
 				return HistoryPage{}, err
 			}
 		}
 	}
-	a.syncTabSessionIdentity(tab, current)
+	if err := a.commitCanonicalSessionBinding(tab, current, ref, workspace, wantedNavigation); err != nil {
+		return HistoryPage{}, err
+	}
 	a.setTabReadOnly(tab.ID, false)
 	a.invalidatePromptHistoryCache()
 	a.notifyTabRuntimeRebuilt(tab)
@@ -124,8 +132,8 @@ func (a *App) resumeCanonicalSessionForTranscript(tab *WorkspaceTab, ctrl contro
 // recorded model before publishing it to the tab. The caller holds
 // runtimeRebuildMu and tab.turnStartMu, so the source remains usable until the
 // target model, writer, and event projection have all been validated.
-func (a *App) replaceControllerForSessionOpenLocked(tab *WorkspaceTab, current control.SessionAPI, service *session.Service, ref session.SessionRef, targetModel string, navigationSequence ...uint64) (control.SessionAPI, error) {
-	if tab == nil || current == nil || service == nil {
+func (a *App) replaceControllerForSessionOpenLocked(tab *WorkspaceTab, current control.SessionAPI, service *session.Service, ref session.SessionRef, targetModel string, workspace workspacestate.Workspace, navigationSequence ...uint64) (control.SessionAPI, error) {
+	if tab == nil || service == nil {
 		return nil, fmt.Errorf("session runtime changed while opening session")
 	}
 	transition, err := a.reserveSessionRuntimePath(tab, sessionRoute(ref.SessionID))
@@ -138,18 +146,15 @@ func (a *App) replaceControllerForSessionOpenLocked(tab *WorkspaceTab, current c
 			a.rollbackSessionRuntimePath(transition)
 		}
 	}()
-	snap := a.tabRuntimeSnapshot(tab)
-	root := strings.TrimSpace(snap.workspaceRoot)
-	if root == "" {
-		if wd, err := os.Getwd(); err == nil {
-			root = wd
-		}
-	}
-	cfg, err := config.LoadForRoot(root)
+	prepared, err := a.prepareSessionOpenEnvironment(tab, workspace)
 	if err != nil {
 		return nil, err
 	}
-	sharedHost := a.lookupSharedHost(snap.sharedHostKey)
+	defer func() { a.finishSessionOpenEnvironment(prepared, committed) }()
+	snap, cfg, root, sharedHost := prepared.snapshot, prepared.config, workspace.Root, prepared.host
+	if targetModel == "" {
+		targetModel, _, _ = cfg.ResolveDesktopNewSessionModel()
+	}
 	extensionGeneration := a.currentExtensionGeneration()
 	buildOptions := a.sessionOpenBootOptions(tab, snap, cfg, service, sharedHost, root, targetModel)
 	requestedModel := targetModel
@@ -179,19 +184,16 @@ func (a *App) replaceControllerForSessionOpenLocked(tab *WorkspaceTab, current c
 		a.noticeForTab(tab.ID, fmt.Sprintf("model %q is no longer available; switched to %s", requestedModel, targetModel))
 	}
 	a.bindControllerDisplayRecorder(candidate)
-	candidate.EnableInteractiveApproval()
-	runtime := snap.normalizedRuntime()
-	applyTabToolApprovalModeToController(candidate, runtime.toolApprovalMode)
-	applyTabQualityFloorToController(candidate, runtime.qualityFloor)
-	runtime.collaborationMode = "normal"
-	runtime.legacyGoal = ""
-	if candidate.PlanMode() {
-		runtime.collaborationMode = "plan"
-	} else if candidate.GoalStatus() == control.GoalStatusRunning && strings.TrimSpace(candidate.Goal()) != "" {
-		runtime.collaborationMode = "goal"
-		runtime.legacyGoal = strings.TrimSpace(candidate.Goal())
-	}
+	runtime := prepareCanonicalControllerRuntime(candidate, snap)
 
+	confirmed, err := a.canonicalSessionWorkspace(a.bootContext(), ref)
+	if err != nil {
+		return nil, err
+	}
+	if confirmed.ID != workspace.ID || !sameDesktopPath(confirmed.Root, root) {
+		return nil, errSessionWorkspaceConflict
+	}
+	var terminalSessions []*terminalSession
 	a.mu.Lock()
 	if len(navigationSequence) > 0 && navigationSequence[0] != 0 && a.desktopSessions.navigationSeq.Load() != navigationSequence[0] {
 		a.mu.Unlock()
@@ -205,11 +207,21 @@ func (a *App) replaceControllerForSessionOpenLocked(tab *WorkspaceTab, current c
 		a.mu.Unlock()
 		return nil, err
 	}
-	if !a.commitSessionRuntimePathLocked(transition) {
+	oldSink := tab.sink
+	if !a.commitCanonicalRuntimeTransitionLocked(tab, transition, prepared.preserveSource) {
 		a.mu.Unlock()
 		return nil, fmt.Errorf("tab runtime changed while opening session")
 	}
+	if prepared.workspaceChanged && a.terminals != nil {
+		terminalSessions = a.terminals.detachForTab(tab.ID)
+	}
+	applyCanonicalWorkspaceLocked(tab, workspace)
+	tab.SharedHostKey = snap.sharedHostKey
 	tab.Ctrl = candidate
+	tab.sink = snap.sink
+	tab.adoptDisplayState(&tabDisplayState{})
+	tab.ActivityStatus = ""
+	tab.replaceTelemetry(tabTelemetrySnapshot{}, sessionRuntimeKey(sessionRoute(ref.SessionID)))
 	tab.SessionID = ref.SessionID
 	tab.SessionPath = ""
 	tab.model = targetModel
@@ -217,6 +229,11 @@ func (a *App) replaceControllerForSessionOpenLocked(tab *WorkspaceTab, current c
 	applyNormalizedRuntimeToTabLocked(tab, runtime)
 	tab.Ready = true
 	clearTabStartupError(tab)
+	if prepared.preserveSource {
+		a.newSessionRuntimeLocked(tab, transition.targetKey)
+	}
+	tab.sink.setBinding(tab.ID, a, tab.SessionGeneration)
+	tab.sink.setContext(a.ctx)
 	a.bindSessionRuntimeKeyLocked(tab, tab.currentSessionIdentity())
 	a.supersedeTabBuildLocked(tab)
 	a.saveTabsLocked()
@@ -224,7 +241,13 @@ func (a *App) replaceControllerForSessionOpenLocked(tab *WorkspaceTab, current c
 	committed = true
 	a.mu.Unlock()
 
-	retireReplacedController(current, candidate)
+	if !prepared.preserveSource {
+		fenceCanonicalNavigationSink(oldSink)
+		retireReplacedController(current, candidate)
+	}
+	if prepared.workspaceChanged {
+		a.finishCanonicalWorkspaceMove(tab.ID, terminalSessions)
+	}
 	discard = false
 	a.notifyTabRuntimeRebuiltAtEpoch(tab, epoch)
 	return candidate, nil

@@ -28,7 +28,7 @@ import { providerIsConfigured, providerRequiresKey, removeProviderAccessesForMoc
 import { DEFAULT_STATUS_BAR_ITEMS } from "./statusBarItems";
 import { registerTrustedThemeBackgroundURLs } from "./themePack";
 import { modeHasAutoApproveTools, modeWithAutoApproveTools, modeWithPlan, normalizeCollaborationMode, normalizeMode, normalizeToolApprovalMode } from "./types";
-import { makeMockProjectTreeOrganizationBindings } from "./mockProjectTreeOrganization";
+import { makeMockProjectTreeOrganizationBindings, subscribeMockProjectTreeChanged, notifyMockProjectTreeChanged } from "./mockProjectTreeOrganization";
 import { decisionSurfaceMockFromInput, isLongDecisionOptionsMockInput } from "./decisionSurfaceMock";
 import { mockWorkspaceFile } from "./mockWorkspaceFile";
 import { mockAIRenameSession, type SessionTitleBindings } from "./mockSessionTitle";
@@ -935,7 +935,7 @@ export function onReady(cb: (tabId?: string) => void): () => void {
 }
 
 export function onProjectTreeChanged(cb: () => void): () => void {
-  return hostEvents("project-tree:changed", (payload?: unknown) => (payload as { reason?: unknown } | undefined)?.reason !== "runtime" && (payload as { reason?: unknown } | undefined)?.reason !== "catalog-v2" && cb()) ?? (() => {});
+  return hostEvents("project-tree:changed", (payload?: unknown) => (payload as { reason?: unknown } | undefined)?.reason !== "runtime" && (payload as { reason?: unknown } | undefined)?.reason !== "catalog-v2" && cb()) ?? subscribeMockProjectTreeChanged(cb);
 }
 
 // onTopicActivation subscribes to the "topic:activation" channel carrying the
@@ -1152,12 +1152,6 @@ function browserPlatformOverride(): "darwin" | "windows" | "linux" | "" {
   return value === "darwin" || value === "windows" || value === "linux" ? value : "";
 }
 
-function browserMockDesktopLayoutStyle(): "workbench" | "creation" {
-  if (typeof window === "undefined" || desktopHost().app) return "workbench";
-  const value = new URLSearchParams(window.location.search).get("layout");
-  return value === "creation" ? value : "workbench";
-}
-
 function browserPreviewBashSandboxMode(): "enforce" | "off" {
   return browserPlatformOverride() === "windows" ? "off" : "enforce";
 }
@@ -1165,7 +1159,7 @@ function browserPreviewBashSandboxMode(): "enforce" | "off" {
 function browserPreviewEffectiveShell(prefer = "auto"): "bash" | "git-bash" | "powershell" | "pwsh" {
   const normalized = prefer.trim().toLowerCase();
   if (normalized === "powershell" || normalized === "pwsh") return normalized;
-  return browserPlatformOverride() === "windows" ? "git-bash" : "bash";
+  return browserPlatformOverride() === "windows" ? (normalized === "bash" ? "git-bash" : "pwsh") : "bash";
 }
 
 function mockScenario(): "demo" | "fresh" | "running" | "guidance" | "recovery" | "sandbox_escape" | "notice" | "deepseek_upgrade" | "bench" {
@@ -1780,7 +1774,6 @@ function makeMockApp(): AppBindings {
     },
     desktopLanguage: "",
     desktopCurrency: "",
-    desktopLayoutStyle: browserMockDesktopLayoutStyle(),
     desktopTheme: "auto",
     desktopThemeStyle: "graphite",
     desktopTerminalTheme: "auto",
@@ -2314,8 +2307,8 @@ function makeMockApp(): AppBindings {
     },
     async ReadSessionHistory(_ref: SessionRef, _cursor: string, _limit: number) { return { messages: [], startTurn: 0, endTurn: 0, totalTurns: 0, hasOlder: false }; },
     async RenameCanonicalSession(_ref: SessionRef, _title: string) {},
-    async ArchiveCanonicalSession(ref: SessionRef) { mockArchivedSessionIDs.add(ref.sessionId); },
-    async RestoreCanonicalSession(ref: SessionRef) { mockArchivedSessionIDs.delete(ref.sessionId); },
+    async ArchiveCanonicalSession(ref: SessionRef) { mockArchivedSessionIDs.add(ref.sessionId); notifyMockProjectTreeChanged(); },
+    async RestoreCanonicalSession(ref: SessionRef) { mockArchivedSessionIDs.delete(ref.sessionId); notifyMockProjectTreeChanged(); },
     async MoveWorkspaceSession(_workspaceId: string, _sessionId: string, _beforeSessionId: string) {},
     async RenameWorkspace(_workspaceId: string, _title: string) {},
     async SetWorkspaceVisible(_workspaceId: string, _visible: boolean) {},
@@ -4434,11 +4427,10 @@ function makeMockApp(): AppBindings {
       return this.SaveDoc(path, body);
     },
     async DesktopStartupSettings() {
-      const { bot, desktopLanguage, desktopLayoutStyle, desktopTheme, desktopThemeStyle, desktopTerminalTheme, displayMode, sessionExperience, reasoningDisplayMode, reasoningDisplayModeExplicit, statusBarStyle, statusBarItems, checkUpdates, conversationWidth } = settings;
+      const { bot, desktopLanguage, desktopTheme, desktopThemeStyle, desktopTerminalTheme, displayMode, sessionExperience, reasoningDisplayMode, reasoningDisplayModeExplicit, statusBarStyle, statusBarItems, checkUpdates, conversationWidth } = settings;
       return JSON.parse(JSON.stringify({
         bot,
         desktopLanguage,
-        desktopLayoutStyle,
         desktopTheme,
         desktopThemeStyle,
         desktopTerminalTheme,
@@ -5003,9 +4995,9 @@ function makeMockApp(): AppBindings {
         async PickThemeBackground() {
           return "";
         },
-        async SetDesktopLayoutStyle(style: string) {
-          settings.desktopLayoutStyle = style === "creation" ? "creation" : "workbench";
-        },
+        // The layout-style preference was removed from the UI; the binding
+        // stays because the generated host contract still declares it.
+        async SetDesktopLayoutStyle(_style: string) {},
         async SetDesktopZoomFactor(factor: number) {
           mockDesktopZoomFactor = Math.min(2.0, Math.max(0.5, Number.isFinite(factor) ? factor : 1.0));
         },

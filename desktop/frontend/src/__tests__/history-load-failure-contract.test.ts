@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { fetchPreparedHistorySlice } from "../lib/transcriptHistoryFetch";
+import type { HistorySlice } from "../lib/types";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const controller = readFileSync(join(root, "lib/useController.ts"), "utf8");
@@ -22,7 +24,12 @@ assert.match(
   /loadSessionDataForTab\(tabId, false, "startup", \{ preserveCachedHistory: true \}\)/,
   "failed clear keeps the visible transcript instead of a resident snapshot",
 );
-assert.match(store, /slice\.error/, "transcript store rejects slice.error as failure");
+assert.match(store, /fetchPreparedHistorySlice/, "transcript store uses the shared history reader");
+await assert.rejects(
+  fetchPreparedHistorySlice(async () => ({ entries: [], error: " history unavailable " }) as unknown as HistorySlice, () => true),
+  { message: "history unavailable" },
+  "history reader rejects slice errors instead of treating them as empty history",
+);
 assert.match(appView, /retrySessionHistory/, "App wires history retry control");
 assert.match(chatPane, /SessionRecoveryBanner/, "App surfaces persistent history recovery above the transcript");
 

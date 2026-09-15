@@ -273,7 +273,7 @@
       "test-file-size": 2891
     },
     "desktop/terminal.go": {
-      "file-size": 73
+      "file-size": 75
     },
     "desktop/theme_app.go": {
       "complexity": 9,
@@ -841,7 +841,7 @@
     "internal/control/controller.go": {
       "complexity": 13,
       "essay": 98,
-      "file-size": 5254,
+      "file-size": 5255,
       "function-size": 88,
       "narrative": 4,
       "struct-state": 22

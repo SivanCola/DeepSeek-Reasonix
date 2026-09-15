@@ -6,14 +6,15 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
+	"reasonix/internal/agent"
 	"reasonix/internal/fileutil"
 	"reasonix/internal/provider"
 )
 
-const catalogMetadataVersion = 1
+// Rebuild previews derived from provider content by older versions.
+const catalogMetadataVersion = 2
 
 const (
 	MetadataReady   = "ready"
@@ -56,12 +57,24 @@ func metadataFromProjection(manifest Manifest, sequence uint64, projection Proje
 		}
 	}
 	for _, message := range projection.Messages {
-		if message.Role == provider.RoleUser && strings.TrimSpace(message.Content) != "" {
-			metadata.Preview = messagePreview(message)
+		if preview := catalogMessagePreview(message); preview != "" {
+			metadata.Preview = preview
 			break
 		}
 	}
 	return metadata
+}
+
+// Catalog labels use authored display text, including literal markup in an
+// explicit RawContent. Host messages and mid-turn steers are not session names.
+func catalogMessagePreview(message provider.Message) string {
+	if message.Role != provider.RoleUser || agent.IsHostGeneratedUserMessage(message) {
+		return ""
+	}
+	if _, steer := agent.SteerText(message.Content); steer {
+		return ""
+	}
+	return messagePreview(message)
 }
 
 // logRevision identifies the durable file revision a cache entry describes.
@@ -131,15 +144,23 @@ func rebuildCatalogMetadata(ctx context.Context, handle eventPageReader, cacheDi
 }
 
 func reduceCatalogMetadata(ctx context.Context, handle eventPageReader, manifest Manifest) (catalogMetadata, error) {
-	projection := Projection{}
+	reducer := catalogReducer{}
+	if stream, ok := handle.(interface {
+		scanCatalog(context.Context, func(Commit) error) error
+	}); ok {
+		if err := stream.scanCatalog(ctx, reducer.apply); err != nil {
+			return catalogMetadata{}, err
+		}
+		return reducer.metadata(manifest), nil
+	}
 	var cursor uint64
 	for {
-		page, err := handle.Read(ctx, cursor, 1000)
+		page, err := handle.Read(ctx, cursor, 32)
 		if err != nil {
 			return catalogMetadata{}, err
 		}
 		for _, commit := range page.Commits {
-			if err := applyProjectionCommit(&projection, commit); err != nil {
+			if err := reducer.apply(commit); err != nil {
 				return catalogMetadata{}, err
 			}
 		}
@@ -151,7 +172,7 @@ func reduceCatalogMetadata(ctx context.Context, handle eventPageReader, manifest
 		}
 		cursor = page.Next
 	}
-	return metadataFromProjection(manifest, projection.CommittedSequence, projection), nil
+	return reducer.metadata(manifest), nil
 }
 
 // writeCatalogMetadataForSession stamps the cache with the exact durable bytes

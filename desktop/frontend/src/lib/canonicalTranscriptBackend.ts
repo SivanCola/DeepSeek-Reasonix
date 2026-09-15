@@ -1,6 +1,8 @@
 import type { HistoryWindowPage, MessageHistoryPage, PersistentMessage } from "../generated/desktopContract.generated";
 import { asArray } from "./array";
 import { app } from "./bridge";
+import { HistoryPreparingError } from "./historyPreparation";
+import { canonicalUserDisplay } from "./canonicalUserDisplay";
 import type { HistoryContentChunk, HistoryContentRef, HistoryEntry, HistoryMessage, HistorySlice, HistorySliceRequest, HistoryWindowPageView, HistoryWindowRequestView, MemoryCitation } from "./types";
 
 function asWireObject(value: unknown): Record<string, unknown> {
@@ -35,10 +37,12 @@ export function canonicalMessage(message: PersistentMessage, body: unknown): His
     removed: typeof call.removed === "number" ? call.removed : undefined,
   }));
   const presented = asWireObject(raw.presented_files);
+  const role = Boolean(raw.local_only) ? "assistant" : String(raw.role ?? message.role);
+  const display = role === "user" ? canonicalUserDisplay(raw, message.preview ?? "") : { role, content: String(raw.content ?? raw.raw_content ?? message.preview ?? "") };
   return {
-    role: Boolean(raw.local_only) ? "assistant" : String(raw.role ?? message.role),
+    role: display.role,
     messageId: String(raw.id ?? message.messageId),
-    content: String(raw.content ?? raw.raw_content ?? message.preview ?? ""),
+    content: display.content,
     reasoning: typeof raw.reasoning_content === "string" ? raw.reasoning_content : undefined,
     createdAt: typeof raw.createdAt === "number" ? raw.createdAt : undefined,
     workDurationMs: typeof raw.workDurationMs === "number" ? raw.workDurationMs : undefined,
@@ -205,7 +209,7 @@ function requireReadyWindow(window: HistoryWindowPageView): HistorySlice | undef
   switch (window.status) {
     case "ready": return sliceFromWindow(window, "window");
     case "stale_cursor": return staleSlice();
-    case "preparing": throw new Error("Session history is preparing");
+    case "preparing": throw new HistoryPreparingError();
     case "failed": throw new Error("Session history is failed");
     case "not_found": throw new Error("Session history is unavailable for this session");
     default: return undefined;
@@ -261,6 +265,7 @@ async function legacyPageSlice(tabId: string, cursor: string, limit: number, sou
   }
   const reset = cursor === locatorResetCursor;
   const page = await historyPage(tabId, reset ? "" : cursor, limit);
+  if (page.status === "preparing") throw new HistoryPreparingError();
   if (page.status === "stale_cursor") return staleSlice();
   if (page.status && page.status !== "ready") throw new Error(`Session history is ${page.status}`);
   const entries = entriesFor(asArray<PersistentMessage>(page.messages), page.snapshotSequence);

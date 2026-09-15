@@ -11,6 +11,7 @@
 // the answer text.
 
 import { memo, useEffect, useMemo, useRef, useState } from "react";
+import "./MarkdownSvgBlock.css";
 import { Code2, Play } from "lucide-react";
 import { CodeViewer } from "./CodeViewer";
 import { CopyButton } from "./CopyButton";

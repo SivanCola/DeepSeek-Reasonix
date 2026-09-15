@@ -54,6 +54,7 @@ import { upsertReadPause } from "./readPause";
 import { applyHydrateErrorState, hydratePlaceholderItems as resolveHydratePlaceholders } from "./hydrateErrorState";
 import { isHostRecoveryGuidance } from "./hostRecoverySteer";
 import { activeTabHydrationPlan, canAdoptUnboundLiveSurface, duplicateLiveItemIds, hasCachedLiveTurn, hasReusableCachedTranscript, hydratedHistoryApplyMode, sameSessionHydrateIdentity, sameSessionPlaceholderItems, shouldPreferResidentHistory, type HydrateSurfacePolicy } from "./hydrateHistoryApply";
+import { useSessionCatalogActions } from "./useSessionCatalogActions";
 import { hydrateIdentityCurrent, sessionIdentityFields, sessionIdentityStableKey, type SessionHydrationOptions } from "./sessionIdentity";
 import { loadHistoryWindow } from "./historyWindowController";
 import { reduceHistoryWindowState } from "./historyWindowState";
@@ -2713,7 +2714,7 @@ export function useController() {
               turns: HISTORY_PAGE_TURNS,
               preferResident: shouldPreferResidentHistory(resetSurface, options.preserveCachedHistory),
               expectedRevision: sessionRevision,
-              expectedDigest: sessionDigest,
+              expectedDigest: sessionDigest, current: stillCurrent,
             }),
           );
 
@@ -4192,7 +4193,7 @@ export function useController() {
           () => isNavigationIntentCurrent(navigationSeq) && sessionLoadCurrent(targetTabId, seq)))) return terminal("superseded");
       } else if (typeof app.SessionOpenForTab === "function") {
         ensureTranscriptSubscription(targetTabId);
-        const projection = await getTranscriptStore().loadLatest(targetTabId, path, { turns: HISTORY_PAGE_TURNS, preferResident: false });
+        const projection = await getTranscriptStore().loadLatest(targetTabId, path, { turns: HISTORY_PAGE_TURNS, preferResident: false, current: () => isNavigationIntentCurrent(navigationSeq) && sessionLoadCurrent(targetTabId, seq) });
         if (!projection || !isNavigationIntentCurrent(navigationSeq) || !sessionLoadCurrent(targetTabId, seq)) return terminal("superseded");
         dispatchTo(targetTabId, { type: "reset" });
         dispatchTo(targetTabId, historyReplaceAction(projection));
@@ -4249,7 +4250,7 @@ export function useController() {
           () => isNavigationIntentCurrent(navigationSeq) && sessionLoadCurrent(tabId, seq)))) return terminal("superseded");
       } else if (typeof app.SessionOpenForTab === "function") {
         ensureTranscriptSubscription(tabId);
-        const projection = await getTranscriptStore().loadLatest(tabId, path, { turns: HISTORY_PAGE_TURNS, preferResident: false });
+        const projection = await getTranscriptStore().loadLatest(tabId, path, { turns: HISTORY_PAGE_TURNS, preferResident: false, current: () => isNavigationIntentCurrent(navigationSeq) && sessionLoadCurrent(tabId, seq) });
         if (!projection || !isNavigationIntentCurrent(navigationSeq) || !sessionLoadCurrent(tabId, seq)) return terminal("superseded");
         dispatchTo(tabId, { type: "reset" });
         dispatchTo(tabId, historyReplaceAction(projection));
@@ -4267,11 +4268,8 @@ export function useController() {
     return { value: undefined, surfaceReady };
   }, [beginActiveNavigation, bumpSessionLoadSeq, dispatchTo, ensureTranscriptSubscription, failSessionNavigation, invalidateCheckpoints, isNavigationIntentCurrent, navigationCompletionCurrent, reconcileSessionNavigationForTab, refreshTurnBoundaries, requireRegisteredNavigationIntent, sessionLoadCurrent, snapshotClient, snapshotNavigationSourceTab, waitForTabReady]);
 
-  const previewSession = useCallback(async (path: string): Promise<HistoryMessage[]> => asArray<HistoryMessage>(await app.PreviewSession(path).catch(() => [])), []);
-  const deleteSession = useCallback((path: string) => app.DeleteSession(path).finally(() => invalidateCache()), []);
-  const restoreSession = useCallback((path: string) => app.RestoreSession(path).finally(() => invalidateCache()), []);
-  const purgeTrashedSession = useCallback((path: string) => app.PurgeTrashedSession(path).finally(() => invalidateCache()), []);
-  const renameSession = useCallback((path: string, title: string) => app.RenameSession(path, title).catch(() => {}).finally(() => invalidateCache()), []);
+  const { openCanonicalSession, previewSession, deleteSession, restoreSession, purgeTrashedSession, renameSession } =
+    useSessionCatalogActions(requireRegisteredNavigationIntent, isNavigationIntentCurrent, syncActiveTabFromBackend, invalidateCache);
   const refreshMeta = useCallback(async () => {
     if (!activeTabId) return;
     invalidateSharedQuery("MetaForTab", [activeTabId]);
@@ -4946,5 +4944,6 @@ export function useController() {
     isNavigationIntentCurrent,
     reassertVisibleTabAfterStaleNavigation,
     syncActiveTab: syncActiveTabFromBackend,
+    openCanonicalSession,
   };
 }
