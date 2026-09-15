@@ -19,9 +19,13 @@ export function sessionButton(page, label) {
 }
 
 export async function revealSession(page, label) {
+  // Composer readiness and sidebar data readiness are independent. Wait for
+  // the first projected row before deciding whether the target is truncated.
+  await page.locator(".workspace-browser__session-open, .project-tree__topic-main").first().waitFor({ state: "visible" });
   let button = sessionButton(page, label);
   if (await button.count() === 0) {
     const expanders = page.locator(".workspace-browser__show-more");
+    await expanders.first().waitFor({ state: "visible" });
     for (let index = 0; index < await expanders.count(); index += 1) {
       const expander = expanders.nth(index);
       if (await expander.isVisible()) await expander.click();
