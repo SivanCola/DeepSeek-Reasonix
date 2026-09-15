@@ -52,6 +52,7 @@ import (
 	"reasonix/internal/nilutil"
 	"reasonix/internal/permission"
 	"reasonix/internal/permissionpreset"
+	"reasonix/internal/persistentshell"
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
 	"reasonix/internal/sandbox"
@@ -341,7 +342,8 @@ type Controller struct {
 	// sessionTemp owns the logical-session private temporary directory shared
 	// by Bash calls. Retained for this Controller's lifetime; rotated on
 	// /new, /clear, resume of another session, and branch switches.
-	sessionTemp *sessiontemp.Manager
+	sessionTemp     *sessiontemp.Manager
+	persistentShell *persistentshell.Manager
 	// snapshotMu serializes the whole save/recovery handoff for this controller.
 	// Agent-level path locks protect individual files, but recovery also moves
 	// controller-owned state (sessionPath, guardianPath, checkpoints, rewrite
@@ -721,6 +723,11 @@ type Options struct {
 	// Controller. Hot rebuilds pass the previous Controller's Manager so the
 	// temporary directory survives model/settings swaps.
 	SessionTemp *sessiontemp.Manager
+	// PersistentShell is the session-scoped PTY used by ordinary foreground
+	// bash. Nil creates a fresh Manager owned by this Controller. Hot rebuilds
+	// pass the previous Controller's Manager so cwd and exported environment
+	// survive model/settings swaps.
+	PersistentShell *persistentshell.Manager
 }
 
 // New builds a Controller. A nil Sink becomes event.Discard; unless the caller
@@ -731,6 +738,13 @@ func controllerSessionTemp(existing *sessiontemp.Manager) *sessiontemp.Manager {
 		return existing
 	}
 	return sessiontemp.New()
+}
+
+func controllerPersistentShell(existing *persistentshell.Manager) *persistentshell.Manager {
+	if existing != nil {
+		return existing
+	}
+	return persistentshell.New()
 }
 
 func New(opts Options) *Controller {
@@ -837,6 +851,8 @@ func (c *Controller) initializeOwnedResources(opts Options) {
 	// owner reference without racing a replacement Controller.
 	c.sessionTemp = controllerSessionTemp(opts.SessionTemp)
 	c.sessionTemp.Retain()
+	c.persistentShell = controllerPersistentShell(opts.PersistentShell)
+	c.persistentShell.Retain()
 	if strings.TrimSpace(opts.WorkspaceRoot) != "" {
 		c.legacyResearchArchive = legacyResearchArchive{store: autoresearch.NewStore(opts.WorkspaceRoot)}
 	}
@@ -5243,6 +5259,9 @@ func (c *Controller) finalizeControllerClose() {
 		if c.sessionTemp != nil {
 			c.sessionTemp.Release()
 		}
+		if c.persistentShell != nil {
+			c.persistentShell.Release()
+		}
 	})
 }
 
@@ -5261,10 +5280,25 @@ func (c *Controller) SessionTemp() *sessiontemp.Manager {
 // session cannot see the previous session's temporary files. In-flight command
 // leases keep the old generation alive until they release.
 func (c *Controller) rotateSessionTemp() {
-	if c == nil || c.sessionTemp == nil {
+	if c == nil {
 		return
 	}
-	c.sessionTemp.Rotate()
+	if c.sessionTemp != nil {
+		c.sessionTemp.Rotate()
+	}
+	if c.persistentShell != nil {
+		c.persistentShell.Rotate()
+	}
+}
+
+// PersistentShell returns the session-scoped PTY manager. Hot rebuilds pass
+// this to the replacement Controller so shell state survives model/settings
+// swaps. Nil only when the Controller was constructed without one.
+func (c *Controller) PersistentShell() *persistentshell.Manager {
+	if c == nil {
+		return nil
+	}
+	return c.persistentShell
 }
 
 // Jobs returns the still-running background jobs for the status bar (nil when

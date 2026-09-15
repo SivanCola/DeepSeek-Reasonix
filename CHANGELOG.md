@@ -28,6 +28,11 @@ branch.
 
 ### Changed
 
+- **Persistent bash PTY:** ordinary foreground `bash` calls in a session now
+  share one PTY, so `cd`, exported variables, and shell functions survive
+  across calls. Background jobs, per-call write-root escalations, and host
+  terminals stay one-shot. The bash tool schema and description are unchanged.
+
 - **Harness-style scheduling and recovery:** calls take effect in execution
   order, including same-batch read/edit sequences. Bounded reads create no
   completion debt. Unknown external effects are durable advisory facts and no
