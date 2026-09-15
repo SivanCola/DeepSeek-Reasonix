@@ -12,6 +12,8 @@ import (
 
 func TestCanonicalNavigationLastRequestWins(t *testing.T) {
 	app, tab, target, _, _ := canonicalWorkspaceOpenFixture(t)
+	ctrl := tab.Ctrl
+	tab.Ctrl = &activeNavigationController{SessionAPI: ctrl, IdentityLifecycle: ctrl.(control.IdentityLifecycle), status: control.RuntimeStatus{Running: true}}
 	source := session.SessionRef{HostID: localDesktopHostID, SessionID: tab.SessionID}
 	app.runtimeRebuildMu.Lock()
 	locked := true

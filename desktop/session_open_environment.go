@@ -16,12 +16,15 @@ type sessionOpenEnvironment struct {
 	oldHost          string
 	acquiredHost     bool
 	workspaceChanged bool
+	preserveSource   bool
 	releaseAdmission func()
 }
 
 func (a *App) prepareSessionOpenEnvironment(tab *WorkspaceTab, workspace workspacestate.Workspace) (*sessionOpenEnvironment, error) {
 	snap := a.tabRuntimeSnapshot(tab)
 	prepared := &sessionOpenEnvironment{snapshot: snap, oldHost: snap.sharedHostKey, workspaceChanged: canonicalWorkspaceChanged(snap, workspace)}
+	prepared.preserveSource = controllerHasActiveRuntimeWork(snap.ctrl)
+	prepared.snapshot.sink = &tabEventSink{tabID: tab.ID, app: a}
 	prepared.snapshot.scope, prepared.snapshot.workspaceRoot = canonicalWorkspaceScope(workspace), workspace.Root
 	release, err := a.beginProjectRuntimeAdmission(prepared.snapshot.scope, workspace.Root)
 	if err != nil {
@@ -34,7 +37,7 @@ func (a *App) prepareSessionOpenEnvironment(tab *WorkspaceTab, workspace workspa
 		return nil, err
 	}
 	prepared.host = a.lookupSharedHost(snap.sharedHostKey)
-	if prepared.workspaceChanged || snap.ctrl == nil {
+	if prepared.workspaceChanged || snap.ctrl == nil || prepared.preserveSource {
 		prepared.snapshot.sharedHostKey = workspace.Root
 		prepared.host = a.acquireSharedHost(workspace.Root)
 		prepared.acquiredHost = true
@@ -49,7 +52,7 @@ func (a *App) finishSessionOpenEnvironment(prepared *sessionOpenEnvironment, com
 	}
 	if !committed {
 		a.releaseSharedHost(prepared.snapshot.sharedHostKey)
-	} else if prepared.oldHost != "" {
+	} else if prepared.oldHost != "" && !prepared.preserveSource {
 		a.releaseSharedHost(prepared.oldHost)
 	}
 }

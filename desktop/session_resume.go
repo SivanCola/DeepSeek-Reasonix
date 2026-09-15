@@ -86,9 +86,6 @@ func (a *App) resumeCanonicalSessionForTranscript(tab *WorkspaceTab, ctrl contro
 	if current != ctrl {
 		return HistoryPage{}, fmt.Errorf("tab runtime changed while opening session")
 	}
-	if current != nil && (current.RuntimeStatus().Running || current.RuntimeStatus().PendingPrompt) {
-		return HistoryPage{}, control.ErrTurnRunning
-	}
 	var currentRef session.SessionRef
 	if identity != nil {
 		currentRef, _ = identity.SessionRef()
@@ -113,18 +110,9 @@ func (a *App) resumeCanonicalSessionForTranscript(tab *WorkspaceTab, ctrl contro
 			}
 			defer func() { _ = binding.Release(a.bootContext()) }()
 			targetModel := strings.TrimSpace(binding.Runtime().StateSnapshot().Session.Projection.ModelRef)
-			if targetModel != "" || workspaceChanged || current == nil {
-				current, err = a.replaceControllerForSessionOpenLocked(tab, current, service, ref, targetModel, workspace, wantedNavigation)
-				if err != nil {
-					return HistoryPage{}, err
-				}
-			} else {
-				if wantedNavigation != 0 && a.desktopSessions.navigationSeq.Load() != wantedNavigation {
-					return HistoryPage{}, errSessionNavigationSuperseded
-				}
-				if _, err := identity.OpenSession(a.bootContext(), ref); err != nil {
-					return HistoryPage{}, err
-				}
+			current, err = a.replaceControllerForSessionOpenLocked(tab, current, service, ref, targetModel, workspace, wantedNavigation)
+			if err != nil {
+				return HistoryPage{}, err
 			}
 		}
 	}
@@ -219,7 +207,8 @@ func (a *App) replaceControllerForSessionOpenLocked(tab *WorkspaceTab, current c
 		a.mu.Unlock()
 		return nil, err
 	}
-	if !a.commitSessionRuntimePathLocked(transition) {
+	oldSink := tab.sink
+	if !a.commitCanonicalRuntimeTransitionLocked(tab, transition, prepared.preserveSource) {
 		a.mu.Unlock()
 		return nil, fmt.Errorf("tab runtime changed while opening session")
 	}
@@ -229,6 +218,10 @@ func (a *App) replaceControllerForSessionOpenLocked(tab *WorkspaceTab, current c
 	applyCanonicalWorkspaceLocked(tab, workspace)
 	tab.SharedHostKey = snap.sharedHostKey
 	tab.Ctrl = candidate
+	tab.sink = snap.sink
+	tab.adoptDisplayState(&tabDisplayState{})
+	tab.ActivityStatus = ""
+	tab.replaceTelemetry(tabTelemetrySnapshot{}, sessionRuntimeKey(sessionRoute(ref.SessionID)))
 	tab.SessionID = ref.SessionID
 	tab.SessionPath = ""
 	tab.model = targetModel
@@ -236,6 +229,11 @@ func (a *App) replaceControllerForSessionOpenLocked(tab *WorkspaceTab, current c
 	applyNormalizedRuntimeToTabLocked(tab, runtime)
 	tab.Ready = true
 	clearTabStartupError(tab)
+	if prepared.preserveSource {
+		a.newSessionRuntimeLocked(tab, transition.targetKey)
+	}
+	tab.sink.setBinding(tab.ID, a, tab.SessionGeneration)
+	tab.sink.setContext(a.ctx)
 	a.bindSessionRuntimeKeyLocked(tab, tab.currentSessionIdentity())
 	a.supersedeTabBuildLocked(tab)
 	a.saveTabsLocked()
@@ -243,7 +241,10 @@ func (a *App) replaceControllerForSessionOpenLocked(tab *WorkspaceTab, current c
 	committed = true
 	a.mu.Unlock()
 
-	retireReplacedController(current, candidate)
+	if !prepared.preserveSource {
+		fenceCanonicalNavigationSink(oldSink)
+		retireReplacedController(current, candidate)
+	}
 	if prepared.workspaceChanged {
 		a.finishCanonicalWorkspaceMove(tab.ID, terminalSessions)
 	}

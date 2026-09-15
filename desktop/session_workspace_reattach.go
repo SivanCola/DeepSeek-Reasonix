@@ -10,6 +10,7 @@ import (
 // live owner before asking the writer registry for a competing controller.
 func (a *App) reattachCanonicalSessionRuntime(tab *WorkspaceTab, current control.SessionAPI, ref session.SessionRef, workspace workspacestate.Workspace, navigation uint64) (control.SessionAPI, error) {
 	key := sessionRuntimeKey(sessionRoute(ref.SessionID))
+	preserveSource := controllerHasActiveRuntimeWork(current)
 	a.mu.Lock()
 	if navigation != 0 && a.desktopSessions.navigationSeq.Load() != navigation {
 		a.mu.Unlock()
@@ -35,11 +36,19 @@ func (a *App) reattachCanonicalSessionRuntime(tab *WorkspaceTab, current control
 		return nil, errSessionNavigationSuperseded
 	}
 	oldHost := tab.SharedHostKey
+	oldSink := tab.sink
 	var terminals []*terminalSession
 	if a.terminals != nil {
 		terminals = a.terminals.detachForTab(tab.ID)
 	}
-	a.releaseSessionRuntimeLocked(tab)
+	if preserveSource {
+		if !a.detachRuntimeForReplacementLocked(tab) {
+			a.mu.Unlock()
+			return nil, errSessionNavigationSuperseded
+		}
+	} else {
+		a.releaseSessionRuntimeLocked(tab)
+	}
 	delete(a.detachedSessions, key)
 	if a.tabs[source.ID] == source {
 		delete(a.tabs, source.ID)
@@ -55,9 +64,12 @@ func (a *App) reattachCanonicalSessionRuntime(tab *WorkspaceTab, current control
 	adopted, sink := tab.Ctrl, tab.sink
 	epoch := a.advanceSessionRuntimeEpochLocked(tab)
 	a.mu.Unlock()
-	retireReplacedController(current, adopted)
-	if oldHost != "" {
-		a.releaseSharedHost(oldHost)
+	if !preserveSource {
+		fenceCanonicalNavigationSink(oldSink)
+		retireReplacedController(current, adopted)
+		if oldHost != "" {
+			a.releaseSharedHost(oldHost)
+		}
 	}
 	a.finishCanonicalWorkspaceMove(tab.ID, terminals)
 	a.replayPendingPromptsAfterRuntimeAttach(tab.ID, sink, adopted, epoch)
