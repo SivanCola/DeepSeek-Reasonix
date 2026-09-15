@@ -153,13 +153,9 @@ func compareLegacySpool(path string, preview []provider.Message) (importMessageR
 	}
 }
 
-// publishLegacyImport materializes the transcript target. It runs only after
-// the source decision is final, so a refused or sidecar-winning import never
-// creates the legacy target as a side effect.
-func publishLegacyImport(ctx context.Context, frozen *frozenLegacyHead, targetRoot string) (ImportResult, error) {
-	return publishLegacyImportWithHeader(ctx, frozen, targetRoot, CreateOptions{})
-}
-
+// publishLegacyImportWithHeader materializes the transcript target. It runs
+// only after the source decision is final, so a refused or sidecar-winning
+// import never creates a target or immutable Header as a side effect.
 func publishLegacyImportWithHeader(ctx context.Context, frozen *frozenLegacyHead, targetRoot string, options CreateOptions) (ImportResult, error) {
 	migration, err := frozen.publish(ctx, targetRoot, options)
 	if err != nil {
