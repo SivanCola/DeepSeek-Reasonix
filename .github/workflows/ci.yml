@@ -1222,7 +1222,17 @@ jobs:
         run: |
           go test -skip '^Test[I-Z]' ./...
           go test -run '^Test[I-P]' ./...
-          go test -run '^Test[Q-Z]' -skip '^TestWindowsTerminalProcessConPTYSmoke$' ./...
+
+      # The Q-Z desktop package is large enough to exceed the step budget on
+      # a loaded hosted runner. Keep the two disjoint suffixes separate so a
+      # slow tail cannot hide a completed test group or consume the whole job.
+      - name: test (Windows desktop Q-R)
+        timeout-minutes: 25
+        run: go test -run '^Test[Q-R]' -skip '^TestWindowsTerminalProcessConPTYSmoke$' ./...
+
+      - name: test (Windows desktop S-Z)
+        timeout-minutes: 25
+        run: go test -run '^Test[S-Z]' -skip '^TestWindowsTerminalProcessConPTYSmoke$' ./...
 
       # ConPTY startup and teardown depend on the hosted runner's interactive
       # Windows environment. Keep the end-to-end probe visible without making
