@@ -56,23 +56,31 @@ const (
 	ReadWrite AccessMode = "write"
 )
 
-type CreateOptions struct{ SessionID string }
+type CreateOptions struct {
+	SessionID       string
+	CWD             string
+	ParentSessionID string
+	Origin          SessionOrigin
+}
 
 type SessionInfo struct {
-	SessionID      string
-	Ref            SessionRef
-	Codec          string
-	Title          string
-	ModelRef       string
-	ModelIdentity  string
-	Turns          int
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	EventSequence  uint64
-	Preview        string
-	MetadataStatus string
-	Path           string
-	Error          string
+	SessionID       string
+	Ref             SessionRef
+	Codec           string
+	Title           string
+	ModelRef        string
+	ModelIdentity   string
+	Turns           int
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	EventSequence   uint64
+	Preview         string
+	MetadataStatus  string
+	CWD             string
+	ParentSessionID string
+	Origin          SessionOrigin
+	Path            string
+	Error           string
 }
 
 type SessionPage struct {
@@ -154,7 +162,12 @@ func (p *FilesystemPersistence) Create(options CreateOptions) (*Session, error) 
 	if err != nil {
 		return nil, err
 	}
-	return CreateWithOptions(dir, id, OpenOptions{ExternalHistory: true})
+	options.SessionID = id
+	header, err := headerForCreate(options)
+	if err != nil {
+		return nil, err
+	}
+	return createWithOptions(dir, id, OpenOptions{ExternalHistory: true}, header)
 }
 
 func (p *FilesystemPersistence) Open(sessionID string, mode AccessMode) (*Session, error) {
@@ -164,6 +177,9 @@ func (p *FilesystemPersistence) Open(sessionID string, mode AccessMode) (*Sessio
 	}
 	dir, err := p.sessionDir(id, true)
 	if err != nil {
+		return nil, err
+	}
+	if _, _, err := readSessionHeader(dir, id); err != nil {
 		return nil, err
 	}
 	if mode == ReadOnly {
@@ -202,6 +218,10 @@ func (p *FilesystemPersistence) Stat(ctx context.Context, sessionID string) (Ses
 	if manifest.SessionID != id {
 		return SessionInfo{}, fmt.Errorf("%w: manifest belongs to %q", ErrDamagedStore, manifest.SessionID)
 	}
+	header, hasHeader, err := readSessionHeader(dir, id)
+	if err != nil {
+		return SessionInfo{}, err
+	}
 	// Listing reads the manifest, log metadata, and rebuildable catalog cache.
 	// It never opens event bodies; Query refreshes missing display metadata in
 	// the background.
@@ -216,6 +236,9 @@ func (p *FilesystemPersistence) Stat(ctx context.Context, sessionID string) (Ses
 		}
 	}
 	info := SessionInfo{SessionID: manifest.SessionID, Codec: manifest.Codec, CreatedAt: manifest.CreatedAt, UpdatedAt: updatedAt, MetadataStatus: MetadataPending, Path: dir}
+	if hasHeader {
+		info.CWD, info.ParentSessionID, info.Origin = header.CWD, header.ParentSessionID, header.Origin
+	}
 	cacheDir := filepath.Join(p.Root, ".query-cache", filepath.Base(id))
 	if metadata, metadataErr := readCatalogMetadata(cacheDir, manifest, revision); metadataErr == nil {
 		info.Title, info.ModelRef, info.ModelIdentity = metadata.Title, metadata.ModelRef, metadata.ModelIdentity

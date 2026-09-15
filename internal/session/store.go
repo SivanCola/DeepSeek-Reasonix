@@ -305,6 +305,10 @@ func CreateStore(dir, sessionID string) (*Session, error) {
 }
 
 func CreateWithOptions(dir, sessionID string, opts OpenOptions) (*Session, error) {
+	return createWithOptions(dir, sessionID, opts, nil)
+}
+
+func createWithOptions(dir, sessionID string, opts OpenOptions, header *SessionHeader) (*Session, error) {
 	dir = filepath.Clean(strings.TrimSpace(dir))
 	sessionID = strings.TrimSpace(sessionID)
 	if dir == "." || sessionID == "" {
@@ -328,9 +332,19 @@ func CreateWithOptions(dir, sessionID string, opts OpenOptions) (*Session, error
 			_ = os.RemoveAll(dir)
 		}
 	}()
-	manifest := Manifest{SchemaVersion: SchemaVersion, Codec: Codec, StorageRevision: StorageRevision, ContentRoot: sharedContentRoot, SessionID: sessionID, CreatedAt: time.Now().UTC()}
+	createdAt := time.Now().UTC()
+	if header != nil {
+		header.SessionID = sessionID
+		header.CreatedAt = createdAt
+	}
+	manifest := Manifest{SchemaVersion: SchemaVersion, Codec: Codec, StorageRevision: StorageRevision, ContentRoot: sharedContentRoot, SessionID: sessionID, CreatedAt: createdAt}
 	if err := writeManifestFile(filepath.Join(dir, "manifest.json"), manifest); err != nil {
 		return nil, err
+	}
+	if header != nil {
+		if err := writeSessionHeader(dir, *header); err != nil {
+			return nil, err
+		}
 	}
 	if err := fileutil.AtomicWriteFileStrict(filepath.Join(dir, currentLogName), nil, 0o600); err != nil {
 		return nil, err
