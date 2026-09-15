@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -38,12 +39,19 @@ func TestSynchronousCloseKeepsExecutionBoundUntilTerminalCommit(t *testing.T) {
 	release := make(chan struct{})
 	c, service, runtime := exclusiveTestController(t, holdFinishingWindow(release, entered, nil))
 	done := make(chan error, 1)
+	finished := make(chan struct{})
+	releaseTerminal := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(func() {
+		releaseTerminal()
+		<-finished
+	})
 	go func() {
-		done <- c.runSynchronousTurn(context.Background(), nil, func(context.Context) error { return nil })
+		defer close(finished)
+		done <- c.runSynchronousTurn(t.Context(), nil, func(context.Context) error { return nil })
 	}()
 	select {
 	case <-entered:
-	case <-time.After(time.Second):
+	case <-t.Context().Done():
 		t.Fatal("synchronous terminal publication did not start")
 	}
 	c.Close()
@@ -56,13 +64,15 @@ func TestSynchronousCloseKeepsExecutionBoundUntilTerminalCommit(t *testing.T) {
 	if _, ok := service.Runtime(runtime.Ref()); !ok {
 		t.Fatal("close retired synchronous runtime before terminal commit")
 	}
-	close(release)
+	releaseTerminal()
+	// The barrier proves execution ownership ordering. Real session teardown
+	// flushes and closes its writer; its speed is not a one-second contract.
 	select {
 	case err := <-done:
 		if err != nil {
 			t.Fatalf("synchronous turn: %v", err)
 		}
-	case <-time.After(time.Second):
+	case <-t.Context().Done():
 		t.Fatal("synchronous turn did not finish")
 	}
 	if runtime.OwnsExecution(c.ExecutionGeneration()) {
