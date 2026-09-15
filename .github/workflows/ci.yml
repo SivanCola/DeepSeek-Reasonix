@@ -101,7 +101,8 @@ jobs:
         with:
           module: root
 
-      - if: env.RUN_STEPS == 'true' && runner.os == 'Windows'
+      # Both non-Linux legs drive their package selection through a Node script.
+      - if: env.RUN_STEPS == 'true' && runner.os != 'Linux'
         uses: actions/setup-node@v7
         with:
           node-version: "22"
@@ -162,13 +163,25 @@ jobs:
         run: go build ./...
 
       - name: test
-        if: env.RUN_STEPS == 'true' && runner.os != 'Windows'
+        if: env.RUN_STEPS == 'true' && (runner.os == 'Linux' || github.event_name != 'pull_request')
         env:
           # Run the prompt-cache prefix-stability guard (TestCacheHit*) in CI: a
           # regression there silently tanks the cache hit rate the project is
           # built around.
           REASONIX_RELEASE_CACHE_GUARD: "1"
         run: go test ./...
+
+      # Public repositories get five concurrent macOS runners and one pull
+      # request already claims three. Linux proves the portable packages on
+      # every pull request, so this leg sweeps only the darwin-specific ones
+      # and pushes keep the full ./... run above — the same tiering the Windows
+      # legs and the race job already use.
+      - name: test (macOS platform packages)
+        if: env.RUN_STEPS == 'true' && runner.os == 'macOS' && github.event_name == 'pull_request'
+        timeout-minutes: 15
+        env:
+          REASONIX_RELEASE_CACHE_GUARD: "1"
+        run: node scripts/macos-go-tests.mjs darwin
 
       # Agent, boot and control own isolated Windows runners on PRs and pushes.
       # The shared selector excludes them here, preserving platform smoke
@@ -1434,7 +1447,7 @@ jobs:
             .github/workflows/release-verify-issues.yml \
             .github/workflows/docs-impact.yml \
             .github/workflows/ci.yml
-          node --test scripts/desktop-release-artifacts.test.mjs scripts/signpath-checkpoint.test.mjs scripts/ci-workflow.test.mjs scripts/notarize-desktop.test.mjs scripts/verify-windows-gui-subsystem.test.mjs scripts/windows-go-tests.test.mjs
+          node --test scripts/desktop-release-artifacts.test.mjs scripts/signpath-checkpoint.test.mjs scripts/ci-workflow.test.mjs scripts/notarize-desktop.test.mjs scripts/verify-windows-gui-subsystem.test.mjs scripts/windows-go-tests.test.mjs scripts/macos-go-tests.test.mjs
           bash scripts/release-workflows.test.sh
           node scripts/check-single-release-public-contract.mjs
 
