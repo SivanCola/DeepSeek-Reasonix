@@ -12,6 +12,7 @@ import (
 
 	"reasonix/internal/control"
 	"reasonix/internal/provider"
+	"reasonix/internal/session"
 )
 
 func TestBuildRuntimeDisablesImplicitSkillInvocation(t *testing.T) {
@@ -295,6 +296,57 @@ func TestRebuildMigratesSessionState(t *testing.T) {
 		t.Fatal("Rebuild closed the old runtime set")
 	}
 	oldCtrl.Close()
+}
+
+func TestRebuildImportsLegacySessionWithHostHeader(t *testing.T) {
+	isolateConfigHome(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	writeRuntimeFixture(t, dir)
+
+	old, err := BuildRuntime(context.Background(), Options{})
+	if err != nil {
+		t.Fatalf("BuildRuntime legacy: %v", err)
+	}
+	t.Cleanup(old.Controller.Close)
+	old.Controller.EnsureSessionPath()
+	old.Controller.AdoptHistory([]provider.Message{
+		{Role: provider.RoleSystem, Content: systemMessage(old.Controller.History())},
+		{Role: provider.RoleUser, Content: "legacy history"},
+	}, old.Controller.SessionPath())
+	if err := old.Controller.Snapshot(); err != nil {
+		t.Fatalf("Snapshot legacy: %v", err)
+	}
+
+	workspace := filepath.Join(dir, "workspace")
+	storeRoot := filepath.Join(dir, "desktop-sessions-v5", "by-id")
+	service, err := session.NewService("local", session.NewFilesystemPersistence(storeRoot))
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	t.Cleanup(func() { _ = service.Shutdown(context.Background()) })
+
+	rebuilt, err := Rebuild(context.Background(), old.Controller, Options{
+		SessionService: service,
+		SessionCreateOptions: session.CreateOptions{
+			CWD: workspace, Origin: session.SessionOriginLegacyImport,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Rebuild: %v", err)
+	}
+	t.Cleanup(rebuilt.Controller.Close)
+	ref, ok := rebuilt.Controller.SessionRef()
+	if !ok {
+		t.Fatal("rebuilt controller has no canonical identity")
+	}
+	info, err := service.Query().Stat(t.Context(), ref)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if info.CWD != workspace || info.Origin != session.SessionOriginLegacyImport {
+		t.Fatalf("import header = cwd:%q origin:%q", info.CWD, info.Origin)
+	}
 }
 
 // TestRebuildCarriesGoalWithoutSessionPath covers the in-memory fallback: an

@@ -104,12 +104,14 @@ func (c *Controller) ContinueLegacySessionWithOptions(ctx context.Context, sourc
 	return c.continueLegacySession(ctx, sourcePath, headID, true, options)
 }
 
-// ContinueLegacySessionForRebuild performs the same fail-atomic import while an
-// Agent generation is being replaced for the same logical session. The
-// SessionTemp generation belongs to that logical session, so this path must
-// not rotate it merely because persistence crossed the legacy/v3 boundary.
-func (c *Controller) ContinueLegacySessionForRebuild(ctx context.Context, sourcePath, headID string) (session.SessionRef, error) {
-	return c.continueLegacySession(ctx, sourcePath, headID, false, session.CreateOptions{})
+// ContinueLegacySessionForRebuildWithOptions performs the same fail-atomic
+// import while an Agent generation is being replaced for the same logical
+// session, and publishes host-owned immutable metadata in that same
+// transaction. The SessionTemp generation belongs to the logical session, so
+// this path must not rotate it merely because persistence crossed the
+// legacy/v3 boundary.
+func (c *Controller) ContinueLegacySessionForRebuildWithOptions(ctx context.Context, sourcePath, headID string, options session.CreateOptions) (session.SessionRef, error) {
+	return c.continueLegacySession(ctx, sourcePath, headID, false, options)
 }
 
 func (c *Controller) continueLegacySession(ctx context.Context, sourcePath, headID string, rotateSessionTemp bool, options session.CreateOptions) (session.SessionRef, error) {

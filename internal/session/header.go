@@ -106,8 +106,17 @@ func validateSessionHeaderForCreate(dir, sessionID string, options CreateOptions
 	if err != nil {
 		return err
 	}
-	if !found || header.CWD != expected.CWD || header.ParentSessionID != expected.ParentSessionID || header.Origin != expected.Origin {
-		return fmt.Errorf("%w: session header does not match requested ownership", ErrDamagedStore)
+	if !found {
+		return fmt.Errorf("%w: session header is missing", ErrDamagedStore)
+	}
+	if header.CWD != expected.CWD {
+		return fmt.Errorf("%w: session header workspace does not match requested ownership", ErrDamagedStore)
+	}
+	if header.ParentSessionID != expected.ParentSessionID {
+		return fmt.Errorf("%w: session header lineage does not match requested ownership", ErrDamagedStore)
+	}
+	if header.Origin != expected.Origin {
+		return fmt.Errorf("%w: session header origin does not match requested ownership", ErrDamagedStore)
 	}
 	return nil
 }

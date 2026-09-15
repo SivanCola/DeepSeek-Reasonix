@@ -150,12 +150,12 @@ type Options struct {
 	// empty, the shared CLI/global session directory is used.
 	SessionDir string
 	// SessionService is shared by all controllers on one host. Rebuild injects
-	// the previous service and runtime so changing model/settings replaces only
-	// the Agent while the immutable session identity and writer remain owned by
-	// the same SessionRuntime.
-	SessionService *session.Service
-	SessionRuntime *session.Runtime
-	SessionHostID  string
+	// the previous service/runtime so model changes keep the immutable session
+	// identity and writer owned by the same SessionRuntime.
+	SessionService       *session.Service
+	SessionRuntime       *session.Runtime
+	SessionHostID        string
+	SessionCreateOptions session.CreateOptions
 	// SharedHost is an optional plugin.Host shared across controllers for the
 	// same workspace root. When set, boot.Build reuses its running clients
 	// instead of creating new subprocesses, and the caller manages the host's

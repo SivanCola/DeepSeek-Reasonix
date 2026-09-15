@@ -10,6 +10,7 @@ import (
 	"reasonix/internal/control"
 	"reasonix/internal/extension"
 	"reasonix/internal/provider"
+	"reasonix/internal/session"
 )
 
 // RebuildFrom is Rebuild using previous BuildResult for incremental sidecars
@@ -158,7 +159,7 @@ func rebuildWithPrevious(ctx context.Context, old *control.Controller, previous 
 	}
 	attachPlanAndStatus(res, fromGraph, toGraph, opts.Generation, previousSnapshot)
 
-	if err := migrateRuntimeState(res.Controller, old, m); err != nil {
+	if err := migrateRuntimeState(res.Controller, old, m, opts.SessionCreateOptions); err != nil {
 		// Fail-atomic: release the replacement; old keeps serving.
 		// Activation never reached Active publish.
 		if res.Snapshot != nil {
@@ -203,7 +204,7 @@ type runtimeMigration struct {
 // migrateRuntimeState applies the captured state to the freshly built
 // controller. Every step today is an infallible public control call; the
 // error return is the fail-atomic seam for steps that gain failure modes.
-func migrateRuntimeState(ctrl, old *control.Controller, m runtimeMigration) error {
+func migrateRuntimeState(ctrl, old *control.Controller, m runtimeMigration, createOptions session.CreateOptions) error {
 	carried := spliceFreshSystemPrompt(m.carried, ctrl.History())
 	if ctrl.UsesExclusiveSession() {
 		if _, _, ok := ctrl.SessionBinding(); ok {
@@ -212,7 +213,7 @@ func migrateRuntimeState(ctrl, old *control.Controller, m runtimeMigration) erro
 			}
 		} else if m.prevPath != "" {
 			path := agent.ContinueSessionPath(m.prevPath, ctrl.SessionDir(), ctrl.Label())
-			if _, err := ctrl.ContinueLegacySessionForRebuild(context.Background(), path, ""); err != nil {
+			if _, err := ctrl.ContinueLegacySessionForRebuildWithOptions(context.Background(), path, "", createOptions); err != nil {
 				return err
 			}
 			if err := ctrl.AdoptRebuiltModelContext(carried); err != nil {
