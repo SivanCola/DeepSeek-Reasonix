@@ -315,18 +315,31 @@ export async function fetchFirstJSON(urls, fetchImpl = fetch, accept = () => tru
 // the page, and a later signed stable release still supersedes all of them.
 const MANUAL_DESKTOP_TAGS = ["desktop-v1.38.8", "desktop-v1.38.9"];
 
-export async function fetchDesktopDownloadModel(fetchImpl = fetch) {
+export async function fetchDesktopDownloadModel(fetchImpl = fetch, pinnedVersion = "") {
+  if (pinnedVersion && !parsePublicTag(pinnedVersion)) return null;
+  const acceptsVersion = (model) => Boolean(model && (!pinnedVersion || model.version === pinnedVersion));
   const load = async (manifestURLs, releaseURL) => {
     try {
       return desktopReleaseModel(await fetchFirstJSON(
-        manifestURLs, fetchImpl, (manifest) => Boolean(desktopReleaseModel(manifest)),
+        manifestURLs, fetchImpl, (manifest) => acceptsVersion(desktopReleaseModel(manifest)),
       ));
     } catch {
       return desktopGitHubReleaseModel(await fetchFirstJSON(
-        [releaseURL], fetchImpl, (release) => Boolean(desktopGitHubReleaseModel(release)),
+        [releaseURL], fetchImpl, (release) => acceptsVersion(desktopGitHubReleaseModel(release)),
       ));
     }
   };
+  if (pinnedVersion) {
+    const tag = `desktop-${pinnedVersion}`;
+    try {
+      return await load(
+        [`https://dl.reasonix.io/${tag}/latest.json`],
+        `https://api.github.com/repos/esengine/DeepSeek-Reasonix/releases/tags/${tag}`,
+      );
+    } catch {
+      return null;
+    }
+  }
   const results = await Promise.allSettled([
     load([
       "https://dl.reasonix.io/latest/latest.json",

@@ -29,6 +29,40 @@ const desktopSHA256 = "a".repeat(64);
 // actually resolves", so listing the next tag early cannot downgrade the page.
 const manualTagOf = (url) => (url.match(/desktop-v\d+\.\d+\.\d+/) || [])[0];
 
+test("a website pin requests only the exact Desktop version", async () => {
+  const requests = [];
+  const model = await fetchDesktopDownloadModel(async (url) => {
+    requests.push(url);
+    return { ok: true, json: async () => desktopManifest("v1.38.3") };
+  }, "v1.38.3");
+  assert.equal(model.version, "v1.38.3");
+  assert.deepEqual(requests, ["https://dl.reasonix.io/desktop-v1.38.3/latest.json"]);
+  assert.ok(Object.values(model.assets).every((url) => url.includes("/desktop-v1.38.3/")));
+});
+
+test("a website pin rejects mismatched manifests and falls back to the exact GitHub release", async () => {
+  const requests = [];
+  const model = await fetchDesktopDownloadModel(async (url) => {
+    requests.push(url);
+    return { ok: true, json: async () => url.includes("api.github.com")
+      ? desktopGitHubRelease("v1.38.3") : desktopManifest("v1.38.9") };
+  }, "v1.38.3");
+  assert.equal(model.version, "v1.38.3");
+  assert.deepEqual(requests, [
+    "https://dl.reasonix.io/desktop-v1.38.3/latest.json",
+    "https://api.github.com/repos/esengine/DeepSeek-Reasonix/releases/tags/desktop-v1.38.3",
+  ]);
+});
+
+test("an unavailable or mismatched website pin never selects a newer release", async () => {
+  for (const payload of [null, desktopManifest("v1.38.9"), desktopGitHubRelease("v1.38.9")]) {
+    assert.equal(await fetchDesktopDownloadModel(async () => ({
+      ok: true, json: async () => payload,
+    }), "v1.38.3"), null);
+  }
+  assert.equal(await fetchDesktopDownloadModel(async () => { throw new Error("offline"); }, "v1.38.3"), null);
+});
+
 test("manual desktop downloads advance independently and yield to future stable releases", async () => {
   for (const stableVersion of ["v1.38.7", "v1.38.8", "v1.39.0"]) {
     const model = await fetchDesktopDownloadModel(async (url) => {

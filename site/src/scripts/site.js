@@ -1,4 +1,5 @@
 import { downloadPaneFromURL, downloadURLForPane } from "./download-link.js";
+import { desktopDownloadVersion } from "../data/desktop-download.js";
 import {
   cliReleaseModel,
   cliUpgradeCommand,
@@ -259,24 +260,28 @@ import { initMobileNav } from "./mobile-nav.js";
   // Never synthesize public artifact URLs. If every required asset is not
   // attested by live release data, fall back to the release list instead of a
   // plausible-looking URL that may 404.
-  const fallbackReleaseURL = () => releasesPage;
+  const fallbackReleaseURL = (surface) => surface === "desktop" && desktopDownloadVersion
+    ? releasesPage + "/tag/desktop-" + desktopDownloadVersion
+    : releasesPage;
 
   const renderReleaseSurface = (surface) => {
     const model = releaseModels[surface];
     document.querySelectorAll('[data-release-version="' + surface + '"]').forEach((element) => {
-      element.textContent = releaseVersionLabel(model);
+      element.textContent = releaseVersionLabel(model || (surface === "desktop" && desktopDownloadVersion
+        ? { version: desktopDownloadVersion } : null));
     });
     document.querySelectorAll('[data-release-notes="' + surface + '"]').forEach((link) => {
-      const path = model?.changelogURL ? new URL(model.changelogURL).pathname : "changelog/";
+      const path = model?.changelogURL ? new URL(model.changelogURL).pathname
+        : surface === "desktop" && desktopDownloadVersion ? "changelog/" + desktopDownloadVersion + "/" : "changelog/";
       link.href = new URL(path, window.location.origin + "/").href;
     });
 
     const assetAttribute = "data-" + surface + "-asset";
     document.querySelectorAll("[" + assetAttribute + "]").forEach((link) => {
       const asset = link.getAttribute(assetAttribute);
-      const target = model?.assets?.[asset] || fallbackReleaseURL();
+      const target = model?.assets?.[asset] || fallbackReleaseURL(surface);
       link.href = target;
-      if (target === releasesPage) link.removeAttribute("download");
+      if (!model?.assets?.[asset]) link.removeAttribute("download");
       else link.setAttribute("download", "");
     });
 
@@ -291,7 +296,7 @@ import { initMobileNav } from "./mobile-nav.js";
   renderReleaseSurface("cli");
   if (requestedPane) reflectPaneURL(requestedPane);
 
-  fetchDesktopDownloadModel()
+  fetchDesktopDownloadModel(fetch, desktopDownloadVersion)
     .then((model) => {
       if (!model) return;
       releaseModels.desktop = model;
