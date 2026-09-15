@@ -80,7 +80,7 @@ func charEvents(r rune) []map[string]any {
 func chordEvents(spec string) (map[string]any, map[string]any, error) {
 	parts := strings.Split(spec, "+")
 	modifiers := 0
-	for i := 0; i < len(parts)-1; i++ {
+	for i := range len(parts) - 1 {
 		name := strings.ToLower(strings.TrimSpace(parts[i]))
 		bit, ok := modifierNames[name]
 		if !ok {

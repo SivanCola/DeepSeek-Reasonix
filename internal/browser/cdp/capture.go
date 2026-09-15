@@ -171,7 +171,7 @@ func (e *Executor) downloadWillBegin(params json.RawMessage) {
 	tab := ""
 	for _, p := range e.pages {
 		p.mu.Lock()
-		if p.frame == ev.FrameID {
+		if p.doc.frame == ev.FrameID {
 			tab = p.id
 			p.downloads = append(p.downloads, ev.GUID)
 		}

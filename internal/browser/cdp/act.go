@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,7 +56,7 @@ func (e *Executor) Snapshot(ctx context.Context, req browser.SnapshotRequest) (b
 	}
 	token := mintToken()
 	p.mu.Lock()
-	p.token, p.lastSeq, p.takenOver = token, out.UserSeq, false
+	p.doc.token, p.doc.lastSeq, p.doc.takenOver = token, out.UserSeq, false
 	p.url, p.title = out.URL, out.Title
 	p.mu.Unlock()
 
@@ -84,7 +85,7 @@ func (e *Executor) Act(ctx context.Context, req browser.ActRequest) (browser.Act
 		return e.failure(err)
 	}
 	p.mu.Lock()
-	token := p.token
+	token := p.doc.token
 	p.mu.Unlock()
 	if !executed {
 		return browser.ActResult{Reason: reason, Outcome: browser.OutcomeNotExecuted, DocumentToken: token}, nil
@@ -101,7 +102,7 @@ func (e *Executor) failure(err error) (browser.ActResult, error) {
 	case errors.Is(err, browser.ErrStaleReference), errors.Is(err, browser.ErrTakenOver), errors.Is(err, browser.ErrNoGrant):
 		return browser.ActResult{Outcome: browser.OutcomeNotExecuted}, err
 	case errors.Is(err, errDispatched):
-		return browser.ActResult{Outcome: browser.OutcomeUnknown}, fmt.Errorf("%w: %s", browser.ErrUnknownOutcome, err)
+		return browser.ActResult{Outcome: browser.OutcomeUnknown}, fmt.Errorf("%w: %w", browser.ErrUnknownOutcome, err)
 	}
 	return browser.ActResult{Reason: err.Error(), Outcome: browser.OutcomeNotExecuted}, nil
 }
@@ -110,7 +111,7 @@ func (e *Executor) failure(err error) (browser.ActResult, error) {
 // or that a human has touched since the snapshot.
 func (e *Executor) guard(ctx context.Context, p *page, token string) error {
 	p.mu.Lock()
-	current, takenOver := p.token, p.takenOver
+	current, takenOver := p.doc.token, p.doc.takenOver
 	p.mu.Unlock()
 	switch {
 	case takenOver:
@@ -122,7 +123,7 @@ func (e *Executor) guard(ctx context.Context, p *page, token string) error {
 		return err
 	}
 	p.mu.Lock()
-	takenOver, current = p.takenOver, p.token
+	takenOver, current = p.doc.takenOver, p.doc.token
 	p.mu.Unlock()
 	switch {
 	case takenOver:
@@ -350,12 +351,8 @@ func (e *Executor) dispatchAll(ctx context.Context, p *page, method string, even
 
 func merge(base, over map[string]any) map[string]any {
 	out := make(map[string]any, len(base)+len(over))
-	for k, v := range base {
-		out[k] = v
-	}
-	for k, v := range over {
-		out[k] = v
-	}
+	maps.Copy(out, base)
+	maps.Copy(out, over)
 	return out
 }
 

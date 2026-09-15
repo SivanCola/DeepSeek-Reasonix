@@ -20,40 +20,52 @@ const worldName = "reasonix-browser"
 // cannot flood the model's context.
 const snapshotBudget = 2000
 
-// page is one agent-owned tab. Its mutex guards the document-scoped state that
-// navigation, take-over, and snapshots retire together.
-type page struct {
+// pageIdentity is fixed for a tab's whole life: which target it is, which
+// session may drive it, and which partition it belongs to.
+type pageIdentity struct {
 	id        string
 	target    string
 	session   string
 	context   string
 	owner     string
 	temporary bool
-	detach    []func()
+}
 
-	mu        sync.Mutex
+// pageDocument is what one document version owns. Navigation, page
+// replacement, and a take-over retire all of it together, which is why it is
+// one value and not five independent flags: no combination of a live token
+// with a dead isolated world can exist.
+type pageDocument struct {
 	frame     string
 	world     int64
 	token     string
+	lastSeq   int64
 	takenOver bool
+}
+
+// page is one agent-owned tab. Its mutex guards the document state and the
+// per-tab records that outlive a single document.
+type page struct {
+	pageIdentity
+	detach []func()
+
+	mu        sync.Mutex
+	doc       pageDocument
 	loading   bool
 	dead      bool
 	url       string
 	title     string
-	lastSeq   int64
 	downloads []string
 }
 
 // retire drops everything bound to the document that just went away: the
 // isolated world holding the refs, the token those refs were promised under,
-// and the take-over counter the new world starts over from.
+// and the take-over counter the new world starts over from. The frame outlives
+// the document that was loaded in it.
 func (p *page) retire(url string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.world = 0
-	p.token = ""
-	p.lastSeq = 0
-	p.takenOver = false
+	p.doc = pageDocument{frame: p.doc.frame}
 	if url != "" {
 		p.url = url
 	}
@@ -74,8 +86,8 @@ func (p *page) setLoading(loading bool) {
 func (p *page) markDead() {
 	p.mu.Lock()
 	p.dead = true
-	p.world = 0
-	p.token = ""
+	p.doc.world = 0
+	p.doc.token = ""
 	p.mu.Unlock()
 }
 
@@ -95,7 +107,9 @@ func (e *Executor) attach(ctx context.Context, id, target, contextID, owner stri
 	if err := e.conn.call(ctx, "", "Target.attachToTarget", map[string]any{"targetId": target, "flatten": true}, &out); err != nil {
 		return nil, fmt.Errorf("attach to tab: %w", err)
 	}
-	p := &page{id: id, target: target, session: out.SessionID, context: contextID, owner: owner, temporary: temporary}
+	p := &page{pageIdentity: pageIdentity{
+		id: id, target: target, session: out.SessionID, context: contextID, owner: owner, temporary: temporary,
+	}}
 	if err := e.conn.call(ctx, p.session, "Page.enable", nil, nil); err != nil {
 		return nil, fmt.Errorf("enable page events: %w", err)
 	}
@@ -119,7 +133,7 @@ func (e *Executor) subscribe(p *page) {
 				return
 			}
 			p.mu.Lock()
-			p.frame = ev.Frame.ID
+			p.doc.frame = ev.Frame.ID
 			p.mu.Unlock()
 			p.retire(ev.Frame.URL)
 		}),
@@ -152,7 +166,7 @@ func (e *Executor) refreshFrame(ctx context.Context, p *page) {
 		return
 	}
 	p.mu.Lock()
-	p.frame = tree.FrameTree.Frame.ID
+	p.doc.frame = tree.FrameTree.Frame.ID
 	if p.url == "" {
 		p.url = tree.FrameTree.Frame.URL
 	}
@@ -187,17 +201,15 @@ func (r evalResult) exception() error {
 }
 
 func firstLine(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return s[:i]
-	}
-	return s
+	line, _, _ := strings.Cut(s, "\n")
+	return line
 }
 
 // ensureWorld returns the page's isolated world, creating and bootstrapping it
 // when the previous document took the old one with it.
 func (e *Executor) ensureWorld(ctx context.Context, p *page) (int64, error) {
 	p.mu.Lock()
-	world, frame := p.world, p.frame
+	world, frame := p.doc.world, p.doc.frame
 	p.mu.Unlock()
 	if world != 0 {
 		return world, nil
@@ -205,7 +217,7 @@ func (e *Executor) ensureWorld(ctx context.Context, p *page) (int64, error) {
 	if frame == "" {
 		e.refreshFrame(ctx, p)
 		p.mu.Lock()
-		frame = p.frame
+		frame = p.doc.frame
 		p.mu.Unlock()
 	}
 	if frame == "" {
@@ -225,8 +237,8 @@ func (e *Executor) ensureWorld(ctx context.Context, p *page) (int64, error) {
 		return 0, err
 	}
 	p.mu.Lock()
-	p.world = out.ExecutionContextID
-	p.lastSeq = 0
+	p.doc.world = out.ExecutionContextID
+	p.doc.lastSeq = 0
 	p.mu.Unlock()
 	return out.ExecutionContextID, nil
 }
@@ -245,7 +257,7 @@ func evaluateParams(expression string, contextID int64, byValue bool) map[string
 // A world that died between the lookup and the call is rebuilt once, which is
 // the ordinary race with a page navigating itself.
 func (e *Executor) eval(ctx context.Context, p *page, expression string, out any) error {
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := range 2 {
 		world, err := e.ensureWorld(ctx, p)
 		if err != nil {
 			return err
@@ -329,9 +341,9 @@ func (e *Executor) observe(ctx context.Context, p *page) (pageState, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.url, p.title = st.URL, st.Title
-	if st.UserSeq != p.lastSeq {
-		p.lastSeq = st.UserSeq
-		p.takenOver = true
+	if st.UserSeq != p.doc.lastSeq {
+		p.doc.lastSeq = st.UserSeq
+		p.doc.takenOver = true
 	}
 	return st, nil
 }
@@ -344,7 +356,7 @@ func (e *Executor) markAgentInput(ctx context.Context, p *page, windowMillis int
 		return err
 	}
 	p.mu.Lock()
-	p.lastSeq = seq
+	p.doc.lastSeq = seq
 	p.mu.Unlock()
 	return nil
 }

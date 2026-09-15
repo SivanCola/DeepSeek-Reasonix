@@ -87,7 +87,7 @@ func (f *fakeBrowser) serve(ws *websocket.Conn, msg message) {
 	f.mu.Unlock()
 
 	var (
-		result any = map[string]any{}
+		result any
 		fail   *protocolError
 	)
 	if handler != nil {
@@ -196,16 +196,15 @@ func value(v any) map[string]any {
 
 // refArg pulls the quoted ref out of an __rx call such as __rx.rect("e1").
 func refArg(expr string) string {
-	start := strings.Index(expr, `"`)
-	if start < 0 {
+	_, rest, ok := strings.Cut(expr, `"`)
+	if !ok {
 		return ""
 	}
-	rest := expr[start+1:]
-	end := strings.Index(rest, `"`)
-	if end < 0 {
+	ref, _, ok := strings.Cut(rest, `"`)
+	if !ok {
 		return ""
 	}
-	return rest[:end]
+	return ref
 }
 
 func (f *fakeBrowser) write(ws *websocket.Conn, msg message) {

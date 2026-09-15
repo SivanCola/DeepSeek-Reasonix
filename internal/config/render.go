@@ -420,6 +420,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	}
 
 	renderLSPConfig(&b, c.LSP)
+	renderBrowserConfig(&b, c.Browser)
 
 	b.WriteString("[skills]\n")
 	if len(c.Skills.Paths) > 0 {
@@ -1088,6 +1089,11 @@ func RenderTOMLProjectDelta(c *Config) string {
 	// [lsp]
 	if !reflect.DeepEqual(c.LSP, d.LSP) {
 		renderLSPConfig(&b, c.LSP)
+	}
+
+	// [browser]
+	if !reflect.DeepEqual(c.Browser, d.Browser) {
+		renderBrowserConfig(&b, c.Browser)
 	}
 
 	// [skills]

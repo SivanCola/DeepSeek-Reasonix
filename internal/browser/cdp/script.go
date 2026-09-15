@@ -14,6 +14,8 @@ for (const t of ['pointerdown', 'keydown', 'wheel']) {
 }
 const clip = (s, n) => s.length > n ? s.slice(0, n) + '…' : s;
 const flat = (s) => (s || '').replace(/\s+/g, ' ').trim();
+const named = (s) => s ? ' ' + JSON.stringify(s) : '';
+const ACTIONABLE = 'a[href],button,input,select,textarea,summary,[role],[tabindex],[contenteditable]';
 
 W.window = (ms) => { W.agentUntil = Date.now() + ms; return W.userSeq; };
 W.state = () => ({userSeq: W.userSeq, url: location.href, title: document.title, ready: document.readyState});
@@ -83,10 +85,20 @@ const roleOf = (el) => {
   return ROLES[tag] || '';
 };
 
-const nameOf = (el) => {
-  const labelled = el.getAttribute('aria-label') || el.getAttribute('alt') || el.getAttribute('placeholder') || el.getAttribute('title');
-  if (flat(labelled)) return clip(flat(labelled), 160);
-  if (el.tagName === 'INPUT' && el.labels && el.labels.length) return clip(flat(el.labels[0].textContent), 160);
+// nameOf follows the accessible-name order that matters here: an explicit
+// label beats the placeholder a user only sees while the field is empty, and
+// an element's own text names it only when it has nothing else to say, so a
+// container is not named after everything inside it.
+const nameOf = (el, allowText) => {
+  const aria = flat(el.getAttribute('aria-label'));
+  if (aria) return clip(aria, 160);
+  if (el.labels && el.labels.length) {
+    const label = flat(el.labels[0].textContent);
+    if (label) return clip(label, 160);
+  }
+  const attr = flat(el.getAttribute('alt') || el.getAttribute('title') || el.getAttribute('placeholder'));
+  if (attr) return clip(attr, 160);
+  if (!allowText) return '';
   return clip(flat(el.innerText || el.textContent), 160);
 };
 
@@ -140,18 +152,21 @@ W.snapshot = (selector, budget) => {
       }
       if (node.nodeType !== 1 || SKIP.has(node.tagName.toLowerCase()) || !visible(node)) continue;
       const role = roleOf(node);
+      const leaf = node.children.length === 0;
       if (interactive(node)) {
         const ref = 'e' + (W.next++);
         W.refs.set(ref, node);
         left--;
-        lines.push(pad(depth) + '- ' + (role || 'control') + ' ' + JSON.stringify(nameOf(node)) + attrsOf(node) + ' [ref=' + ref + ']');
-        if (node.tagName !== 'SELECT' && node.tagName !== 'TEXTAREA') walk(node, depth + 1);
+        lines.push(pad(depth) + '- ' + (role || 'control') + named(nameOf(node, true)) + attrsOf(node) + ' [ref=' + ref + ']');
+        // A control's own text is already its name; walk into it only when it
+        // wraps another control the model could act on.
+        if (!leaf && node.tagName !== 'SELECT' && node.tagName !== 'TEXTAREA' && node.querySelector(ACTIONABLE)) walk(node, depth + 1);
         continue;
       }
       if (role) {
         left--;
-        lines.push(pad(depth) + '- ' + role + ' ' + JSON.stringify(nameOf(node)));
-        walk(node, depth + 1);
+        lines.push(pad(depth) + '- ' + role + named(nameOf(node, leaf)));
+        if (!leaf) walk(node, depth + 1);
         continue;
       }
       walk(node, depth);
