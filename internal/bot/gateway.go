@@ -643,7 +643,7 @@ func (gw *BotGateway) Stop() {
 	gw.gatewayWG.Wait()
 	gw.closeSessions()
 	gw.turnWG.Wait()
-	gw.closeSessions()
+	gw.finishSessionTeardown()
 }
 
 func (gw *BotGateway) closeSessions() {

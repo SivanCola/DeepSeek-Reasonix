@@ -89,6 +89,7 @@ func TestGoalDriverContinuesAfterFinalAndCompletesThroughExactRoundAuthority(t *
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "goal-driver"})
 	if err != nil {
 		t.Fatal(err)
@@ -167,6 +168,7 @@ func TestGoalDriverTurnsExplicitRoundLimitIntoBlockedState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "goal-limit"})
 	if err != nil {
 		t.Fatal(err)
@@ -250,6 +252,7 @@ func TestConcurrentIdleKicksCannotAdmitParallelGoalRounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "goal-dedup"})
 	if err != nil {
 		t.Fatal(err)
@@ -312,6 +315,7 @@ func TestPausingRunningGoalRoundCancelsActivityAndPersistsPaused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "goal-cancel"})
 	if err != nil {
 		t.Fatal(err)
@@ -369,6 +373,7 @@ func TestCancellationAfterAcceptedCompleteDoesNotRewriteGoalToPaused(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "goal-complete-then-cancel"})
 	if err != nil {
 		t.Fatal(err)
@@ -490,6 +495,7 @@ func TestGoalDriverBlocksAtExplicitHostTokenBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "goal-budget"})
 	if err != nil {
 		t.Fatal(err)
@@ -541,6 +547,7 @@ func TestGoalRoundModelErrorDisarmsWithoutCompleting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "goal-model-error"})
 	if err != nil {
 		t.Fatal(err)
@@ -592,6 +599,7 @@ func TestGoalDriverFlushFailureStartsNoAutomaticModelCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "goal-flush"})
 	if err != nil {
 		t.Fatal(err)
@@ -659,6 +667,7 @@ func TestUserInputArrivingDuringGoalFlushWinsAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "goal-user-wins"})
 	if err != nil {
 		t.Fatal(err)
@@ -736,6 +745,7 @@ func TestColdRestoredGoalCanResumeFromNaturalUserRequestAndContinue(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = seedService.CloseAll(context.Background()) })
 	seedRuntime, err := seedService.Create(t.Context(), session.CreateOptions{SessionID: "restored-goal"})
 	if err != nil {
 		t.Fatal(err)
@@ -759,6 +769,7 @@ func TestColdRestoredGoalCanResumeFromNaturalUserRequestAndContinue(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	binding, err := service.Open(t.Context(), session.SessionRef{HostID: "desktop", SessionID: "restored-goal"})
 	if err != nil {
 		t.Fatal(err)

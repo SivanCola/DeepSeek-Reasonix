@@ -11,18 +11,21 @@ func newOwnedTestController(t testing.TB, options Options) *Controller {
 	controller := New(options)
 	t.Cleanup(func() {
 		controller.Close()
+		// Close only starts teardown; finalizeControllerClose joins the workers
+		// that may still write under SessionDir. Waiting keeps a late Flush from
+		// racing t.TempDir removal, so it is unconditional.
+		select {
+		case <-controller.closeFinalized:
+		case <-time.After(5 * time.Second):
+			t.Error("controller resources did not settle after close")
+			return
+		}
 		if options.SessionService == nil {
 			return
 		}
-		select {
-		case <-controller.closeFinalized:
-			// Close an idle retained runtime when this is the final owner. A
-			// runtime still bound by another controller belongs to that
-			// controller's cleanup instead.
-			_ = options.SessionService.CloseAll(context.Background())
-		case <-time.After(5 * time.Second):
-			t.Error("controller resources did not settle after close")
-		}
+		// Close an idle retained runtime when this is the final owner. A runtime
+		// still bound by another controller belongs to that controller's cleanup.
+		_ = options.SessionService.CloseAll(context.Background())
 	})
 	return controller
 }

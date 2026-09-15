@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"errors"
 	"os"
 	"testing"
@@ -22,6 +23,7 @@ func TestGoalCommandDoesNotStartProviderAfterPersistenceFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "goal-command-failure"})
 	if err != nil {
 		t.Fatal(err)

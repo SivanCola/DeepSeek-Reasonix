@@ -20,6 +20,7 @@ func TestServiceForkAndRewindUsePersistedTurnBoundaries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	parent, err := service.Create(t.Context(), CreateOptions{SessionID: "parent"})
 	if err != nil {
 		t.Fatal(err)
@@ -78,6 +79,7 @@ func TestServiceConcurrentOpenPublishesOneExactRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	ref := SessionRef{HostID: "local", SessionID: "shared"}
 
 	const callers = 16
@@ -131,6 +133,7 @@ func TestServicePrepareCreateIsInvisibleUntilExactPublish(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	prepared, err := service.PrepareCreate(t.Context(), CreateOptions{SessionID: "prepared"})
 	if err != nil {
 		t.Fatal(err)
@@ -166,6 +169,7 @@ func TestQueryListProjectsEventBackedTitleAndCompletedTurns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), CreateOptions{SessionID: "listed"})
 	if err != nil {
 		t.Fatal(err)
@@ -204,6 +208,7 @@ func TestServiceDiscardPreparedCreateReleasesWriter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	prepared, err := service.PrepareCreate(t.Context(), CreateOptions{SessionID: "discarded"})
 	if err != nil {
 		t.Fatal(err)
@@ -226,6 +231,7 @@ func TestRuntimeCancellationUsesOwnedActivityWithoutTurnID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), CreateOptions{SessionID: "cancel"})
 	if err != nil {
 		t.Fatal(err)
@@ -262,6 +268,7 @@ func TestServiceObserveDistinguishesLiveAcceptedAndColdDurablePrefixes(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), CreateOptions{SessionID: "observe"})
 	if err != nil {
 		t.Fatal(err)
@@ -299,6 +306,7 @@ func TestServiceClosePreservesBusyRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), CreateOptions{SessionID: "busy"})
 	if err != nil {
 		t.Fatal(err)
@@ -338,6 +346,7 @@ func TestServiceOpenClosesPersistedRuntimeWithoutRestoringAuthority(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	binding, err := service.Open(t.Context(), SessionRef{HostID: "local", SessionID: "restart"})
 	if err != nil {
 		t.Fatal(err)
@@ -376,6 +385,7 @@ func TestSessionQueryColdReadDoesNotAcquireWriter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	ref := SessionRef{HostID: "local", SessionID: "cold"}
 	history, err := service.Query().History(t.Context(), ref)
 	if err != nil || len(history) != 1 || history[0].ID != "m" {
@@ -413,6 +423,7 @@ func TestServiceContinueLegacyPublishesNewIdentityAndLeavesSourceUnchanged(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, migration, err := service.ContinueLegacy(t.Context(), legacy, "")
 	if err != nil {
 		t.Fatal(err)
@@ -438,6 +449,7 @@ func TestServiceExportAndDeleteAreSessionDirectoryAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), CreateOptions{SessionID: "managed"})
 	if err != nil {
 		t.Fatal(err)
@@ -480,6 +492,7 @@ func TestServiceImportValidatesSelfContainedContentAndPublishesAtomically(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = source.CloseAll(context.Background()) })
 	runtime, err := source.Create(t.Context(), CreateOptions{SessionID: "portable"})
 	if err != nil {
 		t.Fatal(err)
@@ -504,6 +517,7 @@ func TestServiceImportValidatesSelfContainedContentAndPublishesAtomically(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = target.CloseAll(context.Background()) })
 	ref, err := target.Import(t.Context(), bundle)
 	if err != nil {
 		t.Fatal(err)
@@ -548,6 +562,7 @@ func TestCancelledActivityCannotCommitLateBusinessResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), CreateOptions{SessionID: "fenced"})
 	if err != nil {
 		t.Fatal(err)
@@ -577,6 +592,7 @@ func TestRecoveryOwnerCanCommitOnlyTerminalRecoveryFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), CreateOptions{SessionID: "recovery-terminal"})
 	if err != nil {
 		t.Fatal(err)
@@ -611,6 +627,7 @@ func TestCancelSessionIsIdempotentWithoutAttachedRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	ref := SessionRef{HostID: "local", SessionID: "not-attached"}
 	receipt, err := service.CancelSession(ref)
 	if err != nil || !receipt.Accepted || receipt.Phase != RuntimeIdle {

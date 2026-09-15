@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -17,6 +18,7 @@ func TestGoalDiagnosticExportReadsCompleteDurableV3Log(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "goal-diagnostic"})
 	if err != nil {
 		t.Fatal(err)

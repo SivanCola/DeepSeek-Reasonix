@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"os"
 	"sync"
 	"testing"
@@ -30,6 +31,7 @@ func TestControllerCloseCancelsGoalDriverFlushWait(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "goal-close-flush"})
 	if err != nil {
 		t.Fatal(err)

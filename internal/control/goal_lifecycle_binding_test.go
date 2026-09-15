@@ -67,6 +67,7 @@ func TestExclusiveControllerLoadsGoalFromV3Projection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "goal-session"})
 	if err != nil {
 		t.Fatal(err)
@@ -92,6 +93,7 @@ func TestColdRestoredGoalComposeIncludesRecoverableGoalContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "goal-recovery-context"})
 	if err != nil {
 		t.Fatal(err)
@@ -117,6 +119,7 @@ func TestGoalLifecycleMutationAppendsToActiveV3Session(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "goal-mutation"})
 	if err != nil {
 		t.Fatal(err)
@@ -159,6 +162,7 @@ func TestGoalLifecycleMutationRejectsStaleRuntimeAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "goal-stale"})
 	if err != nil {
 		t.Fatal(err)
@@ -182,6 +186,7 @@ func TestModelCannotResumeUserPausedGoal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "goal-paused"})
 	if err != nil {
 		t.Fatal(err)

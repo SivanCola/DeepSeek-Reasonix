@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -281,6 +282,7 @@ func TestServerAdvertisesSessionForkTargetsOnlyForExclusiveSessions(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	ctrl := control.New(control.Options{SessionService: service, ExclusiveSession: true})
 	defer ctrl.Close()
 	srv := New(ctrl, NewBroadcaster(), config.ServeConfig{AuthMode: "token", Token: "secret"})

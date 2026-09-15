@@ -146,6 +146,7 @@ func TestWarmListDoesNotReplayEventBodies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	page, err := service.Query().List(t.Context(), "", 50)
 	if err != nil {
 		t.Fatal(err)

@@ -88,6 +88,9 @@ func TestBindExecutionDoesNotSilentlyReplaceExistingOwner(t *testing.T) {
 	if got := first.phase; got != RuntimeCancelling {
 		t.Fatalf("original owner phase = %s, want cancelling", got)
 	}
+	// A runtime with a live execution refuses to close, which would strand its
+	// writer lease past the test.
+	first.Finish()
 }
 
 func TestUnbindDoesNotClearNewerExecutionGeneration(t *testing.T) {
@@ -155,7 +158,9 @@ func TestOldControllerCannotIdleNewGeneration(t *testing.T) {
 	if got := runtime.StateSnapshot().Phase; got != RuntimeRunning {
 		t.Fatalf("old finish cleared new turn: %s", got)
 	}
-	next.Finish()
+	// next was built idle, so Finish is a no-op for it; idle the generation the
+	// runtime actually observes or the runtime stays busy and cannot close.
+	runtime.NoteExecution(next.gen, RuntimeIdle, "")
 }
 
 func TestReplaceExecutionRejectsBusyOwner(t *testing.T) {

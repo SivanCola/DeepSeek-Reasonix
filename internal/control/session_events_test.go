@@ -59,6 +59,7 @@ func TestExclusiveControllerUsesBoundSessionIdentityAndWritesNoLegacyTranscript(
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "stable-session"})
 	if err != nil {
 		t.Fatal(err)
@@ -105,6 +106,7 @@ func TestOpenFailureDoesNotCloseAnotherControllersRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	first, err := service.Create(t.Context(), session.CreateOptions{SessionID: "first"})
 	if err != nil {
 		t.Fatal(err)
@@ -144,6 +146,7 @@ func TestExclusiveControllerRuntimeSnapshotAndCancelUseExactV3Instance(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "runtime-owned"})
 	if err != nil {
 		t.Fatal(err)
@@ -190,6 +193,7 @@ func TestExclusiveSessionSwitchRestoresPlanAndGoalWithoutTodo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	first, err := service.Create(t.Context(), session.CreateOptions{SessionID: "first-domain"})
 	if err != nil {
 		t.Fatal(err)
@@ -238,6 +242,7 @@ func TestExclusiveControllerNewPublishesFreshIdentityAndKeepsOldHistory(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "old-session"})
 	if err != nil {
 		t.Fatal(err)
@@ -276,6 +281,7 @@ func TestExclusiveControllerOpenMissingKeepsCurrentExactRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "current"})
 	if err != nil {
 		t.Fatal(err)
@@ -302,6 +308,7 @@ func TestExclusiveControllerClearDeletesClosedSourceAfterPublishingFreshIdentity
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "clear-source"})
 	if err != nil {
 		t.Fatal(err)
@@ -328,6 +335,7 @@ func TestExclusiveControllerForkUsesTypedTurnBoundaryAndNoLegacyTranscript(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "fork-parent"})
 	if err != nil {
 		t.Fatal(err)

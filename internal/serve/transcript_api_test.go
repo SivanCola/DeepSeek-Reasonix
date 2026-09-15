@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -173,6 +174,7 @@ func TestCanonicalSessionHistoryHTTPUsesAuthorizedContentRanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), canonical.CreateOptions{SessionID: "canonical"})
 	if err != nil {
 		t.Fatal(err)
@@ -386,10 +388,20 @@ func TestCanonicalSessionMessageFieldHTTPStreamsAlignedFragments(t *testing.T) {
 
 	var assembled strings.Builder
 	var offset int64
-	for {
+	// Rune- and escape-safe cutting is a property of the cut size, not of the
+	// number of cuts: the first reads use a length far below one CJK rune's
+	// width to force mid-rune boundaries, then the remainder drains in large
+	// fragments. Requesting the whole body 64 bytes at a time would cost
+	// thousands of localhost round trips for no additional coverage.
+	const narrowLength, narrowReads, wideLength = 64, 8, 1 << 16
+	for reads := 0; ; reads++ {
+		length := int64(wideLength)
+		if reads < narrowReads {
+			length = narrowLength
+		}
 		request := url.Values{"sessionId": []string{"canonical"}, "messageId": []string{"m2"}, "field": []string{"content"}}
 		request.Set("offset", fmt.Sprint(offset))
-		request.Set("length", "64")
+		request.Set("length", fmt.Sprint(length))
 		response, err := http.Get(server.URL + "/session-message-field?" + request.Encode())
 		if err != nil {
 			t.Fatal(err)
@@ -408,8 +420,8 @@ func TestCanonicalSessionMessageFieldHTTPStreamsAlignedFragments(t *testing.T) {
 		if want := int64(len(windowTestBody) + len(`""`)); fragment.TotalBytes != want {
 			t.Fatalf("total bytes=%d want %d", fragment.TotalBytes, want)
 		}
-		if int64(len(fragment.Data)) > 64 {
-			t.Fatalf("fragment exceeded the requested length: %d", len(fragment.Data))
+		if int64(len(fragment.Data)) > length {
+			t.Fatalf("fragment exceeded the requested length %d: %d", length, len(fragment.Data))
 		}
 		assembled.Write(fragment.Data)
 		if fragment.NextOffset == 0 {
@@ -470,6 +482,7 @@ func newWindowTestServer(t *testing.T) (*httptest.Server, *control.Controller) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), canonical.CreateOptions{SessionID: "canonical"})
 	if err != nil {
 		t.Fatal(err)

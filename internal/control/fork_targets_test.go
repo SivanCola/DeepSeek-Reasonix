@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -25,6 +26,7 @@ func newForkTargetsHarness(t *testing.T, sessionID string, script ...testutil.Tu
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: sessionID})
 	if err != nil {
 		t.Fatal(err)

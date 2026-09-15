@@ -26,6 +26,7 @@ func exclusiveTestController(t *testing.T, sink event.Sink) (*Controller, *sessi
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "loop"})
 	if err != nil {
 		t.Fatal(err)
@@ -311,6 +312,7 @@ func TestOldControllerUnbindDoesNotClearNewGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "handoff"})
 	if err != nil {
 		t.Fatal(err)
@@ -344,6 +346,7 @@ func TestOneRuntimeCannotRunTwoControllerLoops(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "single-loop"})
 	if err != nil {
 		t.Fatal(err)
@@ -391,6 +394,7 @@ func TestReplacementModelContextCommitsOnlyWithExecutionCutover(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "atomic-cutover"})
 	if err != nil {
 		t.Fatal(err)

@@ -4,11 +4,26 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"testing"
 	"time"
 
 	"reasonix/internal/skill/skillwatch"
 )
+
+func catalogNames(snapshot CatalogSnapshot) []string {
+	names := make([]string, 0, len(snapshot.Candidates))
+	for _, candidate := range snapshot.Candidates {
+		names = append(names, candidate.Name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func sameCatalogNames(a, b CatalogSnapshot) bool {
+	return slices.Equal(catalogNames(a), catalogNames(b))
+}
 
 func waitForCatalog(t *testing.T, what string, cond func() bool) {
 	t.Helper()
@@ -50,8 +65,10 @@ func TestHostWatchServiceSharedAcrossStores(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if firstA.Version != firstB.Version {
-		t.Fatalf("initial versions differ: %d vs %d", firstA.Version, firstB.Version)
+	// Version is each store's own rebuild counter, not a shared clock. Sharing
+	// guarantees identical discovered content, so compare that.
+	if !sameCatalogNames(firstA, firstB) {
+		t.Fatalf("shared roots produced different catalogs: %v vs %v", catalogNames(firstA), catalogNames(firstB))
 	}
 	diag, ok := storeA.WatchDiagnostics()
 	if !ok || diag.PhysicalWatches == 0 {

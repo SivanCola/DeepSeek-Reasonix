@@ -26,6 +26,7 @@ func newBenchmarkSource(b *testing.B, commits int) (*Service, SessionRef) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	b.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(context.Background(), CreateOptions{SessionID: "source"})
 	if err != nil {
 		b.Fatal(err)

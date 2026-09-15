@@ -64,6 +64,7 @@ func TestExternalHistoryColdOpenDefersBodiesBeforeModelReset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), CreateOptions{SessionID: "bounded-open"})
 	if err != nil {
 		t.Fatal(err)
@@ -117,6 +118,7 @@ func TestExternalHistoryColdOpenDefersBodiesBeforeModelReset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = reopenedService.CloseAll(context.Background()) })
 	binding, err := reopenedService.Open(t.Context(), ref)
 	if err != nil {
 		t.Fatalf("cold open resolved retired history body: %v", err)
@@ -137,6 +139,7 @@ func TestHistoryPageKeepsSnapshotAndAuthorizesReferencedContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), CreateOptions{SessionID: "paged"})
 	if err != nil {
 		t.Fatal(err)
@@ -216,6 +219,7 @@ func TestLocateMessageReturnsFixedSnapshotCursorWithoutBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), CreateOptions{SessionID: "locate"})
 	if err != nil {
 		t.Fatal(err)
@@ -246,6 +250,7 @@ func TestHistoryLocatorGenerationSurvivesRebuildAndChangesOnReplacement(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), CreateOptions{SessionID: "locator-generation"})
 	if err != nil {
 		t.Fatal(err)
@@ -299,6 +304,7 @@ func TestSearchHistoryUsesStableSnapshotAndOpaqueQueryCursor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), CreateOptions{SessionID: "search"})
 	if err != nil {
 		t.Fatal(err)
@@ -348,6 +354,7 @@ func TestSearchHistoryCoversInlineFieldsAndReferencedBodies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), CreateOptions{SessionID: "search-storage"})
 	if err != nil {
 		t.Fatal(err)
@@ -391,6 +398,7 @@ func TestSearchHistoryKeepsLiteralUnicodeSubstringSemanticsIndependently(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), CreateOptions{SessionID: "literal-search"})
 	if err != nil {
 		t.Fatal(err)
@@ -466,6 +474,7 @@ func TestHistoryIndexAdvancesInPlaceAfterAppend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), CreateOptions{SessionID: "incremental"})
 	if err != nil {
 		t.Fatal(err)

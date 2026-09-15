@@ -72,6 +72,7 @@ func TestHistoryWindowNewestAndOlderPaging(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), CreateOptions{SessionID: "windowed"})
 	if err != nil {
 		t.Fatal(err)
@@ -111,6 +112,7 @@ func TestHistoryWindowMessageAndTurnAnchors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), CreateOptions{SessionID: "anchored"})
 	if err != nil {
 		t.Fatal(err)
@@ -159,6 +161,7 @@ func TestHistoryWindowRejectsForeignCursor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), CreateOptions{SessionID: "fenced"})
 	if err != nil {
 		t.Fatal(err)
@@ -202,6 +205,7 @@ func TestReadMessageFieldReturnsBoundedAlignedFragments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), CreateOptions{SessionID: "fields"})
 	if err != nil {
 		t.Fatal(err)

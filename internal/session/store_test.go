@@ -491,6 +491,7 @@ func TestMigrateLegacyBeyondFormer128MiBReplayLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	binding, err := service.Open(t.Context(), SessionRef{HostID: "capacity", SessionID: result.TargetID})
 	if err != nil {
 		t.Fatal(err)

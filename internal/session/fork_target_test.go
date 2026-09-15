@@ -26,6 +26,7 @@ func newSourceService(t *testing.T, sessionID string) (*Service, string, *Runtim
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), CreateOptions{SessionID: sessionID})
 	if err != nil {
 		t.Fatal(err)

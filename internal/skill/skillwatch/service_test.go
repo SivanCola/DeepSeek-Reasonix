@@ -170,9 +170,11 @@ func TestScopeSkippedBodyChangesDoNotNotify(t *testing.T) {
 	var hits int
 	var mu sync.Mutex
 	svc.Subscribe(dir, 3, countingScope, flatHash, func(string) { mu.Lock(); hits++; mu.Unlock() })
-	if got := svc.Diagnostics().PhysicalWatches; got != 1 {
-		t.Fatalf("physical watches = %d, want only the discovery root", got)
-	}
+	// Helper registration is bounded rather than unconditionally blocking, so
+	// the count settles shortly after Subscribe returns on that backend.
+	waitFor(t, "physical watch registration", func() bool {
+		return svc.Diagnostics().PhysicalWatches == 1
+	})
 
 	if err := os.WriteFile(filepath.Join(dir, "scripts", "tool.sh"), []byte("echo hi"), 0o644); err != nil {
 		t.Fatal(err)

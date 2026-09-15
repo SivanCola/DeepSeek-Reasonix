@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"os"
 	"testing"
 
@@ -23,5 +24,6 @@ func goalRoundTestService(t *testing.T) *session.Service {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	return service
 }

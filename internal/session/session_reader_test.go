@@ -17,6 +17,7 @@ func TestOpenSessionUsesRecentBaselineWithoutQueryIndexes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), CreateOptions{SessionID: "open-view"})
 	if err != nil {
 		t.Fatal(err)
@@ -86,6 +87,7 @@ func TestOpenSessionRejectsRecentSnapshotAfterPhysicalLogReplacement(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), CreateOptions{SessionID: "replaced"})
 	if err != nil {
 		t.Fatal(err)

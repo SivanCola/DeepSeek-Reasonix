@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"testing"
 )
@@ -11,6 +12,7 @@ func TestServiceCloseAllPreservesBindingAndReleasesIdleLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), CreateOptions{SessionID: "shutdown"})
 	if err != nil {
 		t.Fatal(err)
@@ -35,6 +37,7 @@ func TestServiceCloseAllPreservesBindingAndReleasesIdleLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = other.CloseAll(context.Background()) })
 	reopened, err := other.EnsureExecution(t.Context(), runtime.Ref())
 	if err != nil {
 		t.Fatalf("writer lease was not released: %v", err)

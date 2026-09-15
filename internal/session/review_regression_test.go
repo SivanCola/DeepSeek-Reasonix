@@ -33,6 +33,7 @@ func reviewRuntime(t *testing.T) (*Service, *Runtime) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), CreateOptions{SessionID: "review"})
 	if err != nil {
 		t.Fatal(err)

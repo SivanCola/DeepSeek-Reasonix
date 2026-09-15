@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -16,6 +17,7 @@ func TestInheritLifecycleCarriesLiveGoalStateAcrossSameRuntimeRebuild(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "goal-rebuild"})
 	if err != nil {
 		t.Fatal(err)
@@ -59,6 +61,7 @@ func TestInheritLifecycleRejectsActiveGoalDriverReservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "goal-rebuild-busy"})
 	if err != nil {
 		t.Fatal(err)
@@ -90,6 +93,7 @@ func TestEditGoalDurablePreservesIdentityAndAdmittedRounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "goal-edit"})
 	if err != nil {
 		t.Fatal(err)

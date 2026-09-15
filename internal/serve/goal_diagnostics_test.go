@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,6 +19,7 @@ func TestGoalDiagnosticsHTTPExportsAuthoritativeSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "diagnostic-http"})
 	if err != nil {
 		t.Fatal(err)
