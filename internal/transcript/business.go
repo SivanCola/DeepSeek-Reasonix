@@ -1,6 +1,8 @@
 package transcript
 
 import (
+	"slices"
+
 	"reasonix/internal/event"
 	"reasonix/internal/eventwire"
 )
@@ -45,9 +47,9 @@ func (p *Projection) acceptBusiness(rows []Message, removed []string, covered ui
 		p.buffer.Reset()
 	}
 	for _, id := range removed {
-		for index := len(p.buffer.messages) - 1; index >= 0; index-- {
-			if p.buffer.messages[index].message.MessageID == id {
-				if p.buffer.messages[index].message.Role == "user" {
+		for index, row := range slices.Backward(p.buffer.messages) {
+			if row.message.MessageID == id {
+				if row.message.Role == "user" {
 					p.buffer.userTurns--
 				}
 				p.buffer.messages = append(p.buffer.messages[:index], p.buffer.messages[index+1:]...)
