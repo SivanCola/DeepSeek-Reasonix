@@ -163,7 +163,9 @@ jobs:
         run: go build ./...
 
       - name: test
-        if: env.RUN_STEPS == 'true' && (runner.os == 'Linux' || github.event_name != 'pull_request')
+        # Windows full coverage belongs to the disjoint selectors below and
+        # the isolated jobs; running ./... here would execute every test twice.
+        if: env.RUN_STEPS == 'true' && (runner.os == 'Linux' || (runner.os == 'macOS' && github.event_name != 'pull_request'))
         env:
           # Run the prompt-cache prefix-stability guard (TestCacheHit*) in CI: a
           # regression there silently tanks the cache hit rate the project is

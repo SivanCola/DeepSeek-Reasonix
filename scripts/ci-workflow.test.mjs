@@ -26,6 +26,29 @@ const ci = workflow("ci");
 const release = workflow("release-desktop");
 const appMemory = workflow("app-memory");
 
+test("Windows full runs use the partitioned suite without a duplicate module sweep", () => {
+  const body = job(ci, "test");
+  const enabled = (name, os, event, run = "true") => {
+    const step = body.split(`      - name: ${name}\n`)[1].split(/\n      - /)[0];
+    const expression = step.match(/^        if: (.+)$/m)[1];
+    return vm.runInNewContext(expression, {
+      env: { RUN_STEPS: run }, runner: { os }, github: { event_name: event },
+    });
+  };
+  for (const event of ["pull_request", "push", "workflow_dispatch"]) {
+    for (const os of ["Linux", "macOS", "Windows"]) {
+      assert.equal(enabled("test", os, event), os === "Linux" || (os === "macOS" && event !== "pull_request"));
+      assert.equal(enabled("test (full)", os, event), os === "Windows" && event !== "pull_request");
+      assert.equal(enabled("test (Windows smoke)", os, event), os === "Windows" && event === "pull_request");
+      assert.equal(enabled("test", os, event, "false"), false);
+      assert.equal(enabled("test (full)", os, event, "false"), false);
+    }
+  }
+  assert.match(body, /run: node scripts\/windows-go-tests\.mjs full/);
+  assert.match(job(ci, "windows-isolated"), /group: \[agent, boot\]/);
+  assert.match(job(ci, "windows-control"), /run: node scripts\/windows-go-tests\.mjs control/);
+});
+
 test("App memory workflow tiers pull requests and keeps full scheduled coverage", t => {
   assert.match(appMemory, /schedule:\n    - cron: "17 3 \* \* \*"/);
   assert.match(appMemory, /\[ "\$EVENT_NAME" = workflow_dispatch \] \|\| \[ "\$EVENT_NAME" = schedule \]/);

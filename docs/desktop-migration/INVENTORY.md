@@ -15,8 +15,8 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 | persistence | 13 | 0 | 0 | 13 |
 | shell-file | 1 | 39 | 4 | 44 |
 | artifact | 5 | 0 | 0 | 5 |
-| ci-job | 25 | 0 | 0 | 25 |
-| **all** | | | | **781** |
+| ci-job | 26 | 0 | 0 | 26 |
+| **all** | | | | **782** |
 
 ## Desktop commands (Go `App` methods bound to the UI)
 
@@ -836,7 +836,8 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 | `ci.yml/desktop-macos` |  | .github/workflows/ci.yml | keep-business (保留业务实现) | Electron packaging smoke |
 | `ci.yml/desktop-prepare` |  | .github/workflows/ci.yml | keep-business (保留业务实现) | go run . -emit-contract drift gate; pnpm workspace root |
 | `ci.yml/desktop-windows` |  | .github/workflows/ci.yml | keep-business (保留业务实现) | Electron packaging smoke |
-| `ci.yml/desktop-windows-go` |  | .github/workflows/ci.yml | keep-business (保留业务实现) | desktop Go suite, split from the Electron leg |
+| `ci.yml/desktop-windows-go` |  | .github/workflows/ci.yml | keep-business (保留业务实现) | aggregate of native Windows desktop Go test groups |
+| `ci.yml/desktop-windows-go-group` |  | .github/workflows/ci.yml | keep-business (保留业务实现) | native Windows desktop Go suite on independent test-group runners |
 | `ci.yml/desktop-windows-package` |  | .github/workflows/ci.yml | keep-business (保留业务实现) | Electron installer build, split from the test leg |
 | `release-desktop.yml/attest-signing-contract` |  | .github/workflows/release-desktop.yml | keep-business (保留业务实现) | attests the extended payload list |
 | `release-desktop.yml/build` |  | .github/workflows/release-desktop.yml | keep-business (保留业务实现) | desktop-build.sh packages the Electron app with the same NSIS/nfpm/signing steps |

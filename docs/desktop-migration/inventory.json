@@ -6008,7 +6008,14 @@
       "name": "ci.yml/desktop-windows-go",
       "location": ".github/workflows/ci.yml",
       "class": "keep-business",
-      "owner": "desktop Go suite, split from the Electron leg"
+      "owner": "aggregate of native Windows desktop Go test groups"
+    },
+    {
+      "kind": "ci-job",
+      "name": "ci.yml/desktop-windows-go-group",
+      "location": ".github/workflows/ci.yml",
+      "class": "keep-business",
+      "owner": "native Windows desktop Go suite on independent test-group runners"
     },
     {
       "kind": "ci-job",
