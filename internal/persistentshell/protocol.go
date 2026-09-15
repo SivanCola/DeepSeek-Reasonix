@@ -96,36 +96,6 @@ func posixCommandScript(command, start, end string) string {
 		"; printf '%s%s\\n' " + posixQuote(end) + ` "$__rx_status"` + "\n"
 }
 
-func powerShellSetupScript() string {
-	return "$OutputEncoding=[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; " +
-		"Write-Output " + powershellSingleQuote(readyToken) + "\n"
-}
-
-// powerShellCommandScript mirrors posixCommandScript. PSReadLine has no
-// `stty -echo` equivalent, so the submitted line is echoed back; the markers
-// are still unambiguous because completion requires status digits immediately
-// after the end nonce and the echo continues with a quote character.
-func powerShellCommandScript(command, start, end string) string {
-	encoded := hex.EncodeToString([]byte(command))
-	return strings.Join([]string{
-		"$__rx_start=" + powershellSingleQuote(start),
-		"$__rx_end=" + powershellSingleQuote(end),
-		"Write-Output $__rx_start",
-		"$__rx_hex=" + powershellSingleQuote(encoded),
-		"$__rx_cmd=-join (for ($i=0; $i -lt $__rx_hex.Length; $i+=2) { [char][Convert]::ToInt32($__rx_hex.Substring($i,2),16) })",
-		"$global:LASTEXITCODE=0",
-		"Invoke-Expression $__rx_cmd",
-		"if ($null -eq $global:LASTEXITCODE) { $__rx_code = $(if ($?) { 0 } else { 1 }) } else { $__rx_code = [int]$global:LASTEXITCODE }",
-		// A preceding command that left the cursor mid-line must not merge with
-		// the status marker: start it on a line of its own.
-		"Write-Output (\"`n\" + $__rx_end + $__rx_code)",
-	}, "; ") + "\n"
-}
-
-func powershellSingleQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
-}
-
 // normalizePTY collapses terminal line endings. A run of carriage returns
 // before a newline is one line break: the line discipline can emit \r\r\n under
 // output pressure, and mapping each \r to \n would inject blank lines into

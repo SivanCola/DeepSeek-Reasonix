@@ -72,7 +72,6 @@ type session struct {
 	mu          sync.Mutex
 	conn        ptyConn
 	fp          string
-	powerShell  bool
 	closed      bool
 	san         sanitizer
 	pendingRead chan readChunkResult
@@ -173,6 +172,9 @@ func (m *Manager) Close() {
 func (m *Manager) Run(ctx context.Context, req Request) Result {
 	if m == nil {
 		return failResult(fmt.Errorf("%w: manager is nil", ErrUnavailable), tool.ShellPhaseLaunch)
+	}
+	if !Supports(req.Shell) {
+		return failResult(fmt.Errorf("%w: %s", ErrUnavailable, unsupportedShellReason), tool.ShellPhaseLaunch)
 	}
 	m.runMu.Lock()
 	defer m.runMu.Unlock()
@@ -280,18 +282,13 @@ func startSession(req Request, fp string) (*session, error) {
 		return nil, err
 	}
 	s := &session{
-		conn:       conn,
-		fp:         fp,
-		powerShell: req.Shell.Kind == sandbox.ShellPowerShell,
+		conn: conn,
+		fp:   fp,
 	}
 	s.startReader()
 	ctx, cancel := context.WithTimeout(context.Background(), startupTimeout)
 	defer cancel()
-	setup := posixSetupScript()
-	if s.powerShell {
-		setup = powerShellSetupScript()
-	}
-	if err := s.writeScript(setup); err != nil {
+	if err := s.writeScript(posixSetupScript()); err != nil {
 		s.close()
 		return nil, err
 	}
@@ -352,11 +349,7 @@ func (s *session) run(ctx context.Context, req Request) Result {
 	// The status digits must follow the end marker immediately, so echoed
 	// wrapper source can never fabricate a completion.
 	end := "REASONIX_END_" + id + ":"
-	script := posixCommandScript(req.Command, start, end)
-	if s.powerShell {
-		script = powerShellCommandScript(req.Command, start, end)
-	}
-	if err := s.writeScript(script); err != nil {
+	if err := s.writeScript(posixCommandScript(req.Command, start, end)); err != nil {
 		s.markClosed()
 		return Result{
 			ShellDied:    true,
@@ -450,6 +443,18 @@ func (s *session) pump(ctx context.Context, step func(string) bool) error {
 
 func (s *session) close() {
 	s.markClosed()
+}
+
+// unsupportedShellReason explains why a shell has no session PTY. Callers fall
+// back to one-shot execution, which is correct for every shell.
+const unsupportedShellReason = "PowerShell has no session shell; a PowerShell host needs prompt-marker readiness and echo handling that this package does not implement"
+
+// Supports reports whether sh can host a session PTY. PowerShell cannot: its
+// host echoes submitted input and settles readiness through a prompt protocol,
+// which the marker wrapper here does not speak, so a PowerShell shell never
+// reports ready. Those hosts keep one-shot execution.
+func Supports(sh sandbox.Shell) bool {
+	return sh.Kind != sandbox.ShellPowerShell
 }
 
 // InteractiveArgv is the long-lived interpreter argv (no -c / -Command) used

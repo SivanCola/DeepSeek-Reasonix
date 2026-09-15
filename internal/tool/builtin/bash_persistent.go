@@ -56,7 +56,10 @@ func hasBackgroundStatement(command string) bool {
 	return background
 }
 
-func (b bash) shouldUsePersistent(ctx context.Context, p bashParams) bool {
+func (b bash) shouldUsePersistent(ctx context.Context, p bashParams, sh sandbox.Shell) bool {
+	if !persistentshell.Supports(sh) {
+		return false
+	}
 	if p.RunInBackground || p.PreserveBackgroundProcesses {
 		return false
 	}
@@ -97,7 +100,7 @@ func (b bash) tryPersistent(ctx context.Context, p bashParams, sh sandbox.Shell,
 }
 
 func (b bash) runPersistent(ctx context.Context, p bashParams, sh sandbox.Shell, prepared sandbox.Prepared, cmdEnv []string) (string, *tool.ShellExecution, error, bool) {
-	if !b.shouldUsePersistent(ctx, p) {
+	if !b.shouldUsePersistent(ctx, p, sh) {
 		return "", nil, nil, false
 	}
 	m := b.persistentManager(ctx)

@@ -2,6 +2,7 @@ package persistentshell
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -130,29 +131,22 @@ func TestPersistentShellTimeoutResetsState(t *testing.T) {
 	}
 }
 
-func TestPersistentShellPowerShellKeepsLocation(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("Windows PowerShell persistence")
-	}
-	sh := sandbox.ResolveShell("powershell", "", nil)
-	if sh.Kind != sandbox.ShellPowerShell {
-		t.Fatal("PowerShell is required")
-	}
-	dir := t.TempDir()
-	sub := filepath.Join(dir, "sub")
-	if err := os.Mkdir(sub, 0o755); err != nil {
-		t.Fatal(err)
+func TestPersistentShellRejectsPowerShell(t *testing.T) {
+	sh := sandbox.Shell{Kind: sandbox.ShellPowerShell, Path: "powershell"}
+	if Supports(sh) {
+		t.Fatal("PowerShell has no session shell")
 	}
 	m := testManager(t)
-	if res := runPersistent(t, m, sh, dir, "Set-Location sub", 8*time.Second); res.Err != nil {
-		t.Fatalf("Set-Location: %v (%q)", res.Err, res.Output)
+	res := m.Run(context.Background(), Request{
+		Argv:    InteractiveArgv(sh),
+		Command: "Get-Location",
+		Shell:   sh,
+	})
+	if res.Started {
+		t.Fatalf("a PowerShell request must not start a shell: %+v", res)
 	}
-	res := runPersistent(t, m, sh, dir, "(Get-Location).Path", 8*time.Second)
-	if res.Err != nil {
-		t.Fatalf("Get-Location: %v (%q)", res.Err, res.Output)
-	}
-	if !strings.Contains(strings.ReplaceAll(res.Output, "/", `\`), `sub`) {
-		t.Fatalf("location %q, want sub under %q", res.Output, dir)
+	if !errors.Is(res.Err, ErrUnavailable) {
+		t.Fatalf("err=%v, want ErrUnavailable so the caller falls back to one-shot", res.Err)
 	}
 }
 
