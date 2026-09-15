@@ -27,16 +27,6 @@ import (
 	"reasonix/internal/workspacelease"
 )
 
-// withSubagentSessionTemp installs a fresh session-private temporary directory
-// Manager for one sub-agent run. The returned release must be deferred by the
-// caller so the directory is retired when the run ends (including background
-// sub-agent completion).
-func withSubagentSessionTemp(ctx context.Context) (context.Context, func()) {
-	m := sessiontemp.New()
-	m.Retain()
-	return sessiontemp.WithManager(ctx, m), m.Release
-}
-
 // DefaultTaskSystemPrompt steers a sub-agent toward focused, terse delivery —
 // it doesn't see the parent's conversation so it must self-contain.
 const DefaultTaskSystemPrompt = `You are a sub-agent invoked by a parent coding agent to carry out one focused task.

@@ -10,12 +10,14 @@ require (
 	charm.land/lipgloss/v2 v2.0.6
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3
 	github.com/BurntSushi/toml v1.6.0
+	github.com/UserExistsError/conpty v0.1.4
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/atotto/clipboard v0.1.4
 	github.com/aymanbagabas/go-udiff v0.4.1
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/x/ansi v0.11.8
+	github.com/creack/pty v1.1.24
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/gorilla/websocket v1.5.3

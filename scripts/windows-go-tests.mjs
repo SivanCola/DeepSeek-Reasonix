@@ -5,7 +5,10 @@ import { fileURLToPath } from "node:url";
 export const isolatedGroups = ["agent", "boot", "control"];
 const smokeRoots = [
   "appidentity", "checkpoint", "cli", "desktoplauncher", "extension/sidecar",
-  "filelock", "fileutil", "hook", "instruction", "mcplaunch", "notify", "proc",
+  "filelock", "fileutil", "hook", "instruction", "mcplaunch", "notify",
+  // persistentshell drives a real ConPTY and a PowerShell wrapper that no other
+  // platform exercises, so Windows is the only lane that can prove it.
+  "persistentshell", "proc",
   "remote", "repair", "sandbox", "sessioncatalog", "sysproxy", "winsandbox", "workspacelease",
 ].map(name => `reasonix/internal/${name}`).concat("reasonix/cmd");
 const beneath = (pkg, root) => pkg === root || pkg.startsWith(`${root}/`);

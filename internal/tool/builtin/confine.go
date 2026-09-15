@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"reasonix/internal/netclient"
+	"reasonix/internal/persistentshell"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/secrets"
 	"reasonix/internal/sessiontemp"
@@ -51,6 +52,17 @@ func BindSessionTemp(tl tool.Tool, m *sessiontemp.Manager) (tool.Tool, bool) {
 	default:
 		return nil, false
 	}
+}
+
+// BindPersistentShell attaches a session-scoped PTY manager to a bash tool.
+// ok is false when tl is not a bash value (including wrappers that do not unwrap).
+func BindPersistentShell(tl tool.Tool, m *persistentshell.Manager) (tool.Tool, bool) {
+	b, ok := tl.(bash)
+	if !ok {
+		return nil, false
+	}
+	b.persistent = m
+	return b, true
 }
 
 // RebindBashWriteRoots returns a copy of bash with its complete write surface

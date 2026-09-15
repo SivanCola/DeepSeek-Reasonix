@@ -53,6 +53,7 @@ import (
 	"reasonix/internal/netclient"
 	"reasonix/internal/outputstyle"
 	"reasonix/internal/permission"
+	"reasonix/internal/persistentshell"
 	"reasonix/internal/plugin"
 	"reasonix/internal/productdocs"
 	"reasonix/internal/provider"
@@ -222,6 +223,7 @@ type Options struct {
 	WorkspaceOnly          bool
 	PinnedContextLoader    control.PinnedContextLoader
 	SessionTemp            *sessiontemp.Manager // session-private temp manager; Rebuild reuses old's
+	PersistentShell        *persistentshell.Manager
 	RuntimeReload
 	// deferPublish keeps a replacement generation private until migration and
 	// commit succeed. Cold BuildRuntime leaves this false and publishes at boot.
@@ -742,16 +744,11 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	bashTimeout := time.Duration(cfg.BashTimeoutSeconds()) * time.Second
 	enabledBuiltins := cfg.Tools.Enabled
 	readPathResolver := builtin.NewPathResolver()
-	// Session-private temporary directory manager for Bash/grep. Rebuild
-	// reuses the previous Controller's Manager; a fresh build creates one
-	// here so tools and the Controller share the same instance from boot.
-	sessionTemp := opts.SessionTemp
-	if sessionTemp == nil {
-		sessionTemp = sessiontemp.New()
-	}
+	sessionTemp, persistentShell := sessionManagers(opts)
 	// Register the full built-in inventory for use_capability dispatch. The
 	// provider-visible surface is narrowed later via SetProviderVisibleTools.
 	addBuiltins(reg, enabledBuiltins, writeRoots, writeRootSet, bashSpec, bashTimeout, searchSpec, stderr, root, proxySpec, forbidReadRoots, readPathResolver, sessionGuard, managedConfig, opts.FileOverlay, opts.TerminalRunner, sessionTemp, fileWriteReceipt)
+	bindPersistentShell(reg, persistentShell)
 	addWebSearch(reg, cfg, entry, proxySpec, sink)
 	browserExec, closeBrowser := browserBackend(opts.BrowserExecutor, cfg.Browser, writeRoots)
 	if browserExec != nil {
@@ -1916,7 +1913,8 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		RuntimeOwner:      owner,
 		// Share the Manager already bound into bash/grep so tools and the
 		// Controller observe the same temporary generation across rebuilds.
-		SessionTemp: sessionTemp,
+		SessionTemp:     sessionTemp,
+		PersistentShell: persistentShell,
 	}
 	if opts.ModelSettings != nil {
 		ctrlOpts.ModelSettingsSourceRevision = opts.ModelSettings.Revision

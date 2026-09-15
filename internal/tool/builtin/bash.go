@@ -18,6 +18,7 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 
 	"reasonix/internal/jobs"
+	"reasonix/internal/persistentshell"
 	"reasonix/internal/proc"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/secrets"
@@ -88,6 +89,9 @@ type bash struct {
 	// and never for background jobs, which need the local job manager.
 	terminal    TerminalRunner
 	sessionTemp *sessiontemp.Manager
+	// persistent runs ordinary foreground commands in a session PTY. A
+	// context-attached manager isolates sub-agents. Nil keeps one-shot processes.
+	persistent *persistentshell.Manager
 }
 
 type bashParams struct {
@@ -186,14 +190,8 @@ func (b bash) ExecuteDetailed(ctx context.Context, args json.RawMessage) (tool.D
 	}
 
 	sh := b.resolved()
-	if !sh.SupportsChaining() && (hasUnquotedSeq(p.Command, "&&") || hasUnquotedSeq(p.Command, "||")) {
-		ex.State = tool.ShellStateNotRun
-		ex.FailurePhase = tool.ShellPhasePreflight
-		ex.MutationRisk = tool.ShellMutationNotStarted
-		ex.DurationMs = time.Since(start).Milliseconds()
-		return tool.DetailedResult{Execution: ex}, fmt.Errorf("this shell is Windows PowerShell, which does not parse '&&' or '||'. " +
-			"Sequence with ';' (both run regardless of the first's result), use 'if ($?) { ... }' for " +
-			"conditional chaining, or issue the commands as separate calls")
+	if res, err, reject := rejectPowerShellChaining(ex, start, sh, p.Command); reject {
+		return res, err
 	}
 
 	// Pin the session-private temporary generation before any launch path so
@@ -237,6 +235,10 @@ func (b bash) ExecuteDetailed(ctx context.Context, args json.RawMessage) (tool.D
 
 	argv, wrapped := prepared.Argv, prepared.Wrapped
 	cmdEnv := applyEnvOverrides(bashCommandEnv(ctx), prepared.EnvOverrides)
+
+	if res, err, used := b.tryPersistent(ctx, p, sh, prepared, persistEnv(cmdEnv), start, ex); used {
+		return res, err
+	}
 
 	if p.RunInBackground {
 		jm, ok := jobs.FromContext(ctx)
