@@ -51,9 +51,8 @@ try {
     const before = calls.length;
     assert.equal(branch().hasAttribute("disabled"), false, `${label}: unavailable action remains focusable for its explanation`);
     assert.equal(branch().getAttribute("aria-disabled"), "true", `${label}: reports itself unavailable`);
-    const described = harness.dom.window.document.getElementById(branch().getAttribute("aria-describedby") ?? "");
-    assert.ok(described, `${label}: names its reason for assistive tech`);
-    assert.match(described.textContent ?? "", expect, `${label}: explains the reason it shows`);
+    assert.equal(branch().getAttribute("aria-describedby"), null, `${label}: needs no remount-sensitive description node`);
+    assert.match(branch().getAttribute("aria-label") ?? "", expect, `${label}: includes its reason in the accessible name`);
     await act(async () => branch().click());
     assert.equal(calls.length, before, `${label}: never dispatches`);
   };

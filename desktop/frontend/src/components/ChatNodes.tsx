@@ -1,4 +1,4 @@
-import { lazy, Suspense, memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { lazy, Suspense, memo, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { FileText, Globe, GitBranch, PackageOpen, Search, Terminal, Users, Wrench, X } from "lucide-react";
 import { ChatSource, type ChatNode } from "../lib/chatViewSource";
 import type { ChatContentLoader } from "../lib/chatContentLoader";
@@ -223,7 +223,6 @@ function ChatReasoning({ node, loader, source, scroll }: { node: Extract<ChatNod
 function ChatTurnTail({ node, source, actions, loader, tabId, hostId }: { node: Extract<ChatNode, { kind: "tail" }>; source: ChatSource; actions: ChatActions; loader: ChatContentLoader; tabId?: string; hostId?: string }) {
   const answer = useChatNode(source, node.answerKey ?? "");
   const t = useT();
-  const reasonId = useId();
   const hasAnswer = answer?.kind === "assistant" && Boolean(answer.item.text.trim());
   if (!hasAnswer && !node.presentedFiles.length && !node.modifiedFiles.length) return null;
   const fork = actions.fork;
@@ -249,14 +248,12 @@ function ChatTurnTail({ node, source, actions, loader, tabId, hostId }: { node: 
       <button
         type="button"
         className="chat-action-icon"
-        aria-label={t("chat.branch")}
+        aria-label={reason ? `${t("chat.branch")}: ${reasonText}` : t("chat.branch")}
         aria-disabled={reason ? true : undefined}
-        aria-describedby={reason ? reasonId : undefined}
         data-unavailable={reason ? true : undefined}
         onClick={reason || !target || !create ? undefined : () => create(target)}
       ><GitBranch aria-hidden="true" /></button>
     </Tooltip>}
-    {reason && <span id={reasonId} className="sr-only">{reasonText}</span>}
     {answer!.item.turnUsage && answer!.item.turnUsage.totalTokens > 0 && <TurnUsagePanel usage={answer!.item.turnUsage} />}
     {(answer!.item.turnDurationMs ?? answer!.item.workDurationMs) != null && <TurnTimePanel
       durationMs={(answer!.item.turnDurationMs ?? answer!.item.workDurationMs)!}
