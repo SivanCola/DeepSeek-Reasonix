@@ -77,9 +77,10 @@ func TestPersistentShellLongCommandWithoutLineEditing(t *testing.T) {
 	sh := posixShell(t)
 	dir := t.TempDir()
 	m := testManager(t)
-	req := Request{Argv: InteractiveArgv(sh), Dir: dir, Shell: sh, Timeout: 10 * time.Second,
+	argv := append([]string{sh.Path, "--noediting"}, InteractiveArgv(sh)[1:]...)
+	req := Request{Argv: argv, Dir: dir, Shell: sh, Timeout: 10 * time.Second,
 		Env:     []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "TERM=dumb", "INPUTRC=/dev/null", "LC_ALL=C"},
-		Command: "set +o emacs; set +o vi; PS2=CONTINUATION_PROMPT"}
+		Command: "PS2=CONTINUATION_PROMPT"}
 	if res := m.Run(t.Context(), req); res.Err != nil {
 		t.Fatal(res.Err)
 	}
