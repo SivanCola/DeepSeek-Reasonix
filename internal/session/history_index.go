@@ -612,7 +612,11 @@ func insertContentRef(ctx context.Context, state *historyBuildState, ref session
 
 func messagePreview(message provider.Message) string {
 	preview := strings.TrimSpace(message.Content)
-	if preview == "" {
+	if message.Role == provider.RoleUser {
+		// Derive display text before truncating; a truncated injected block can
+		// no longer be separated from the user's request.
+		preview = agent.UserMessageText(message)
+	} else if preview == "" {
 		preview = strings.TrimSpace(message.RawContent)
 	}
 	runes := []rune(preview)

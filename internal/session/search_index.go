@@ -16,7 +16,7 @@ import (
 	"reasonix/internal/sessioncontent"
 )
 
-const searchIndexVersion = 1
+const searchIndexVersion = 2
 
 var searchMigrations = []projectiondb.Migration{{Version: 1, Apply: func(ctx context.Context, tx *sql.Tx) error {
 	for _, statement := range []string{

@@ -552,8 +552,8 @@ func (s *Session) externalizeDurableHistory() {
 		return
 	}
 	for _, message := range s.projection.Messages {
-		if message.Role == provider.RoleUser && s.catalogPreview == "" {
-			s.catalogPreview = messagePreview(message)
+		if s.catalogPreview == "" {
+			s.catalogPreview = catalogMessagePreview(message)
 		}
 	}
 	s.projection.Messages = nil

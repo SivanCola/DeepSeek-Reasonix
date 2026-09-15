@@ -6,14 +6,15 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
+	"reasonix/internal/agent"
 	"reasonix/internal/fileutil"
 	"reasonix/internal/provider"
 )
 
-const catalogMetadataVersion = 1
+// Rebuild previews derived from provider content by older versions.
+const catalogMetadataVersion = 2
 
 const (
 	MetadataReady   = "ready"
@@ -56,12 +57,24 @@ func metadataFromProjection(manifest Manifest, sequence uint64, projection Proje
 		}
 	}
 	for _, message := range projection.Messages {
-		if message.Role == provider.RoleUser && strings.TrimSpace(message.Content) != "" {
-			metadata.Preview = messagePreview(message)
+		if preview := catalogMessagePreview(message); preview != "" {
+			metadata.Preview = preview
 			break
 		}
 	}
 	return metadata
+}
+
+// Catalog labels use authored display text, including literal markup in an
+// explicit RawContent. Host messages and mid-turn steers are not session names.
+func catalogMessagePreview(message provider.Message) string {
+	if message.Role != provider.RoleUser || agent.IsHostGeneratedUserMessage(message) {
+		return ""
+	}
+	if _, steer := agent.SteerText(message.Content); steer {
+		return ""
+	}
+	return messagePreview(message)
 }
 
 // logRevision identifies the durable file revision a cache entry describes.

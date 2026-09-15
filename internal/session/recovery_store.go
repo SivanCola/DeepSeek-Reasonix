@@ -23,11 +23,10 @@ import (
 	"reasonix/internal/sessioncontent"
 )
 
-// Version 2 adds per-turn fork availability derived from the complete closing
-// commit. Version 1 checkpoints decode that field as empty, so accepting one
-// would incorrectly mark previously completed turns unverifiable until a full
-// replay. Rejecting the old projection rebuilds it from the durable log.
-const recoveryProjectionVersion = 2
+// Version 3 derives catalog and recent-message previews from authored text.
+// Older checkpoints may contain truncated host wrappers; rebuild from the
+// durable log because those previews cannot recover the original request.
+const recoveryProjectionVersion = 3
 
 const (
 	recoveryFormatVersion = 1
