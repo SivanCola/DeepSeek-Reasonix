@@ -5,15 +5,18 @@ import (
 
 	"reasonix/internal/agent"
 	"reasonix/internal/control"
+	"reasonix/internal/session"
 )
 
 // SessionClearResult is the post-clear session identity the frontend must apply
 // atomically so hydrate/mode-switch cannot re-bind to the destroyed transcript.
 type SessionClearResult struct {
-	SessionPath       string `json:"sessionPath"`
-	SessionRevision   int64  `json:"sessionRevision,omitempty"`
-	SessionDigest     string `json:"sessionDigest,omitempty"`
-	SessionGeneration uint64 `json:"sessionGeneration"`
+	SessionPath       string              `json:"sessionPath"`
+	SessionID         string              `json:"sessionId,omitempty"`
+	Session           *session.SessionRef `json:"session,omitempty"`
+	SessionRevision   int64               `json:"sessionRevision,omitempty"`
+	SessionDigest     string              `json:"sessionDigest,omitempty"`
+	SessionGeneration uint64              `json:"sessionGeneration"`
 }
 
 func initClearedPins(path string, newCtrl, oldCtrl control.SessionAPI, tab *WorkspaceTab) error {
@@ -86,10 +89,16 @@ func (a *App) bumpAndSnapshotSessionClear(tab *WorkspaceTab) SessionClearResult 
 		tab.sink.setSessionGeneration(gen)
 	}
 	path := tab.currentSessionPath()
+	sessionID := tab.SessionID
 	if path == "" && tab.Ctrl != nil {
 		path = tab.Ctrl.SessionPath()
 	}
 	a.mu.Unlock()
+	var sessionRef *session.SessionRef
+	if sessionID != "" {
+		ref := session.SessionRef{HostID: localDesktopHostID, SessionID: sessionID}
+		sessionRef = &ref
+	}
 	var revision int64
 	var digest string
 	if meta, ok, err := agent.LoadBranchMeta(path); err == nil && ok {
@@ -97,7 +106,8 @@ func (a *App) bumpAndSnapshotSessionClear(tab *WorkspaceTab) SessionClearResult 
 		digest = meta.ContentDigest
 	}
 	return SessionClearResult{
-		SessionPath: path, SessionRevision: revision, SessionDigest: digest, SessionGeneration: gen,
+		SessionPath: path, SessionID: sessionID, Session: sessionRef,
+		SessionRevision: revision, SessionDigest: digest, SessionGeneration: gen,
 	}
 }
 

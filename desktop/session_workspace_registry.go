@@ -117,6 +117,9 @@ func (a *App) bindFreshDesktopSession(ctx context.Context, scope, workspaceRoot 
 	if err != nil {
 		return session.SessionRef{}, workspaceID, err
 	}
+	if err := a.validateDesktopWorkspaceMembership(ctx, workspaceID, ref); err != nil {
+		return ref, workspaceID, err
+	}
 	if err := store.AttachSession(ctx, operationID, workspaceID, ref.SessionID, ""); err != nil {
 		return ref, workspaceID, err
 	}
@@ -128,10 +131,38 @@ func (a *App) attachDesktopSession(ctx context.Context, scope, workspaceRoot str
 	if err != nil {
 		return "", err
 	}
+	if err := a.validateDesktopWorkspaceMembership(ctx, workspaceID, ref); err != nil {
+		return "", err
+	}
 	if err := a.workspaceRegistry().AttachSession(ctx, "", workspaceID, ref.SessionID, ""); err != nil {
 		return "", err
 	}
 	return workspaceID, nil
+}
+
+func (a *App) validateDesktopWorkspaceMembership(ctx context.Context, workspaceID string, ref session.SessionRef) error {
+	if err := validateLocalSessionRef(ref); err != nil {
+		return err
+	}
+	state, err := a.workspaceRegistry().Load(ctx)
+	if err != nil {
+		return err
+	}
+	workspace, ok := state.Workspaces[strings.TrimSpace(workspaceID)]
+	if !ok {
+		return workspacestate.ErrWorkspaceNotFound
+	}
+	info, err := a.desktopSessionService("").Query().Stat(ctx, ref)
+	if err != nil {
+		return err
+	}
+	if info.Origin == "" || strings.TrimSpace(info.CWD) == "" {
+		return fmt.Errorf("desktop session %q has no immutable workspace header", ref.SessionID)
+	}
+	if !sameDesktopPath(info.CWD, workspace.Root) {
+		return fmt.Errorf("desktop session %q belongs to a different workspace", ref.SessionID)
+	}
+	return nil
 }
 
 func (a *App) attachForkedDesktopSession(ctx context.Context, source *WorkspaceTab, childSessionID string) error {
@@ -153,6 +184,11 @@ func (a *App) attachForkedDesktopSession(ctx context.Context, source *WorkspaceT
 	workspace, ok := state.Workspaces[workspaceID]
 	if !ok {
 		return workspacestate.ErrWorkspaceNotFound
+	}
+	if err := a.validateDesktopWorkspaceMembership(ctx, workspaceID, session.SessionRef{
+		HostID: localDesktopHostID, SessionID: childSessionID,
+	}); err != nil {
+		return err
 	}
 	beforeID := ""
 	for index, id := range workspace.SessionIDs {
@@ -230,6 +266,9 @@ func (a *App) prepareDesktopSessionRotation(ctx context.Context, request control
 		return control.SessionRotationPlan{}, err
 	}
 	if !contained {
+		if err := a.validateDesktopWorkspaceMembership(ctx, workspaceID, request.Source); err != nil {
+			return control.SessionRotationPlan{}, err
+		}
 		if err := a.workspaceRegistry().AttachSession(ctx, "", workspaceID, request.Source.SessionID, ""); err != nil {
 			return control.SessionRotationPlan{}, err
 		}
@@ -251,6 +290,9 @@ func (a *App) prepareDesktopSessionRotation(ctx context.Context, request control
 		Commit: func(commitCtx context.Context, ref session.SessionRef) error {
 			if ref.SessionID != sessionID {
 				return errors.New("desktop session rotation published an unexpected identity")
+			}
+			if err := a.validateDesktopWorkspaceMembership(commitCtx, workspaceID, ref); err != nil {
+				return err
 			}
 			if err := store.CommitRotation(commitCtx, operationID, workspaceID, sessionID, "", archiveSource); err != nil {
 				return err

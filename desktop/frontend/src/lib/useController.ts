@@ -54,7 +54,7 @@ import { upsertReadPause } from "./readPause";
 import { applyHydrateErrorState, hydratePlaceholderItems as resolveHydratePlaceholders } from "./hydrateErrorState";
 import { isHostRecoveryGuidance } from "./hostRecoverySteer";
 import { activeTabHydrationPlan, canAdoptUnboundLiveSurface, duplicateLiveItemIds, hasCachedLiveTurn, hasReusableCachedTranscript, hydratedHistoryApplyMode, sameSessionHydrateIdentity, sameSessionPlaceholderItems, shouldPreferResidentHistory, type HydrateSurfacePolicy } from "./hydrateHistoryApply";
-import { hydrateIdentityCurrent } from "./sessionIdentity";
+import { hydrateIdentityCurrent, sessionIdentityFields, sessionIdentityStableKey, type SessionHydrationOptions } from "./sessionIdentity";
 import { loadHistoryWindow } from "./historyWindowController";
 import { reduceHistoryWindowState } from "./historyWindowState";
 import { getTranscriptOutlineStore, localOutlineRead } from "./transcriptOutlineStore";
@@ -73,6 +73,7 @@ import { initialForkTurnState, reduceForkTurn, settleForkTurnForTab, type ForkTu
 import { createTurnBoundaryReads } from "./turnBoundaryReads";
 import { fileDiffFromWire, summarize, summarizeFileDiff, type ToolFileDiff } from "./tools";
 import type { QualityFloor } from "./types";
+import type { SessionClearResult } from "./historyTypes";
 import type {
   BalanceInfo,
   CheckpointMeta,
@@ -716,10 +717,10 @@ export function sameMeta(a?: Meta, b?: Meta): boolean {
     a.workspaceRoot === b.workspaceRoot &&
     a.workspaceName === b.workspaceName &&
     a.workspacePath === b.workspacePath &&
-    a.sessionPath === b.sessionPath &&
+    sessionIdentityStableKey(a) === sessionIdentityStableKey(b) &&
+    a.sessionGeneration === b.sessionGeneration &&
     a.sessionRevision === b.sessionRevision &&
     a.sessionDigest === b.sessionDigest &&
-    a.sessionGeneration === b.sessionGeneration &&
     a.gitBranch === b.gitBranch &&
     a.imageInputEnabled === b.imageInputEnabled &&
     a.visionFallbackEnabled === b.visionFallbackEnabled &&
@@ -2529,7 +2530,7 @@ export function useController() {
   const snapshotClientRef = useRef<TranscriptSnapshotClient>(snapshotClient);
   const dispatchToRef = useRef(dispatchTo);
   dispatchToRef.current = dispatchTo;
-  const sessionLoadInFlight = useRef(new Map<string, { sessionPath: string; revision?: number; digest?: string; promise: Promise<void> }>());
+  const sessionLoadInFlight = useRef(new Map<string, { identityKey: string; revision?: number; digest?: string; promise: Promise<void> }>());
   const transcriptSubscriptions = useRef(new Map<string, () => void>());
   const bumpMetaRefreshSeq = useCallback((tabId: string): number => {
     const seq = (metaRefreshSeq.current.get(tabId) ?? 0) + 1;
@@ -2571,9 +2572,9 @@ export function useController() {
       return field === "reasoning" ? record?.message.reasoning : record?.message.content;
       } catch (error) {
         if (!(error instanceof StaleCut)) throw error;
-        const path = statesRef.current.get(tabId)?.meta?.sessionPath;
+        const identity = statesRef.current.get(tabId)?.meta;
         await snapshotClient.load(tabId, (snapshot) => dispatchTo(tabId, { type: "transcript_snapshot", snapshot }),
-          () => statesRef.current.get(tabId)?.meta?.sessionPath === path);
+          () => hydrateIdentityCurrent(identity ?? {}, statesRef.current.get(tabId)?.meta));
         throw error;
       }
     }, () => snapshotClient.installed(tabId));
@@ -2630,30 +2631,21 @@ export function useController() {
     tabId: string,
     reset = false,
     reason: HydrateReason = "startup",
-    options: {
-      skipHistory?: boolean;
-      placeholderItems?: Item[];
-      preserveCachedHistory?: boolean;
-      sessionPath?: string;
-      sessionRevision?: number;
-      sessionDigest?: string;
-      sessionGeneration?: number;
-      cancelHydrateGeneration?: number;
-      deferResetUntilHistory?: boolean; surfacePolicy?: HydrateSurfacePolicy;
-      recoveryCurrent?: () => boolean;
-    } = {},
+    options: SessionHydrationOptions<Item, HydrateSurfacePolicy> = {},
   ) => {
     const surfacePolicy = options.surfacePolicy ?? "preserve-current"; const resetSurface = reset || surfacePolicy === "replace-surface";
     const stateMeta = statesRef.current.get(tabId)?.meta;
-    const sessionPath = ("sessionPath" in options ? options.sessionPath ?? "" : stateMeta?.sessionPath ?? "").trim();
+    const resolvedIdentity = sessionIdentityStableKey(options) ? options : stateMeta ?? options;
+    const sessionPath = (resolvedIdentity.sessionPath ?? "").trim();
     const sessionRevision = "sessionRevision" in options ? options.sessionRevision : stateMeta?.sessionRevision;
     const sessionDigest = "sessionDigest" in options ? options.sessionDigest : stateMeta?.sessionDigest;
-    const sessionGeneration = "sessionGeneration" in options ? options.sessionGeneration : stateMeta?.sessionGeneration;
+    const targetIdentity = { ...resolvedIdentity, sessionPath };
+    const targetIdentityKey = sessionIdentityStableKey(targetIdentity);
     const canJoinInFlight = !resetSurface && !options.skipHistory && !options.recoveryCurrent;
     const shouldTrackInFlight = !options.skipHistory;
     if (canJoinInFlight) {
       const existing = sessionLoadInFlight.current.get(tabId);
-      if (existing?.sessionPath === sessionPath && existing.revision === sessionRevision && existing.digest === sessionDigest) return existing.promise;
+      if (targetIdentityKey && existing?.identityKey === targetIdentityKey && existing.revision === sessionRevision && existing.digest === sessionDigest) return existing.promise;
     } else {
       sessionLoadInFlight.current.delete(tabId);
     }
@@ -2665,7 +2657,7 @@ export function useController() {
       const hydrateStartedAt = Date.now();
       const skipHistory = Boolean(
         (options.skipHistory ||
-        (options.preserveCachedHistory && !resetSurface && hasReusableCachedTranscript(statesRef.current.get(tabId), sessionPath, sessionRevision, sessionDigest))) &&
+        (options.preserveCachedHistory && !resetSurface && hasReusableCachedTranscript(statesRef.current.get(tabId), targetIdentity, sessionRevision, sessionDigest))) &&
         (!usesLegacyTranscriptSnapshots() || snapshotClient.installed(tabId)),
       );
       const deferResetUntilHistory = Boolean(surfacePolicy === "preserve-current" && (options.deferResetUntilHistory ?? true) && resetSurface && !skipHistory);
@@ -2676,7 +2668,7 @@ export function useController() {
         if (!sessionLoadCurrent(tabId, seq)) return false;
         if (cancelHydrateGeneration !== undefined && !cancelHydrateCurrent(tabId, cancelHydrateGeneration)) return false;
         const meta = statesRef.current.get(tabId)?.meta;
-        return hydrateIdentityCurrent(sessionPath, sessionGeneration, meta?.sessionPath, meta?.sessionGeneration);
+        return hydrateIdentityCurrent(targetIdentity, meta);
       };
       if (!stillCurrent()) return;
       addBreadcrumb("tab.hydrate", `start ${reason} ${tabId}`);
@@ -2866,7 +2858,7 @@ export function useController() {
       });
     })();
     if (shouldTrackInFlight) {
-      sessionLoadInFlight.current.set(tabId, { sessionPath, revision: sessionRevision, digest: sessionDigest, promise });
+      sessionLoadInFlight.current.set(tabId, { identityKey: targetIdentityKey, revision: sessionRevision, digest: sessionDigest, promise });
     }
     try {
       await promise;
@@ -2880,12 +2872,12 @@ export function useController() {
   const resetTurnEventProjection = useCallback(async (tabId: string, replay: TurnEventReplayView): Promise<boolean> => {
     const state = statesRef.current.get(tabId);
     if (!state) return false;
+    const identity = state.meta ?? {};
     if (usesLegacyTranscriptSnapshots()) {
-      const path = state.meta?.sessionPath;
       return snapshotClient.load(tabId, (snapshot) => {
         runtimeEpochByTabRef.current.set(tabId, snapshot.identity.runtimeEpoch);
         dispatchTo(tabId, { type: "transcript_snapshot", snapshot });
-      }, () => statesRef.current.get(tabId)?.meta?.sessionPath === path);
+      }, () => hydrateIdentityCurrent(identity, statesRef.current.get(tabId)?.meta));
     }
     const sessionPath = state.meta?.sessionPath?.trim() ?? "";
     const expectedEpoch = replay.runtimeEpoch?.trim() ?? "";
@@ -2898,7 +2890,7 @@ export function useController() {
     });
     if (!projection) return false;
     const current = statesRef.current.get(tabId);
-    if (!current || (current.meta?.sessionPath?.trim() ?? "") !== sessionPath) return false;
+    if (!current || !hydrateIdentityCurrent(identity, current.meta)) return false;
     if (expectedEpoch && runtimeEpochByTabRef.current.get(tabId) !== expectedEpoch) return false;
     if (replay.transcriptRevision !== undefined && projection.revisionKnown) {
       if (projection.revision < replay.transcriptRevision) return false;
@@ -2943,6 +2935,7 @@ export function useController() {
     const before = statesRef.current.get(tabId);
     if (!before || before.transcriptProtocol === 1 || before.historyHasNewer || before.running || before.turnActive || before.pendingPrompt) return;
     const sessionPath = before.meta?.sessionPath ?? "";
+    const identity = before.meta ?? {};
     const generation = before.sessionGen;
     ensureTranscriptSubscription(tabId);
     const projection = await getTranscriptStore().loadLatest(tabId, sessionPath, {
@@ -2951,7 +2944,7 @@ export function useController() {
     });
     const current = statesRef.current.get(tabId);
     if (!projection || !current || current.sessionGen !== generation ||
-      (current.meta?.sessionPath ?? "") !== sessionPath || current.running || current.turnActive || current.pendingPrompt) return;
+      !hydrateIdentityCurrent(identity, current.meta) || current.running || current.turnActive || current.pendingPrompt) return;
     dispatchTo(tabId, {
       type: "history_rebase",
       items: projection.items,
@@ -3145,7 +3138,7 @@ export function useController() {
     const missedTurnDone = Boolean(local?.running && !foregroundRunning);
     if (hydrateSessionData && (needsInitialLoad || missedTurnDone)) {
       await loadSessionDataForTab(tabId, missedTurnDone, "startup", {
-        sessionPath: tab.sessionPath,
+        ...sessionIdentityFields(tab),
         sessionRevision: tab.sessionRevision,
         sessionDigest: tab.sessionDigest,
       });
@@ -3267,7 +3260,7 @@ export function useController() {
       void loadSessionDataForTab(restoredTabId, false, "open-topic", {
         placeholderItems: sourceState.items,
         preserveCachedHistory: false,
-        sessionPath: restoredMeta.sessionPath,
+        ...sessionIdentityFields(restoredMeta),
         sessionRevision: restoredMeta.sessionRevision,
         sessionDigest: restoredMeta.sessionDigest,
         sessionGeneration: restoredMeta.sessionGeneration,
@@ -3459,19 +3452,13 @@ export function useController() {
       if (!tabId || !meta) return;
       const current = statesRef.current.get(tabId);
       if (!current?.meta) return;
-      if (
-        meta.sessionPath !== undefined &&
-        current.meta.sessionPath !== undefined &&
-        meta.sessionPath !== current.meta.sessionPath
-      ) {
-        return;
-      }
+      if (sessionIdentityStableKey(meta) && !sameSessionHydrateIdentity(meta, current.meta)) return;
       dispatchTo(tabId, { type: "meta", meta });
     });
 
     const offRecovery = startControllerEventRecovery({
       navigation: () => activeNavigationSeqRef.current,
-      bindings: () => new Map(Array.from(statesRef.current, ([id, state]) => [id, JSON.stringify([state.meta?.sessionPath, state.meta?.sessionGeneration, sessionLoadSeq.current.get(id)])])),
+      bindings: () => new Map(Array.from(statesRef.current, ([id, state]) => [id, JSON.stringify([sessionIdentityStableKey(state.meta), sessionLoadSeq.current.get(id)])])),
       meta: id => statesRef.current.get(id)?.meta,
       now: promptEventClock,
       flush: () => textBatch.drain(),
@@ -3483,7 +3470,7 @@ export function useController() {
       runtime: (tab, snapshotAt) => { dispatchRuntimeStatusForTab(tab.id, tab, snapshotAt); },
       reset: id => turnEventProjector.release(id),
       hydrate: (tab, recoveryCurrent) => loadSessionDataForTab(tab.id, true, "startup", {
-        sessionPath: tab.sessionPath, sessionRevision: tab.sessionRevision,
+        ...sessionIdentityFields(tab), sessionRevision: tab.sessionRevision,
         sessionDigest: tab.sessionDigest, sessionGeneration: tab.sessionGeneration, recoveryCurrent,
       }),
     });
@@ -4087,7 +4074,7 @@ export function useController() {
       bumpSessionLoadSeq(tabId);
       sessionLoadInFlight.current.delete(tabId);
     }
-    let cleared: { sessionPath: string; sessionRevision?: number; sessionDigest?: string; sessionGeneration: number };
+    let cleared: SessionClearResult;
     try {
       cleared = tabId ? await app.ClearSessionForTab(tabId) : await app.ClearSession();
     } catch {
@@ -4105,6 +4092,7 @@ export function useController() {
       const nextMeta = {
         ...(existing ?? { label: "", ready: true, eventChannel: "agent:event", cwd: "" }),
         sessionPath: cleared.sessionPath || "",
+        session: cleared.session ?? null,
         sessionRevision: cleared.sessionRevision,
         sessionDigest: cleared.sessionDigest,
         sessionGeneration: cleared.sessionGeneration,
@@ -4132,7 +4120,10 @@ export function useController() {
   const retrySessionHistory = useCallback(async (tabId?: string) => {
     const id = tabId || activeTabIdRef.current; if (!id) return;
     const m = statesRef.current.get(id)?.meta;
-    await loadSessionDataForTab(id, false, "startup", { sessionPath: m?.sessionPath, sessionRevision: m?.sessionRevision, sessionDigest: m?.sessionDigest, preserveCachedHistory: false });
+    await loadSessionDataForTab(id, false, "startup", {
+      ...sessionIdentityFields(m),
+      sessionRevision: m?.sessionRevision, sessionDigest: m?.sessionDigest, preserveCachedHistory: false,
+    });
   }, [loadSessionDataForTab]);
   const reconcileSessionNavigationForTab = useCallback(async (
     tabId: string,
@@ -4511,8 +4502,7 @@ export function useController() {
     const previousTabId = activeTabIdRef.current;
     const targetState = statesRef.current.get(tabId);
     const currentTargetIdentity = targetState?.meta ?? listedSessionIdentityByTabRef.current.get(tabId);
-    const targetIdentity = optimisticTab ? { sessionPath: optimisticTab.sessionPath, sessionGeneration: optimisticTab.sessionGeneration } : undefined;
-    const targetSessionPath = optimisticTab?.sessionPath;
+    const targetIdentity = optimisticTab ? sessionIdentityFields(optimisticTab) : undefined;
     const targetSessionRevision = optimisticTab?.sessionRevision;
     const targetSessionDigest = optimisticTab?.sessionDigest;
     const targetSessionGeneration = optimisticTab?.sessionGeneration;
@@ -4521,7 +4511,7 @@ export function useController() {
     const adoptUnboundLiveSurface = canAdoptUnboundLiveSurface(targetIdentity, currentTargetIdentity, targetState, Boolean(optimisticStatus?.running), optimisticTab?.runtime?.epoch, runtimeEpochByTabRef.current.get(tabId));
     const preserveTargetSurface = sameSession || adoptUnboundLiveSurface;
     const placeholderItems = sameSession ? targetState?.items : undefined;
-    const preserveCachedHistory = sameSession && hasReusableCachedTranscript(targetState, targetSessionPath, targetSessionRevision, targetSessionDigest);
+    const preserveCachedHistory = sameSession && hasReusableCachedTranscript(targetState, targetIdentity ?? {}, targetSessionRevision, targetSessionDigest);
     addBreadcrumb("tab.switch", `click ${tabId}`);
     setActiveTabId(tabId);
     activeTabIdRef.current = tabId;
@@ -4612,7 +4602,7 @@ export function useController() {
           placeholderItems,
           surfacePolicy: preserveTargetSurface ? "preserve-current" : "replace-surface",
           preserveCachedHistory,
-          sessionPath: targetSessionPath,
+          ...sessionIdentityFields(optimisticTab),
           sessionRevision: targetSessionRevision,
           sessionDigest: targetSessionDigest,
           sessionGeneration: targetSessionGeneration,
@@ -4671,7 +4661,7 @@ export function useController() {
     const prevState = statesRef.current.get(meta.id);
     const isNewTab = !prevState;
     const sameSession = sameSessionHydrateIdentity(meta, prevState?.meta);
-    const preserveCachedHistory = sameSession && hasReusableCachedTranscript(prevState, meta.sessionPath, meta.sessionRevision, meta.sessionDigest);
+    const preserveCachedHistory = sameSession && hasReusableCachedTranscript(prevState, meta, meta.sessionRevision, meta.sessionDigest);
     setActiveTabId(meta.id);
     activeTabIdRef.current = meta.id;
     confirmBackendActiveTab(meta.id);
@@ -4679,7 +4669,7 @@ export function useController() {
     dispatchRuntimeStatusForTab(meta.id, meta, snapshotAt);
     const load = loadSessionDataForTab(meta.id, !sameSession, "open-topic", {
       placeholderItems: sameSessionPlaceholderItems(meta, prevState), surfacePolicy: sameSession ? "preserve-current" : "replace-surface", preserveCachedHistory,
-      sessionPath: meta.sessionPath, sessionRevision: meta.sessionRevision, sessionDigest: meta.sessionDigest, sessionGeneration: meta.sessionGeneration,
+      ...sessionIdentityFields(meta), sessionRevision: meta.sessionRevision, sessionDigest: meta.sessionDigest,
     });
     monitorNavigationHydration(navigationSeq, meta.id, load, isNewTab ? () => reconcileTabRuntime(meta.id, RUNTIME_STATUS_ONLY) : undefined);
     return meta;
@@ -4698,7 +4688,7 @@ export function useController() {
     const prevState = statesRef.current.get(meta.id);
     const isNewTab = !prevState;
     const sameSession = sameSessionHydrateIdentity(meta, prevState?.meta);
-    const preserveCachedHistory = sameSession && hasReusableCachedTranscript(prevState, meta.sessionPath, meta.sessionRevision, meta.sessionDigest);
+    const preserveCachedHistory = sameSession && hasReusableCachedTranscript(prevState, meta, meta.sessionRevision, meta.sessionDigest);
     setActiveTabId(meta.id);
     activeTabIdRef.current = meta.id;
     confirmBackendActiveTab(meta.id);
@@ -4706,7 +4696,7 @@ export function useController() {
     dispatchRuntimeStatusForTab(meta.id, meta, snapshotAt);
     const load = loadSessionDataForTab(meta.id, !sameSession, "open-topic", {
       placeholderItems: sameSessionPlaceholderItems(meta, prevState), surfacePolicy: sameSession ? "preserve-current" : "replace-surface", preserveCachedHistory,
-      sessionPath: meta.sessionPath, sessionRevision: meta.sessionRevision, sessionDigest: meta.sessionDigest, sessionGeneration: meta.sessionGeneration,
+      ...sessionIdentityFields(meta), sessionRevision: meta.sessionRevision, sessionDigest: meta.sessionDigest,
     });
     monitorNavigationHydration(navigationSeq, meta.id, load, isNewTab ? () => reconcileTabRuntime(meta.id, RUNTIME_STATUS_ONLY) : undefined);
     return meta;
@@ -4725,7 +4715,7 @@ export function useController() {
     const prevState = statesRef.current.get(meta.id);
     const isNewTab = !prevState;
     const sameSession = sameSessionHydrateIdentity(meta, prevState?.meta);
-    const preserveCachedHistory = sameSession && hasReusableCachedTranscript(prevState, meta.sessionPath, meta.sessionRevision, meta.sessionDigest);
+    const preserveCachedHistory = sameSession && hasReusableCachedTranscript(prevState, meta, meta.sessionRevision, meta.sessionDigest);
     setActiveTabId(meta.id);
     activeTabIdRef.current = meta.id;
     confirmBackendActiveTab(meta.id);
@@ -4733,7 +4723,7 @@ export function useController() {
     dispatchRuntimeStatusForTab(meta.id, meta, snapshotAt);
     const load = loadSessionDataForTab(meta.id, !sameSession, "open-topic", {
       placeholderItems: sameSessionPlaceholderItems(meta, prevState), surfacePolicy: sameSession ? "preserve-current" : "replace-surface", preserveCachedHistory,
-      sessionPath: meta.sessionPath, sessionRevision: meta.sessionRevision, sessionDigest: meta.sessionDigest, sessionGeneration: meta.sessionGeneration,
+      ...sessionIdentityFields(meta), sessionRevision: meta.sessionRevision, sessionDigest: meta.sessionDigest,
     });
     monitorNavigationHydration(navigationSeq, meta.id, load, isNewTab ? () => reconcileTabRuntime(meta.id, RUNTIME_STATUS_ONLY) : undefined);
     return meta;
@@ -4822,7 +4812,9 @@ export function useController() {
     confirmBackendActiveTab(meta.id);
     dispatchTo(meta.id, { type: "optimistic_meta", meta: metaFromTab(meta, statesRef.current.get(meta.id)?.meta) });
     dispatchRuntimeStatusForTab(meta.id, meta, snapshotAt);
-    const load = loadSessionDataForTab(meta.id, true, "new-session", { surfacePolicy: "replace-surface", sessionPath: meta.sessionPath, sessionGeneration: meta.sessionGeneration });
+    const load = loadSessionDataForTab(meta.id, true, "new-session", {
+      surfacePolicy: "replace-surface", ...sessionIdentityFields(meta),
+    });
     monitorNavigationHydration(navigationSeq, meta.id, load, isNewTab ? () => reconcileTabRuntime(meta.id, RUNTIME_STATUS_ONLY) : undefined);
     return meta;
   }, [beginActiveNavigation, invalidateCheckpoints, confirmBackendActiveTab, dispatchRuntimeStatusForTab, dispatchTo, loadSessionDataForTab, monitorNavigationHydration, navigationCompletionCurrent, reassertVisibleTabAfterStaleNavigation, reconcileTabRuntime, requireRegisteredNavigationIntent, snapshotNavigationSourceTab]);
@@ -4842,7 +4834,9 @@ export function useController() {
     confirmBackendActiveTab(meta.id);
     dispatchTo(meta.id, { type: "optimistic_meta", meta: metaFromTab(meta, statesRef.current.get(meta.id)?.meta) });
     dispatchRuntimeStatusForTab(meta.id, meta, snapshotAt);
-    const load = loadSessionDataForTab(meta.id, true, "new-session", { surfacePolicy: "replace-surface", sessionPath: meta.sessionPath, sessionGeneration: meta.sessionGeneration });
+    const load = loadSessionDataForTab(meta.id, true, "new-session", {
+      surfacePolicy: "replace-surface", ...sessionIdentityFields(meta),
+    });
     monitorNavigationHydration(navigationSeq, meta.id, load, () => reconcileTabRuntime(meta.id, RUNTIME_STATUS_ONLY));
     return meta;
   }, [beginActiveNavigation, confirmBackendActiveTab, dispatchRuntimeStatusForTab, dispatchTo, loadSessionDataForTab, monitorNavigationHydration, navigationCompletionCurrent, reassertVisibleTabAfterStaleNavigation, reconcileTabRuntime, requireRegisteredNavigationIntent, snapshotNavigationSourceTab]);
@@ -4868,7 +4862,7 @@ export function useController() {
     dispatchRuntimeStatusForTab(meta.id, meta, snapshotAt);
     const load = loadSessionDataForTab(meta.id, !sameSession, "open-topic", {
       placeholderItems: sameSessionPlaceholderItems(meta, prevState), surfacePolicy: sameSession ? "preserve-current" : "replace-surface",
-      sessionPath: meta.sessionPath, sessionRevision: meta.sessionRevision, sessionDigest: meta.sessionDigest, sessionGeneration: meta.sessionGeneration,
+      ...sessionIdentityFields(meta), sessionRevision: meta.sessionRevision, sessionDigest: meta.sessionDigest,
     });
     monitorNavigationHydration(navigationSeq, meta.id, load, isNewTab ? () => reconcileTabRuntime(meta.id, RUNTIME_STATUS_ONLY) : undefined);
     return result;

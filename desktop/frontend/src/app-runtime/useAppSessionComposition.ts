@@ -273,7 +273,7 @@ export function useAppSessionComposition(input: AppSessionCompositionInput) {
   }, [activeTab, activeTabId]);
   const transcriptGeometrySessionKey = activeSessionIdentity;
   const workspaceScopeKey = projectWorkspaceScopeKey({
-    activeTabId, tabSessionPath: activeTab?.sessionPath, metaSessionPath: state.meta?.sessionPath,
+    activeTabId, sessionKey: activeSessionIdentity,
     cwd: state.meta?.cwd, sessionGen: state.sessionGen, workspaceControllerEpoch,
   });
   const workspaceTreeMemoryKey = projectWorkspaceTreeMemoryKey({

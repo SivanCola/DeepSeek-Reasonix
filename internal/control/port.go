@@ -64,6 +64,7 @@ type IdentityLifecycle interface {
 // IdentityLifecycle.BindFreshSession while they do not own Workspace metadata.
 type IdentityCreateLifecycle interface {
 	BindFreshSessionWithOptions(context.Context, session.CreateOptions) (session.SessionRef, error)
+	ContinueLegacySessionWithOptions(context.Context, string, string, session.CreateOptions) (session.SessionRef, error)
 }
 
 // TurnControl covers driving a model turn and observing its run state: the

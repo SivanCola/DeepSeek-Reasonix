@@ -367,6 +367,10 @@ console.log("\nuse controller meta");
   eq(sameMeta(meta(), meta()), true, "identical meta is unchanged");
   eq(sameMeta(meta({ sessionGeneration: 1 }), meta({ sessionGeneration: 1 })), true, "identical sessionGeneration is unchanged");
 eq(sameMeta(meta({ sessionGeneration: 1 }), meta({ sessionGeneration: 2 })), false, "sessionGeneration changes invalidate meta equality");
+eq(sameMeta(
+  meta({ session: { hostId: "local", sessionId: "a" } }),
+  meta({ session: { hostId: "local", sessionId: "b" } }),
+), false, "SessionRef changes invalidate meta equality when paths are empty");
 eq(sameMeta(meta({ collaborationMode: "normal" }), meta({ collaborationMode: "plan" })), false, "collaboration mode changes invalidate meta equality");
   eq(sameMeta(meta({ workspacePath: "/repo" }), meta({ workspacePath: "/other" })), false, "workspace path changes invalidate meta equality");
   eq(sameMeta(meta({ gitBranch: "main" }), meta({ gitBranch: "feature" })), false, "git branch changes invalidate meta equality");
@@ -394,6 +398,8 @@ eq(sameMeta(meta({ collaborationMode: "normal" }), meta({ collaborationMode: "pl
   const todos = [{ content: "Keep task state", status: "in_progress" }];
   const withTodos = metaFromTab(tab(), meta({ canonicalTodos: todos }));
   eq(withTodos.canonicalTodos, todos, "optimistic tab metadata preserves canonical todos for the same session");
+  const canonical = metaFromTab(tab({ sessionId: "canonical", session: { hostId: "local", sessionId: "canonical" } }));
+  eq(canonical.session?.sessionId, "canonical", "optimistic tab metadata carries canonical SessionRef identity");
 }
 
 {

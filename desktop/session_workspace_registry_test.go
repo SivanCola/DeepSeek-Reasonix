@@ -59,3 +59,32 @@ func TestFreshDesktopSessionIsDurableRegistryMemberBeforeReturn(t *testing.T) {
 		t.Fatalf("sessions = %#v", page.Sessions)
 	}
 }
+
+func TestWorkspaceRegistryRejectsSessionHeaderFromDifferentWorkspace(t *testing.T) {
+	root := t.TempDir()
+	app := NewApp()
+	t.Cleanup(app.closeSessionServices)
+	app.desktopSessions.root = filepath.Join(root, "desktop-sessions-v5", "by-id")
+	app.desktopSessions.workspaceState = workspacestate.NewStore(filepath.Join(root, "desktop", "workspace-state-v1.json"))
+	service := app.desktopSessionService("")
+	projectA := filepath.Join(root, "project-a")
+	projectB := filepath.Join(root, "project-b")
+	runtime, err := service.Create(t.Context(), session.CreateOptions{
+		SessionID: "belongs-to-a", CWD: projectA, Origin: session.SessionOriginNew,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := app.attachDesktopSession(t.Context(), "project", projectB, runtime.Ref()); err == nil {
+		t.Fatal("attaching a session to a workspace that disagrees with its immutable header succeeded")
+	}
+	state, err := app.workspaceRegistry().Load(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := state.Workspaces[desktopWorkspaceID("project", projectB)]
+	if len(workspace.SessionIDs) != 0 {
+		t.Fatalf("mismatched workspace members = %#v", workspace.SessionIDs)
+	}
+}

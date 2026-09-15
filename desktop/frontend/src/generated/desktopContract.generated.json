@@ -28423,6 +28423,17 @@
           }
         },
         {
+          "name": "session",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "session.SessionRef"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
           "name": "sessionRevision",
           "optional": true,
           "type": {
@@ -33094,6 +33105,24 @@
           "name": "sessionPath",
           "type": {
             "kind": "string"
+          }
+        },
+        {
+          "name": "sessionId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "session",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "session.SessionRef"
+            },
+            "kind": "nullable"
           }
         },
         {

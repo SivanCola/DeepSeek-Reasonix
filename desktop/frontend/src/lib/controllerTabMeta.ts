@@ -20,6 +20,7 @@ export function metaFromTab(tab: TabMeta, existing?: Meta): Meta {
     workspaceName: tab.workspaceName || existing?.workspaceName,
     workspacePath: tab.workspacePath || tab.workspaceRoot || existing?.workspacePath,
     sessionPath: tab.sessionPath !== undefined ? tab.sessionPath : existing?.sessionPath,
+    session: tab.session !== undefined ? tab.session : existing?.session,
     sessionRevision: tab.sessionRevision !== undefined ? tab.sessionRevision : existing?.sessionRevision,
     sessionDigest: tab.sessionDigest !== undefined ? tab.sessionDigest : existing?.sessionDigest,
     sessionGeneration: tab.sessionGeneration !== undefined ? tab.sessionGeneration : existing?.sessionGeneration,

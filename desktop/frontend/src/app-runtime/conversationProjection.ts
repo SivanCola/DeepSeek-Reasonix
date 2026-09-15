@@ -114,16 +114,14 @@ export function projectConversationLayout(input: {
 /** Workspace controller scope key: any identity input change re-scopes the composer. */
 export function projectWorkspaceScopeKey(input: {
   activeTabId: string | undefined;
-  tabSessionPath: string | undefined;
-  metaSessionPath: string | undefined;
+  sessionKey: string;
   cwd: string | undefined;
   sessionGen: number;
   workspaceControllerEpoch: number;
 }): string {
   return [
     input.activeTabId ?? "",
-    input.tabSessionPath ?? "",
-    input.metaSessionPath ?? "",
+    input.sessionKey,
     input.cwd ?? "",
     input.sessionGen,
     input.workspaceControllerEpoch,

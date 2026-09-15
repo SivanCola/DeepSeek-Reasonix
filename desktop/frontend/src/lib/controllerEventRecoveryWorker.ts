@@ -3,6 +3,7 @@ import { app } from "./bridge";
 import { startDesktopEventRecovery } from "./desktopEventRecovery";
 import { recordFrontendDiagnostic } from "./frontendDiagnosticBridge";
 import type { Meta, TabMeta } from "./types";
+import { sameSessionIdentity } from "./sessionIdentity";
 
 export interface ControllerRecoveryPorts {
   navigation(): number;
@@ -35,7 +36,7 @@ export function startControllerEventRecovery(ports: ControllerRecoveryPorts, sub
       for (const tab of tabs) {
         if (!scope.bindings.has(tab.id)) continue;
         const meta = ports.meta(tab.id);
-        const changedSession = meta?.sessionPath !== tab.sessionPath || meta?.sessionGeneration !== tab.sessionGeneration;
+        const changedSession = !sameSessionIdentity(meta, tab);
         ports.prepare(tab);
         if (changedSession || hydrating.has(tab.id)) {
           hydrating.add(tab.id);

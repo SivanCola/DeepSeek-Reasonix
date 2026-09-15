@@ -111,7 +111,13 @@ func (a *App) bindTabCanonicalSession(
 		ref, err = identity.OpenSession(ctx, session.SessionRef{HostID: service.HostID(), SessionID: strings.TrimSpace(sessionID)})
 	case strings.TrimSpace(legacyPath) != "":
 		if _, statErr := os.Stat(legacyPath); statErr == nil {
-			ref, err = identity.ContinueLegacySession(ctx, legacyPath, "")
+			if headerIdentity, ok := identity.(control.IdentityCreateLifecycle); ok {
+				ref, err = headerIdentity.ContinueLegacySessionWithOptions(ctx, legacyPath, "", session.CreateOptions{
+					CWD: desktopWorkspaceRoot(scope, workspaceRoot), Origin: session.SessionOriginLegacyImport,
+				})
+			} else {
+				ref, err = identity.ContinueLegacySession(ctx, legacyPath, "")
+			}
 		} else if !os.IsNotExist(statErr) {
 			err = statErr
 		} else {

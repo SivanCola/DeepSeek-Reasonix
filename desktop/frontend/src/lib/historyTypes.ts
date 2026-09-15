@@ -36,7 +36,14 @@ export interface HistoryEntry {
   refs: HistoryContentRef[];
 }
 
-export interface SessionClearResult { sessionPath: string; sessionRevision?: number; sessionDigest?: string; sessionGeneration: number }
+export interface SessionClearResult {
+  sessionPath: string;
+  sessionId?: string;
+  session?: { hostId: string; sessionId: string } | null;
+  sessionRevision?: number;
+  sessionDigest?: string;
+  sessionGeneration: number;
+}
 
 export interface HistorySlice {
   entries: HistoryEntry[];

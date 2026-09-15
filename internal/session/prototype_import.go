@@ -59,7 +59,7 @@ func importPreview(ctx context.Context, sourceDir, targetRoot string) (Prototype
 		return PrototypeImportResult{}, err
 	}
 	defer os.RemoveAll(frozen.freezeDir)
-	return importFrozenPreview(ctx, frozen, targetRoot)
+	return importFrozenPreview(ctx, frozen, targetRoot, CreateOptions{})
 }
 
 func freezePreview(ctx context.Context, sourceDir string) (frozenPreview, error) {
@@ -166,21 +166,19 @@ func freezePreviewCodec(ctx context.Context, sourceDir string, allowCurrent bool
 	return frozenPreview{dir: sourceDir, freezeDir: freezeDir, manifestBytes: manifestBytes, eventPath: frozenEventPath, manifest: manifest, source: source, logName: logName}, nil
 }
 
-func importFrozenPreview(ctx context.Context, frozen frozenPreview, targetRoot string) (PrototypeImportResult, error) {
+func importFrozenPreview(ctx context.Context, frozen frozenPreview, targetRoot string, options CreateOptions) (PrototypeImportResult, error) {
 	prototype, source := frozen.manifest, frozen.source
 	manifestBytes, sourceDir := frozen.manifestBytes, frozen.dir
 	targetID := deterministicID("prototype-import\x00" + prototype.Codec + "\x00" + sourceDir + "\x00" + source.SHA256)
 	targetDir := filepath.Join(targetRoot, targetID)
 	result := PrototypeImportResult{TargetID: targetID, TargetDir: targetDir, Source: source}
-	if existing, readErr := readManifest(filepath.Join(targetDir, "manifest.json")); readErr == nil {
-		if existing.Source != nil && existing.Source.Path == source.Path && existing.Source.SHA256 == source.SHA256 && existing.Source.Version == prototype.Codec {
-			result.Reused = true
-			result.ImportedEvents = existing.InheritedEvents
-			return result, nil
-		}
-		return PrototypeImportResult{}, fmt.Errorf("%w: prototype target %s has another source", ErrSessionExists, targetID)
-	} else if !os.IsNotExist(readErr) {
-		return PrototypeImportResult{}, readErr
+	reused, inherited, err := reuseFrozenPreviewTarget(targetDir, targetID, source, prototype.Codec, options)
+	if err != nil {
+		return PrototypeImportResult{}, err
+	}
+	if reused {
+		result.Reused, result.ImportedEvents = true, inherited
+		return result, nil
 	}
 	if err := os.MkdirAll(targetRoot, 0o700); err != nil {
 		return PrototypeImportResult{}, err
@@ -290,7 +288,7 @@ func importFrozenPreview(ctx context.Context, frozen frozenPreview, targetRoot s
 		SchemaVersion: SchemaVersion, Codec: Codec, StorageRevision: StorageRevision, ContentRoot: sharedContentRoot, SessionID: targetID,
 		CreatedAt: time.Now().UTC(), InheritedEvents: lastSequence, Source: &source,
 	}
-	if err := writeManifestFile(filepath.Join(tmp, "manifest.json"), finalManifest); err != nil {
+	if err := writeImportedPreviewManifest(tmp, finalManifest, options); err != nil {
 		return PrototypeImportResult{}, err
 	}
 	validatedLog, err := os.Open(finalLogPath)
@@ -322,6 +320,30 @@ func importFrozenPreview(ctx context.Context, frozen frozenPreview, targetRoot s
 	published = true
 	result.ImportedEvents = lastSequence
 	return result, nil
+}
+
+func reuseFrozenPreviewTarget(targetDir, targetID string, source Source, codec string, options CreateOptions) (bool, uint64, error) {
+	manifest, err := readManifest(filepath.Join(targetDir, "manifest.json"))
+	if os.IsNotExist(err) {
+		return false, 0, nil
+	}
+	if err != nil {
+		return false, 0, err
+	}
+	if manifest.Source == nil || manifest.Source.Path != source.Path || manifest.Source.SHA256 != source.SHA256 || manifest.Source.Version != codec {
+		return false, 0, fmt.Errorf("%w: prototype target %s has another source", ErrSessionExists, targetID)
+	}
+	if err := validateSessionHeaderForCreate(targetDir, targetID, options); err != nil {
+		return false, 0, err
+	}
+	return true, manifest.InheritedEvents, nil
+}
+
+func writeImportedPreviewManifest(dir string, manifest Manifest, options CreateOptions) error {
+	if err := writeManifestFile(filepath.Join(dir, "manifest.json"), manifest); err != nil {
+		return err
+	}
+	return writeSessionHeaderForCreate(dir, manifest.SessionID, manifest.CreatedAt, options)
 }
 
 func convertPrototypeCommit(original Commit, sourceID, targetID, sourceCodec string) (Commit, error) {

@@ -284,11 +284,17 @@ func (s *Service) ContinueLegacy(ctx context.Context, sourcePath, headID string)
 // instead of letting a caller accidentally resume whichever source it opened
 // first.
 func (s *Service) ContinueImported(ctx context.Context, sourcePath, headID string) (*Runtime, ImportResult, error) {
+	return s.ContinueImportedWithHeader(ctx, sourcePath, headID, CreateOptions{})
+}
+
+// ContinueImportedWithHeader publishes Desktop ownership in the same atomic
+// directory publication as the imported history.
+func (s *Service) ContinueImportedWithHeader(ctx context.Context, sourcePath, headID string, options CreateOptions) (*Runtime, ImportResult, error) {
 	filesystem, ok := s.persistence.(*FilesystemPersistence)
 	if !ok {
 		return nil, ImportResult{}, errors.New("session: persistence does not support imported sessions")
 	}
-	result, err := importSourceForLegacy(ctx, sourcePath, filesystem.Root, headID)
+	result, err := importSourceForLegacyWithHeader(ctx, sourcePath, filesystem.Root, headID, options)
 	if err != nil {
 		return nil, result, err
 	}
@@ -330,7 +336,7 @@ func (s *Service) ContinueStoredPreview(ctx context.Context, sessionID string) (
 	if err != nil {
 		return nil, PrototypeImportResult{}, err
 	}
-	result, err := importFrozenPreview(ctx, frozen, filesystem.Root)
+	result, err := importFrozenPreview(ctx, frozen, filesystem.Root, CreateOptions{})
 	if err != nil {
 		return nil, result, err
 	}

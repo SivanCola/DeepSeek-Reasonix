@@ -187,6 +187,23 @@ func (q *Query) History(ctx context.Context, ref SessionRef) ([]provider.Message
 	return append([]provider.Message(nil), snapshot.Projection.Messages...), nil
 }
 
+// Stat returns one header-backed metadata observation without opening event
+// bodies. Live projection state overlays the disposable cache, matching List.
+func (q *Query) Stat(ctx context.Context, ref SessionRef) (SessionInfo, error) {
+	if q == nil || q.persistence == nil {
+		return SessionInfo{}, fmt.Errorf("session: nil session query")
+	}
+	if err := ref.validate(q.hostID); err != nil {
+		return SessionInfo{}, err
+	}
+	info, err := q.persistence.Stat(ctx, ref.SessionID)
+	if err != nil {
+		return SessionInfo{}, err
+	}
+	q.enrichInfo(&info)
+	return info, nil
+}
+
 func (q *Query) List(ctx context.Context, cursor string, limit int) (SessionPage, error) {
 	if q == nil || q.persistence == nil {
 		return SessionPage{}, fmt.Errorf("session: nil session query")
@@ -196,23 +213,25 @@ func (q *Query) List(ctx context.Context, cursor string, limit int) (SessionPage
 		return SessionPage{}, err
 	}
 	for i := range page.Sessions {
-		info := &page.Sessions[i]
-		info.Ref = SessionRef{HostID: q.hostID, SessionID: info.SessionID}
-		if info.Error != "" {
-			continue
-		}
-		if q.service != nil {
-			if runtime, ok := q.service.Runtime(info.Ref); ok {
-				metadata := runtime.Session().CatalogMetadata()
-				applyCatalogMetadata(info, metadata)
-				continue
-			}
-		}
-		if info.Codec == Codec && info.MetadataStatus != MetadataReady {
-			q.scheduleMetadataRebuild(info.SessionID)
-		}
+		q.enrichInfo(&page.Sessions[i])
 	}
 	return page, nil
+}
+
+func (q *Query) enrichInfo(info *SessionInfo) {
+	info.Ref = SessionRef{HostID: q.hostID, SessionID: info.SessionID}
+	if info.Error != "" {
+		return
+	}
+	if q.service != nil {
+		if runtime, ok := q.service.Runtime(info.Ref); ok {
+			applyCatalogMetadata(info, runtime.Session().CatalogMetadata())
+			return
+		}
+	}
+	if info.Codec == Codec && info.MetadataStatus != MetadataReady {
+		q.scheduleMetadataRebuild(info.SessionID)
+	}
 }
 
 func applyCatalogMetadata(info *SessionInfo, metadata catalogMetadata) {

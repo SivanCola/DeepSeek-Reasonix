@@ -95,7 +95,13 @@ func (c *Controller) BindFreshSessionWithOptions(ctx context.Context, options se
 // publishes the returned immutable v3 identity. The source remains only as a
 // display/import locator and is never rebound as the execution store.
 func (c *Controller) ContinueLegacySession(ctx context.Context, sourcePath, headID string) (session.SessionRef, error) {
-	return c.continueLegacySession(ctx, sourcePath, headID, true)
+	return c.continueLegacySession(ctx, sourcePath, headID, true, session.CreateOptions{})
+}
+
+// ContinueLegacySessionWithOptions installs immutable Desktop ownership in
+// the same publication that materializes the imported session.
+func (c *Controller) ContinueLegacySessionWithOptions(ctx context.Context, sourcePath, headID string, options session.CreateOptions) (session.SessionRef, error) {
+	return c.continueLegacySession(ctx, sourcePath, headID, true, options)
 }
 
 // ContinueLegacySessionForRebuild performs the same fail-atomic import while an
@@ -103,10 +109,10 @@ func (c *Controller) ContinueLegacySession(ctx context.Context, sourcePath, head
 // SessionTemp generation belongs to that logical session, so this path must
 // not rotate it merely because persistence crossed the legacy/v3 boundary.
 func (c *Controller) ContinueLegacySessionForRebuild(ctx context.Context, sourcePath, headID string) (session.SessionRef, error) {
-	return c.continueLegacySession(ctx, sourcePath, headID, false)
+	return c.continueLegacySession(ctx, sourcePath, headID, false, session.CreateOptions{})
 }
 
-func (c *Controller) continueLegacySession(ctx context.Context, sourcePath, headID string, rotateSessionTemp bool) (session.SessionRef, error) {
+func (c *Controller) continueLegacySession(ctx context.Context, sourcePath, headID string, rotateSessionTemp bool, options session.CreateOptions) (session.SessionRef, error) {
 	service, _, _ := c.v3Binding()
 	if c == nil || service == nil || c.executor == nil {
 		return session.SessionRef{}, errors.New("v3 session service is unavailable")
@@ -121,7 +127,7 @@ func (c *Controller) continueLegacySession(ctx context.Context, sourcePath, head
 			restoreLegacyEvents()
 		}
 	}()
-	candidate, _, err := service.ContinueImported(ctx, sourcePath, headID)
+	candidate, _, err := service.ContinueImportedWithHeader(ctx, sourcePath, headID, options)
 	if err != nil {
 		return session.SessionRef{}, err
 	}

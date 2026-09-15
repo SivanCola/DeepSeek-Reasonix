@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 9;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:fec7268c46043f877a7a98aa1d1bbec8698fbc4ddea6f553a033ba42e0bbce03";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:2012335ccfb27551704b8e967a4514f28eb3418c79fdd96dc0c9f503ab29c0bd";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -2680,6 +2680,7 @@ export interface Meta {
   eventChannel: string;
   sessionPath?: string;
   sessionId?: string;
+  session?: SessionRef | null;
   sessionRevision?: number;
   sessionDigest?: string;
   cwd: string;
@@ -3534,6 +3535,8 @@ export interface SessionCatalogStatus {
 
 export interface SessionClearResult {
   sessionPath: string;
+  sessionId?: string;
+  session?: SessionRef | null;
   sessionRevision?: number;
   sessionDigest?: string;
   sessionGeneration: number;

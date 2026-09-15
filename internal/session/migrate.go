@@ -81,7 +81,7 @@ func migrateLegacyHead(ctx context.Context, sourcePath, targetRoot, legacyHeadID
 	if err != nil {
 		return MigrationResult{}, err
 	}
-	return frozen.publish(ctx, targetRoot)
+	return frozen.publish(ctx, targetRoot, CreateOptions{})
 }
 
 // frozenLegacyHead is one legacy head reduced to an immutable, already-parsed
@@ -208,7 +208,7 @@ func parseFrozenLegacy(ctx context.Context, artifacts []frozenArtifact, sourcePa
 // publish materializes the frozen input as the deterministic final target. The
 // directory is built in a sibling temporary path and atomically renamed, so a
 // reader never observes a partial session.
-func (f *frozenLegacyHead) publish(ctx context.Context, targetRoot string) (MigrationResult, error) {
+func (f *frozenLegacyHead) publish(ctx context.Context, targetRoot string, options CreateOptions) (MigrationResult, error) {
 	if f == nil {
 		return MigrationResult{}, fmt.Errorf("session: nil frozen legacy head")
 	}
@@ -221,17 +221,13 @@ func (f *frozenLegacyHead) publish(ctx context.Context, targetRoot string) (Migr
 	if err := ctx.Err(); err != nil {
 		return MigrationResult{}, err
 	}
-	if m, err := readManifest(filepath.Join(targetDir, "manifest.json")); err == nil {
-		if m.Source != nil && m.Source.Path == f.sourcePath && m.Source.SHA256 == f.source.SHA256 && m.Source.LegacyHeadID == f.headID {
-			if err := appendMigrationMapping(ctx, targetRoot, MigrationEntry{SourcePath: f.sourcePath, SourceSize: f.source.Size, SourceSHA256: f.source.SHA256, LegacyHeadID: f.headID, TargetCodec: Codec, TargetID: f.targetID, CreatedAt: m.CreatedAt}); err != nil {
-				return MigrationResult{}, fmt.Errorf("repair migration mapping: %w", err)
-			}
-			result.Reused = true
-			return result, nil
-		}
-		return MigrationResult{}, fmt.Errorf("session: target %s already exists for different input", f.targetID)
-	} else if !os.IsNotExist(err) {
+	reused, err := f.reusePublished(ctx, targetRoot, targetDir, options)
+	if err != nil {
 		return MigrationResult{}, err
+	}
+	if reused {
+		result.Reused = true
+		return result, nil
 	}
 	if err := os.MkdirAll(targetRoot, 0o700); err != nil {
 		return MigrationResult{}, err
@@ -248,7 +244,7 @@ func (f *frozenLegacyHead) publish(ctx context.Context, targetRoot string) (Migr
 	}()
 
 	manifest := Manifest{SchemaVersion: SchemaVersion, Codec: Codec, StorageRevision: StorageRevision, ContentRoot: sharedContentRoot, SessionID: f.targetID, CreatedAt: time.Now().UTC(), Source: &f.source}
-	if err := writeManifest(filepath.Join(tmp, "manifest.json"), manifest); err != nil {
+	if err := writeImportedManifest(tmp, manifest, options); err != nil {
 		return MigrationResult{}, err
 	}
 	legacyDir := filepath.Join(tmp, "legacy")
@@ -348,6 +344,34 @@ func (f *frozenLegacyHead) publish(ctx context.Context, targetRoot string) (Migr
 		return result, fmt.Errorf("publish migration mapping: %w", err)
 	}
 	return result, nil
+}
+
+func (f *frozenLegacyHead) reusePublished(ctx context.Context, targetRoot, targetDir string, options CreateOptions) (bool, error) {
+	manifest, err := readManifest(filepath.Join(targetDir, "manifest.json"))
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if manifest.Source == nil || manifest.Source.Path != f.sourcePath || manifest.Source.SHA256 != f.source.SHA256 || manifest.Source.LegacyHeadID != f.headID {
+		return false, fmt.Errorf("session: target %s already exists for different input", f.targetID)
+	}
+	if err := validateSessionHeaderForCreate(targetDir, f.targetID, options); err != nil {
+		return false, err
+	}
+	entry := MigrationEntry{SourcePath: f.sourcePath, SourceSize: f.source.Size, SourceSHA256: f.source.SHA256, LegacyHeadID: f.headID, TargetCodec: Codec, TargetID: f.targetID, CreatedAt: manifest.CreatedAt}
+	if err := appendMigrationMapping(ctx, targetRoot, entry); err != nil {
+		return false, fmt.Errorf("repair migration mapping: %w", err)
+	}
+	return true, nil
+}
+
+func writeImportedManifest(dir string, manifest Manifest, options CreateOptions) error {
+	if err := writeManifest(filepath.Join(dir, "manifest.json"), manifest); err != nil {
+		return err
+	}
+	return writeSessionHeaderForCreate(dir, manifest.SessionID, manifest.CreatedAt, options)
 }
 
 type frozenArtifact struct {

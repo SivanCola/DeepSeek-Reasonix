@@ -25,6 +25,10 @@ type ImportResult struct {
 }
 
 func importSourceForLegacy(ctx context.Context, sourcePath, targetRoot, headID string) (ImportResult, error) {
+	return importSourceForLegacyWithHeader(ctx, sourcePath, targetRoot, headID, CreateOptions{})
+}
+
+func importSourceForLegacyWithHeader(ctx context.Context, sourcePath, targetRoot, headID string, options CreateOptions) (ImportResult, error) {
 	// The identity cutover deliberately reuses BranchID(sourcePath) for the
 	// canonical runtime. Once a final v4 store exists at that identity it is
 	// authoritative: treating it as a retired "paired preview" both rejects a
@@ -38,6 +42,9 @@ func importSourceForLegacy(ctx context.Context, sourcePath, targetRoot, headID s
 		if final.Source != nil {
 			source = *final.Source
 		}
+		if err := validateSessionHeaderForCreate(previewDir, final.SessionID, options); err != nil {
+			return ImportResult{}, err
+		}
 		return ImportResult{TargetID: final.SessionID, Source: source, Reused: true, Kind: "final"}, nil
 	}
 	if _, statErr := os.Stat(previewDir); errors.Is(statErr, fs.ErrNotExist) {
@@ -46,7 +53,7 @@ func importSourceForLegacy(ctx context.Context, sourcePath, targetRoot, headID s
 			return ImportResult{}, err
 		}
 		defer os.RemoveAll(frozenLegacy.freezeDir)
-		return publishLegacyImport(ctx, frozenLegacy, targetRoot)
+		return publishLegacyImportWithHeader(ctx, frozenLegacy, targetRoot, options)
 	}
 	// Freeze and parse every candidate before publication. Inspecting a paired
 	// sidecar after publishing legacy history can omit newer work and leave an
@@ -60,7 +67,7 @@ func importSourceForLegacy(ctx context.Context, sourcePath, targetRoot, headID s
 	if errors.Is(err, fs.ErrNotExist) {
 		// No paired sidecar (or no target root yet) means the transcript is the
 		// only candidate. Nothing has been published at this point.
-		return publishLegacyImport(ctx, frozenLegacy, targetRoot)
+		return publishLegacyImportWithHeader(ctx, frozenLegacy, targetRoot, options)
 	}
 	if err != nil {
 		return ImportResult{}, fmt.Errorf("inspect paired session events: %w", err)
@@ -71,7 +78,7 @@ func importSourceForLegacy(ctx context.Context, sourcePath, targetRoot, headID s
 		return ImportResult{}, fmt.Errorf("inspect paired session events: %w", err)
 	}
 	if !meaningful {
-		return publishLegacyImport(ctx, frozenLegacy, targetRoot)
+		return publishLegacyImportWithHeader(ctx, frozenLegacy, targetRoot, options)
 	}
 
 	relation, legacyMessages, firstDifference, err := compareLegacySpool(frozenLegacy.messageSpool, preview)
@@ -82,11 +89,11 @@ func importSourceForLegacy(ctx context.Context, sourcePath, targetRoot, headID s
 	case importMessagesEqual, importLegacyPrefix:
 		// The event sidecar carries the same history or a strictly longer one,
 		// so it is the only source that can be resumed without losing work.
-		imported, importErr := importFrozenPreview(ctx, frozenPreview, targetRoot)
+		imported, importErr := importFrozenPreview(ctx, frozenPreview, targetRoot, options)
 		return ImportResult{TargetID: imported.TargetID, Source: imported.Source, Reused: imported.Reused, Kind: "events"}, importErr
 	case importPreviewPrefix:
 		// The transcript is strictly newer; the sidecar is an earlier prefix.
-		return publishLegacyImport(ctx, frozenLegacy, targetRoot)
+		return publishLegacyImportWithHeader(ctx, frozenLegacy, targetRoot, options)
 	default:
 		// Neither source is a provable prefix of the other. Both originals stay
 		// read-only and no executable target is created.
@@ -150,7 +157,11 @@ func compareLegacySpool(path string, preview []provider.Message) (importMessageR
 // the source decision is final, so a refused or sidecar-winning import never
 // creates the legacy target as a side effect.
 func publishLegacyImport(ctx context.Context, frozen *frozenLegacyHead, targetRoot string) (ImportResult, error) {
-	migration, err := frozen.publish(ctx, targetRoot)
+	return publishLegacyImportWithHeader(ctx, frozen, targetRoot, CreateOptions{})
+}
+
+func publishLegacyImportWithHeader(ctx context.Context, frozen *frozenLegacyHead, targetRoot string, options CreateOptions) (ImportResult, error) {
+	migration, err := frozen.publish(ctx, targetRoot, options)
 	if err != nil {
 		return ImportResult{}, err
 	}

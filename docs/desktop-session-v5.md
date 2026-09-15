@@ -15,6 +15,9 @@ identity.
   disposable projections and cannot add or remove Workspace members.
 - Local Desktop uses one `SessionService` with host ID `local`. A Workspace
   path is recorded in a new session header but is never needed to open it.
+- Workspace attachment validates the candidate SessionID against its immutable
+  header `cwd`; the ordered registry is the membership authority, while the
+  header prevents one Session from being attached to the wrong Workspace.
 
 Creation and rotation reserve a SessionID in `pendingCreates`, seed and flush
 the canonical session, attach the ID to its Workspace, and only then expose a
@@ -28,6 +31,8 @@ The Workspace browser lists registry IDs even while their projections are
 being rebuilt. `OpenSession` first reads history without a controller and never
 creates a replacement for a missing or damaged ID. A navigation sequence fences
 late results so only the newest selection can replace the visible runtime.
+Frontend transcript, draft, operation, paging, and hydration fences use the
+complete SessionRef first; legacy paths are only a compatibility fallback.
 
 When a saved model no longer exists, Desktop retries the same SessionID with
 the configured default model, appends the replacement `session/config` event,
@@ -56,10 +61,14 @@ Topic 和项目路径都不再参与打开 canonical 会话。
   和内容引用；canonical 事件仍是标题、模型及轮次 metadata 的唯一真相。
 - `desktop/workspace-state-v1.json` 保存 Workspace/Session 顺序、可见性、归档
   状态和新建事务；查询索引损坏或重建时不得删除其中的 SessionID。
+- Registry attach 会用不可变 Header 的 `cwd` 校验 Workspace 归属；Registry
+  仍是成员与顺序真相，但错误 Workspace 不能收录该 SessionID。
 - 新建与轮换必须依次完成 pending 预留、canonical seed/flush、Registry attach，
   然后才允许 tab 进入 Ready；淘汰 tab 前会重新验证持久化结果。
 - 打开会话先进行与 controller 无关的历史读取，缺失或损坏的 ID 不会生成
   空白替代会话；navigation sequence 保证快速连续点击仅最后一次生效。
+- 前端 transcript、草稿、操作、分页与 hydration 防线优先比较完整
+  SessionRef；legacy path 只作为旧会话兼容回退。
 - 原模型失效时，在同一 SessionID 上使用 Desktop 默认模型恢复，并追加新的
   `session/config` 事件；不改变已有历史和 provider-visible prompt/tool bytes。
 
