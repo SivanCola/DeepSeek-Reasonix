@@ -35,6 +35,7 @@ func resourceMCPServer(t *testing.T) *httptest.Server {
 				"protocolVersion": "2024-11-05",
 				"serverInfo":      map[string]any{"name": "docs", "version": "1"},
 				"capabilities":    map[string]any{"resources": map[string]any{}, "tools": map[string]any{}},
+				"instructions":    "Prefer doc:// URIs.",
 			}
 		case "tools/list":
 			result = map[string]any{"tools": []any{}}
@@ -117,6 +118,10 @@ func TestMCPResourceToolsListTemplatesReadAndRedact(t *testing.T) {
 	}
 	if _, err := byName[ReadMCPResourceName].Execute(ctx, json.RawMessage(`{"server":"missing","uri":"doc://a"}`)); err == nil || !strings.Contains(err.Error(), `no MCP server named "missing"`) {
 		t.Fatalf("missing server err = %v", err)
+	}
+	guide := host.ServerGuide()
+	if !strings.Contains(guide, `["docs"]`) || !strings.Contains(guide, "Prefer doc:// URIs.") {
+		t.Fatalf("server guide = %q", guide)
 	}
 }
 

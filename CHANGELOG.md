@@ -10,13 +10,14 @@ branch.
 
 - **MCP on-demand resources:** when any MCP server is configured, the model
   gets three stable tools — `list_mcp_resources`, `list_mcp_resource_templates`,
-  and `read_mcp_resource` — each taking an explicit server name. Zero-config
-  sessions keep the previous tool list. Resource bodies stay on demand; binary
-  blobs are omitted from model text. Server names are not written into the
-  system prompt.
+  and `read_mcp_resource` — each taking an explicit server name. Connected
+  server names and initialize instructions are injected in the user-turn
+  `<session-context>` snapshot (last section), not the system prompt. Zero-config
+  sessions keep the previous tool list and snapshot bytes. Resource bodies stay
+  on demand; binary blobs are omitted from model text.
 - **MCP 按需资源：** 配置了任意 MCP 服务器时，模型获得三个稳定工具（list / URI
-  模板 / read），须显式传入 server 名。无 MCP 的会话工具列表不变。文档按需读取；
-  二进制不进模型文本。Server 名不写入 system prompt。
+  模板 / read）。已连接 server 名与 initialize instructions 写入 user-turn 的
+  `<session-context>` 最后一节，不进 system prompt。无 MCP 时工具列表与快照字节不变。
 
 - **Live file observations:** structured file tools now protect mutations with
   a host-owned current-version observation. Any successful text window is
