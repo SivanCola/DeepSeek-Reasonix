@@ -120,6 +120,7 @@ func (b bash) runPersistent(ctx context.Context, p bashParams, sh sandbox.Shell,
 	if emit, ok := tool.ProgressFrom(ctx); ok {
 		progress = shellrun.NewProgressWriter(emit)
 	}
+	defer progress.Flush()
 	res := m.Run(ctx, persistentshell.Request{
 		Argv:     launch.Argv,
 		Dir:      b.workDir,
