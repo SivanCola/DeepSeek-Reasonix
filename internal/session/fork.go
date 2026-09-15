@@ -134,6 +134,10 @@ func writeForkChild(ctx context.Context, parentDir, parentID string, prefix []Co
 	if strings.TrimSpace(parentDir) == "" {
 		return Manifest{}, fmt.Errorf("session: fork requires the parent session directory")
 	}
+	parentHeader, hasParentHeader, err := readSessionHeader(parentDir, parentID)
+	if err != nil {
+		return Manifest{}, err
+	}
 	projection, err := Project(prefix)
 	if err != nil {
 		return Manifest{}, err
@@ -190,6 +194,14 @@ func writeForkChild(ctx context.Context, parentDir, parentID string, prefix []Co
 	}()
 	if err := writeManifestFile(filepath.Join(tmp, "manifest.json"), manifest); err != nil {
 		return Manifest{}, err
+	}
+	if hasParentHeader {
+		if err := writeSessionHeader(tmp, SessionHeader{
+			SchemaVersion: SessionHeaderSchemaVersion, SessionID: childID, CreatedAt: manifest.CreatedAt,
+			CWD: parentHeader.CWD, ParentSessionID: parentID, Origin: SessionOriginFork,
+		}); err != nil {
+			return Manifest{}, err
+		}
 	}
 	if err := fileutil.AtomicWriteFileStrict(filepath.Join(tmp, currentLogName), log.Bytes(), 0o600); err != nil {
 		return Manifest{}, err

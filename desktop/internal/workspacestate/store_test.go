@@ -79,6 +79,33 @@ func TestStoreCreateTransactionIsIdempotent(t *testing.T) {
 	assertStrings(t, state.Workspaces[GlobalWorkspaceID].SessionIDs, []string{"session"})
 }
 
+func TestCommitRotationAttachesReplacementAndArchivesSourceAtomically(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "workspace-state-v1.json"))
+	ctx := t.Context()
+	if err := store.EnsureWorkspace(ctx, Workspace{ID: "project-a", Visible: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AttachSession(ctx, "", "project-a", "source", ""); err != nil {
+		t.Fatal(err)
+	}
+	pending := PendingCreate{OperationID: "rotation", WorkspaceID: "project-a", SessionID: "replacement"}
+	if err := store.BeginCreate(ctx, pending); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CommitRotation(ctx, pending.OperationID, pending.WorkspaceID, pending.SessionID, "", "source"); err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.Load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertStrings(t, state.Workspaces["project-a"].SessionIDs, []string{"source", "replacement"})
+	assertStrings(t, state.ArchivedSessionIDs, []string{"source"})
+	if len(state.PendingCreates) != 0 {
+		t.Fatalf("pending creates = %#v", state.PendingCreates)
+	}
+}
+
 func TestStorePreservesUnknownTopLevelAndWorkspaceFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "workspace-state-v1.json")
 	original := `{"version":1,"generation":2,"initialized":true,"workspaceIds":["global"],"workspaces":{"global":{"id":"global","root":"","title":"Global","sessionIds":[],"visible":true,"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z","futureWorkspace":{"enabled":true}}},"archivedSessionIds":[],"pendingCreates":{},"futureTop":{"value":7}}`

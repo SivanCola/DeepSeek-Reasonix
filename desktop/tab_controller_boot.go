@@ -17,6 +17,9 @@ func (a *App) buildTabControllerBoot(ctx context.Context, opts boot.Options) (co
 	if opts.SessionService == nil {
 		opts.SessionService = a.desktopSessionService(opts.SessionDir)
 	}
+	if opts.OnSessionRotation == nil {
+		opts.OnSessionRotation = a.prepareDesktopSessionRotation
+	}
 	return boot.Build(ctx, opts)
 }
 

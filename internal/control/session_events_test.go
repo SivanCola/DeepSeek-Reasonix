@@ -328,6 +328,53 @@ func TestExclusiveControllerClearDeletesClosedSourceAfterPublishingFreshIdentity
 	c.Close()
 }
 
+func TestExclusiveControllerDelegatesClearPersistenceToIdentityHost(t *testing.T) {
+	root := t.TempDir()
+	persistence := session.NewFilesystemPersistence(filepath.Join(root, "sessions-v5"))
+	service, err := session.NewService("desktop", persistence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "clear-source", CWD: root, Origin: session.SessionOriginNew})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var committed SessionRotationRequest
+	exec := agent.New(nil, tool.NewRegistry(), agent.NewSession("system"), agent.Options{}, event.Discard)
+	c := newOwnedTestController(t, Options{
+		Executor: exec, Sink: event.Discard, SessionService: service, SessionRuntime: runtime, ExclusiveSession: true,
+		OnSessionRotation: func(_ context.Context, request SessionRotationRequest) (SessionRotationPlan, error) {
+			committed = request
+			return SessionRotationPlan{
+				CreateOptions: session.CreateOptions{SessionID: "replacement", CWD: root, Origin: session.SessionOriginNew},
+				Commit: func(_ context.Context, ref session.SessionRef) error {
+					if ref.SessionID != "replacement" {
+						t.Fatalf("replacement ref = %+v", ref)
+					}
+					return nil
+				},
+			}, nil
+		},
+	})
+	if err := c.ClearSession(); err != nil {
+		t.Fatal(err)
+	}
+	if committed.Source.SessionID != "clear-source" || committed.Reason != "clear" {
+		t.Fatalf("rotation request = %+v", committed)
+	}
+	if _, err := persistence.Stat(t.Context(), "clear-source"); err != nil {
+		t.Fatalf("host-owned clear permanently deleted source: %v", err)
+	}
+	info, err := persistence.Stat(t.Context(), "replacement")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.CWD != root || info.Origin != session.SessionOriginNew {
+		t.Fatalf("replacement header = %+v", info)
+	}
+	c.Close()
+}
+
 func TestExclusiveControllerForkUsesTypedTurnBoundaryAndNoLegacyTranscript(t *testing.T) {
 	root := t.TempDir()
 	persistence := session.NewFilesystemPersistence(filepath.Join(root, "sessions-v4"))
@@ -336,7 +383,7 @@ func TestExclusiveControllerForkUsesTypedTurnBoundaryAndNoLegacyTranscript(t *te
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
-	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "fork-parent"})
+	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "fork-parent", CWD: root, Origin: session.SessionOriginNew})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,6 +410,13 @@ func TestExclusiveControllerForkUsesTypedTurnBoundaryAndNoLegacyTranscript(t *te
 	}
 	if got := snapshot.Projection.Messages; len(got) != 3 || got[1].Content != "one" || got[2].Content != "answer one" {
 		t.Fatalf("child history = %#v", got)
+	}
+	childInfo, err := persistence.Stat(t.Context(), childID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if childInfo.CWD != root || childInfo.ParentSessionID != "fork-parent" || childInfo.Origin != session.SessionOriginFork {
+		t.Fatalf("child header = %+v", childInfo)
 	}
 	entries, err := os.ReadDir(filepath.Join(root, "legacy"))
 	if err != nil && !os.IsNotExist(err) {

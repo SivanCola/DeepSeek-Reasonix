@@ -118,6 +118,9 @@ func (a *App) forkForTabWithOptions(tabID string, turn int, isolateWorkspace boo
 	locator := forkedSessionLocator{SessionPath: newPath}
 	if exclusiveV3 {
 		locator = forkedSessionLocator{SessionID: newPath}
+		if err := a.attachForkedDesktopSession(a.bootContext(), sourceTab, newPath); err != nil {
+			return ForkWorktreeResultView{}, a.rollbackUnusedForkWorktree(created, fmt.Errorf("publish fork workspace membership: %w", err))
+		}
 	}
 	opened, err := a.openForkedSessionTabWithWorkspace(sourceTab, locator, created.WorkspaceRoot)
 	result.Tab = opened.tab

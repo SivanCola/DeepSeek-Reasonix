@@ -189,6 +189,7 @@ type Controller struct {
 	sessionRecoveryMeta               func(SessionRecoveryRequest) agent.BranchMeta
 	onSessionRecovered                func(SessionRecoveryInfo) error
 	onSessionTransition               func(SessionTransitionInfo) error
+	onSessionRotation                 func(context.Context, SessionRotationRequest) (SessionRotationPlan, error)
 
 	// balanceURL/balanceKey target the active provider's optional wallet-balance
 	// endpoint (empty when the provider declares none). Captured at build so a
@@ -696,6 +697,11 @@ type Options struct {
 	// OnSessionTransition transfers write ownership before an intentional
 	// fork, branch, or switch publishes a different Session.
 	OnSessionTransition func(SessionTransitionInfo) error
+	// OnSessionRotation lets an identity-owning host durably reserve a fresh
+	// SessionID before /new or /clear publishes it. When installed, the host
+	// also owns clear archival; the controller never permanently deletes the
+	// source session.
+	OnSessionRotation func(context.Context, SessionRotationRequest) (SessionRotationPlan, error)
 	// ApprovalTimeout bounds how long a tool-approval or ask prompt blocks waiting
 	// for a user decision. Zero (default) waits forever — right for an interactive
 	// terminal. Bot/headless frontends set a positive value so an unanswered
@@ -803,6 +809,7 @@ func New(opts Options) *Controller {
 		sessionRecoveryMeta:               opts.SessionRecoveryMeta,
 		onSessionRecovered:                opts.OnSessionRecovered,
 		onSessionTransition:               opts.OnSessionTransition,
+		onSessionRotation:                 opts.OnSessionRotation,
 		balanceURL:                        opts.BalanceURL,
 		balanceKey:                        opts.BalanceKey,
 		balanceClient:                     opts.BalanceClient,

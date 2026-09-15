@@ -517,6 +517,7 @@ func (a *App) startup(ctx context.Context) {
 	a.startNativeShellSupport()
 	a.enableDeferredRebuildRetry()
 	a.startHistoryIndexMigration()
+	a.startDesktopSessionMigration(ctx)
 
 	if cfg, err := config.Load(); err == nil && cfg.DesktopMetrics() && version != "dev" {
 		a.metrics.Store(newMetricsAggregator(config.MemoryUserDir()))
@@ -2161,6 +2162,7 @@ func (a *App) clearLegacySessionRuntimeLocked(tab *WorkspaceTab, oldCtrl control
 		PinnedContextLoader:      pinnedContextLoader(snap.workspaceRoot),
 		OnSessionRecovered:       a.handleTabSessionRecovered(tab),
 		OnSessionTransition:      a.handleTabSessionTransition(tab),
+		OnSessionRotation:        a.prepareDesktopSessionRotation,
 		BeforeInboxDispatch:      a.beforeInboxDispatch,
 		OnSessionTitleChanged:    a.onSessionTitleChanged,
 	})
@@ -4211,6 +4213,7 @@ func (a *App) buildSessionRebindCandidate(
 		PinnedContextLoader:      pinnedContextLoader(root),
 		OnSessionRecovered:       a.handleTabSessionRecovered(tab),
 		OnSessionTransition:      a.handleTabSessionTransition(tab),
+		OnSessionRotation:        a.prepareDesktopSessionRotation,
 		BeforeInboxDispatch:      a.beforeInboxDispatch,
 		OnSessionTitleChanged:    a.onSessionTitleChanged,
 	})
@@ -9624,6 +9627,7 @@ func (a *App) SetModelForTab(tabID, name string) (retErr error) {
 		PinnedContextLoader:      pinnedContextLoader(snap.workspaceRoot),
 		OnSessionRecovered:       a.handleTabSessionRecovered(tab),
 		OnSessionTransition:      a.handleTabSessionTransition(tab),
+		OnSessionRotation:        a.prepareDesktopSessionRotation,
 		BeforeInboxDispatch:      a.beforeInboxDispatch,
 		OnSessionTitleChanged:    a.onSessionTitleChanged,
 		// Keep the private temporary directory across model switches (#7575).
@@ -9830,6 +9834,7 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 		PinnedContextLoader:      pinnedContextLoader(snap.workspaceRoot),
 		OnSessionRecovered:       a.handleTabSessionRecovered(tab),
 		OnSessionTransition:      a.handleTabSessionTransition(tab),
+		OnSessionRotation:        a.prepareDesktopSessionRotation,
 		BeforeInboxDispatch:      a.beforeInboxDispatch,
 		OnSessionTitleChanged:    a.onSessionTitleChanged,
 		// Keep the private temporary directory across effort switches (#7575).

@@ -149,6 +149,7 @@ func (a *App) replaceControllerForSessionOpenLocked(tab *WorkspaceTab, current c
 		PinnedContextLoader:      pinnedContextLoader(root),
 		OnSessionRecovered:       a.handleTabSessionRecovered(tab),
 		OnSessionTransition:      a.handleTabSessionTransition(tab),
+		OnSessionRotation:        a.prepareDesktopSessionRotation,
 		BeforeInboxDispatch:      a.beforeInboxDispatch,
 		OnSessionTitleChanged:    a.onSessionTitleChanged,
 	})

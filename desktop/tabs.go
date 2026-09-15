@@ -3188,6 +3188,10 @@ func (a *App) keepOnlyVisibleTab(tabID string) (TabMeta, error) {
 				slog.Warn("desktop: session metadata before pruning hidden tab failed", "tab", id, "err", err)
 				return TabMeta{}, fmt.Errorf("save current session metadata before switching tabs: %w", err)
 			}
+			if err := a.verifyCanonicalTabRegistryBeforePrune(tab); err != nil {
+				slog.Warn("desktop: canonical registry before pruning hidden tab failed", "tab", id, "err", err)
+				return TabMeta{}, fmt.Errorf("publish current session before switching tabs: %w", err)
+			}
 		}
 
 		a.mu.Lock()
@@ -3714,9 +3718,10 @@ func (a *App) buildTabControllerWithContextCore(tab *WorkspaceTab, loadedSession
 	extensionGen := a.currentExtensionGeneration()
 	sharedHost := a.acquireSharedHost(rootKey)
 	sink := a.desktopControllerSink(buildSink, cfg.Notifications)
-	buildCtx, registration := beginSharedHostMCPRegistration(buildCtx, sharedHost)
-	defer registration.rollback()
-	ctrl, err := a.buildTabControllerBootFenced(buildCtx, extensionGen, boot.Options{
+	baseBuildCtx := buildCtx
+	buildCtx, registration := beginSharedHostMCPRegistration(baseBuildCtx, sharedHost)
+	defer func() { registration.rollback() }()
+	buildOptions := boot.Options{
 		Model:                model,
 		RequireKey:           false,
 		StatsSource:          "desktop",
@@ -3733,9 +3738,30 @@ func (a *App) buildTabControllerWithContextCore(tab *WorkspaceTab, loadedSession
 		PinnedContextLoader:      pinnedContextLoader(root),
 		OnSessionRecovered:       a.handleTabSessionRecovered(tab),
 		OnSessionTransition:      a.handleTabSessionTransition(tab),
+		OnSessionRotation:        a.prepareDesktopSessionRotation,
 		BeforeInboxDispatch:      a.beforeInboxDispatch,
 		OnSessionTitleChanged:    a.onSessionTitleChanged,
-	})
+	}
+	ctrl, err := a.buildTabControllerBootFenced(buildCtx, extensionGen, buildOptions)
+	modelFallback := false
+	if errors.Is(err, boot.ErrUnknownModel) && strings.TrimSpace(tabSessionID) != "" {
+		if fallbackModel, _, ok := cfg.ResolveDesktopNewSessionModel(); ok && fallbackModel != model {
+			registration.rollback()
+			buildCtx, registration = beginSharedHostMCPRegistration(baseBuildCtx, sharedHost)
+			buildOptions.Model = fallbackModel
+			ctrl, err = a.buildTabControllerBootFenced(buildCtx, extensionGen, buildOptions)
+			if err == nil {
+				modelFallback = true
+				model = fallbackModel
+				a.noticeForTab(tab.ID, fmt.Sprintf("model %q is no longer available; switched to %s", requestedModel, fallbackModel))
+				a.mu.Lock()
+				if !a.tabBuildSupersededLocked(tab, buildGeneration) {
+					tab.model, tab.Label = fallbackModel, fallbackModel
+				}
+				a.mu.Unlock()
+			}
+		}
+	}
 	if a.handleTabControllerBootError(tab, registration, rootKey, buildGeneration, appCtx, err) {
 		return
 	}
@@ -3781,6 +3807,9 @@ func (a *App) buildTabControllerWithContextCore(tab *WorkspaceTab, loadedSession
 		}
 		if bindErr == nil && workspaceID == "" {
 			workspaceID, bindErr = a.attachDesktopSession(buildCtx, tabScope, tabWorkspaceRoot, ref)
+		}
+		if bindErr == nil && modelFallback {
+			bindErr = identity.SessionService().SetModel(buildCtx, ref, model, cfg.ModelSelectionIdentity(model))
 		}
 		if bindErr != nil {
 			a.recordTabStartupFailure(tab, buildGeneration, appCtx, friendlySessionLoadError(bindErr))

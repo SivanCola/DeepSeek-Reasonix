@@ -45,6 +45,35 @@ func (s *Service) SetTitle(ctx context.Context, ref SessionRef, title string) er
 	return err
 }
 
+// SetModel appends the same canonical session/config event used at creation.
+// It is used when a host restores history under a safe fallback controller.
+func (s *Service) SetModel(ctx context.Context, ref SessionRef, modelRef, modelIdentity string) error {
+	if err := ref.validate(s.hostID); err != nil {
+		return err
+	}
+	runtime, alreadyOpen := s.Runtime(ref)
+	var target *Session
+	var err error
+	if alreadyOpen {
+		target = runtime.Session()
+	} else {
+		target, err = s.persistence.Open(ref.SessionID, ReadWrite)
+		if err != nil {
+			return err
+		}
+		defer target.Close(context.Background())
+	}
+	payload, err := json.Marshal(map[string]string{"modelRef": strings.TrimSpace(modelRef), "modelIdentity": strings.TrimSpace(modelIdentity)})
+	if err != nil {
+		return err
+	}
+	if _, err := target.AppendBatch(ctx, "session-model:"+randomID(), []Event{{Kind: "session/config", Payload: payload}}); err != nil {
+		return err
+	}
+	_, err = target.Flush(ctx)
+	return err
+}
+
 // Export writes a self-contained immutable copy of the session directory. It
 // first establishes a durability checkpoint, then freezes the physical write
 // boundary while copying, so the exported manifest and event prefix cannot
@@ -309,18 +338,25 @@ func (s *Service) Export(ctx context.Context, ref SessionRef, destination string
 // The archive's immutable identity is retained; importing over an existing
 // identity is refused rather than merging two histories.
 func (s *Service) Import(ctx context.Context, source string) (SessionRef, error) {
+	return s.ImportWithHeader(ctx, source, CreateOptions{})
+}
+
+// ImportWithHeader atomically adopts a self-contained export and installs
+// immutable Desktop ownership metadata before the target directory is
+// published. Existing import callers remain headerless by passing zero options.
+func (s *Service) ImportWithHeader(ctx context.Context, source string, options CreateOptions) (SessionRef, error) {
 	filesystem, ok := s.persistence.(*FilesystemPersistence)
 	if !ok {
 		return SessionRef{}, errors.New("session: persistence does not support import")
 	}
-	id, err := filesystem.importDirectory(ctx, source)
+	id, err := filesystem.importDirectory(ctx, source, options)
 	if err != nil {
 		return SessionRef{}, err
 	}
 	return SessionRef{HostID: s.hostID, SessionID: id}, nil
 }
 
-func (p *FilesystemPersistence) importDirectory(ctx context.Context, source string) (string, error) {
+func (p *FilesystemPersistence) importDirectory(ctx context.Context, source string, options CreateOptions) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -366,6 +402,22 @@ func (p *FilesystemPersistence) importDirectory(ctx context.Context, source stri
 	}()
 	if _, err := Replay(staging, nil); err != nil {
 		return "", fmt.Errorf("validate imported events: %w", err)
+	}
+	if options.SessionID == "" {
+		options.SessionID = manifest.SessionID
+	}
+	if options.SessionID != manifest.SessionID {
+		return "", errors.New("session: import header identity does not match manifest")
+	}
+	header, err := headerForCreate(options)
+	if err != nil {
+		return "", err
+	}
+	if header != nil {
+		header.CreatedAt = manifest.CreatedAt
+		if err := writeSessionHeader(staging, *header); err != nil {
+			return "", err
+		}
 	}
 	if err := os.Rename(staging, target); err != nil {
 		return "", fmt.Errorf("publish imported session: %w", err)

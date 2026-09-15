@@ -185,6 +185,45 @@ func (s *Store) AttachSession(ctx context.Context, operationID, workspaceID, ses
 	})
 }
 
+// CommitRotation atomically publishes a prepared replacement into its
+// workspace and, for Clear, archives the source without removing its stable
+// position from the registry.
+func (s *Store) CommitRotation(ctx context.Context, operationID, workspaceID, sessionID, beforeSessionID, archiveSessionID string) error {
+	operationID, workspaceID, sessionID = strings.TrimSpace(operationID), strings.TrimSpace(workspaceID), strings.TrimSpace(sessionID)
+	archiveSessionID = strings.TrimSpace(archiveSessionID)
+	if operationID == "" || workspaceID == "" || sessionID == "" {
+		return errors.New("rotation commit requires operation, workspace, and session ids")
+	}
+	return s.mutate(ctx, func(state *State) error {
+		workspace, ok := state.Workspaces[workspaceID]
+		if !ok {
+			return ErrWorkspaceNotFound
+		}
+		pending, ok := state.PendingCreates[sessionID]
+		if !ok || pending.OperationID != operationID || pending.WorkspaceID != workspaceID {
+			if owner, attached := sessionOwner(*state, sessionID); !attached || owner != workspaceID {
+				return ErrMutationConflict
+			}
+		} else if owner, attached := sessionOwner(*state, sessionID); attached && owner != workspaceID {
+			return ErrMutationConflict
+		} else if !attached {
+			workspace.SessionIDs = insertBefore(workspace.SessionIDs, sessionID, beforeSessionID)
+			workspace.UpdatedAt = time.Now().UTC()
+			state.Workspaces[workspaceID] = workspace
+		}
+		delete(state.PendingCreates, sessionID)
+		if archiveSessionID != "" {
+			if _, exists := sessionOwner(*state, archiveSessionID); !exists {
+				return ErrSessionNotFound
+			}
+			if !contains(state.ArchivedSessionIDs, archiveSessionID) {
+				state.ArchivedSessionIDs = append(state.ArchivedSessionIDs, archiveSessionID)
+			}
+		}
+		return nil
+	})
+}
+
 func (s *Store) AbortCreate(ctx context.Context, sessionID string) error {
 	return s.mutate(ctx, func(state *State) error {
 		delete(state.PendingCreates, strings.TrimSpace(sessionID))

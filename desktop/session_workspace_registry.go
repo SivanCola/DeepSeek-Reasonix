@@ -10,6 +10,7 @@ import (
 
 	"reasonix/desktop/internal/workspacestate"
 	"reasonix/internal/config"
+	"reasonix/internal/control"
 	"reasonix/internal/session"
 )
 
@@ -99,4 +100,119 @@ func (a *App) attachDesktopSession(ctx context.Context, scope, workspaceRoot str
 		return "", err
 	}
 	return workspaceID, nil
+}
+
+func (a *App) attachForkedDesktopSession(ctx context.Context, source *WorkspaceTab, childSessionID string) error {
+	if source == nil || strings.TrimSpace(childSessionID) == "" {
+		return errors.New("desktop fork requires source and child identities")
+	}
+	workspaceID := strings.TrimSpace(source.WorkspaceID)
+	if workspaceID == "" {
+		var err error
+		workspaceID, err = a.ensureDesktopWorkspace(ctx, source.Scope, source.WorkspaceRoot)
+		if err != nil {
+			return err
+		}
+	}
+	state, err := a.workspaceRegistry().Load(ctx)
+	if err != nil {
+		return err
+	}
+	workspace, ok := state.Workspaces[workspaceID]
+	if !ok {
+		return workspacestate.ErrWorkspaceNotFound
+	}
+	beforeID := ""
+	for index, id := range workspace.SessionIDs {
+		if id == source.SessionID && index+1 < len(workspace.SessionIDs) {
+			beforeID = workspace.SessionIDs[index+1]
+			break
+		}
+	}
+	return a.workspaceRegistry().AttachSession(ctx, "", workspaceID, childSessionID, beforeID)
+}
+
+func (a *App) verifyCanonicalTabRegistryBeforePrune(tab *WorkspaceTab) error {
+	if tab == nil || strings.TrimSpace(tab.SessionID) == "" {
+		return nil
+	}
+	store := a.workspaceRegistry()
+	contained, err := store.Contains(a.bootContext(), tab.SessionID)
+	if err != nil {
+		return err
+	}
+	if contained {
+		return nil
+	}
+	_, err = a.attachDesktopSession(a.bootContext(), tab.Scope, tab.WorkspaceRoot, session.SessionRef{
+		HostID: localDesktopHostID, SessionID: tab.SessionID,
+	})
+	return err
+}
+
+func (a *App) prepareDesktopSessionRotation(ctx context.Context, request control.SessionRotationRequest) (control.SessionRotationPlan, error) {
+	if err := validateLocalSessionRef(request.Source); err != nil {
+		return control.SessionRotationPlan{}, err
+	}
+	a.mu.RLock()
+	var owner *WorkspaceTab
+	for _, tab := range a.runtimeTabsLocked() {
+		if tab != nil && tab.SessionID == request.Source.SessionID {
+			owner = tab
+			break
+		}
+	}
+	a.mu.RUnlock()
+	if owner == nil {
+		return control.SessionRotationPlan{}, errors.New("desktop session rotation owner is unavailable")
+	}
+	workspaceID := strings.TrimSpace(owner.WorkspaceID)
+	if workspaceID == "" {
+		var err error
+		workspaceID, err = a.ensureDesktopWorkspace(ctx, owner.Scope, owner.WorkspaceRoot)
+		if err != nil {
+			return control.SessionRotationPlan{}, err
+		}
+	}
+	contained, err := a.workspaceRegistry().Contains(ctx, request.Source.SessionID)
+	if err != nil {
+		return control.SessionRotationPlan{}, err
+	}
+	if !contained {
+		if err := a.workspaceRegistry().AttachSession(ctx, "", workspaceID, request.Source.SessionID, ""); err != nil {
+			return control.SessionRotationPlan{}, err
+		}
+	}
+	sessionID := "desktop-" + strings.TrimPrefix(newTabID(), "tab_")
+	operationID := "rotate-" + strings.TrimPrefix(newTabID(), "tab_")
+	store := a.workspaceRegistry()
+	if err := store.BeginCreate(ctx, workspacestate.PendingCreate{OperationID: operationID, WorkspaceID: workspaceID, SessionID: sessionID}); err != nil {
+		return control.SessionRotationPlan{}, err
+	}
+	archiveSource := ""
+	if request.Reason == "clear" {
+		archiveSource = request.Source.SessionID
+	}
+	return control.SessionRotationPlan{
+		CreateOptions: session.CreateOptions{
+			SessionID: sessionID, CWD: desktopWorkspaceRoot(owner.Scope, owner.WorkspaceRoot), Origin: session.SessionOriginNew,
+		},
+		Commit: func(commitCtx context.Context, ref session.SessionRef) error {
+			if ref.SessionID != sessionID {
+				return errors.New("desktop session rotation published an unexpected identity")
+			}
+			if err := store.CommitRotation(commitCtx, operationID, workspaceID, sessionID, "", archiveSource); err != nil {
+				return err
+			}
+			a.mu.Lock()
+			if current := a.tabs[owner.ID]; current == owner {
+				owner.WorkspaceID = workspaceID
+				owner.SessionID = sessionID
+				owner.SessionPath = ""
+				a.saveTabsLocked()
+			}
+			a.mu.Unlock()
+			return nil
+		},
+	}, nil
 }

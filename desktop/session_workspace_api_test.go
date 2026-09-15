@@ -73,3 +73,56 @@ func TestWorkspaceSessionListSurvivesRuntimePruneAndAppRestart(t *testing.T) {
 		t.Fatalf("RestoreCanonicalSession: %v", err)
 	}
 }
+
+func TestSessionRefHistoryAndRenameDoNotNeedController(t *testing.T) {
+	root := t.TempDir()
+	app := NewApp()
+	app.desktopSessionRoot = filepath.Join(root, "desktop-sessions-v5", "by-id")
+	app.workspaceState = workspacestate.NewStore(filepath.Join(root, "desktop", "workspace-state-v1.json"))
+	service := app.desktopSessionService("")
+	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "cold-session", CWD: root, Origin: session.SessionOriginNew})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(map[string]any{"message": map[string]any{"id": "user-1", "role": "user", "content": "cold history"}})
+	if _, err := runtime.Session().AppendBatch(t.Context(), "turn", []session.Event{{Kind: "message/complete", Payload: payload}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.Session().Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	workspaceID, err := app.ensureDesktopWorkspace(t.Context(), "global", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.workspaceState.AttachSession(t.Context(), "", workspaceID, "cold-session", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Close(t.Context(), runtime.Ref()); err != nil {
+		t.Fatal(err)
+	}
+	page, err := app.ReadSessionHistory(runtime.Ref(), "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Messages) != 1 || page.Messages[0].Content != "cold history" {
+		t.Fatalf("history = %#v", page.Messages)
+	}
+	if err := app.RenameCanonicalSession(runtime.Ref(), "Cold title"); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := app.ListWorkspaceSessions(workspaceID, "", "", 10, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Sessions) != 1 || listed.Sessions[0].Title != "Cold title" {
+		t.Fatalf("renamed list = %#v", listed.Sessions)
+	}
+	missing := session.SessionRef{HostID: "local", SessionID: "missing"}
+	if _, err := app.ReadSessionHistory(missing, "", 10); err == nil {
+		t.Fatal("missing SessionID produced readable replacement history")
+	}
+	if _, err := service.Query().Snapshot(t.Context(), missing); err == nil {
+		t.Fatal("missing SessionID was created as an empty replacement")
+	}
+}

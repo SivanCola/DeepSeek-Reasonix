@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"reasonix/desktop/internal/workspacestate"
+	"reasonix/internal/agent"
 	"reasonix/internal/session"
 )
 
@@ -257,6 +258,63 @@ func (a *App) RestoreCanonicalSession(ref session.SessionRef) error {
 
 func (a *App) MoveWorkspaceSession(workspaceID, sessionID, beforeSessionID string) error {
 	if err := a.workspaceRegistry().MoveSession(context.Background(), workspaceID, sessionID, beforeSessionID); err != nil {
+		return err
+	}
+	a.emitProjectTreeChanged()
+	return nil
+}
+
+func (a *App) ReadSessionHistory(ref session.SessionRef, cursor string, limit int) (HistoryPage, error) {
+	if err := validateLocalSessionRef(ref); err != nil {
+		return HistoryPage{}, err
+	}
+	beforeTurn := 0
+	if strings.TrimSpace(cursor) != "" {
+		parsed, err := strconv.Atoi(cursor)
+		if err != nil || parsed < 0 {
+			return HistoryPage{}, errors.New("invalid session history cursor")
+		}
+		beforeTurn = parsed
+	}
+	messages, err := a.desktopSessionService("").Query().History(a.bootContext(), ref)
+	if err != nil {
+		return HistoryPage{}, err
+	}
+	page := historyPageFromProviderMessages(messages, func(content string) string { return content }, nil, nil, beforeTurn, limit)
+	digest, _ := agent.ContentDigestForMessages(messages)
+	return historyPageWithFingerprint(page, sessionRoute(ref.SessionID), digest), nil
+}
+
+// OpenSession installs exactly ref into the current local surface. It first
+// proves the target history is readable; a missing or damaged identity never
+// creates an empty replacement and never clears the currently visible log.
+func (a *App) OpenSession(ref session.SessionRef) (HistoryPage, error) {
+	page, err := a.ReadSessionHistory(ref, "", defaultHistoryPageTurns)
+	if err != nil {
+		return HistoryPage{}, err
+	}
+	tab, ctrl := a.tabAndCtrlByID("")
+	if tab == nil || ctrl == nil {
+		return HistoryPage{}, errors.New("workspace is not ready")
+	}
+	if _, err := a.resumeCanonicalSessionForTranscript(tab, ctrl, sessionRoute(ref.SessionID), defaultHistoryPageTurns, false); err != nil {
+		return HistoryPage{}, err
+	}
+	return page, nil
+}
+
+func (a *App) RenameCanonicalSession(ref session.SessionRef, title string) error {
+	if err := validateLocalSessionRef(ref); err != nil {
+		return err
+	}
+	contained, err := a.workspaceRegistry().Contains(a.bootContext(), ref.SessionID)
+	if err != nil {
+		return err
+	}
+	if !contained {
+		return workspacestate.ErrSessionNotFound
+	}
+	if err := a.desktopSessionService("").SetTitle(a.bootContext(), ref, strings.TrimSpace(title)); err != nil {
 		return err
 	}
 	a.emitProjectTreeChanged()

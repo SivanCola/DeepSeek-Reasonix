@@ -37,10 +37,9 @@ func (a *App) deleteCanonicalSession(route string) error {
 		}
 		return nil
 	}
-	if err := service.Delete(a.bootContext(), ref); err != nil {
+	if err := a.ArchiveCanonicalSession(ref); err != nil {
 		return friendlySessionFileError(err)
 	}
 	a.invalidatePromptHistoryCache()
-	a.emitProjectTreeChangedForSessionDirs(a.activeSessionDir())
 	return nil
 }

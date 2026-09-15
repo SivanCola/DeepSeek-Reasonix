@@ -538,6 +538,21 @@ func TestServiceImportValidatesSelfContainedContentAndPublishesAtomically(t *tes
 			t.Fatalf("failed import left staging directory %q", entry.Name())
 		}
 	}
+	headerTarget, err := NewService("desktop", NewFilesystemPersistence(filepath.Join(t.TempDir(), "desktop-sessions-v5", "by-id")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	headerRef, err := headerTarget.ImportWithHeader(t.Context(), bundle, CreateOptions{SessionID: "portable", CWD: "/workspace", Origin: SessionOriginCanonicalImport})
+	if err != nil {
+		t.Fatal(err)
+	}
+	headerInfo, err := headerTarget.persistence.Stat(t.Context(), headerRef.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if headerInfo.CWD != "/workspace" || headerInfo.Origin != SessionOriginCanonicalImport {
+		t.Fatalf("imported header = %+v", headerInfo)
+	}
 }
 
 func TestDeleteRefusesAnOwnedSession(t *testing.T) {

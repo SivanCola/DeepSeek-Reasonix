@@ -477,6 +477,16 @@ func (c *Controller) sessionEngineEnabled() bool {
 	return exclusive
 }
 
+type SessionRotationRequest struct {
+	Source session.SessionRef
+	Reason string
+}
+
+type SessionRotationPlan struct {
+	CreateOptions session.CreateOptions
+	Commit        func(context.Context, session.SessionRef) error
+}
+
 // rotateExclusiveSession implements /new and /clear without allocating a
 // legacy transcript path. clear additionally deletes the closed source v3
 // directory; new leaves it available in history.
@@ -498,11 +508,24 @@ func (c *Controller) rotateExclusiveSession(clear bool) error {
 	}
 	c.hooks.SessionEnd(context.Background(), reason)
 	c.extensionSessionEvent(extension.PointSessionEnd, dispatch.PhaseEnd, oldRef.SessionID)
-	ref, err := c.BindFreshSession(context.Background(), "")
+	createOptions := session.CreateOptions{}
+	var commitRotation func(context.Context, session.SessionRef) error
+	if c.onSessionRotation != nil {
+		plan, planErr := c.onSessionRotation(context.Background(), SessionRotationRequest{Source: oldRef, Reason: reason})
+		if planErr != nil {
+			return planErr
+		}
+		createOptions, commitRotation = plan.CreateOptions, plan.Commit
+	}
+	ref, err := c.BindFreshSessionWithOptions(context.Background(), createOptions)
 	if err != nil {
 		return err
 	}
-	if clear {
+	if commitRotation != nil {
+		if err := commitRotation(context.Background(), ref); err != nil {
+			return fmt.Errorf("new session %s is active; publish workspace membership: %w", ref.SessionID, err)
+		}
+	} else if clear {
 		if err := service.Delete(context.Background(), oldRef); err != nil {
 			return fmt.Errorf("new session %s is active; delete cleared session: %w", ref.SessionID, err)
 		}
