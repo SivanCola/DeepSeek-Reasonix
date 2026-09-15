@@ -25,14 +25,30 @@ func desktopSessionRoot(sessionDir string) string {
 }
 
 func (a *App) desktopSessionService(sessionDir string) *session.Service {
-	root := desktopSessionRoot(sessionDir)
-	if a == nil || root == "" {
+	if a == nil {
 		return nil
 	}
 	a.sessionServicesMu.Lock()
 	defer a.sessionServicesMu.Unlock()
+	root := a.desktopSessionRoot
+	// Zero-value Apps in narrow tests retain an isolated legacy-derived root;
+	// NewApp always supplies the production v5 root.
+	if root == "" {
+		root = desktopSessionRoot(sessionDir)
+		a.desktopSessionRoot = root
+	}
+	if root == "" {
+		return nil
+	}
 	if a.sessionServices == nil {
 		a.sessionServices = map[string]*session.Service{}
+	}
+	for _, service := range a.sessionServices {
+		// There is deliberately one local service even when a caller still
+		// carries a project-local legacy sessionDir during the cutover.
+		if service != nil {
+			return service
+		}
 	}
 	if service := a.sessionServices[root]; service != nil {
 		return service

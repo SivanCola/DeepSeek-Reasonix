@@ -29,6 +29,7 @@ import (
 
 	"reasonix/desktop/internal/browserops"
 	"reasonix/desktop/internal/instanceidentity"
+	"reasonix/desktop/internal/workspacestate"
 	"reasonix/internal/agent"
 	"reasonix/internal/billing"
 	"reasonix/internal/boot"
@@ -192,11 +193,13 @@ type App struct {
 	// App.mu guards both maps and every desktopSessionRuntime field.
 	runtimeByID         map[string]*desktopSessionRuntime
 	runtimeBySessionKey map[string]*desktopSessionRuntime
-	// sessionServices owns one final-format runtime registry per physical v3
-	// root. Controllers for tabs in the same scope attach to this registry
-	// instead of constructing competing Service instances over the same files.
-	sessionServicesMu sync.Mutex
-	sessionServices   map[string]*session.Service
+	// sessionServices contains one SessionID-only registry for the whole local
+	// Desktop host. desktopSessionRoot is fixed at construction; tests may
+	// override it before the first service is opened.
+	sessionServicesMu  sync.Mutex
+	sessionServices    map[string]*session.Service
+	desktopSessionRoot string
+	workspaceState     *workspacestate.Store
 
 	// tabsRestored is closed when restoreOrBuildTabs has finished populating
 	// a.tabs from desktop-tabs.json (or built the first-launch tab). Startup
@@ -460,6 +463,8 @@ func NewApp() *App {
 		runtimeByID:          map[string]*desktopSessionRuntime{},
 		runtimeBySessionKey:  map[string]*desktopSessionRuntime{},
 		sessionServices:      map[string]*session.Service{},
+		desktopSessionRoot:   config.DesktopSessionStoreDir(),
+		workspaceState:       workspacestate.NewStore(config.DesktopWorkspaceStatePath()),
 		catalogReconcileJobs: map[string]*desktopCatalogReconcileJob{},
 		detachedSessions:     map[string]*WorkspaceTab{},
 		mediaTokens:          newMediaTokenStore(),

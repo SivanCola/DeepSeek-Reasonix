@@ -445,6 +445,28 @@ func SessionStoreDir() string {
 	return filepath.Join(dir, "sessions-v4")
 }
 
+// DesktopSessionStoreDir is the SessionID-only Desktop store. It is a new
+// generation so older binaries never mistake its layout for a project-local
+// sessions-v4 root. The persistence root is by-id: workspace ownership lives
+// in DesktopWorkspaceStatePath rather than in physical directories.
+func DesktopSessionStoreDir() string {
+	dir := userSupportDir()
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, "desktop-sessions-v5", "by-id")
+}
+
+// DesktopWorkspaceStatePath is the durable ordered Workspace -> SessionID
+// registry used by the Desktop sidebar and session lifecycle.
+func DesktopWorkspaceStatePath() string {
+	dir := userSupportDir()
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, "desktop", "workspace-state-v1.json")
+}
+
 // StatsDir is where usage statistics are persisted (one .jsonl per day, e.g.
 // stats/2026-08-02.jsonl). It lives under the user state root — not the install
 // directory, which is typically read-only and replaced on upgrade — so usage
