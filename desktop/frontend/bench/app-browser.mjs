@@ -3,7 +3,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startPreviewServer } from "./vite-preview-server.mjs";
-import { chooseAppLayout, selectSession } from "./app-page-actions.mjs";
+import { chooseAppLayout, newSessionButton, selectSession } from "./app-page-actions.mjs";
 
 const frontendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 process.env.PLAYWRIGHT_BROWSERS_PATH = !process.env.PLAYWRIGHT_BROWSERS_PATH || process.env.PLAYWRIGHT_BROWSERS_PATH === ".pw-browsers"
@@ -143,7 +143,7 @@ try {
   await page.locator('.remote-surface--ready').waitFor();
   await page.waitForFunction(() => document.querySelector('textarea.composer__input:not([aria-hidden=true])')?.disabled === false);
   assert((await page.locator('.topicbar').textContent()).includes('Remote demo session'), "remote project selection adopts its source workspace and authoritative hydrated surface");
-  await page.locator('.sidebar__quick-action').click();
+  await newSessionButton(page).click();
   await page.waitForFunction(() => document.querySelector('.topicbar')?.textContent?.includes('New session'));
   await page.locator('.remote-surface--ready').waitFor();
   await page.waitForFunction(() => document.querySelector('textarea.composer__input:not([aria-hidden=true])')?.disabled === false);

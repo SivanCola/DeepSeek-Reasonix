@@ -41,6 +41,11 @@ export async function selectSession(page, label) {
   await button.click();
 }
 
+/** Return the visible new-session action without coupling a fixture to layout. */
+export function newSessionButton(page) {
+  return page.locator(".sidebar__quick-action:visible, .sidebar__new:visible").first();
+}
+
 export function activeSessionLabel(page) {
   return page.locator([
     '.workspace-browser__session-open[aria-current="page"] strong',
