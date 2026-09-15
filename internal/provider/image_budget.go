@@ -189,6 +189,11 @@ func retainedImageRawBytes(ref string) (int, bool) {
 			return 0, true
 		}
 		return base64DecodedLen(payload), true
+	case ImageFileID:
+		if n, ok := DefaultFileIndex().BytesForFileID(ref); ok {
+			return n, true
+		}
+		return 0, true
 	default:
 		return 0, true
 	}

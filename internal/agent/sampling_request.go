@@ -51,6 +51,7 @@ func (a *Agent) streamProviderRequest(ctx context.Context, req provider.Request)
 	if err := provider.ValidateModelTranscript(req.Messages); err != nil {
 		return nil, err
 	}
+	req.Messages = a.promoteVisionFiles(req.Messages)
 	if err := a.checkRetainedImages(req.Messages); err != nil {
 		return nil, err
 	}

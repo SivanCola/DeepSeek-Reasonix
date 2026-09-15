@@ -2,6 +2,7 @@ package provider
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -72,6 +73,24 @@ func TestCheckRetainedImagesCountQuantum(t *testing.T) {
 	}
 	if CheckRetainedImages(msgs[:MaxImagesPerRequest]) != nil {
 		t.Fatal("600 file images must fit")
+	}
+}
+
+func TestCheckRetainedImagesUsesIndexedFileBytes(t *testing.T) {
+	idx := NewFileIndex(filepath.Join(t.TempDir(), "files-v1.json"))
+	SetDefaultFileIndex(idx)
+	t.Cleanup(func() { SetDefaultFileIndex(NewFileIndex("")) })
+	id := "file-api-budgetbytes"
+	now := int64(1_000)
+	idx.Commit(FileIndexRecord{
+		Scope: "s", Variant: "v", FileID: id,
+		Bytes: 30 << 20, CreatedAt: now, ExpiresAt: 10_000_000,
+	}, now, 1)
+	msgs := []Message{{ID: "u1", Role: RoleUser, Images: []string{id, id, id, id, id}}}
+	err := CheckRetainedImages(msgs)
+	off := AsImageOffloadRequired(err)
+	if off == nil || off.OffloadImages == 0 {
+		t.Fatalf("indexed file bytes should trip the Files watermark: %v", err)
 	}
 }
 

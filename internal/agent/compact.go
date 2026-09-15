@@ -457,6 +457,7 @@ func (a *Agent) runSummaryRequest(ctx context.Context, req provider.Request) (su
 	if a.svc.prov == nil {
 		return "", usage, fmt.Errorf("summary unavailable")
 	}
+	req.Messages = a.promoteVisionFiles(req.Messages)
 	if err := a.checkRetainedImages(req.Messages); err != nil {
 		return "", usage, err
 	}

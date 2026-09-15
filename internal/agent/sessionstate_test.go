@@ -46,6 +46,7 @@ var sessionCarryOver = map[string]bool{
 	"lastPrefixShape":      true,
 	"haveLastPrefixShape":  true,
 	"imageOffloadRecorder": true, // controller wiring; survives conversation swap
+	"visionFilePromoter":   true, // controller wiring; survives conversation swap
 }
 
 func sessionRuntimeFields(t *testing.T) map[string]bool {

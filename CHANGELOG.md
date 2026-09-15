@@ -8,6 +8,16 @@ branch.
 
 ### Added
 
+- **Official vision Files-first upload:** new official DeepSeek images upload
+  through the Files API (Chat `/files` or Messages `/v1/files`) and send
+  `file-id`s. The same compressed bytes reuse a home-scoped index keyed by
+  endpoint and API-key hash. Historical data URLs stay stored as-is; request
+  preparation promotes leftover data URLs only when every occurrence uploads.
+  Upload failure falls back to data URLs under 32 MiB. Tool schemas unchanged.
+- **官方视觉 Files 优先：** 新的官方 DeepSeek 图片经 Files API 上传并以 `file-id`
+  发送，按 endpoint 与 API key 哈希复用。已存 data URL 不改写；请求阶段仅在全部
+  能上传时提升为 file-id。上传失败且小于 32 MiB 时回退 data URL。工具 schema 不变。
+
 - **Live file observations:** structured file tools now protect mutations with
   a host-owned current-version observation. Any successful text window is
   sufficient, successful writes refresh the version, and external changes

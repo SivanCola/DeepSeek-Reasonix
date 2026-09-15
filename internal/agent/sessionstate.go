@@ -57,6 +57,7 @@ type sessionRuntime struct {
 	imageOffloadMu       sync.Mutex
 	imageOffload         []provider.ImageOffloadTarget
 	imageOffloadRecorder func(provider.ImageOffloadPayload)
+	visionFilePromoter   func([]provider.Message) []provider.Message
 
 	// lastPrefixShape records the previous provider request's cacheable prefix
 	// so usage events can explain prefix churn on the next request. Carried

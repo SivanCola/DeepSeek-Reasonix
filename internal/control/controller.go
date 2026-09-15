@@ -848,6 +848,7 @@ func (c *Controller) initializeOwnedResources(opts Options) {
 		}
 	}
 	c.bindImageOffloadRecorder()
+	c.bindVisionFilePromoter()
 	// Checkpoints: bind a store to the session and route writer pre-edits into it.
 	c.rebindCheckpoints(opts.SessionPath)
 	c.setActiveJobSession(opts.SessionPath)
