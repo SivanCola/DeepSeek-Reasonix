@@ -22,6 +22,8 @@ type Query struct {
 	generation    map[string]uint64
 	rebuildCtx    context.Context
 	rebuildStop   context.CancelFunc
+	rebuildWG     sync.WaitGroup
+	closed        bool
 	slots         *rebuildSlots
 	indexMu       sync.Mutex
 	indexLocks    map[string]*sync.Mutex
@@ -122,9 +124,18 @@ func (q *Query) projectionLock(kind, sessionID string) *sync.Mutex {
 // own shared rebuilds, so cancelling one request never cancels work another
 // caller may use; the host query lifetime is the cancellation boundary.
 func (q *Query) Close() {
-	if q != nil && q.rebuildStop != nil {
-		q.rebuildStop()
+	if q == nil {
+		return
 	}
+	q.rebuildMu.Lock()
+	if !q.closed {
+		q.closed = true
+		if q.rebuildStop != nil {
+			q.rebuildStop()
+		}
+	}
+	q.rebuildMu.Unlock()
+	q.rebuildWG.Wait()
 }
 
 func (q *Query) Snapshot(ctx context.Context, ref SessionRef) (Snapshot, error) {
@@ -214,6 +225,10 @@ func (q *Query) scheduleMetadataRebuild(sessionID string) {
 		return
 	}
 	q.rebuildMu.Lock()
+	if q.closed {
+		q.rebuildMu.Unlock()
+		return
+	}
 	if _, exists := q.rebuilding[sessionID]; exists {
 		q.rebuildMu.Unlock()
 		return
@@ -227,6 +242,7 @@ func (q *Query) scheduleMetadataRebuild(sessionID string) {
 		q.rebuildMu.Unlock()
 		return
 	}
+	q.rebuildWG.Add(1)
 	q.rebuildMu.Unlock()
 	go q.rebuildCatalogMetadata(sessionID, generation)
 }
@@ -244,6 +260,7 @@ func (q *Query) invalidateCatalog(sessionID string) {
 }
 
 func (q *Query) rebuildCatalogMetadata(sessionID string, generation uint64) {
+	defer q.rebuildWG.Done()
 	defer q.slots.release()
 	defer func() {
 		q.rebuildMu.Lock()

@@ -16,7 +16,7 @@ func (a *App) closeSessionServices() {
 	}
 	a.sessionServicesMu.Unlock()
 	for _, service := range services {
-		if err := service.CloseAll(context.Background()); err != nil {
+		if err := service.Shutdown(context.Background()); err != nil {
 			slog.Warn("desktop: close session service", "err", err)
 		}
 	}

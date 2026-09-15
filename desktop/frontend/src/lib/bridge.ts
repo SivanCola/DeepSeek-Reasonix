@@ -2303,38 +2303,11 @@ function makeMockApp(): AppBindings {
     },
     async OpenSession(ref: SessionRef) {
       if (ref.hostId !== "local") throw new Error(`unsupported mock session host: ${ref.hostId}`);
-      const parent = mockProjectTreeForDisplay().find((candidate) => projectChildren(candidate).some((node) => mockSessionIDForNode(node) === ref.sessionId));
-      const node = parent && projectChildren(parent).find((candidate) => mockSessionIDForNode(candidate) === ref.sessionId);
-      if (!parent || !node?.topicId) throw new Error(`mock session not found: ${ref.sessionId}`);
-      const tab = mockTabs.find((candidate) => candidate.active) ?? mockTabs[0];
-      if (!tab) throw new Error("mock workspace is not ready");
-      // SessionRef navigation rebinds the existing local surface. Do not route
-      // it through the legacy Topic activator: that swaps tab ids, so the
-      // frontend correctly rejects the resulting ready event as belonging to
-      // a different surface and never hydrates the selected transcript.
-      pruneMockTabsTo(tab.id);
-      const workspaceId = mockWorkspaceID(parent);
-      const session = { hostId: "local", sessionId: ref.sessionId } as SessionRef;
-      const scope = parent.kind === "global_folder" ? "global" : "project";
-      const workspaceRoot = parent.root || (scope === "global" ? globalWorkspaceRoot : "");
-      const rebound: TabMeta = {
-        ...mockTabs[0],
-        scope,
-        workspaceRoot,
-        workspaceId,
-        workspaceName: parent.label,
-        workspacePath: workspaceRoot,
-        topicId: node.topicId,
-        topicTitle: topicLabel(node.topicId, node.label),
-        sessionPath: `/mock/sessions/${node.topicId}.jsonl`,
-        sessionId: ref.sessionId,
-        session,
-        projectColor: node.projectColor || parent.projectColor,
-        ready: true,
-        running: mockTopicRunsInScenario(node.topicId),
-        active: true,
-        cwd: workspaceRoot,
-      };
+      const { rebindMockSessionTab } = await import("./bridgeMockSessionNavigation");
+      const rebound = rebindMockSessionTab(ref, mockTabs.find((candidate) => candidate.active) ?? mockTabs[0], mockProjectTreeForDisplay(), globalWorkspaceRoot, mockTopicRunsInScenario);
+      // SessionRef navigation rebinds the existing surface; legacy Topic
+      // activation swaps tab ids and makes its ready event correctly stale.
+      pruneMockTabsTo(rebound.id);
       mockTabs = [rebound];
       emitMockReady(rebound.id);
       return this.HistoryPageForTab(rebound.id, 0, 60);

@@ -186,7 +186,7 @@ func (a *App) migrateCanonicalStore(ctx context.Context, source desktopMigration
 	if err != nil {
 		return err
 	}
-	defer func() { retErr = errors.Join(retErr, old.CloseAll(context.Background())) }()
+	defer func() { retErr = errors.Join(retErr, old.Shutdown(context.Background())) }()
 	infos, err := listAllCanonicalSessionInfo(ctx, old.Query())
 	if err != nil {
 		return err
@@ -304,7 +304,7 @@ func (a *App) migrateLegacySession(ctx context.Context, path string, source desk
 	if err != nil {
 		return err
 	}
-	defer func() { retErr = errors.Join(retErr, stage.CloseAll(context.Background())) }()
+	defer func() { retErr = errors.Join(retErr, stage.Shutdown(context.Background())) }()
 	runtime, result, err := stage.ContinueImported(ctx, path, "")
 	if err != nil {
 		_ = updateDesktopMigrationLedger(key, "", "failed", "legacy_import")
