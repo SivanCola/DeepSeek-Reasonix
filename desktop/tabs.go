@@ -3534,22 +3534,9 @@ func (a *App) buildTabControllerWithContextCore(tab *WorkspaceTab, loadedSession
 	if a.tabBuildSuperseded(tab, buildGeneration) {
 		return
 	}
-	a.mu.Lock()
-	if !tab.removed && tab.Ctrl == nil {
-		// A lease-blocked tab keeps its blocked banner steady while the
-		// deferred-rebuild loop retries every 2s: resetting to "starting" on
-		// each attempt makes the frontend's takeover banner (and the dialog
-		// built from it) mount/unmount in a 2s cycle. The state flips to ready
-		// only when a retry actually wins the lease. Deliberate user rebuilds
-		// never carry StartupErrLeaseHeld, so they reset as before.
-		if !tab.StartupErrLeaseHeld {
-			tab.Ready = false
-			clearTabStartupError(tab)
-			a.setSessionRuntimePhaseLocked(tab, sessionRuntimeStarting, nil)
-		}
+	if !a.prepareTabControllerWorkspace(tab, buildCtx, buildGeneration, appCtx) {
+		return
 	}
-	a.mu.Unlock()
-	a.reconcileTabWithPinnedSessionMeta(tab)
 
 	// Snapshot the identity/profile fields under a.mu before the off-lock
 	// stretch: session rebinding, recovery, and topic assignment write them

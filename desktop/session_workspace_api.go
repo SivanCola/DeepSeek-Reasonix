@@ -485,7 +485,7 @@ func (a *App) OpenSession(ref session.SessionRef) (HistoryPage, error) {
 		return HistoryPage{}, errSessionNavigationSuperseded
 	}
 	tab, ctrl := a.tabAndCtrlByID("")
-	if tab == nil || ctrl == nil {
+	if tab == nil {
 		return HistoryPage{}, errors.New("workspace is not ready")
 	}
 	if _, err := a.resumeCanonicalSessionForTranscript(tab, ctrl, sessionRoute(ref.SessionID), defaultHistoryPageTurns, false, navigationSequence); err != nil {

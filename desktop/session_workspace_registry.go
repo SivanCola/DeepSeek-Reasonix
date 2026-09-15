@@ -163,7 +163,7 @@ func (a *App) validateDesktopWorkspaceMembership(ctx context.Context, workspaceI
 		return fmt.Errorf("desktop session %q has no immutable workspace header", ref.SessionID)
 	}
 	if !sameDesktopPath(info.CWD, workspace.Root) {
-		return fmt.Errorf("desktop session %q belongs to a different workspace", ref.SessionID)
+		return errSessionWorkspaceConflict
 	}
 	return nil
 }
