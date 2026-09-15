@@ -70,7 +70,7 @@ func (a *App) recoverDesktopPendingCreates(ctx context.Context) error {
 			if attachErr := a.workspaceRegistry().AttachSession(ctx, pending.OperationID, pending.WorkspaceID, sessionID, ""); attachErr != nil {
 				joined = errors.Join(joined, attachErr)
 			} else {
-				a.pendingCreateRecovered.Add(1)
+				a.desktopSessions.pendingCreateRecovered.Add(1)
 			}
 		} else if errors.Is(err, session.ErrSessionNotFound) {
 			if abortErr := a.workspaceRegistry().AbortCreate(ctx, sessionID); abortErr != nil {
@@ -104,7 +104,7 @@ func (a *App) migrateDesktopSessionsV5(ctx context.Context) error {
 	sources := map[string]*desktopMigrationSource{}
 	add := func(scope, workspaceRoot, root string) *desktopMigrationSource {
 		root = filepath.Clean(strings.TrimSpace(root))
-		if root == "." || root == "" || sameDesktopPath(root, a.desktopSessionRoot) {
+		if root == "." || root == "" || sameDesktopPath(root, a.desktopSessions.root) {
 			return nil
 		}
 		key := canonicalRuntimeRoot(root)

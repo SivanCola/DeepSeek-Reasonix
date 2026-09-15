@@ -36,12 +36,16 @@ type desktopTabsFile struct {
 	TabOrder       []string                `json:"tabOrder,omitempty"`
 }
 
+type desktopTabWorkspace struct {
+	ID string
+}
+
 func persistedDesktopTabEntry(tab *WorkspaceTab) desktopTabEntry {
 	return desktopTabEntry{
 		ID:                tab.ID,
 		Scope:             tab.Scope,
 		WorkspaceRoot:     tab.WorkspaceRoot,
-		WorkspaceID:       tab.WorkspaceID,
+		WorkspaceID:       tab.SessionWorkspace.ID,
 		TopicID:           tab.TopicID,
 		SessionPath:       tab.currentSessionPath(),
 		SessionID:         tab.SessionID,

@@ -29,7 +29,6 @@ import (
 
 	"reasonix/desktop/internal/browserops"
 	"reasonix/desktop/internal/instanceidentity"
-	"reasonix/desktop/internal/workspacestate"
 	"reasonix/internal/agent"
 	"reasonix/internal/billing"
 	"reasonix/internal/boot"
@@ -194,12 +193,10 @@ type App struct {
 	runtimeByID         map[string]*desktopSessionRuntime
 	runtimeBySessionKey map[string]*desktopSessionRuntime
 	// sessionServices contains one SessionID-only registry for the whole local
-	// Desktop host. desktopSessionRoot is fixed at construction; tests may
-	// override it before the first service is opened.
-	sessionServicesMu  sync.Mutex
-	sessionServices    map[string]*session.Service
-	desktopSessionRoot string
-	workspaceState     *workspacestate.Store
+	// Desktop host. desktopSessions owns its persistence and navigation state.
+	sessionServicesMu sync.Mutex
+	sessionServices   map[string]*session.Service
+	desktopSessions   desktopSessionState
 
 	// tabsRestored is closed when restoreOrBuildTabs has finished populating
 	// a.tabs from desktop-tabs.json (or built the first-launch tab). Startup
@@ -222,13 +219,6 @@ type App struct {
 	// one-conversation layout so overlapping navigation cannot remove the tab
 	// another navigation is still activating.
 	singleSurfaceMu sync.Mutex
-	// sessionNavigationSeq fences SessionID-only browser opens. History may be
-	// read concurrently, but only the newest requested identity may publish a
-	// controller/tab replacement.
-	sessionNavigationSeq    atomic.Uint64
-	pruneBlockedPersistence atomic.Uint64
-	pendingCreateRecovered  atomic.Uint64
-
 	// worktreeMergeMu serializes the inspect-confirm-merge/finalize mutation
 	// boundary. Git identities are still revalidated after workspace leases are
 	// acquired; this mutex only prevents duplicate in-process Wails calls.
@@ -469,7 +459,7 @@ func NewApp() *App {
 		runtimeByID:          map[string]*desktopSessionRuntime{},
 		runtimeBySessionKey:  map[string]*desktopSessionRuntime{},
 		sessionServices:      map[string]*session.Service{},
-		workspaceState:       workspacestate.NewStore(config.DesktopWorkspaceStatePath()),
+		desktopSessions:      newDesktopSessionState(),
 		catalogReconcileJobs: map[string]*desktopCatalogReconcileJob{},
 		detachedSessions:     map[string]*WorkspaceTab{},
 		mediaTokens:          newMediaTokenStore(),
@@ -510,11 +500,7 @@ func (a *App) Platform() string {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.shuttingDown.Store(false)
-	a.sessionServicesMu.Lock()
-	if len(a.sessionServices) == 0 {
-		a.desktopSessionRoot = config.DesktopSessionStoreDir()
-	}
-	a.sessionServicesMu.Unlock()
+	a.initializeDesktopSessionRoot()
 	// Only the process that claimed the pre-shell diagnostics lock consumes
 	// lifecycle evidence.
 	initializeLifecycleDiagnostics(a)
@@ -768,10 +754,7 @@ func (a *App) restoreOrBuildTabs() {
 				tab = a.createTabEntryWithID("global", globalTabWorkspaceRoot(), entry.TopicID, id)
 			}
 			tab.model = entry.Model
-			tab.WorkspaceID = strings.TrimSpace(entry.WorkspaceID)
-			if tab.WorkspaceID == "" {
-				tab.WorkspaceID = desktopWorkspaceID(entry.Scope, entry.WorkspaceRoot)
-			}
+			tab.SessionWorkspace.ID = restoredWorkspaceID(entry)
 			tab.effort = cloneStringPtr(entry.Effort)
 			// Legacy role fields remain readable, but the retired setting no
 			// longer changes restored-session behavior.
@@ -878,7 +861,7 @@ func (a *App) createTabEntryWithID(scope, workspaceRoot, topicID, id string) *Wo
 		ID:               id,
 		Scope:            scope,
 		WorkspaceRoot:    workspaceRoot,
-		WorkspaceID:      desktopWorkspaceID(scope, workspaceRoot),
+		SessionWorkspace: desktopTabWorkspace{ID: desktopWorkspaceID(scope, workspaceRoot)},
 		TopicID:          topicID,
 		TopicTitle:       topicTitleForTab(scope, workspaceRoot, topicID),
 		topicTitleSource: loadTopicTitleSource(topicTitleRoot(scope, workspaceRoot), topicID),
@@ -2168,7 +2151,6 @@ func (a *App) clearLegacySessionRuntimeLocked(tab *WorkspaceTab, oldCtrl control
 		PinnedContextLoader:      pinnedContextLoader(snap.workspaceRoot),
 		OnSessionRecovered:       a.handleTabSessionRecovered(tab),
 		OnSessionTransition:      a.handleTabSessionTransition(tab),
-		OnSessionRotation:        a.prepareDesktopSessionRotation,
 		BeforeInboxDispatch:      a.beforeInboxDispatch,
 		OnSessionTitleChanged:    a.onSessionTitleChanged,
 	})
@@ -4219,7 +4201,6 @@ func (a *App) buildSessionRebindCandidate(
 		PinnedContextLoader:      pinnedContextLoader(root),
 		OnSessionRecovered:       a.handleTabSessionRecovered(tab),
 		OnSessionTransition:      a.handleTabSessionTransition(tab),
-		OnSessionRotation:        a.prepareDesktopSessionRotation,
 		BeforeInboxDispatch:      a.beforeInboxDispatch,
 		OnSessionTitleChanged:    a.onSessionTitleChanged,
 	})
@@ -9633,7 +9614,6 @@ func (a *App) SetModelForTab(tabID, name string) (retErr error) {
 		PinnedContextLoader:      pinnedContextLoader(snap.workspaceRoot),
 		OnSessionRecovered:       a.handleTabSessionRecovered(tab),
 		OnSessionTransition:      a.handleTabSessionTransition(tab),
-		OnSessionRotation:        a.prepareDesktopSessionRotation,
 		BeforeInboxDispatch:      a.beforeInboxDispatch,
 		OnSessionTitleChanged:    a.onSessionTitleChanged,
 		// Keep the private temporary directory across model switches (#7575).
@@ -9840,7 +9820,6 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 		PinnedContextLoader:      pinnedContextLoader(snap.workspaceRoot),
 		OnSessionRecovered:       a.handleTabSessionRecovered(tab),
 		OnSessionTransition:      a.handleTabSessionTransition(tab),
-		OnSessionRotation:        a.prepareDesktopSessionRotation,
 		BeforeInboxDispatch:      a.beforeInboxDispatch,
 		OnSessionTitleChanged:    a.onSessionTitleChanged,
 		// Keep the private temporary directory across effort switches (#7575).

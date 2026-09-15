@@ -6,10 +6,8 @@ import (
 	"os"
 	"strings"
 
-	"reasonix/internal/boot"
 	"reasonix/internal/config"
 	"reasonix/internal/control"
-	"reasonix/internal/plugin"
 	"reasonix/internal/session"
 )
 
@@ -67,7 +65,7 @@ func (a *App) resumeCanonicalSessionForTranscript(tab *WorkspaceTab, ctrl contro
 	wantedNavigation := uint64(0)
 	if len(navigationSequence) > 0 {
 		wantedNavigation = navigationSequence[0]
-		if a.sessionNavigationSeq.Load() != wantedNavigation {
+		if a.desktopSessions.navigationSeq.Load() != wantedNavigation {
 			return HistoryPage{}, errSessionNavigationSuperseded
 		}
 	}
@@ -95,7 +93,7 @@ func (a *App) resumeCanonicalSessionForTranscript(tab *WorkspaceTab, ctrl contro
 				return HistoryPage{}, err
 			}
 		} else {
-			if wantedNavigation != 0 && a.sessionNavigationSeq.Load() != wantedNavigation {
+			if wantedNavigation != 0 && a.desktopSessions.navigationSeq.Load() != wantedNavigation {
 				return HistoryPage{}, errSessionNavigationSuperseded
 			}
 			if _, err := identity.OpenSession(a.bootContext(), ref); err != nil {
@@ -144,44 +142,11 @@ func (a *App) replaceControllerForSessionOpenLocked(tab *WorkspaceTab, current c
 	}
 	sharedHost := a.lookupSharedHost(snap.sharedHostKey)
 	extensionGeneration := a.currentExtensionGeneration()
-	buildOptions := boot.Options{
-		Model:                    targetModel,
-		RequireKey:               false,
-		StatsSource:              "desktop",
-		TaskStore:                a.taskStore(),
-		OnConfigLoadWarnings:     a.configLoadWarningsHandler(),
-		Sink:                     a.desktopControllerSink(snap.sink, cfg.Notifications),
-		WorkspaceRoot:            root,
-		SessionDir:               sessionDirForSnapshot(snap),
-		SessionService:           service,
-		EffortOverride:           cloneStringPtr(snap.effort),
-		SharedHost:               sharedHost,
-		BrowserExecutor:          a.browserExecutorForTab(tab),
-		MCPHostProfile:           plugin.HostProfileDesktopApps,
-		CleanupPendingReconciler: reconcileDesktopCleanupPending,
-		SubagentParentLive:       a.subagentParentProbeForBuild(tab),
-		SessionRecoveryMeta:      a.tabSessionRecoveryMeta(tab),
-		PinnedContextLoader:      pinnedContextLoader(root),
-		OnSessionRecovered:       a.handleTabSessionRecovered(tab),
-		OnSessionTransition:      a.handleTabSessionTransition(tab),
-		OnSessionRotation:        a.prepareDesktopSessionRotation,
-		BeforeInboxDispatch:      a.beforeInboxDispatch,
-		OnSessionTitleChanged:    a.onSessionTitleChanged,
-	}
+	buildOptions := a.sessionOpenBootOptions(tab, snap, cfg, service, sharedHost, root, targetModel)
 	requestedModel := targetModel
-	candidate, err := a.buildTabControllerBootFenced(a.bootContext(), extensionGeneration, buildOptions)
-	fallbackUsed := false
-	if errors.Is(err, boot.ErrUnknownModel) {
-		fallbackModel, _, ok := cfg.ResolveDesktopNewSessionModel()
-		if ok && fallbackModel != targetModel {
-			buildOptions.Model = fallbackModel
-			candidate, err = a.buildTabControllerBootFenced(a.bootContext(), extensionGeneration, buildOptions)
-			if err == nil {
-				targetModel = fallbackModel
-				fallbackUsed = true
-			}
-		}
-	}
+	candidate, targetModel, fallbackUsed, err := a.buildSessionOpenControllerCandidate(
+		a.bootContext(), extensionGeneration, cfg, buildOptions,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -219,7 +184,7 @@ func (a *App) replaceControllerForSessionOpenLocked(tab *WorkspaceTab, current c
 	}
 
 	a.mu.Lock()
-	if len(navigationSequence) > 0 && navigationSequence[0] != 0 && a.sessionNavigationSeq.Load() != navigationSequence[0] {
+	if len(navigationSequence) > 0 && navigationSequence[0] != 0 && a.desktopSessions.navigationSeq.Load() != navigationSequence[0] {
 		a.mu.Unlock()
 		return nil, errSessionNavigationSuperseded
 	}

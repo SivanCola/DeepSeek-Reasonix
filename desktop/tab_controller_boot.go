@@ -33,12 +33,12 @@ func (a *App) desktopSessionService(sessionDir string) *session.Service {
 	}
 	a.sessionServicesMu.Lock()
 	defer a.sessionServicesMu.Unlock()
-	root := a.desktopSessionRoot
+	root := a.desktopSessions.root
 	// Zero-value Apps in narrow tests retain an isolated legacy-derived root;
 	// NewApp always supplies the production v5 root.
 	if root == "" {
 		root = desktopSessionRoot(sessionDir)
-		a.desktopSessionRoot = root
+		a.desktopSessions.root = root
 	}
 	if root == "" {
 		return nil

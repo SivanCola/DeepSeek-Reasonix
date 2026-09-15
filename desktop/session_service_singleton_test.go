@@ -9,7 +9,7 @@ import (
 
 func TestDesktopSessionServiceIsSharedAcrossWorkspaces(t *testing.T) {
 	app := NewApp()
-	app.desktopSessionRoot = filepath.Join(t.TempDir(), "desktop-sessions-v5", "by-id")
+	app.desktopSessions.root = filepath.Join(t.TempDir(), "desktop-sessions-v5", "by-id")
 
 	first := app.desktopSessionService(filepath.Join(t.TempDir(), "project-a", "sessions"))
 	second := app.desktopSessionService(filepath.Join(t.TempDir(), "project-b", "sessions"))

@@ -17,8 +17,8 @@ func TestWorkspaceSessionListSurvivesRuntimePruneAndAppRestart(t *testing.T) {
 	projectRoot := filepath.Join(root, "project")
 
 	first := NewApp()
-	first.desktopSessionRoot = sessionRoot
-	first.workspaceState = workspacestate.NewStore(statePath)
+	first.desktopSessions.root = sessionRoot
+	first.desktopSessions.workspaceState = workspacestate.NewStore(statePath)
 	service := first.desktopSessionService(filepath.Join(projectRoot, "sessions"))
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "durable-session", CWD: projectRoot, Origin: session.SessionOriginNew})
 	if err != nil {
@@ -38,14 +38,14 @@ func TestWorkspaceSessionListSurvivesRuntimePruneAndAppRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ensureDesktopWorkspace: %v", err)
 	}
-	if err := first.workspaceState.AttachSession(t.Context(), "", workspaceID, runtime.Ref().SessionID, ""); err != nil {
+	if err := first.desktopSessions.workspaceState.AttachSession(t.Context(), "", workspaceID, runtime.Ref().SessionID, ""); err != nil {
 		t.Fatalf("AttachSession: %v", err)
 	}
 	first.closeSessionServices()
 
 	second := NewApp()
-	second.desktopSessionRoot = sessionRoot
-	second.workspaceState = workspacestate.NewStore(statePath)
+	second.desktopSessions.root = sessionRoot
+	second.desktopSessions.workspaceState = workspacestate.NewStore(statePath)
 	page, err := second.ListWorkspaceSessions(workspaceID, "", "", 10, false)
 	if err != nil {
 		t.Fatalf("ListWorkspaceSessions after restart: %v", err)
@@ -78,8 +78,8 @@ func TestWorkspaceSessionListSurvivesRuntimePruneAndAppRestart(t *testing.T) {
 func TestSessionRefHistoryAndRenameDoNotNeedController(t *testing.T) {
 	root := t.TempDir()
 	app := NewApp()
-	app.desktopSessionRoot = filepath.Join(root, "desktop-sessions-v5", "by-id")
-	app.workspaceState = workspacestate.NewStore(filepath.Join(root, "desktop", "workspace-state-v1.json"))
+	app.desktopSessions.root = filepath.Join(root, "desktop-sessions-v5", "by-id")
+	app.desktopSessions.workspaceState = workspacestate.NewStore(filepath.Join(root, "desktop", "workspace-state-v1.json"))
 	service := app.desktopSessionService("")
 	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "cold-session", CWD: root, Origin: session.SessionOriginNew})
 	if err != nil {
@@ -96,7 +96,7 @@ func TestSessionRefHistoryAndRenameDoNotNeedController(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := app.workspaceState.AttachSession(t.Context(), "", workspaceID, "cold-session", ""); err != nil {
+	if err := app.desktopSessions.workspaceState.AttachSession(t.Context(), "", workspaceID, "cold-session", ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := service.Close(t.Context(), runtime.Ref()); err != nil {
@@ -132,8 +132,8 @@ func TestForkSessionPublishesHeaderBackedChildAfterParent(t *testing.T) {
 	root := t.TempDir()
 	app := NewApp()
 	app.ctx = t.Context()
-	app.desktopSessionRoot = filepath.Join(root, "desktop-sessions-v5", "by-id")
-	app.workspaceState = workspacestate.NewStore(filepath.Join(root, "desktop", "workspace-state-v1.json"))
+	app.desktopSessions.root = filepath.Join(root, "desktop-sessions-v5", "by-id")
+	app.desktopSessions.workspaceState = workspacestate.NewStore(filepath.Join(root, "desktop", "workspace-state-v1.json"))
 	workspaceID, err := app.ensureDesktopWorkspace(t.Context(), "project", root)
 	if err != nil {
 		t.Fatal(err)
@@ -151,14 +151,14 @@ func TestForkSessionPublishesHeaderBackedChildAfterParent(t *testing.T) {
 	if _, err := parent.Session().Flush(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err := app.workspaceState.AttachSession(t.Context(), "", workspaceID, parent.Ref().SessionID, ""); err != nil {
+	if err := app.desktopSessions.workspaceState.AttachSession(t.Context(), "", workspaceID, parent.Ref().SessionID, ""); err != nil {
 		t.Fatal(err)
 	}
 	child, err := app.ForkSession(parent.Ref(), "turn-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := app.workspaceState.Load(t.Context())
+	state, err := app.desktopSessions.workspaceState.Load(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

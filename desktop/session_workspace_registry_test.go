@@ -30,8 +30,8 @@ func (c registrySessionCreator) BindFreshSessionWithOptions(ctx context.Context,
 func TestFreshDesktopSessionIsDurableRegistryMemberBeforeReturn(t *testing.T) {
 	root := t.TempDir()
 	app := NewApp()
-	app.desktopSessionRoot = filepath.Join(root, "desktop-sessions-v5", "by-id")
-	app.workspaceState = workspacestate.NewStore(filepath.Join(root, "desktop", "workspace-state-v1.json"))
+	app.desktopSessions.root = filepath.Join(root, "desktop-sessions-v5", "by-id")
+	app.desktopSessions.workspaceState = workspacestate.NewStore(filepath.Join(root, "desktop", "workspace-state-v1.json"))
 	service := app.desktopSessionService(filepath.Join(root, "old-project-sessions"))
 	project := filepath.Join(root, "project")
 
@@ -39,7 +39,7 @@ func TestFreshDesktopSessionIsDurableRegistryMemberBeforeReturn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bindFreshDesktopSession: %v", err)
 	}
-	state, err := app.workspaceState.Load(t.Context())
+	state, err := app.desktopSessions.workspaceState.Load(t.Context())
 	if err != nil {
 		t.Fatalf("Load workspace state: %v", err)
 	}

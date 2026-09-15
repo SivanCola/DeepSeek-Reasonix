@@ -35,8 +35,8 @@ func TestCanonicalV4MigrationPublishesHeaderThenWorkspaceMembershipIdempotently(
 	}
 
 	app := NewApp()
-	app.desktopSessionRoot = filepath.Join(root, "desktop-sessions-v5", "by-id")
-	app.workspaceState = workspacestate.NewStore(filepath.Join(root, "desktop", "workspace-state-v1.json"))
+	app.desktopSessions.root = filepath.Join(root, "desktop-sessions-v5", "by-id")
+	app.desktopSessions.workspaceState = workspacestate.NewStore(filepath.Join(root, "desktop", "workspace-state-v1.json"))
 	source := desktopMigrationSource{
 		root: sourceRoot, scope: "project", workspaceRoot: filepath.Join(root, "workspace"),
 		exact: map[string]bool{"legacy-canonical": true},
@@ -54,7 +54,7 @@ func TestCanonicalV4MigrationPublishesHeaderThenWorkspaceMembershipIdempotently(
 	if len(info.Sessions) != 1 || info.Sessions[0].SessionID != "legacy-canonical" || info.Sessions[0].Origin != session.SessionOriginCanonicalImport {
 		t.Fatalf("migrated sessions = %#v", info.Sessions)
 	}
-	state, err := app.workspaceState.Load(t.Context())
+	state, err := app.desktopSessions.workspaceState.Load(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,13 +75,13 @@ func TestExactLegacyTabMigrationFreezesIntoHeaderBackedSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	app := NewApp()
-	app.desktopSessionRoot = filepath.Join(root, "desktop-sessions-v5", "by-id")
-	app.workspaceState = workspacestate.NewStore(filepath.Join(root, "desktop", "workspace-state-v1.json"))
+	app.desktopSessions.root = filepath.Join(root, "desktop-sessions-v5", "by-id")
+	app.desktopSessions.workspaceState = workspacestate.NewStore(filepath.Join(root, "desktop", "workspace-state-v1.json"))
 	source := desktopMigrationSource{root: legacyDir, scope: "global", exact: map[string]bool{legacyPath: true}}
 	if err := app.migrateLegacyDirectory(t.Context(), source); err != nil {
 		t.Fatal(err)
 	}
-	state, err := app.workspaceState.Load(t.Context())
+	state, err := app.desktopSessions.workspaceState.Load(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,8 +105,8 @@ func TestExactLegacyTabMigrationFreezesIntoHeaderBackedSession(t *testing.T) {
 func TestPendingCreateRecoveryAttachesDurableSessionAndDropsMissingReservation(t *testing.T) {
 	root := t.TempDir()
 	app := NewApp()
-	app.desktopSessionRoot = filepath.Join(root, "desktop-sessions-v5", "by-id")
-	app.workspaceState = workspacestate.NewStore(filepath.Join(root, "desktop", "workspace-state-v1.json"))
+	app.desktopSessions.root = filepath.Join(root, "desktop-sessions-v5", "by-id")
+	app.desktopSessions.workspaceState = workspacestate.NewStore(filepath.Join(root, "desktop", "workspace-state-v1.json"))
 	workspaceID, err := app.ensureDesktopWorkspace(t.Context(), "project", filepath.Join(root, "project"))
 	if err != nil {
 		t.Fatal(err)
@@ -115,7 +115,7 @@ func TestPendingCreateRecoveryAttachesDurableSessionAndDropsMissingReservation(t
 		{OperationID: "durable-op", WorkspaceID: workspaceID, SessionID: "durable"},
 		{OperationID: "missing-op", WorkspaceID: workspaceID, SessionID: "missing"},
 	} {
-		if err := app.workspaceState.BeginCreate(t.Context(), pending); err != nil {
+		if err := app.desktopSessions.workspaceState.BeginCreate(t.Context(), pending); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -131,7 +131,7 @@ func TestPendingCreateRecoveryAttachesDurableSessionAndDropsMissingReservation(t
 	if err := app.recoverDesktopPendingCreates(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	state, err := app.workspaceState.Load(t.Context())
+	state, err := app.desktopSessions.workspaceState.Load(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,8 +169,8 @@ func TestCanonicalMigrationRemapsConflictingSessionIDDeterministically(t *testin
 	}
 
 	app := NewApp()
-	app.desktopSessionRoot = filepath.Join(root, "desktop-sessions-v5", "by-id")
-	app.workspaceState = workspacestate.NewStore(filepath.Join(root, "desktop", "workspace-state-v1.json"))
+	app.desktopSessions.root = filepath.Join(root, "desktop-sessions-v5", "by-id")
+	app.desktopSessions.workspaceState = workspacestate.NewStore(filepath.Join(root, "desktop", "workspace-state-v1.json"))
 	targetRuntime, err := app.desktopSessionService("").Create(t.Context(), session.CreateOptions{SessionID: "same-id", CWD: root, Origin: session.SessionOriginNew})
 	if err != nil {
 		t.Fatal(err)
@@ -184,7 +184,7 @@ func TestCanonicalMigrationRemapsConflictingSessionIDDeterministically(t *testin
 	if err := app.migrateCanonicalStore(t.Context(), source); err != nil {
 		t.Fatalf("repeat conflict migration: %v", err)
 	}
-	state, err := app.workspaceState.Load(t.Context())
+	state, err := app.desktopSessions.workspaceState.Load(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

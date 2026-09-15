@@ -122,8 +122,8 @@ func (a *App) GetSessionArchitectureDiagnostics() (SessionArchitectureDiagnostic
 	}
 	infos, listErr := listAllCanonicalSessionInfo(context.Background(), a.desktopSessionService("").Query())
 	result := SessionArchitectureDiagnostics{
-		PendingCreateRecovered:  a.pendingCreateRecovered.Load(),
-		PruneBlockedPersistence: a.pruneBlockedPersistence.Load(),
+		PendingCreateRecovered:  a.desktopSessions.pendingCreateRecovered.Load(),
+		PruneBlockedPersistence: a.desktopSessions.pruneBlockedPersistence.Load(),
 	}
 	members := map[string]bool{}
 	for _, workspace := range state.Workspaces {
@@ -479,12 +479,12 @@ func (a *App) ReadSessionHistory(ref session.SessionRef, cursor string, limit in
 // proves the target history is readable; a missing or damaged identity never
 // creates an empty replacement and never clears the currently visible log.
 func (a *App) OpenSession(ref session.SessionRef) (HistoryPage, error) {
-	navigationSequence := a.sessionNavigationSeq.Add(1)
+	navigationSequence := a.desktopSessions.navigationSeq.Add(1)
 	page, err := a.ReadSessionHistory(ref, "", defaultHistoryPageTurns)
 	if err != nil {
 		return HistoryPage{}, err
 	}
-	if a.sessionNavigationSeq.Load() != navigationSequence {
+	if a.desktopSessions.navigationSeq.Load() != navigationSequence {
 		return HistoryPage{}, errSessionNavigationSuperseded
 	}
 	tab, ctrl := a.tabAndCtrlByID("")

@@ -5,8 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	"reasonix/desktop/internal/workspacestate"
 	"reasonix/internal/config"
@@ -16,6 +19,35 @@ import (
 
 type freshSessionCreator interface {
 	BindFreshSession(context.Context, string) (session.SessionRef, error)
+}
+
+// desktopSessionState groups the Desktop-only persistence and navigation
+// authority so App does not grow a second set of independent scalar owners.
+type desktopSessionState struct {
+	root                    string
+	workspaceState          *workspacestate.Store
+	navigationSeq           atomic.Uint64
+	pruneBlockedPersistence atomic.Uint64
+	pendingCreateRecovered  atomic.Uint64
+}
+
+func newDesktopSessionState() desktopSessionState {
+	return desktopSessionState{workspaceState: workspacestate.NewStore(config.DesktopWorkspaceStatePath())}
+}
+
+func (a *App) initializeDesktopSessionRoot() {
+	a.sessionServicesMu.Lock()
+	defer a.sessionServicesMu.Unlock()
+	if len(a.sessionServices) == 0 {
+		a.desktopSessions.root = config.DesktopSessionStoreDir()
+	}
+}
+
+func restoredWorkspaceID(entry desktopTabEntry) string {
+	if id := strings.TrimSpace(entry.WorkspaceID); id != "" {
+		return id
+	}
+	return desktopWorkspaceID(entry.Scope, entry.WorkspaceRoot)
 }
 
 func desktopWorkspaceID(scope, workspaceRoot string) string {
@@ -40,10 +72,10 @@ func (a *App) workspaceRegistry() *workspacestate.Store {
 	}
 	a.sessionServicesMu.Lock()
 	defer a.sessionServicesMu.Unlock()
-	if a.workspaceState == nil {
-		a.workspaceState = workspacestate.NewStore(config.DesktopWorkspaceStatePath())
+	if a.desktopSessions.workspaceState == nil {
+		a.desktopSessions.workspaceState = workspacestate.NewStore(config.DesktopWorkspaceStatePath())
 	}
-	return a.workspaceState
+	return a.desktopSessions.workspaceState
 }
 
 func (a *App) ensureDesktopWorkspace(ctx context.Context, scope, workspaceRoot string) (string, error) {
@@ -106,7 +138,7 @@ func (a *App) attachForkedDesktopSession(ctx context.Context, source *WorkspaceT
 	if source == nil || strings.TrimSpace(childSessionID) == "" {
 		return errors.New("desktop fork requires source and child identities")
 	}
-	workspaceID := strings.TrimSpace(source.WorkspaceID)
+	workspaceID := strings.TrimSpace(source.SessionWorkspace.ID)
 	if workspaceID == "" {
 		var err error
 		workspaceID, err = a.ensureDesktopWorkspace(ctx, source.Scope, source.WorkspaceRoot)
@@ -150,6 +182,25 @@ func (a *App) verifyCanonicalTabRegistryBeforePrune(tab *WorkspaceTab) error {
 	return err
 }
 
+func (a *App) persistHiddenTabBeforePrune(id string, tab *WorkspaceTab) error {
+	if err := a.snapshotTab(tab); err != nil {
+		a.desktopSessions.pruneBlockedPersistence.Add(1)
+		slog.Warn("desktop: snapshot before pruning hidden tab failed", "tab", id, "err", err)
+		return fmt.Errorf("save current session before switching tabs: %w", err)
+	}
+	if err := a.saveTabSessionMetaForCurrentSession(tab); err != nil {
+		a.desktopSessions.pruneBlockedPersistence.Add(1)
+		slog.Warn("desktop: session metadata before pruning hidden tab failed", "tab", id, "err", err)
+		return fmt.Errorf("save current session metadata before switching tabs: %w", err)
+	}
+	if err := a.verifyCanonicalTabRegistryBeforePrune(tab); err != nil {
+		a.desktopSessions.pruneBlockedPersistence.Add(1)
+		slog.Warn("desktop: canonical registry before pruning hidden tab failed", "tab", id, "err", err)
+		return fmt.Errorf("publish current session before switching tabs: %w", err)
+	}
+	return nil
+}
+
 func (a *App) prepareDesktopSessionRotation(ctx context.Context, request control.SessionRotationRequest) (control.SessionRotationPlan, error) {
 	if err := validateLocalSessionRef(request.Source); err != nil {
 		return control.SessionRotationPlan{}, err
@@ -166,7 +217,7 @@ func (a *App) prepareDesktopSessionRotation(ctx context.Context, request control
 	if owner == nil {
 		return control.SessionRotationPlan{}, errors.New("desktop session rotation owner is unavailable")
 	}
-	workspaceID := strings.TrimSpace(owner.WorkspaceID)
+	workspaceID := strings.TrimSpace(owner.SessionWorkspace.ID)
 	if workspaceID == "" {
 		var err error
 		workspaceID, err = a.ensureDesktopWorkspace(ctx, owner.Scope, owner.WorkspaceRoot)
@@ -206,7 +257,7 @@ func (a *App) prepareDesktopSessionRotation(ctx context.Context, request control
 			}
 			a.mu.Lock()
 			if current := a.tabs[owner.ID]; current == owner {
-				owner.WorkspaceID = workspaceID
+				owner.SessionWorkspace.ID = workspaceID
 				owner.SessionID = sessionID
 				owner.SessionPath = ""
 				a.saveTabsLocked()
