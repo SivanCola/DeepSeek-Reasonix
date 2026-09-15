@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import vm from "node:vm";
 import test from "node:test";
+import { groups as windowsDesktopGroups, testArgs as windowsDesktopTestArgs } from "./desktop-windows-go-tests.mjs";
 
 const workflow = name => readFileSync(new URL(`../.github/workflows/${name}.yml`, import.meta.url), "utf8");
 function job(source, name) {
@@ -216,7 +217,7 @@ test("all desktop consumers verify the prepared build and reject a failed prepar
   assert.equal(ci.match(/test -n "\$\{\{ needs\.desktop-prepare\.outputs\.producer_attempt \}\}"/g)?.length, verifications);
   for (const [name, variant] of [
     ["desktop-go", "stable"], ["desktop-frontend", "stable"], ["desktop-browser-group", "stable"],
-    ["desktop-macos", "stable"], ["desktop-windows", "canary"], ["desktop-windows-go", "stable"],
+    ["desktop-macos", "stable"], ["desktop-windows", "canary"], ["desktop-windows-go-group", "stable"],
   ]) {
     const body = job(ci, name);
     if (["desktop-go", "desktop-frontend"].includes(name)) assert.ok(aggregate.includes(name));
@@ -264,19 +265,22 @@ test("browser matrix preserves five entry points and fails closed through deskto
 });
 
 test("Windows desktop Go partitions tests without verbose JSON cache overhead", () => {
-  const windowsGo = job(ci, "desktop-windows-go");
-  const suite = shellStep(windowsGo, "test (Windows desktop and update helper)");
-  const commands = suite.trim().split("\n").map(line => ({
-    run: line.match(/-run '([^']+)'/)?.[1],
-    skip: line.match(/-skip '([^']+)'/)?.[1],
-  }));
-  assert.equal(commands.length, 3);
-  assert.equal(suite.match(/^\s*go test /gm)?.length, commands.length);
+  const windowsGo = job(ci, "desktop-windows-go-group");
+  assert.match(windowsGo, /run: node \.\.\/scripts\/desktop-windows-go-tests\.mjs \$\{\{ matrix.group \}\}/);
+  const commands = windowsDesktopGroups.map(group => {
+    const args = windowsDesktopTestArgs(group);
+    assert.equal(args[0], "test");
+    assert.equal(args.at(-1), "./...");
+    assert.ok(!args.some(arg => arg.startsWith("-timeout") || arg === "-json" || arg === "-v"));
+    return { run: args.includes("-run") ? args[args.indexOf("-run") + 1] : undefined,
+      skip: args.includes("-skip") ? args[args.indexOf("-skip") + 1] : undefined };
+  });
+  assert.equal(commands.length, 4);
   // Include non-test entry points and every possible first suffix character.
-  // The complement group must retain names outside the two selected ranges.
+  // The complement group must retain names outside the three selected ranges.
   const names = ["Example", "ExampleSession", "FuzzSession", "Test"];
   for (let code = 0; code <= 127; code++) names.push(`Test${String.fromCharCode(code)}Session`);
-  names.push("Test会话", "TestΩSession");
+  names.push("Test会话", "TestΩSession", "TestWindowsTerminalProcessConPTYSmoke");
   for (const name of names) {
     const owners = commands.filter(command =>
       (!command.run || new RegExp(command.run).test(name))
@@ -287,11 +291,16 @@ test("Windows desktop Go partitions tests without verbose JSON cache overhead", 
     }
     assert.equal(owners.length, 1, `${name} must run in exactly one group`);
   }
-  assert.doesNotMatch(suite, /go test[^\n]*-timeout/);
   assert.doesNotMatch(windowsGo, /go test -json/);
   assert.doesNotMatch(windowsGo, /go-test-timing/);
   assert.doesNotMatch(windowsGo, /go test -run ['"]?\^\$/);
 
   assert.match(windowsGo, /name: probe \(Windows ConPTY host integration\)[\s\S]*?continue-on-error: true[\s\S]*?run: go test -run '\^TestWindowsTerminalProcessConPTYSmoke\$' \./);
   assert.match(windowsGo, /steps\.conpty-smoke\.outcome == 'failure'/);
+  const aggregate = job(ci, "desktop-windows-go");
+  const script = shellStep(aggregate, "Verify every native Windows Go group passed");
+  for (const result of ["success", "failure", "cancelled", "skipped", ""]) {
+    const status = spawnSync("bash", ["-e", "-c", script], { env: { ...process.env, GROUP_RESULT: result } }).status;
+    assert.equal(status === 0, result === "success");
+  }
 });
