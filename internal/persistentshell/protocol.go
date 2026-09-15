@@ -32,11 +32,14 @@ func posixQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// ansiCQuote renders s as a POSIX $'...' literal with no raw control bytes, so
+// ansiCQuote renders s as an ASCII-only $'...' literal with no raw control bytes, so
 // a multi-line command still travels as ONE physical input line. An interactive
 // shell echoes PS2 for an embedded newline before it runs the buffer, which
 // would put prompt bytes and wrapper source into model-visible output — and a
 // PTY line discipline is not a reliable carrier for arbitrary control bytes.
+// Readline can interpret high bytes as editing keys in a C/unset locale before
+// the shell parses the literal. Escape bytes, not runes, to preserve the command
+// exactly without changing the user's locale or interactive editing settings.
 func ansiCQuote(s string) string {
 	var b strings.Builder
 	b.Grow(len(s) + 8)
@@ -55,11 +58,15 @@ func ansiCQuote(s string) string {
 		case '\t':
 			b.WriteString(`\t`)
 		default:
-			if c < 0x20 || c == 0x7f {
+			if c < 0x20 || c >= 0x7f {
 				// Octal escapes are the portable $'...' form; \xHH is not
 				// available in every POSIX shell this package can drive.
-				b.WriteString(`\`)
-				b.WriteString(strconv.FormatUint(uint64(c), 8))
+				// Always use three digits so a following command digit cannot
+				// become part of this escape (e.g. byte 1 followed by "70").
+				b.WriteByte('\\')
+				b.WriteByte('0' + (c >> 6))
+				b.WriteByte('0' + ((c >> 3) & 7))
+				b.WriteByte('0' + (c & 7))
 				continue
 			}
 			b.WriteByte(c)

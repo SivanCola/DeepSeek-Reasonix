@@ -104,6 +104,26 @@ func TestBashPersistentSchemaUnchanged(t *testing.T) {
 	}
 }
 
+func TestBashPersistentUnicodeWithoutUTF8Locale(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX persistent bash")
+	}
+	t.Setenv("LC_ALL", "C")
+	t.Setenv("INPUTRC", "/dev/null")
+	b := persistentBash(t, t.TempDir())
+	b.shell = sandbox.ResolveShell("bash", "", nil)
+	ctx := fullAccessBashTestContext(t.Context())
+	for _, command := range []string{
+		"export RX_UNICODE='中文😀'; printf '%s' \"$RX_UNICODE\"",
+		"printf '%s' \"$RX_UNICODE\"",
+	} {
+		out, err := b.Execute(ctx, argsJSON(t, map[string]any{"command": command}))
+		if err != nil || strings.TrimSpace(out) != "中文😀" {
+			t.Fatalf("Unicode command: output=%q err=%v", out, err)
+		}
+	}
+}
+
 func TestBashPersistentSkipsBackgroundAndWriteEscalation(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX persistent bash")

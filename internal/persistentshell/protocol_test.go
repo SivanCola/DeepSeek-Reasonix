@@ -1,6 +1,8 @@
 package persistentshell
 
 import (
+	"bytes"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -21,6 +23,39 @@ func TestExtractOutputIgnoresEchoedScript(t *testing.T) {
 	}
 	if body != "/tmp/work" {
 		t.Fatalf("body=%q", body)
+	}
+}
+
+func TestAnsiCQuoteASCIIByteRoundTrip(t *testing.T) {
+	skipNonPOSIX(t)
+	// NUL cannot occur in a shell argument. Include every other byte followed
+	// by octal digits to catch escapes that accidentally consume the suffix.
+	var input []byte
+	for c := 1; c <= 255; c++ {
+		input = append(input, byte(c), '7', '0')
+	}
+	quoted := ansiCQuote(string(input))
+	for _, c := range []byte(quoted) {
+		if c < 0x20 || c >= 0x7f {
+			t.Fatalf("unsafe terminal input byte: %02x", c)
+		}
+	}
+	for _, name := range []string{"bash", "zsh"} {
+		t.Run(name, func(t *testing.T) {
+			path, err := exec.LookPath(name)
+			if err != nil {
+				t.Skipf("%s not installed", name)
+			}
+			cmd := exec.Command(path, "-c", "printf '%s' "+quoted)
+			cmd.Env = []string{"LC_ALL=C"}
+			got, err := cmd.Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(got, input) {
+				t.Fatalf("shell decoded %x, want %x", got, input)
+			}
+		})
 	}
 }
 
@@ -85,7 +120,7 @@ func TestAnsiCQuoteKeepsOnePhysicalLine(t *testing.T) {
 	if got := ansiCQuote("a'b\nc\\d\te"); got != `$'a\'b\nc\\d\te'` {
 		t.Fatalf("quote=%q", got)
 	}
-	if got := ansiCQuote("\x01"); got != `$'\1'` {
+	if got := ansiCQuote("\x01"); got != `$'\001'` {
 		t.Fatalf("control quote=%q", got)
 	}
 }
