@@ -118,10 +118,13 @@ test("invalid diff identities fail instead of producing a skip", () => {
   assert.throws(() => changedFiles({ base: "f".repeat(40), head: "HEAD" }));
 });
 
-test("CI routing changes exercise every routed Desktop surface", () => {
+// site and sdk are in this list because the required aggregates accept a
+// skipped site or a no-op sdk; a PR that edits the routing contract would
+// otherwise satisfy those expectations without running either surface.
+test("CI routing changes exercise every routed surface", () => {
   for (const path of [".github/workflows/ci.yml", ".github/workflows/app-memory.yml", "scripts/ci-paths.mjs"]) {
     const flags = classifyPaths([path]).flags;
-    for (const name of ["desktop", "desktop_go", "frontend", "browser", "memory", "memory_full", "electron", "native", "packaging"])
+    for (const name of ["desktop", "desktop_go", "frontend", "browser", "memory", "memory_full", "electron", "native", "packaging", "site", "sdk"])
       assert.equal(flags[name], true, `${path}: ${name}`);
   }
 });

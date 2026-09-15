@@ -74,14 +74,22 @@ test("macOS signing diagnostics require protected main and cannot publish", () =
 test("required desktop aggregate rejects every failed, cancelled or unexpectedly skipped child", () => {
   const script = shellStep(job(ci, "desktop"), "Verify desktop validation jobs");
   const success = { CHANGES_RESULT: "success", PREPARE_REQUIRED: "true", NATIVE_REQUIRED: "true", FRONTEND_REQUIRED: "true", BROWSER_REQUIRED: "true",
-    PREPARE_RESULT: "success", GO_RESULT: "success", GO_RACE_RESULT: "success", FRONTEND_RESULT: "success", BROWSER_RESULT: "success" };
+    PACKAGE_REQUIRED: "true", PREPARE_RESULT: "success", GO_RESULT: "success", GO_RACE_RESULT: "success", FRONTEND_RESULT: "success", BROWSER_RESULT: "success",
+    MACOS_RESULT: "success", WINDOWS_RESULT: "success", WINDOWS_GO_RESULT: "success", PACKAGE_RESULT: "success" };
   const run = env => spawnSync("bash", ["-e", "-c", script], { env: { ...process.env, ...env } }).status;
   assert.equal(run(success), 0);
-  for (const key of ["PREPARE_RESULT", "GO_RESULT", "GO_RACE_RESULT", "FRONTEND_RESULT", "BROWSER_RESULT", "CHANGES_RESULT"]) {
+  for (const key of ["PREPARE_RESULT", "GO_RESULT", "GO_RACE_RESULT", "FRONTEND_RESULT", "BROWSER_RESULT", "CHANGES_RESULT",
+    "MACOS_RESULT", "WINDOWS_RESULT", "WINDOWS_GO_RESULT", "PACKAGE_RESULT"]) {
     for (const value of ["failure", "cancelled", "skipped", ""]) assert.notEqual(run({ ...success, [key]: value }), 0, `${key}=${value}`);
   }
+  // A pull request that cannot affect the desktop module: every child skips
+  // except the browser aggregate, which always runs and validates its own.
   assert.equal(run({ ...success, PREPARE_REQUIRED: "false", NATIVE_REQUIRED: "false", FRONTEND_REQUIRED: "false", BROWSER_REQUIRED: "false",
-    PREPARE_RESULT: "skipped", GO_RESULT: "skipped", GO_RACE_RESULT: "skipped", FRONTEND_RESULT: "skipped", BROWSER_RESULT: "success" }), 0);
+    PACKAGE_REQUIRED: "false", PREPARE_RESULT: "skipped", GO_RESULT: "skipped", GO_RACE_RESULT: "skipped", FRONTEND_RESULT: "skipped",
+    BROWSER_RESULT: "success", MACOS_RESULT: "skipped", WINDOWS_RESULT: "skipped", WINDOWS_GO_RESULT: "skipped", PACKAGE_RESULT: "skipped" }), 0);
+  // Any pull request: packaging is push-only, so it must be skipped there.
+  assert.equal(run({ ...success, PACKAGE_REQUIRED: "false", PACKAGE_RESULT: "skipped" }), 0);
+  assert.notEqual(run({ ...success, PACKAGE_REQUIRED: "false", PACKAGE_RESULT: "success" }), 0);
   assert.equal(run({ ...success, FRONTEND_REQUIRED: "false", BROWSER_REQUIRED: "false", FRONTEND_RESULT: "skipped", BROWSER_RESULT: "success" }), 0);
   const browserScript = shellStep(job(ci, "desktop-browser"), "Verify desktop browser groups");
   const browser = spawnSync("bash", ["-e", "-c", browserScript], { env: { ...process.env,
@@ -104,6 +112,59 @@ test("required lint aggregates code lint and the deduplicated frontend suite", (
   assert.equal(run({ ...success, FRONTEND_REQUIRED: "false", PREPARE_RESULT: "success", FRONTEND_RESULT: "skipped" }), 0);
   assert.doesNotMatch(job(ci, "lint-code"), /test:motion/);
   assert.match(body, /needs: \[changes, lint-code, desktop-prepare, desktop-frontend\]/);
+});
+
+test("required root aggregate covers the jobs the per-OS test legs do not", () => {
+  const body = job(ci, "root");
+  const script = shellStep(body, "Verify root validation jobs");
+  const success = { CHANGES_RESULT: "success", CODE_REQUIRED: "true", SITE_REQUIRED: "true", COVERAGE_REQUIRED: "true",
+    CONTROL_RESULT: "success", ISOLATED_RESULT: "success", SDK_RESULT: "success", SITE_RESULT: "success", COVERAGE_RESULT: "success" };
+  const run = env => spawnSync("bash", ["-e", "-c", script], { env: { ...process.env, ...env } }).status;
+  assert.equal(run(success), 0);
+  for (const key of ["CHANGES_RESULT", "CONTROL_RESULT", "ISOLATED_RESULT", "SDK_RESULT", "SITE_RESULT", "COVERAGE_RESULT"])
+    for (const value of ["failure", "cancelled", "skipped", ""]) assert.notEqual(run({ ...success, [key]: value }), 0, `${key}=${value}`);
+  // A pull request unrelated to code or site: the internally-gated jobs still
+  // report success, the skippable ones must actually be skipped.
+  assert.equal(run({ ...success, CODE_REQUIRED: "false", SITE_REQUIRED: "false", COVERAGE_REQUIRED: "false",
+    ISOLATED_RESULT: "skipped", SITE_RESULT: "skipped", COVERAGE_RESULT: "skipped" }), 0);
+  // Coverage is push-only; a pull request that ran it is a routing defect.
+  assert.notEqual(run({ ...success, COVERAGE_REQUIRED: "false", COVERAGE_RESULT: "success" }), 0);
+  assert.match(body, /needs: \[changes, windows-control, windows-isolated, sdk, site, coverage\]/);
+  // govulncheck sets continue-on-error, so needs.*.result is success even when
+  // it fails; aggregating it would be a tautology that reads like coverage.
+  assert.match(job(ci, "govulncheck"), /continue-on-error: true/);
+  assert.doesNotMatch(body, /GOVULN/);
+});
+
+// The gap that let a failing desktop-windows-go merge was a job nobody had
+// wired into a required aggregate. Keep that unrepeatable: every job must be
+// reachable from a required check, or be named here with a reason.
+test("every ci job is reachable from a required aggregate", () => {
+  const required = ["test", "race", "lint", "desktop", "root"];
+  const advisory = {
+    changes: "asserted by line one of every aggregate",
+    "ci-metrics": "reports queue and stage timing; failure must not block merges",
+    "prune-go-cache": "push-only cache housekeeping; cannot report on a pull request",
+    govulncheck: "continue-on-error by design — stdlib advisories precede Go patch releases",
+  };
+  const jobs = ci.slice(ci.indexOf("\njobs:\n")); // `on:` also nests two-space keys
+  const names = [...jobs.matchAll(/^ {2}([a-z][a-z0-9-]*):$/gm)].map(match => match[1]);
+  assert.ok(names.length > 20, `expected the full job list, got ${names.length}`);
+  // A bracketed list may wrap across lines, so consume up to its closing ].
+  const edges = new Map(names.map(name => [name, (job(ci, name).match(/^ {4}needs:\s*(\[[^\]]*\]|\S.*)$/m)?.[1] ?? "")
+    .replace(/[[\]]/g, "").split(",").map(entry => entry.trim()).filter(Boolean)]));
+  const reachable = new Set(required);
+  for (const name of required) for (const dependency of edges.get(name) ?? []) reachable.add(dependency);
+  for (let size = 0; size !== reachable.size;) {
+    size = reachable.size;
+    for (const name of [...reachable]) for (const dependency of edges.get(name) ?? []) reachable.add(dependency);
+  }
+  for (const name of names) {
+    if (reachable.has(name)) continue;
+    assert.ok(advisory[name], `${name} is gated by no required check and is not declared advisory`);
+  }
+  for (const name of Object.keys(advisory))
+    assert.ok(names.includes(name), `${name} is declared advisory but no longer exists`);
 });
 
 test("reuse skips only build work and still gates every publisher on validation", () => {

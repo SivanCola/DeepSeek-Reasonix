@@ -56,8 +56,11 @@ export function classifyPaths(input, { full = false } = {}) {
       flags.sdk = true;
       setReason(reasons, "sdk", path, "SDK or generated protocol source");
     }
+    // site and sdk belong here too: a PR that edits the routing contract must
+    // exercise every gate it can change, and without them such a PR skips site
+    // and no-ops sdk while the aggregates trivially accept those skips.
     if (CI_CONTROL.test(path)) {
-      for (const flag of ["desktop_go", "frontend", "browser", "memory", "memory_full", "electron", "native", "packaging"]) {
+      for (const flag of ["desktop_go", "frontend", "browser", "memory", "memory_full", "electron", "native", "packaging", "site", "sdk"]) {
         flags[flag] = true;
         setReason(reasons, flag, path, "CI routing contract");
       }
