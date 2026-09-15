@@ -114,3 +114,30 @@ func TestCaptureHoldStaysBounded(t *testing.T) {
 		t.Fatalf("body lost data: %d bytes", len(c.body()))
 	}
 }
+
+// A shell tracing its own input (set -x) prints the end marker followed by
+// wrapper source instead of digits. That trailer is output, not a completion,
+// and must not park the reader until the deadline.
+func TestCaptureSkipsMarkerWithNonStatusTrailer(t *testing.T) {
+	c := newCapture("S", "E:", nil)
+	c.push("S\n+ printf '%s%s\\n' E:' \"$__rx_status\"\n")
+	if c.done {
+		t.Fatal("a traced marker must not complete the command")
+	}
+	c.push("real output\nE:3\n")
+	if !c.done || c.exitCode != 3 {
+		t.Fatalf("done=%v code=%d", c.done, c.exitCode)
+	}
+	if !strings.Contains(c.body(), "real output") {
+		t.Fatalf("body=%q", c.body())
+	}
+}
+
+// A CRLF host puts \r before the status terminator.
+func TestCaptureAcceptsCarriageReturnStatus(t *testing.T) {
+	c := newCapture("S", "E:", nil)
+	c.push("S\nout\nE:5\r\n")
+	if !c.done || c.exitCode != 5 {
+		t.Fatalf("done=%v code=%d", c.done, c.exitCode)
+	}
+}

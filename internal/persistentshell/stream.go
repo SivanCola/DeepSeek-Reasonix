@@ -176,15 +176,27 @@ func (c *capture) push(text string) {
 
 func (c *capture) consume(text string) {
 	c.hold += text
-	if idx := strings.Index(c.hold, c.end); idx >= 0 {
-		c.emit(c.hold[:idx])
-		c.hold = c.hold[idx:]
-		status, ok := parseStatus(c.hold[len(c.end):])
-		if !ok {
-			// The marker is here but its status line has not arrived yet; keep
-			// it withheld until the next read completes it.
+	for {
+		idx := strings.Index(c.hold, c.end)
+		if idx < 0 {
+			break
+		}
+		status, ok, pending := parseStatus(c.hold[idx+len(c.end):])
+		if pending {
+			// The status line has not arrived yet; withhold from the marker on.
+			c.emit(c.hold[:idx])
+			c.hold = c.hold[idx:]
 			return
 		}
+		if !ok {
+			// A complete trailer that is not digits is not this command's
+			// completion (a shell tracing its own input prints one). Treat it
+			// as output and keep scanning.
+			c.emit(c.hold[:idx+len(c.end)])
+			c.hold = c.hold[idx+len(c.end):]
+			continue
+		}
+		c.emit(c.hold[:idx])
 		c.hold, c.done, c.exitCode = "", true, status
 		return
 	}

@@ -159,19 +159,23 @@ func readyLine(buf string) bool {
 	return strings.Contains(normalizePTY(buf), readyToken+"\n")
 }
 
-// parseStatus reads the exit status that must follow an end marker. It requires
-// digits terminated by a newline, which is what makes echoed wrapper source
-// unable to fabricate a completion.
-func parseStatus(after string) (int, bool) {
-	line, _, ok := strings.Cut(after, "\n")
-	if !ok || line == "" {
-		return 0, false
+// parseStatus reads the exit status that must follow an end marker. Digits
+// terminated by a newline are required, which is what stops echoed wrapper
+// source from fabricating a completion.
+//
+// pending distinguishes "the status line has not arrived yet" from "this marker
+// is not a completion". Without it, a shell tracing its own input (set -x)
+// parks on a marker whose trailer never becomes digits.
+func parseStatus(after string) (status int, ok bool, pending bool) {
+	line, _, complete := strings.Cut(after, "\n")
+	if !complete {
+		return 0, false, true
 	}
-	n, err := strconv.Atoi(line)
+	n, err := strconv.Atoi(strings.TrimSuffix(line, "\r"))
 	if err != nil {
-		return 0, false
+		return 0, false, false
 	}
-	return n, true
+	return n, true, false
 }
 
 // extractOutput finds a completed command in text. The markers are matched as
@@ -184,7 +188,7 @@ func extractOutput(buf, start, end string) (body string, code int, ok bool) {
 	if endIdx < 0 {
 		return "", 0, false
 	}
-	status, ok := parseStatus(text[endIdx+len(end):])
+	status, ok, _ := parseStatus(text[endIdx+len(end):])
 	if !ok {
 		return "", 0, false
 	}
