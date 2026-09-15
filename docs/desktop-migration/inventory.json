@@ -669,7 +669,7 @@
       "kind": "command",
       "name": "CloseTerminalForTab",
       "detail": "(tabID string, sessionID string) error",
-      "location": "desktop/terminal.go:221",
+      "location": "desktop/terminal.go:222",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -853,7 +853,7 @@
       "kind": "command",
       "name": "CreateTerminalForTab",
       "detail": "(tabID string, rel string, shellID string) (TerminalSessionView, error)",
-      "location": "desktop/terminal.go:179",
+      "location": "desktop/terminal.go:180",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -3053,7 +3053,7 @@
       "kind": "command",
       "name": "RenameTerminalForTab",
       "detail": "(tabID string, sessionID string, title string) error",
-      "location": "desktop/terminal.go:232",
+      "location": "desktop/terminal.go:233",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -3181,7 +3181,7 @@
       "kind": "command",
       "name": "ResizeTerminalForTab",
       "detail": "(tabID string, sessionID string, cols int, rows int) error",
-      "location": "desktop/terminal.go:210",
+      "location": "desktop/terminal.go:211",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -4957,7 +4957,7 @@
       "kind": "command",
       "name": "TerminalOutputForTab",
       "detail": "(tabID string, sessionID string) (string, error)",
-      "location": "desktop/terminal.go:165",
+      "location": "desktop/terminal.go:166",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -4965,7 +4965,7 @@
       "kind": "command",
       "name": "TerminalWorkspaceForTab",
       "detail": "(tabID string) (TerminalWorkspaceView, error)",
-      "location": "desktop/terminal.go:141",
+      "location": "desktop/terminal.go:142",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
