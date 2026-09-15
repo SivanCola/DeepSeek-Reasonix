@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -62,6 +64,19 @@ type WorkspaceSessionPage struct {
 	RegistryGeneration uint64                    `json:"registryGeneration"`
 }
 
+type SessionArchitectureDiagnostics struct {
+	SessionHeadersTotal     int    `json:"session_headers_total"`
+	WorkspaceMembersTotal   int    `json:"workspace_members_total"`
+	UnassignedSessions      int    `json:"unassigned_sessions"`
+	MigrationPending        int    `json:"migration_pending"`
+	MigrationFailed         int    `json:"migration_failed"`
+	MigrationCompleted      int    `json:"migration_completed"`
+	ProjectionPending       int    `json:"projection_pending"`
+	ProjectionFailed        int    `json:"projection_failed"`
+	PendingCreateRecovered  uint64 `json:"pending_create_recovered"`
+	PruneBlockedPersistence uint64 `json:"prune_blocked_persistence"`
+}
+
 func unixMillis(value time.Time) int64 {
 	if value.IsZero() {
 		return 0
@@ -98,6 +113,60 @@ func (a *App) GetWorkspaceSnapshot() (WorkspaceSnapshot, error) {
 		})
 	}
 	return result, nil
+}
+
+func (a *App) GetSessionArchitectureDiagnostics() (SessionArchitectureDiagnostics, error) {
+	state, err := a.workspaceRegistry().Load(context.Background())
+	if err != nil {
+		return SessionArchitectureDiagnostics{}, err
+	}
+	infos, listErr := listAllCanonicalSessionInfo(context.Background(), a.desktopSessionService("").Query())
+	result := SessionArchitectureDiagnostics{
+		PendingCreateRecovered:  a.pendingCreateRecovered.Load(),
+		PruneBlockedPersistence: a.pruneBlockedPersistence.Load(),
+	}
+	members := map[string]bool{}
+	for _, workspace := range state.Workspaces {
+		result.WorkspaceMembersTotal += len(workspace.SessionIDs)
+		for _, sessionID := range workspace.SessionIDs {
+			members[sessionID] = true
+		}
+	}
+	for sessionID, info := range infos {
+		if info.Origin != "" {
+			result.SessionHeadersTotal++
+		}
+		if !members[sessionID] {
+			result.UnassignedSessions++
+		}
+		switch info.MetadataStatus {
+		case session.MetadataPending:
+			result.ProjectionPending++
+		case session.MetadataFailed:
+			result.ProjectionFailed++
+		}
+	}
+	desktopMigrationMu.Lock()
+	var ledger desktopMigrationLedger
+	body, readErr := os.ReadFile(desktopMigrationLedgerPath())
+	if readErr == nil {
+		readErr = json.Unmarshal(body, &ledger)
+	}
+	desktopMigrationMu.Unlock()
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return result, readErr
+	}
+	for _, record := range ledger.Records {
+		switch record.Status {
+		case "pending":
+			result.MigrationPending++
+		case "failed":
+			result.MigrationFailed++
+		case "completed":
+			result.MigrationCompleted++
+		}
+	}
+	return result, listErr
 }
 
 func (a *App) ListWorkspaceSessions(workspaceID, queryText, cursor string, limit int, includeArchived bool) (WorkspaceSessionPage, error) {
@@ -264,6 +333,127 @@ func (a *App) MoveWorkspaceSession(workspaceID, sessionID, beforeSessionID strin
 	return nil
 }
 
+func (a *App) RenameWorkspace(workspaceID, title string) error {
+	if err := a.workspaceRegistry().RenameWorkspace(context.Background(), workspaceID, title); err != nil {
+		return err
+	}
+	a.emitProjectTreeChanged()
+	return nil
+}
+
+func (a *App) SetWorkspaceVisible(workspaceID string, visible bool) error {
+	if strings.TrimSpace(workspaceID) == workspacestate.GlobalWorkspaceID && !visible {
+		return errors.New("the global workspace cannot be hidden")
+	}
+	if err := a.workspaceRegistry().SetWorkspaceVisible(context.Background(), workspaceID, visible); err != nil {
+		return err
+	}
+	a.emitProjectTreeChanged()
+	return nil
+}
+
+func (a *App) MoveWorkspace(workspaceID, beforeWorkspaceID string) error {
+	if err := a.workspaceRegistry().MoveWorkspace(context.Background(), workspaceID, beforeWorkspaceID); err != nil {
+		return err
+	}
+	a.emitProjectTreeChanged()
+	return nil
+}
+
+// CreateSession is the SessionID-only creation facade used by the Workspace
+// browser. The existing controller creation transaction still owns prompt/model
+// seeding; this method only resolves a durable Workspace identity to that flow.
+func (a *App) CreateSession(workspaceID string) (session.SessionRef, error) {
+	state, err := a.workspaceRegistry().Load(context.Background())
+	if err != nil {
+		return session.SessionRef{}, err
+	}
+	workspace, ok := state.Workspaces[strings.TrimSpace(workspaceID)]
+	if !ok {
+		return session.SessionRef{}, workspacestate.ErrWorkspaceNotFound
+	}
+	scope, root := "project", workspace.Root
+	if workspace.ID == workspacestate.GlobalWorkspaceID {
+		scope, root = "global", ""
+	}
+	meta, err := a.EnsureBlankSurface(scope, root)
+	if err != nil {
+		return session.SessionRef{}, err
+	}
+	if meta.Session != nil {
+		return *meta.Session, nil
+	}
+	ref := session.SessionRef{HostID: localDesktopHostID, SessionID: meta.SessionID}
+	return ref, validateLocalSessionRef(ref)
+}
+
+// ForkSession creates an independently routed canonical child and publishes it
+// immediately after its parent in the same Workspace. An empty boundary means
+// the latest completed turn; no message-count inference is used.
+func (a *App) ForkSession(ref session.SessionRef, turnBoundary string) (session.SessionRef, error) {
+	if err := validateLocalSessionRef(ref); err != nil {
+		return session.SessionRef{}, err
+	}
+	state, err := a.workspaceRegistry().Load(context.Background())
+	if err != nil {
+		return session.SessionRef{}, err
+	}
+	workspaceID, beforeID := "", ""
+	for _, id := range state.WorkspaceIDs {
+		workspace := state.Workspaces[id]
+		for index, sessionID := range workspace.SessionIDs {
+			if sessionID != ref.SessionID {
+				continue
+			}
+			workspaceID = id
+			if index+1 < len(workspace.SessionIDs) {
+				beforeID = workspace.SessionIDs[index+1]
+			}
+			break
+		}
+		if workspaceID != "" {
+			break
+		}
+	}
+	if workspaceID == "" {
+		return session.SessionRef{}, workspacestate.ErrSessionNotFound
+	}
+	service := a.desktopSessionService("")
+	binding, err := service.EnsureExecution(a.bootContext(), ref)
+	if err != nil {
+		return session.SessionRef{}, err
+	}
+	defer func() { _ = binding.Release(context.Background()) }()
+	turnBoundary = strings.TrimSpace(turnBoundary)
+	if turnBoundary == "" {
+		turns := binding.Runtime().Session().Snapshot().Projection.Turns
+		if len(turns) == 0 {
+			return session.SessionRef{}, errors.New("session has no completed turn to fork")
+		}
+		turnBoundary = turns[len(turns)-1].TurnID
+	}
+	childID := "desktop-" + strings.TrimPrefix(newTabID(), "tab_")
+	operationID := "fork-" + strings.TrimPrefix(newTabID(), "tab_")
+	if err := a.workspaceRegistry().BeginCreate(a.bootContext(), workspacestate.PendingCreate{
+		OperationID: operationID, WorkspaceID: workspaceID, SessionID: childID,
+	}); err != nil {
+		return session.SessionRef{}, err
+	}
+	child, err := service.Fork(a.bootContext(), ref, turnBoundary, childID)
+	if err != nil {
+		_ = a.workspaceRegistry().AbortCreate(context.Background(), childID)
+		return session.SessionRef{}, err
+	}
+	if _, err := child.Session().Flush(a.bootContext()); err != nil {
+		return session.SessionRef{}, err
+	}
+	if err := a.workspaceRegistry().AttachSession(a.bootContext(), operationID, workspaceID, childID, beforeID); err != nil {
+		return session.SessionRef{}, err
+	}
+	a.emitProjectTreeChanged()
+	return child.Ref(), nil
+}
+
 func (a *App) ReadSessionHistory(ref session.SessionRef, cursor string, limit int) (HistoryPage, error) {
 	if err := validateLocalSessionRef(ref); err != nil {
 		return HistoryPage{}, err
@@ -289,15 +479,19 @@ func (a *App) ReadSessionHistory(ref session.SessionRef, cursor string, limit in
 // proves the target history is readable; a missing or damaged identity never
 // creates an empty replacement and never clears the currently visible log.
 func (a *App) OpenSession(ref session.SessionRef) (HistoryPage, error) {
+	navigationSequence := a.sessionNavigationSeq.Add(1)
 	page, err := a.ReadSessionHistory(ref, "", defaultHistoryPageTurns)
 	if err != nil {
 		return HistoryPage{}, err
+	}
+	if a.sessionNavigationSeq.Load() != navigationSequence {
+		return HistoryPage{}, errSessionNavigationSuperseded
 	}
 	tab, ctrl := a.tabAndCtrlByID("")
 	if tab == nil || ctrl == nil {
 		return HistoryPage{}, errors.New("workspace is not ready")
 	}
-	if _, err := a.resumeCanonicalSessionForTranscript(tab, ctrl, sessionRoute(ref.SessionID), defaultHistoryPageTurns, false); err != nil {
+	if _, err := a.resumeCanonicalSessionForTranscript(tab, ctrl, sessionRoute(ref.SessionID), defaultHistoryPageTurns, false, navigationSequence); err != nil {
 		return HistoryPage{}, err
 	}
 	return page, nil

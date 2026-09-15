@@ -126,6 +126,36 @@ func (s *Store) RenameWorkspace(ctx context.Context, workspaceID, title string) 
 	})
 }
 
+func (s *Store) SetWorkspaceVisible(ctx context.Context, workspaceID string, visible bool) error {
+	return s.mutate(ctx, func(state *State) error {
+		workspace, ok := state.Workspaces[strings.TrimSpace(workspaceID)]
+		if !ok {
+			return ErrWorkspaceNotFound
+		}
+		workspace.Visible = visible
+		workspace.UpdatedAt = time.Now().UTC()
+		state.Workspaces[workspace.ID] = workspace
+		return nil
+	})
+}
+
+func (s *Store) MoveWorkspace(ctx context.Context, workspaceID, beforeWorkspaceID string) error {
+	workspaceID = strings.TrimSpace(workspaceID)
+	beforeWorkspaceID = strings.TrimSpace(beforeWorkspaceID)
+	return s.mutate(ctx, func(state *State) error {
+		if _, ok := state.Workspaces[workspaceID]; !ok {
+			return ErrWorkspaceNotFound
+		}
+		if beforeWorkspaceID != "" {
+			if _, ok := state.Workspaces[beforeWorkspaceID]; !ok {
+				return ErrWorkspaceNotFound
+			}
+		}
+		state.WorkspaceIDs = insertBefore(remove(state.WorkspaceIDs, workspaceID), workspaceID, beforeWorkspaceID)
+		return nil
+	})
+}
+
 func (s *Store) BeginCreate(ctx context.Context, pending PendingCreate) error {
 	pending.OperationID = strings.TrimSpace(pending.OperationID)
 	pending.WorkspaceID = strings.TrimSpace(pending.WorkspaceID)

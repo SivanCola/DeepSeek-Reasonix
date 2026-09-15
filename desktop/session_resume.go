@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -11,6 +12,8 @@ import (
 	"reasonix/internal/plugin"
 	"reasonix/internal/session"
 )
+
+var errSessionNavigationSuperseded = errors.New("session navigation was superseded")
 
 func (a *App) continueLegacySessionForTranscript(tab *WorkspaceTab, ctrl control.SessionAPI, sourcePath string, limit int, includeHistory, readOnly bool) (HistoryPage, error) {
 	identity, ok := ctrl.(control.IdentityLifecycle)
@@ -46,7 +49,7 @@ func (a *App) continueLegacySessionForTranscript(tab *WorkspaceTab, ctrl control
 	return historyPageFromMessagesForTab(tab, current, current.History(), 0, limit), nil
 }
 
-func (a *App) resumeCanonicalSessionForTranscript(tab *WorkspaceTab, ctrl control.SessionAPI, route string, limit int, includeHistory bool) (HistoryPage, error) {
+func (a *App) resumeCanonicalSessionForTranscript(tab *WorkspaceTab, ctrl control.SessionAPI, route string, limit int, includeHistory bool, navigationSequence ...uint64) (HistoryPage, error) {
 	identity, ok := ctrl.(control.IdentityLifecycle)
 	if !ok || !identity.UsesExclusiveSession() {
 		return HistoryPage{}, fmt.Errorf("session identity protocol is unavailable")
@@ -61,6 +64,13 @@ func (a *App) resumeCanonicalSessionForTranscript(tab *WorkspaceTab, ctrl contro
 	defer a.runtimeRebuildMu.Unlock()
 	tab.turnStartMu.Lock()
 	defer tab.turnStartMu.Unlock()
+	wantedNavigation := uint64(0)
+	if len(navigationSequence) > 0 {
+		wantedNavigation = navigationSequence[0]
+		if a.sessionNavigationSeq.Load() != wantedNavigation {
+			return HistoryPage{}, errSessionNavigationSuperseded
+		}
+	}
 
 	current := a.controllerForTab(tab)
 	if current != ctrl || current == nil {
@@ -80,12 +90,17 @@ func (a *App) resumeCanonicalSessionForTranscript(tab *WorkspaceTab, ctrl contro
 		defer func() { _ = binding.Release(a.bootContext()) }()
 		targetModel := strings.TrimSpace(binding.Runtime().StateSnapshot().Session.Projection.ModelRef)
 		if targetModel != "" {
-			current, err = a.replaceControllerForSessionOpenLocked(tab, current, service, ref, targetModel)
+			current, err = a.replaceControllerForSessionOpenLocked(tab, current, service, ref, targetModel, wantedNavigation)
 			if err != nil {
 				return HistoryPage{}, err
 			}
-		} else if _, err := identity.OpenSession(a.bootContext(), ref); err != nil {
-			return HistoryPage{}, err
+		} else {
+			if wantedNavigation != 0 && a.sessionNavigationSeq.Load() != wantedNavigation {
+				return HistoryPage{}, errSessionNavigationSuperseded
+			}
+			if _, err := identity.OpenSession(a.bootContext(), ref); err != nil {
+				return HistoryPage{}, err
+			}
 		}
 	}
 	a.syncTabSessionIdentity(tab, current)
@@ -102,7 +117,7 @@ func (a *App) resumeCanonicalSessionForTranscript(tab *WorkspaceTab, ctrl contro
 // recorded model before publishing it to the tab. The caller holds
 // runtimeRebuildMu and tab.turnStartMu, so the source remains usable until the
 // target model, writer, and event projection have all been validated.
-func (a *App) replaceControllerForSessionOpenLocked(tab *WorkspaceTab, current control.SessionAPI, service *session.Service, ref session.SessionRef, targetModel string) (control.SessionAPI, error) {
+func (a *App) replaceControllerForSessionOpenLocked(tab *WorkspaceTab, current control.SessionAPI, service *session.Service, ref session.SessionRef, targetModel string, navigationSequence ...uint64) (control.SessionAPI, error) {
 	if tab == nil || current == nil || service == nil {
 		return nil, fmt.Errorf("session runtime changed while opening session")
 	}
@@ -129,7 +144,7 @@ func (a *App) replaceControllerForSessionOpenLocked(tab *WorkspaceTab, current c
 	}
 	sharedHost := a.lookupSharedHost(snap.sharedHostKey)
 	extensionGeneration := a.currentExtensionGeneration()
-	candidate, err := a.buildTabControllerBootFenced(a.bootContext(), extensionGeneration, boot.Options{
+	buildOptions := boot.Options{
 		Model:                    targetModel,
 		RequireKey:               false,
 		StatsSource:              "desktop",
@@ -152,7 +167,21 @@ func (a *App) replaceControllerForSessionOpenLocked(tab *WorkspaceTab, current c
 		OnSessionRotation:        a.prepareDesktopSessionRotation,
 		BeforeInboxDispatch:      a.beforeInboxDispatch,
 		OnSessionTitleChanged:    a.onSessionTitleChanged,
-	})
+	}
+	requestedModel := targetModel
+	candidate, err := a.buildTabControllerBootFenced(a.bootContext(), extensionGeneration, buildOptions)
+	fallbackUsed := false
+	if errors.Is(err, boot.ErrUnknownModel) {
+		fallbackModel, _, ok := cfg.ResolveDesktopNewSessionModel()
+		if ok && fallbackModel != targetModel {
+			buildOptions.Model = fallbackModel
+			candidate, err = a.buildTabControllerBootFenced(a.bootContext(), extensionGeneration, buildOptions)
+			if err == nil {
+				targetModel = fallbackModel
+				fallbackUsed = true
+			}
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -169,6 +198,12 @@ func (a *App) replaceControllerForSessionOpenLocked(tab *WorkspaceTab, current c
 	if _, err := candidateIdentity.OpenSession(a.bootContext(), ref); err != nil {
 		return nil, err
 	}
+	if fallbackUsed {
+		if err := service.SetModel(a.bootContext(), ref, targetModel, cfg.ModelSelectionIdentity(targetModel)); err != nil {
+			return nil, err
+		}
+		a.noticeForTab(tab.ID, fmt.Sprintf("model %q is no longer available; switched to %s", requestedModel, targetModel))
+	}
 	a.bindControllerDisplayRecorder(candidate)
 	candidate.EnableInteractiveApproval()
 	runtime := snap.normalizedRuntime()
@@ -184,6 +219,10 @@ func (a *App) replaceControllerForSessionOpenLocked(tab *WorkspaceTab, current c
 	}
 
 	a.mu.Lock()
+	if len(navigationSequence) > 0 && navigationSequence[0] != 0 && a.sessionNavigationSeq.Load() != navigationSequence[0] {
+		a.mu.Unlock()
+		return nil, errSessionNavigationSuperseded
+	}
 	if tab.removed || a.tabs[tab.ID] != tab || tab.Ctrl != current {
 		a.mu.Unlock()
 		return nil, fmt.Errorf("tab runtime changed while opening session")

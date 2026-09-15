@@ -79,6 +79,37 @@ func TestStoreCreateTransactionIsIdempotent(t *testing.T) {
 	assertStrings(t, state.Workspaces[GlobalWorkspaceID].SessionIDs, []string{"session"})
 }
 
+func TestWorkspacePresentationCanBeRenamedHiddenAndReordered(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "workspace-state-v1.json"))
+	ctx := t.Context()
+	for _, workspace := range []Workspace{
+		{ID: GlobalWorkspaceID, Title: "Global", Visible: true},
+		{ID: "project-a", Title: "A", Visible: true},
+		{ID: "project-b", Title: "B", Visible: true},
+	} {
+		if err := store.EnsureWorkspace(ctx, workspace); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.RenameWorkspace(ctx, "project-b", "Renamed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetWorkspaceVisible(ctx, "project-a", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MoveWorkspace(ctx, "project-b", GlobalWorkspaceID); err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.Load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertStrings(t, state.WorkspaceIDs, []string{"project-b", GlobalWorkspaceID, "project-a"})
+	if state.Workspaces["project-b"].Title != "Renamed" || state.Workspaces["project-a"].Visible {
+		t.Fatalf("workspace presentation not persisted: %#v", state.Workspaces)
+	}
+}
+
 func TestCommitRotationAttachesReplacementAndArchivesSourceAtomically(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "workspace-state-v1.json"))
 	ctx := t.Context()

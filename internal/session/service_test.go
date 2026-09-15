@@ -553,6 +553,17 @@ func TestServiceImportValidatesSelfContainedContentAndPublishesAtomically(t *tes
 	if headerInfo.CWD != "/workspace" || headerInfo.Origin != SessionOriginCanonicalImport {
 		t.Fatalf("imported header = %+v", headerInfo)
 	}
+	remapped, err := headerTarget.ImportWithHeader(t.Context(), bundle, CreateOptions{SessionID: "migr-conflict", CWD: "/workspace", Origin: SessionOriginCanonicalImport})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if remapped.SessionID != "migr-conflict" {
+		t.Fatalf("remapped import = %+v", remapped)
+	}
+	remappedPage := historyPageReady(t, headerTarget.Query(), remapped, "", 10)
+	if len(remappedPage.Messages) != 1 || remappedPage.Messages[0].ContentRef == nil {
+		t.Fatalf("remapped history = %+v", remappedPage)
+	}
 }
 
 func TestDeleteRefusesAnOwnedSession(t *testing.T) {

@@ -222,6 +222,12 @@ type App struct {
 	// one-conversation layout so overlapping navigation cannot remove the tab
 	// another navigation is still activating.
 	singleSurfaceMu sync.Mutex
+	// sessionNavigationSeq fences SessionID-only browser opens. History may be
+	// read concurrently, but only the newest requested identity may publish a
+	// controller/tab replacement.
+	sessionNavigationSeq    atomic.Uint64
+	pruneBlockedPersistence atomic.Uint64
+	pendingCreateRecovered  atomic.Uint64
 
 	// worktreeMergeMu serializes the inspect-confirm-merge/finalize mutation
 	// boundary. Git identities are still revalidated after workspace leases are

@@ -252,9 +252,9 @@ func TestDesktopV3CatalogResumeRenameAndDeleteUseSessionIdentity(t *testing.T) {
 	}
 }
 
-func TestDesktopV3ResumeModelBuildFailureKeepsSourceRuntime(t *testing.T) {
+func TestDesktopV3ResumeUnavailableModelFallsBackOnSameSession(t *testing.T) {
 	isolateDesktopUserDirs(t)
-	model, _ := configureSwitchableDefaultModels(t)
+	model, fallbackModel := configureSwitchableDefaultModels(t)
 	app := NewApp()
 	app.ctx = context.Background()
 	root := t.TempDir()
@@ -272,7 +272,7 @@ func TestDesktopV3ResumeModelBuildFailureKeepsSourceRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	appendSessionTestModel(t, target, "target-model", "missing/model")
-	appendSessionTestMessage(t, target, "target-message", provider.Message{ID: "target-user", Role: provider.RoleUser, Content: "must not publish"})
+	appendSessionTestMessage(t, target, "target-message", provider.Message{ID: "target-user", Role: provider.RoleUser, Content: "target restored"})
 
 	ctrl, err := app.buildTabControllerBoot(app.ctx, boot.Options{Model: model, WorkspaceRoot: root, SessionDir: dir, Sink: event.Discard})
 	if err != nil {
@@ -293,13 +293,16 @@ func TestDesktopV3ResumeModelBuildFailureKeepsSourceRuntime(t *testing.T) {
 		}
 	})
 
-	if _, err := app.ResumeSessionForTab(tab.ID, sessionRoute(target.Ref().SessionID)); err == nil {
-		t.Fatal("resume with an unavailable target model unexpectedly succeeded")
+	if _, err := app.ResumeSessionForTab(tab.ID, sessionRoute(target.Ref().SessionID)); err != nil {
+		t.Fatal(err)
 	}
-	if tab.Ctrl != ctrl || tab.SessionID != source.Ref().SessionID || tab.SessionPath != "" {
-		t.Fatalf("failed resume changed source binding: ctrl=%v session=%q path=%q", tab.Ctrl == ctrl, tab.SessionID, tab.SessionPath)
+	if tab.Ctrl == ctrl || tab.SessionID != target.Ref().SessionID || tab.SessionPath != "" || tab.Ctrl.ModelRef() != fallbackModel {
+		t.Fatalf("fallback binding: replaced=%v session=%q path=%q model=%q", tab.Ctrl != ctrl, tab.SessionID, tab.SessionPath, tab.Ctrl.ModelRef())
 	}
-	if got := tab.Ctrl.History(); len(got) != 1 || got[0].Content != "source remains" {
-		t.Fatalf("failed resume changed source history: %+v", got)
+	if got := tab.Ctrl.History(); len(got) != 1 || got[0].Content != "target restored" {
+		t.Fatalf("fallback history = %+v", got)
+	}
+	if snapshot, err := service.Query().Snapshot(t.Context(), target.Ref()); err != nil || snapshot.Projection.ModelRef != fallbackModel {
+		t.Fatalf("fallback config was not persisted on target: %+v, %v", snapshot.Projection, err)
 	}
 }

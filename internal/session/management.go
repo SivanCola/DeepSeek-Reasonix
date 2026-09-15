@@ -381,16 +381,23 @@ func (p *FilesystemPersistence) importDirectory(ctx context.Context, source stri
 	if manifest.ContentRoot != ".content-v1" {
 		return "", errors.New("session: import is not a self-contained export")
 	}
+	targetID := manifest.SessionID
+	if strings.TrimSpace(options.SessionID) != "" {
+		targetID = strings.TrimSpace(options.SessionID)
+	}
+	if err := validateSessionID(targetID); err != nil {
+		return "", err
+	}
 	if err := os.MkdirAll(p.Root, 0o700); err != nil {
 		return "", err
 	}
-	target := filepath.Join(p.Root, manifest.SessionID)
+	target := filepath.Join(p.Root, targetID)
 	if _, err := os.Lstat(target); err == nil {
-		return "", fmt.Errorf("%w: %s", ErrSessionExists, manifest.SessionID)
+		return "", fmt.Errorf("%w: %s", ErrSessionExists, targetID)
 	} else if !os.IsNotExist(err) {
 		return "", err
 	}
-	staging := filepath.Join(p.Root, "."+manifest.SessionID+".import-"+randomID())
+	staging := filepath.Join(p.Root, "."+targetID+".import-"+randomID())
 	if err := exportDirectory(ctx, source, staging); err != nil {
 		return "", err
 	}
@@ -400,14 +407,23 @@ func (p *FilesystemPersistence) importDirectory(ctx context.Context, source stri
 			_ = os.RemoveAll(staging)
 		}
 	}()
+	if targetID != manifest.SessionID {
+		manifest.SessionID = targetID
+		if err := writeManifestFile(filepath.Join(staging, "manifest.json"), manifest); err != nil {
+			return "", err
+		}
+		// Storage generations are scoped to the manifest identity. The imported
+		// event prefix remains valid, but a remapped SessionID must publish a new
+		// generation before any recovery/query projection can be trusted.
+		if _, err := ensureStorageIdentity(staging, manifest); err != nil {
+			return "", err
+		}
+	}
 	if _, err := Replay(staging, nil); err != nil {
 		return "", fmt.Errorf("validate imported events: %w", err)
 	}
 	if options.SessionID == "" {
-		options.SessionID = manifest.SessionID
-	}
-	if options.SessionID != manifest.SessionID {
-		return "", errors.New("session: import header identity does not match manifest")
+		options.SessionID = targetID
 	}
 	header, err := headerForCreate(options)
 	if err != nil {
@@ -423,7 +439,7 @@ func (p *FilesystemPersistence) importDirectory(ctx context.Context, source stri
 		return "", fmt.Errorf("publish imported session: %w", err)
 	}
 	published = true
-	return manifest.SessionID, nil
+	return targetID, nil
 }
 
 func (s *Service) Delete(ctx context.Context, ref SessionRef) error {

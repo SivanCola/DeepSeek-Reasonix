@@ -3181,14 +3181,17 @@ func (a *App) keepOnlyVisibleTab(tabID string) (TabMeta, error) {
 			id, tab := candidate.id, candidate.tab
 			snapshotted[id] = tab
 			if err := a.snapshotTab(tab); err != nil {
+				a.pruneBlockedPersistence.Add(1)
 				slog.Warn("desktop: snapshot before pruning hidden tab failed", "tab", id, "err", err)
 				return TabMeta{}, fmt.Errorf("save current session before switching tabs: %w", err)
 			}
 			if err := a.saveTabSessionMetaForCurrentSession(tab); err != nil {
+				a.pruneBlockedPersistence.Add(1)
 				slog.Warn("desktop: session metadata before pruning hidden tab failed", "tab", id, "err", err)
 				return TabMeta{}, fmt.Errorf("save current session metadata before switching tabs: %w", err)
 			}
 			if err := a.verifyCanonicalTabRegistryBeforePrune(tab); err != nil {
+				a.pruneBlockedPersistence.Add(1)
 				slog.Warn("desktop: canonical registry before pruning hidden tab failed", "tab", id, "err", err)
 				return TabMeta{}, fmt.Errorf("publish current session before switching tabs: %w", err)
 			}

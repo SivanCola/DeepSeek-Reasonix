@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"reasonix/desktop/internal/workspacestate"
+	"reasonix/internal/provider"
 	"reasonix/internal/session"
 )
 
@@ -124,5 +125,52 @@ func TestSessionRefHistoryAndRenameDoNotNeedController(t *testing.T) {
 	}
 	if _, err := service.Query().Snapshot(t.Context(), missing); err == nil {
 		t.Fatal("missing SessionID was created as an empty replacement")
+	}
+}
+
+func TestForkSessionPublishesHeaderBackedChildAfterParent(t *testing.T) {
+	root := t.TempDir()
+	app := NewApp()
+	app.ctx = t.Context()
+	app.desktopSessionRoot = filepath.Join(root, "desktop-sessions-v5", "by-id")
+	app.workspaceState = workspacestate.NewStore(filepath.Join(root, "desktop", "workspace-state-v1.json"))
+	workspaceID, err := app.ensureDesktopWorkspace(t.Context(), "project", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, err := app.desktopSessionService("").Create(t.Context(), session.CreateOptions{SessionID: "fork-parent", CWD: root, Origin: session.SessionOriginNew})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(map[string]any{"message": provider.Message{ID: "answer", Role: provider.RoleAssistant, Content: "forked history"}})
+	if _, err := parent.Session().Append(t.Context(), session.Batch{OperationID: "turn-1", TurnID: "turn-1", Events: []session.Event{
+		{Kind: "turn/start"}, {Kind: "message/complete", Payload: payload}, {Kind: "turn/end", Payload: json.RawMessage(`{"status":"completed"}`)},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parent.Session().Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.workspaceState.AttachSession(t.Context(), "", workspaceID, parent.Ref().SessionID, ""); err != nil {
+		t.Fatal(err)
+	}
+	child, err := app.ForkSession(parent.Ref(), "turn-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := app.workspaceState.Load(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := state.Workspaces[workspaceID].SessionIDs
+	if len(ids) != 2 || ids[0] != parent.Ref().SessionID || ids[1] != child.SessionID {
+		t.Fatalf("fork order = %#v", ids)
+	}
+	infos, err := listAllCanonicalSessionInfo(t.Context(), app.desktopSessionService("").Query())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if infos[child.SessionID].ParentSessionID != parent.Ref().SessionID || infos[child.SessionID].Origin != session.SessionOriginFork {
+		t.Fatalf("fork header = %+v", infos[child.SessionID])
 	}
 }

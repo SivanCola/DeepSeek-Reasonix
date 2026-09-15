@@ -22,6 +22,7 @@ import (
 type desktopMigrationRecord struct {
 	SourceKey       string `json:"sourceKey"`
 	TargetSessionID string `json:"targetSessionId"`
+	ContentDigest   string `json:"contentDigest,omitempty"`
 	Status          string `json:"status"`
 	ErrorCode       string `json:"errorCode,omitempty"`
 	Attempts        int    `json:"attempts"`
@@ -43,10 +44,43 @@ func (a *App) startDesktopSessionMigration(ctx context.Context) {
 		return
 	}
 	go func() {
+		if err := a.recoverDesktopPendingCreates(ctx); err != nil {
+			slogWarnDesktopMigration(err)
+		}
 		if err := a.migrateDesktopSessionsV5(ctx); err != nil {
 			slogWarnDesktopMigration(err)
 		}
 	}()
+}
+
+// recoverDesktopPendingCreates completes the registry half of a create that
+// reached durable session publication before the process stopped. A missing
+// target is safe to forget: no canonical content exists for the pending ID and
+// the UI can retry creation without inventing a replacement identity.
+func (a *App) recoverDesktopPendingCreates(ctx context.Context) error {
+	state, err := a.workspaceRegistry().Load(ctx)
+	if err != nil {
+		return err
+	}
+	service := a.desktopSessionService("")
+	var joined error
+	for sessionID, pending := range state.PendingCreates {
+		ref := session.SessionRef{HostID: localDesktopHostID, SessionID: sessionID}
+		if _, err := service.Query().Snapshot(ctx, ref); err == nil {
+			if attachErr := a.workspaceRegistry().AttachSession(ctx, pending.OperationID, pending.WorkspaceID, sessionID, ""); attachErr != nil {
+				joined = errors.Join(joined, attachErr)
+			} else {
+				a.pendingCreateRecovered.Add(1)
+			}
+		} else if errors.Is(err, session.ErrSessionNotFound) {
+			if abortErr := a.workspaceRegistry().AbortCreate(ctx, sessionID); abortErr != nil {
+				joined = errors.Join(joined, abortErr)
+			}
+		} else {
+			joined = errors.Join(joined, err)
+		}
+	}
+	return joined
 }
 
 func slogWarnDesktopMigration(err error) {
@@ -161,6 +195,7 @@ func (a *App) migrateCanonicalStore(ctx context.Context, source desktopMigration
 	if err != nil {
 		return err
 	}
+	var joined error
 	for _, info := range infos {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -170,48 +205,52 @@ func (a *App) migrateCanonicalStore(ctx context.Context, source desktopMigration
 			continue
 		}
 		if err := a.migrateCanonicalSession(ctx, old, source, workspaceID, info.SessionID); err != nil {
-			return err
+			joined = errors.Join(joined, err)
 		}
 	}
-	return nil
+	return joined
 }
 
 func (a *App) migrateCanonicalSession(ctx context.Context, old *session.Service, source desktopMigrationSource, workspaceID, sessionID string) error {
 	digest := sha256.Sum256([]byte(canonicalRuntimeRoot(source.root) + "\x00" + sessionID))
 	key := hex.EncodeToString(digest[:])
-	if err := updateDesktopMigrationLedger(key, sessionID, "pending", ""); err != nil {
+	oldRef := session.SessionRef{HostID: "migration-source", SessionID: sessionID}
+	contentDigest, err := canonicalMigrationDigest(ctx, old.Query(), oldRef)
+	if err != nil {
 		return err
 	}
 	target := a.desktopSessionService("")
-	ref := session.SessionRef{HostID: localDesktopHostID, SessionID: sessionID}
-	if _, err := target.Query().Snapshot(ctx, ref); err != nil {
-		if !errors.Is(err, session.ErrSessionNotFound) {
-			_ = updateDesktopMigrationLedger(key, sessionID, "failed", "target_conflict")
-			return err
-		}
+	targetID, needsImport, err := resolveMigrationTarget(ctx, target.Query(), sessionID, key, contentDigest)
+	if err != nil {
+		_ = updateDesktopMigrationLedger(key, sessionID, "failed", "target_conflict", contentDigest)
+		return err
+	}
+	if err := updateDesktopMigrationLedger(key, targetID, "pending", "", contentDigest); err != nil {
+		return err
+	}
+	if needsImport {
 		tmp, err := os.MkdirTemp("", "reasonix-session-v5-export-")
 		if err != nil {
 			return err
 		}
 		bundle := filepath.Join(tmp, "bundle")
 		defer os.RemoveAll(tmp)
-		oldRef := session.SessionRef{HostID: "migration-source", SessionID: sessionID}
 		if err := old.Export(ctx, oldRef, bundle); err != nil {
-			_ = updateDesktopMigrationLedger(key, sessionID, "failed", "export")
+			_ = updateDesktopMigrationLedger(key, targetID, "failed", "export", contentDigest)
 			return err
 		}
 		if _, err := target.ImportWithHeader(ctx, bundle, session.CreateOptions{
-			SessionID: sessionID, CWD: desktopWorkspaceRoot(source.scope, source.workspaceRoot), Origin: session.SessionOriginCanonicalImport,
+			SessionID: targetID, CWD: desktopWorkspaceRoot(source.scope, source.workspaceRoot), Origin: session.SessionOriginCanonicalImport,
 		}); err != nil {
-			_ = updateDesktopMigrationLedger(key, sessionID, "failed", "import")
+			_ = updateDesktopMigrationLedger(key, targetID, "failed", "import", contentDigest)
 			return err
 		}
 	}
-	if err := a.workspaceRegistry().AttachSession(ctx, "", workspaceID, sessionID, ""); err != nil {
-		_ = updateDesktopMigrationLedger(key, sessionID, "failed", "registry")
+	if err := a.workspaceRegistry().AttachSession(ctx, "", workspaceID, targetID, ""); err != nil {
+		_ = updateDesktopMigrationLedger(key, targetID, "failed", "registry", contentDigest)
 		return err
 	}
-	return updateDesktopMigrationLedger(key, sessionID, "completed", "")
+	return updateDesktopMigrationLedger(key, targetID, "completed", "", contentDigest)
 }
 
 func (a *App) migrateLegacyDirectory(ctx context.Context, source desktopMigrationSource) error {
@@ -226,6 +265,7 @@ func (a *App) migrateLegacyDirectory(ctx context.Context, source desktopMigratio
 	if err != nil {
 		return err
 	}
+	var joined error
 	for _, entry := range entries {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -243,10 +283,10 @@ func (a *App) migrateLegacyDirectory(ctx context.Context, source desktopMigratio
 			continue
 		}
 		if err := a.migrateLegacySession(ctx, path, source, workspaceID); err != nil {
-			return err
+			joined = errors.Join(joined, err)
 		}
 	}
-	return nil
+	return joined
 }
 
 func (a *App) migrateLegacySession(ctx context.Context, path string, source desktopMigrationSource, workspaceID string) error {
@@ -279,26 +319,76 @@ func (a *App) migrateLegacySession(ctx context.Context, path string, source desk
 		return err
 	}
 	target := a.desktopSessionService("")
-	ref := session.SessionRef{HostID: localDesktopHostID, SessionID: result.TargetID}
-	if _, err := target.Query().Snapshot(ctx, ref); errors.Is(err, session.ErrSessionNotFound) {
+	contentDigest, err := canonicalMigrationDigest(ctx, stage.Query(), runtime.Ref())
+	if err != nil {
+		return err
+	}
+	targetID, needsImport, err := resolveMigrationTarget(ctx, target.Query(), result.TargetID, key, contentDigest)
+	if err != nil {
+		_ = updateDesktopMigrationLedger(key, result.TargetID, "failed", "target_conflict", contentDigest)
+		return err
+	}
+	if err := updateDesktopMigrationLedger(key, targetID, "pending", "", contentDigest); err != nil {
+		return err
+	}
+	if needsImport {
 		if _, err := target.ImportWithHeader(ctx, bundle, session.CreateOptions{
-			SessionID: result.TargetID, CWD: desktopWorkspaceRoot(source.scope, source.workspaceRoot), Origin: session.SessionOriginLegacyImport,
+			SessionID: targetID, CWD: desktopWorkspaceRoot(source.scope, source.workspaceRoot), Origin: session.SessionOriginLegacyImport,
 		}); err != nil {
-			_ = updateDesktopMigrationLedger(key, result.TargetID, "failed", "import")
+			_ = updateDesktopMigrationLedger(key, targetID, "failed", "import", contentDigest)
 			return err
 		}
-	} else if err != nil {
-		_ = updateDesktopMigrationLedger(key, result.TargetID, "failed", "target_conflict")
+	}
+	if err := a.workspaceRegistry().AttachSession(ctx, "", workspaceID, targetID, ""); err != nil {
+		_ = updateDesktopMigrationLedger(key, targetID, "failed", "registry", contentDigest)
 		return err
 	}
-	if err := a.workspaceRegistry().AttachSession(ctx, "", workspaceID, result.TargetID, ""); err != nil {
-		_ = updateDesktopMigrationLedger(key, result.TargetID, "failed", "registry")
-		return err
-	}
-	return updateDesktopMigrationLedger(key, result.TargetID, "completed", "")
+	return updateDesktopMigrationLedger(key, targetID, "completed", "", contentDigest)
 }
 
-func updateDesktopMigrationLedger(sourceKey, targetID, status, errorCode string) error {
+func canonicalMigrationDigest(ctx context.Context, query *session.Query, ref session.SessionRef) (string, error) {
+	messages, err := query.History(ctx, ref)
+	if err != nil {
+		return "", err
+	}
+	return agent.ContentDigestForMessages(messages)
+}
+
+func resolveMigrationTarget(ctx context.Context, query *session.Query, preferredID, sourceKey, contentDigest string) (string, bool, error) {
+	check := func(sessionID string) (bool, error) {
+		digest, err := canonicalMigrationDigest(ctx, query, session.SessionRef{HostID: localDesktopHostID, SessionID: sessionID})
+		if errors.Is(err, session.ErrSessionNotFound) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		return digest == contentDigest, nil
+	}
+	if identical, err := check(preferredID); err != nil {
+		return "", false, err
+	} else if identical {
+		return preferredID, false, nil
+	} else if _, err := query.Snapshot(ctx, session.SessionRef{HostID: localDesktopHostID, SessionID: preferredID}); errors.Is(err, session.ErrSessionNotFound) {
+		return preferredID, true, nil
+	} else if err != nil {
+		return "", false, err
+	}
+	digest := sha256.Sum256([]byte(sourceKey + "\x00" + contentDigest))
+	conflictID := "migr-" + hex.EncodeToString(digest[:12])
+	if identical, err := check(conflictID); err != nil {
+		return "", false, err
+	} else if identical {
+		return conflictID, false, nil
+	} else if _, err := query.Snapshot(ctx, session.SessionRef{HostID: localDesktopHostID, SessionID: conflictID}); errors.Is(err, session.ErrSessionNotFound) {
+		return conflictID, true, nil
+	} else if err != nil {
+		return "", false, err
+	}
+	return "", false, errors.New("migration target identity collision")
+}
+
+func updateDesktopMigrationLedger(sourceKey, targetID, status, errorCode string, digest ...string) error {
 	desktopMigrationMu.Lock()
 	defer desktopMigrationMu.Unlock()
 	path := desktopMigrationLedgerPath()
@@ -318,6 +408,9 @@ func updateDesktopMigrationLedger(sourceKey, targetID, status, errorCode string)
 	}
 	record := ledger.Records[sourceKey]
 	record.SourceKey, record.TargetSessionID, record.Status, record.ErrorCode = sourceKey, targetID, status, errorCode
+	if len(digest) > 0 {
+		record.ContentDigest = digest[0]
+	}
 	if status == "pending" {
 		record.Attempts++
 	}
