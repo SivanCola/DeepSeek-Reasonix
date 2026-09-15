@@ -240,15 +240,7 @@ func (a *Agent) runToolLoop(ctx context.Context, state *turnRuntime) (runErr err
 			}
 			return err
 		}
-		// Publish settlement only after the complete message is accepted by
-		// the business log. Recovery must never observe an end without a result.
-		if streamed.text != "" || streamed.displayReasoning != "" {
-			a.svc.sink.Emit(event.Event{Kind: event.Message, MessageID: streamed.messageID, AttemptID: streamed.messageID,
-				Text: DisplayAssistantText(streamed.text), Reasoning: streamed.displayReasoning})
-		}
-		if streamed.settledAttemptID != "" {
-			a.emitStreamAttempt(streamed.settledAttemptID, event.StreamAttemptCommit, streamed.settledAttempt, "", nil)
-		}
+		a.publishCommittedSample(streamed)
 
 		if len(calls) == 0 {
 			cont, ferr := a.handleFinalResponse(ctx, state, text, reasoning, usage)
@@ -444,4 +436,16 @@ func (a *Agent) pairUnexecutedGraceCalls(ctx context.Context, calls []provider.T
 		messages = append(messages, provider.Message{Role: provider.RoleTool, Content: msg, ToolCallID: call.ID, Name: call.Name})
 	}
 	return a.appendCommittedMessages(ctx, "unexecuted-grace-tools", messages...)
+}
+
+func (a *Agent) publishCommittedSample(streamed streamedTurn) {
+	// Publish settlement only after the complete message is accepted by
+	// the business log. Recovery must never observe an end without a result.
+	if streamed.text != "" || streamed.displayReasoning != "" {
+		a.svc.sink.Emit(event.Event{Kind: event.Message, MessageID: streamed.messageID, AttemptID: streamed.messageID,
+			Text: DisplayAssistantText(streamed.text), Reasoning: streamed.displayReasoning})
+	}
+	if streamed.settledAttemptID != "" {
+		a.emitStreamAttempt(streamed.settledAttemptID, event.StreamAttemptCommit, streamed.settledAttempt, "", nil)
+	}
 }

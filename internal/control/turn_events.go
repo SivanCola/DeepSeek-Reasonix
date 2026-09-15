@@ -221,18 +221,7 @@ func (s *turnEventSink) persistAndPublish(e event.Event) error {
 	// Outside-turn notices are not lifecycle records and must pass through after
 	// bootstrap or a terminal event.
 	if ledger.ActiveTurnID() == "" {
-		if ledger.CurrentStatus() == event.TurnRecoveryRequired && lateBusinessEvent(e.Kind) {
-			return nil
-		}
-		s.c.refreshRuntimeState(e)
-		if _, runtime, exclusive := s.c.v3Binding(); exclusive && runtime != nil {
-			wire := eventwire.ToWire(e)
-			if err := runtime.PublishTranscriptFrame(turnevent.Envelope{Kind: wire.Kind, Event: wire, CreatedAt: time.Now().UnixMilli()}); err != nil {
-				return err
-			}
-		}
-		s.publishInner(e)
-		return nil
+		return s.publishOutsideTurn(ledger, e)
 	}
 	if e.Kind == event.TurnStarted && ledger.CurrentStatus() == event.TurnInProgress {
 		return nil
@@ -786,4 +775,19 @@ func (c *Controller) TurnIDForSubmission(submissionID string) string {
 		return ""
 	}
 	return ledger.TurnIDForSubmission(submissionID)
+}
+
+func (s *turnEventSink) publishOutsideTurn(ledger *turnevent.Ledger, e event.Event) error {
+	if ledger.CurrentStatus() == event.TurnRecoveryRequired && lateBusinessEvent(e.Kind) {
+		return nil
+	}
+	s.c.refreshRuntimeState(e)
+	if _, runtime, exclusive := s.c.v3Binding(); exclusive && runtime != nil {
+		wire := eventwire.ToWire(e)
+		if err := runtime.PublishTranscriptFrame(turnevent.Envelope{Kind: wire.Kind, Event: wire, CreatedAt: time.Now().UnixMilli()}); err != nil {
+			return err
+		}
+	}
+	s.publishInner(e)
+	return nil
 }

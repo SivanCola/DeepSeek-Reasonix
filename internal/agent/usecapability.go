@@ -1400,24 +1400,6 @@ func (o *onDemandMCPConnect) Execute(ctx context.Context, _ json.RawMessage) (st
 	return o.proxy.listServerToolsForSpec(ctx, o.server, spec)
 }
 
-// listServerTools renders the live tool directory of a connected server and
-// refreshes the proxy snapshot on the way (via serverTools).
-func (t *UseCapabilityTool) listServerTools(ctx context.Context, server string) (string, error) {
-	tools, err := t.serverTools(ctx, server)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("connected MCP server %q; %d tools:\n%s", server, len(tools), inspectToolListJSON(server, tools)), nil
-}
-
-func (t *UseCapabilityTool) listServerToolsForSpec(ctx context.Context, server string, spec plugin.Spec) (string, error) {
-	tools, err := t.serverToolsForSpec(ctx, server, spec)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("connected MCP server %q; %d tools:\n%s", server, len(tools), inspectToolListJSON(server, tools)), nil
-}
-
 func parseMCPCapabilityID(id string) (server, raw string, err error) {
 	id = strings.TrimSpace(id)
 	switch {

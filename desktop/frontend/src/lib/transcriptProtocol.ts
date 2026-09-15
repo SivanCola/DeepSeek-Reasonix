@@ -83,3 +83,9 @@ export interface TranscriptProtocolBindings {
   ResumeTranscriptSessionForTab?(tabID: string, path: string): Promise<HistorySwitchPhases | void>;
   OpenChannelTranscriptSessionForTab?(tabID: string, path: string): Promise<HistorySwitchPhases | void>;
 }
+
+export interface TranscriptTurnMetadata {
+  samplingCount?: number;
+  toolCount?: number;
+  turnFinal?: boolean;
+}

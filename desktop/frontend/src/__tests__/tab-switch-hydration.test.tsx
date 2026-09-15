@@ -24,11 +24,7 @@ function ok(value: boolean, label: string) {
 }
 
 function eq(actual: unknown, expected: unknown, label: string) {
-  if (actual === expected) {
-    ok(true, label);
-  } else {
-    ok(false, `${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
-  }
+  ok(actual === expected, actual === expected ? label : `${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
 }
 
 function flushPromises(): Promise<void> {

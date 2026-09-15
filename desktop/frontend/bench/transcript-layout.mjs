@@ -114,9 +114,19 @@ try {
     await measure(`sidebar=${sidebar}/dock=${dock}`);
   }
   await configure({ layout: "workbench", sidebar: false, dock: false, launcher: true });
-  for (const width of [1009, 1010, 1011]) {
+  // Windows at 200% scaling rounds odd native sizes; straddle the CSS threshold
+  // with representable sizes and assert against the actual rendered surface.
+  for (const width of [1008, 1010, 1012]) {
     await setViewport({ width, height: 1080 });
-    await page.waitForFunction(hidden => Boolean(document.querySelector(".dock-launcher")) !== hidden, width < 1010);
+    const surfaceWidth = await page.locator(".chat-pane").evaluate(element => element.getBoundingClientRect().width);
+    if (width < 1010) assert.ok(surfaceWidth < 1010, "fixture reaches below launcher threshold");
+    if (width > 1010) assert.ok(surfaceWidth > 1010, "fixture reaches above launcher threshold");
+    await page.waitForFunction(hidden => Boolean(document.querySelector(".dock-launcher")) !== hidden, surfaceWidth < 1010).catch(async error => {
+      console.error("launcher threshold geometry", await page.evaluate(() => ({ innerWidth, devicePixelRatio, mode: document.documentElement.dataset.dockLauncher,
+        surface: document.querySelector(".chat-pane")?.getBoundingClientRect().width,
+        launcherParent: document.querySelector(".dock-launcher")?.parentElement?.getBoundingClientRect().width })));
+      throw error;
+    });
     await measure("launcher threshold " + width);
   }
   await configure({ launcher: false });

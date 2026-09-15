@@ -50,10 +50,9 @@ func (c *Controller) TranscriptFollow(ctx context.Context, req transcript.Follow
 	if err != nil || view.Snapshot == nil {
 		return out, err
 	}
-	// A bounded display tail cannot represent an arbitrarily large accepted
-	// batch ahead of disk. Make the frozen business cut readable before handing
-	// out its canonical cursors. The subscription is already registered, so
-	// commits during this flush/read remain queued; no publisher lock is held.
+	// Make the frozen cut pageable even when accepted batches exceed the tail.
+	// The registered subscription queues concurrent commits during flush/read;
+	// no publisher lock is held.
 	cut := view.Snapshot.CoveredThroughSeq
 	if view.Snapshot.DurableSeq < cut {
 		receipt, flushErr := runtime.Session().Flush(ctx)

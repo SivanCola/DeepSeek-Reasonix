@@ -191,72 +191,8 @@ func (p *Projection) applyLocked(envelope turnevent.Envelope, covered uint64) er
 			}
 		}
 	}
+	p.applyRuntimeLocked(owned)
 	w := owned.Event
-	if owned.TurnID != "" {
-		p.runtime.TurnID, p.runtime.Status = owned.TurnID, owned.Status
-		p.runtime.SubmissionID = owned.SubmissionID
-	}
-	switch owned.Kind {
-	case "turn_started":
-		p.runtime.FinalMessageID, p.runtime.DurationMs = "", 0
-		p.runtime.SamplingCount, p.runtime.ToolCount = 0, 0
-		p.toolCalls = make(map[string]bool)
-		p.retireRecoveryNotices()
-		if p.startedTurnID != owned.TurnID || p.runtime.StartedAt == 0 {
-			p.runtime.StartedAt = owned.CreatedAt
-			p.startedTurnID = owned.TurnID
-		}
-		p.runtime.Phase = ""
-		p.runtime.CompletionSummary = nil
-		p.runtime.TurnUsage = nil
-		p.buffer.completion = nil
-	case "usage":
-		p.runtime.TurnUsage = mergeTurnUsage(p.runtime.TurnUsage, w.Usage)
-	case "turn_phase":
-		p.runtime.Phase = w.Phase
-	case "completion_summary":
-		p.runtime.CompletionSummary = w.Completion
-	case "stream_attempt":
-		if w.StreamAttempt != nil {
-			if w.StreamAttempt.Action == "begin" {
-				p.runtime.SamplingCount++
-				p.attempts[w.StreamAttempt.ID] = ActiveAttempt{ID: w.StreamAttempt.ID, MessageID: w.MessageID, TurnID: owned.TurnID}
-			} else {
-				delete(p.attempts, w.StreamAttempt.ID)
-			}
-		}
-	case "tool_dispatch":
-		if w.Tool != nil && w.Tool.ID != "" && !p.toolCalls[w.Tool.ID] {
-			if p.toolCalls == nil {
-				p.toolCalls = make(map[string]bool)
-			}
-			p.toolCalls[w.Tool.ID] = true
-			p.runtime.ToolCount++
-		}
-	case "ask_request", "approval_request", "mcp_interaction":
-		id := w.PromptID
-		if id == "" {
-			id = owned.ItemID
-		}
-		if id != "" {
-			p.prompts[id] = w
-		}
-	case "prompt_answered":
-		delete(p.prompts, owned.ItemID)
-	case "turn_done":
-		durationMs := int64(0)
-		if p.runtime.StartedAt > 0 && owned.CreatedAt >= p.runtime.StartedAt {
-			durationMs = owned.CreatedAt - p.runtime.StartedAt
-		}
-		p.runtime.DurationMs = durationMs
-		p.buffer.attachTurnStats(owned.TurnID, p.runtime.TurnUsage, durationMs, owned.CreatedAt, p.runtime.FinalMessageID)
-		clear(p.prompts)
-		clear(p.attempts)
-		if owned.TranscriptDigest != "" {
-			p.identity.HeadID = owned.HeadID
-			p.identity.RewriteEpoch = owned.RewriteEpoch
-		}
-	}
 	p.covered = covered
 	p.revision++
 	// Legacy ledger numbering is never a chat coverage cursor.
@@ -368,4 +304,73 @@ func (p *Projection) runtimeLocked() (Runtime, []ActiveAttempt) {
 	}
 	sort.Slice(attempts, func(i, j int) bool { return attempts[i].ID < attempts[j].ID })
 	return runtime, attempts
+}
+
+func (p *Projection) applyRuntimeLocked(owned turnevent.Envelope) {
+	w := owned.Event
+	if owned.TurnID != "" {
+		p.runtime.TurnID, p.runtime.Status = owned.TurnID, owned.Status
+		p.runtime.SubmissionID = owned.SubmissionID
+	}
+	switch owned.Kind {
+	case "turn_started":
+		p.runtime.FinalMessageID, p.runtime.DurationMs = "", 0
+		p.runtime.SamplingCount, p.runtime.ToolCount = 0, 0
+		p.toolCalls = make(map[string]bool)
+		p.retireRecoveryNotices()
+		if p.startedTurnID != owned.TurnID || p.runtime.StartedAt == 0 {
+			p.runtime.StartedAt = owned.CreatedAt
+			p.startedTurnID = owned.TurnID
+		}
+		p.runtime.Phase = ""
+		p.runtime.CompletionSummary = nil
+		p.runtime.TurnUsage = nil
+		p.buffer.completion = nil
+	case "usage":
+		p.runtime.TurnUsage = mergeTurnUsage(p.runtime.TurnUsage, w.Usage)
+	case "turn_phase":
+		p.runtime.Phase = w.Phase
+	case "completion_summary":
+		p.runtime.CompletionSummary = w.Completion
+	case "stream_attempt":
+		if w.StreamAttempt != nil {
+			if w.StreamAttempt.Action == "begin" {
+				p.runtime.SamplingCount++
+				p.attempts[w.StreamAttempt.ID] = ActiveAttempt{ID: w.StreamAttempt.ID, MessageID: w.MessageID, TurnID: owned.TurnID}
+			} else {
+				delete(p.attempts, w.StreamAttempt.ID)
+			}
+		}
+	case "tool_dispatch":
+		if w.Tool != nil && w.Tool.ID != "" && !p.toolCalls[w.Tool.ID] {
+			if p.toolCalls == nil {
+				p.toolCalls = make(map[string]bool)
+			}
+			p.toolCalls[w.Tool.ID] = true
+			p.runtime.ToolCount++
+		}
+	case "ask_request", "approval_request", "mcp_interaction":
+		id := w.PromptID
+		if id == "" {
+			id = owned.ItemID
+		}
+		if id != "" {
+			p.prompts[id] = w
+		}
+	case "prompt_answered":
+		delete(p.prompts, owned.ItemID)
+	case "turn_done":
+		durationMs := int64(0)
+		if p.runtime.StartedAt > 0 && owned.CreatedAt >= p.runtime.StartedAt {
+			durationMs = owned.CreatedAt - p.runtime.StartedAt
+		}
+		p.runtime.DurationMs = durationMs
+		p.buffer.attachTurnStats(owned.TurnID, p.runtime.TurnUsage, durationMs, owned.CreatedAt, p.runtime.FinalMessageID)
+		clear(p.prompts)
+		clear(p.attempts)
+		if owned.TranscriptDigest != "" {
+			p.identity.HeadID = owned.HeadID
+			p.identity.RewriteEpoch = owned.RewriteEpoch
+		}
+	}
 }
