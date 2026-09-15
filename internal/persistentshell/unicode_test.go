@@ -70,6 +70,31 @@ type cancelOnStarted struct {
 	cancel context.CancelFunc
 }
 
+// Between prompts the PTY can be in canonical mode. Disabling line editing
+// keeps that state deterministic and must not truncate an encoded command.
+func TestPersistentShellLongCommandWithoutLineEditing(t *testing.T) {
+	skipNonPOSIX(t)
+	sh := posixShell(t)
+	dir := t.TempDir()
+	m := testManager(t)
+	req := Request{Argv: InteractiveArgv(sh), Dir: dir, Shell: sh, Timeout: 10 * time.Second,
+		Env:     []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "TERM=dumb", "INPUTRC=/dev/null", "LC_ALL=C"},
+		Command: "set +o emacs; set +o vi; PS2=CONTINUATION_PROMPT"}
+	if res := m.Run(t.Context(), req); res.Err != nil {
+		t.Fatal(res.Err)
+	}
+	text := strings.Repeat("中文😀", 2000)
+	req.Command = "value=" + posixQuote(text) + "; printf '%s' \"$value\""
+	res := m.Run(t.Context(), req)
+	if res.Err != nil || res.Output != text {
+		t.Fatalf("long command: err=%v output bytes=%d want=%d", res.Err, len(res.Output), len(text))
+	}
+	req.Command = "printf '%s' \"$value\""
+	if res := m.Run(t.Context(), req); res.Err != nil || res.Output != text {
+		t.Fatalf("retained value: err=%v output bytes=%d want=%d", res.Err, len(res.Output), len(text))
+	}
+}
+
 func (w *cancelOnStarted) Write(p []byte) (int, error) {
 	w.output.Write(p)
 	if strings.Contains(w.output.String(), "started\n") {

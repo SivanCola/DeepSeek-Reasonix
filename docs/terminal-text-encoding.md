@@ -34,6 +34,18 @@ Readline 配置：先包含用户原有 inputrc，再开启八位输入输出并
 其他编辑偏好。这样在显式 C locale 下也能接收中文和 emoji。临时文件会在启动失败、
 终端关闭或进程退出时清理。
 
+Long persistent-shell commands are sent as bounded ASCII blocks. Each block
+must be acknowledged before the next is submitted; only the final step executes
+the assembled command in the current shell. This avoids canonical terminal
+input truncation while preserving variables, directory, exit status and stdin
+isolation. Cancellation during staging retires the shell without executing the
+partial command.
+
+较长的持久 Shell 命令会拆成有长度上限的 ASCII 块，每块确认接收后才发送下一块，
+最后在当前 Shell 中执行完整命令。这样可避免终端规范模式截断输入，同时保留变量、
+工作目录、退出码与标准输入隔离。分块传输期间取消操作会关闭该 Shell，不执行未完整
+传输的命令。
+
 ## Tool output / 工具输出
 
 Shared live output buffers incomplete UTF-8 characters across reads before

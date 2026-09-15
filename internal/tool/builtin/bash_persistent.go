@@ -131,7 +131,7 @@ func (b bash) runPersistent(ctx context.Context, p bashParams, sh sandbox.Shell,
 		Shell:    sh,
 		Progress: progress,
 	})
-	if !res.Started && res.Err != nil {
+	if !res.Started && res.Err != nil && !res.Reset {
 		var startup *persistentshell.StartupError
 		if !errors.As(res.Err, &startup) {
 			return "", nil, nil, false

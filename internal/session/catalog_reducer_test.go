@@ -56,7 +56,7 @@ func TestCatalogReducerMatchesCanonicalProjection(t *testing.T) {
 	add("message/upsert", map[string]any{"message": message("x", "")})
 	add("message/upsert", map[string]any{"message": provider.Message{ID: "y", Role: provider.RoleUser, Origin: provider.MessageOriginHost, Content: "host"}})
 	add("history/replace", map[string]any{"messages": []provider.Message{}})
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		add("message/complete", map[string]any{"message": message(fmt.Sprint(i), strings.Repeat("body", 100))})
 		add("message/upsert", map[string]any{"message": message(fmt.Sprint(i), "")})
 	}

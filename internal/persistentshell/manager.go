@@ -384,13 +384,14 @@ func (s *session) run(ctx context.Context, req Request) Result {
 	// The status digits must follow the end marker immediately, so echoed
 	// wrapper source can never fabricate a completion.
 	end := "REASONIX_END_" + id + ":"
-	if err := s.writeScript(posixCommandScript(req.Command, start, end)); err != nil {
+	if err := s.writeCommand(runCtx, req.Command, start, end); err != nil {
 		s.markClosed()
 		return Result{
 			ShellDied:    true,
-			Started:      true,
+			TimedOut:     errors.Is(err, context.DeadlineExceeded),
+			Canceled:     errors.Is(err, context.Canceled),
 			State:        tool.ShellStateFailed,
-			FailurePhase: tool.ShellPhaseExecution,
+			FailurePhase: tool.ShellPhasePreflight,
 			Err:          err,
 		}
 	}

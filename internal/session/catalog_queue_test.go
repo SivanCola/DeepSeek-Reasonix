@@ -45,8 +45,10 @@ func TestColdCatalogDrainsAfterOneListWhileSlotsWereBusy(t *testing.T) {
 	}
 	query := newQuery("local", persistence, nil)
 	t.Cleanup(query.Close)
-	if !query.slots.tryAcquire() || !query.slots.tryAcquire() {
-		t.Fatal("cannot hold build slots")
+	for range 2 {
+		if !query.slots.tryAcquire() {
+			t.Fatal("cannot hold build slots")
+		}
 	}
 	page, err := query.List(t.Context(), "", 100)
 	if err != nil {

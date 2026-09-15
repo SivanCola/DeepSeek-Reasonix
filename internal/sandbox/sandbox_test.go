@@ -295,6 +295,12 @@ func TestCommandNonDarwin(t *testing.T) {
 	}
 	spec := Spec{Mode: "enforce", WriteRoots: []string{"/tmp"}}
 	cmd, wrapped := Command(spec, Shell{Kind: ShellBash, Path: "sh"}, "echo hi")
+	if runtime.GOOS == "windows" {
+		if wrapped || len(cmd) != 0 {
+			t.Fatalf("restricted Windows Bash must be rejected before launch: %v wrapped=%v", cmd, wrapped)
+		}
+		return
+	}
 	if Available() {
 		if !wrapped || cmd[0] == "sh" {
 			t.Fatalf("non-darwin enforce with available sandbox should wrap: %v wrapped=%v", cmd, wrapped)

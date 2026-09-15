@@ -133,6 +133,42 @@ func TestCommandScriptClosesStdin(t *testing.T) {
 	}
 }
 
+func TestLongCommandScriptBoundsPhysicalLinesAndPreservesState(t *testing.T) {
+	skipNonPOSIX(t)
+	text := strings.Repeat("中文😀'\\\n", 2000)
+	stages := commandStages("value="+posixQuote(text)+"; printf '%s' \"$value\"; false", "S", "E:")
+	var script, acknowledgements string
+	for _, stage := range stages {
+		script += stage.script
+		if stage.ack != "" {
+			acknowledgements += stage.ack + "\n"
+		}
+	}
+	for line := range strings.SplitSeq(script, "\n") {
+		if len(line) > 768 {
+			t.Fatalf("physical input line has %d bytes; canonical PTYs can discard excess bytes", len(line))
+		}
+	}
+	if _, _, ok := extractOutput(script, "S", "E:"); ok {
+		t.Fatal("echoed multi-line source fabricated completion")
+	}
+	for _, name := range []string{"bash", "zsh"} {
+		t.Run(name, func(t *testing.T) {
+			path, err := exec.LookPath(name)
+			if err != nil {
+				t.Skipf("%s not installed", name)
+			}
+			cmd := exec.CommandContext(t.Context(), path, "-c", script+"printf '%s' \"$value\"")
+			cmd.Env = []string{"LC_ALL=C"}
+			got, err := cmd.Output()
+			want := acknowledgements + "S\n" + text + "E:1\n" + text
+			if err != nil || string(got) != want {
+				t.Fatalf("wrapper changed output, state or status: err=%v bytes=%d want=%d", err, len(got), len(want))
+			}
+		})
+	}
+}
+
 // The line discipline can emit \r\r\n under output pressure. Mapping every \r
 // to \n injected blank lines into model-visible output.
 func TestNormalizePTYCollapsesCarriageReturnRuns(t *testing.T) {

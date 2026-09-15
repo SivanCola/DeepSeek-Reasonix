@@ -93,8 +93,8 @@ func TestTerminalInputrcLifecycle(t *testing.T) {
 	t.Cleanup(cleanup)
 	var path string
 	for _, item := range env {
-		if strings.HasPrefix(item, "INPUTRC=") {
-			path = strings.TrimPrefix(item, "INPUTRC=")
+		if value, ok := strings.CutPrefix(item, "INPUTRC="); ok {
+			path = value
 		}
 	}
 	info, err := os.Stat(path)

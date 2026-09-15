@@ -1,6 +1,9 @@
 package main
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 func (t *WorkspaceTab) sessionRuntimeLookupKeys() []string {
 	if t == nil {
@@ -32,12 +35,7 @@ func sessionRuntimeKeysOverlap(tab *WorkspaceTab, identity string) bool {
 	if want == "" || tab == nil {
 		return false
 	}
-	for _, key := range tab.sessionRuntimeLookupKeys() {
-		if key == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(tab.sessionRuntimeLookupKeys(), want)
 }
 
 func (a *App) liveRuntimeTabMatchingLocked(exclude *WorkspaceTab, identity string) *WorkspaceTab {
@@ -52,12 +50,7 @@ func (a *App) liveRuntimeTabMatchingLocked(exclude *WorkspaceTab, identity strin
 		if want == "" {
 			return false
 		}
-		for _, key := range tab.sessionRuntimeLookupKeys() {
-			if key == want {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(tab.sessionRuntimeLookupKeys(), want)
 	}
 	if want != "" {
 		if rt := a.runtimeBySessionKey[want]; rt != nil && rt.Owner != exclude && a.runtimeOwnerLiveLocked(rt) && rt.Phase == sessionRuntimeReady && rt.Owner != nil && rt.Owner.Ctrl != nil {
