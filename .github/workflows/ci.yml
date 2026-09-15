@@ -512,7 +512,7 @@ jobs:
           # PREPARE_REQUIRED above.
           test "$MACOS_RESULT" = "$(expected "$NATIVE_REQUIRED")"
           test "$WINDOWS_RESULT" = "$(expected "$NATIVE_REQUIRED")"
-          test "$WINDOWS_GO_RESULT" = "$(expected "$NATIVE_REQUIRED")"
+          test "$WINDOWS_GO_RESULT" = success
           test "$PACKAGE_RESULT" = "$(expected "$PACKAGE_REQUIRED")"
 
   desktop-frontend:
@@ -1147,19 +1147,20 @@ jobs:
         run: node electron/scripts/performance-smoke.mjs
 
   # The desktop Go suite shares nothing with the Electron and browser steps
-  # beyond a built frontend for go:embed, and it is the leg's longest step by
-  # far: the module that tests in 1.8 minutes on ubuntu takes ~17 on Windows,
-  # ~11 of them compiling and linking the cgo-heavy root package before a
-  # single test runs (GOCACHE restored, Defender excluded). Running it beside
-  # the Electron steps makes the leg's wall time the longer half rather than
-  # the sum, and a Go flake reruns only this job.
-  desktop-windows-go:
+  # beyond a built frontend for go:embed. Serial partitions exceeded the
+  # shared 25-minute step budget before the last partition could finish.
+  # Isolated runners keep test globals separate and bound each partition
+  # without increasing the existing job, step, or Go test timeout.
+  desktop-windows-go-group:
     needs: [changes, desktop-prepare]
     if: always() && needs.desktop-prepare.result == 'success' && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.native != 'false')
     runs-on: windows-latest
-    # Measured 17.1-17.3 minutes on three consecutive main-v2 runs; bound
-    # hangs, not duration.
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        group: [a-h, i-p, q-r, s-z]
     defaults:
       run:
         shell: bash
@@ -1219,25 +1220,33 @@ jobs:
         # Keep each package below Go's default 10-minute timeout without
         # relaxing it. These disjoint filters cover every test exactly once;
         # examples, fuzz seeds, and other test names remain in the first group.
+        env:
+          WINDOWS_TEST_GROUP: ${{ matrix.group }}
         run: |
-          go test -skip '^Test[I-Z]' ./...
-          go test -run '^Test[I-P]' ./...
-
-      # The Q-Z desktop package is large enough to exceed the step budget on
-      # a loaded hosted runner. Keep the two disjoint suffixes separate so a
-      # slow tail cannot hide a completed test group or consume the whole job.
-      - name: test (Windows desktop Q-R)
-        timeout-minutes: 25
-        run: go test -run '^Test[Q-R]' -skip '^TestWindowsTerminalProcessConPTYSmoke$' ./...
-
-      - name: test (Windows desktop S-Z)
-        timeout-minutes: 25
-        run: go test -run '^Test[S-Z]' -skip '^TestWindowsTerminalProcessConPTYSmoke$' ./...
+          case "$WINDOWS_TEST_GROUP" in
+            a-h)
+              go test -skip '^Test[I-Z]' ./...
+              ;;
+            i-p)
+              go test -run '^Test[I-P]' ./...
+              ;;
+            q-r)
+              go test -run '^Test[Q-R]' ./...
+              ;;
+            s-z)
+              go test -run '^Test[S-Z]' -skip '^TestWindowsTerminalProcessConPTYSmoke$' ./...
+              ;;
+            *)
+              echo "Unknown Windows test group: $WINDOWS_TEST_GROUP" >&2
+              exit 1
+              ;;
+          esac
 
       # ConPTY startup and teardown depend on the hosted runner's interactive
       # Windows environment. Keep the end-to-end probe visible without making
       # a single host scheduling stall equivalent to a Go correctness failure.
       - name: probe (Windows ConPTY host integration)
+        if: matrix.group == 's-z'
         id: conpty-smoke
         continue-on-error: true
         timeout-minutes: 2
@@ -1249,8 +1258,29 @@ jobs:
         run: echo "::warning::The hosted Windows ConPTY integration probe failed; deterministic Windows Go tests still passed."
 
       - name: test (vendored systray identity)
+        if: matrix.group == 's-z'
         timeout-minutes: 2
         run: go test -timeout=60s fyne.io/systray
+
+  desktop-windows-go:
+    needs: [changes, desktop-prepare, desktop-windows-go-group]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify Windows desktop Go groups
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          SHOULD_RUN: ${{ (github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.native != 'false' }}
+          PREPARE_RESULT: ${{ needs.desktop-prepare.result }}
+          GROUP_RESULT: ${{ needs.desktop-windows-go-group.result }}
+        run: |
+          test "$CHANGES_RESULT" = success
+          if [ "$SHOULD_RUN" = true ]; then
+            test "$PREPARE_RESULT" = success
+            test "$GROUP_RESULT" = success
+          else
+            test "$GROUP_RESULT" = skipped
+          fi
 
   # Installer packaging is packaging validation, not a code gate, and it shares
   # no state with the test steps above. It runs beside them instead of after

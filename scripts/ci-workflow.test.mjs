@@ -83,10 +83,10 @@ test("required desktop aggregate rejects every failed, cancelled or unexpectedly
     for (const value of ["failure", "cancelled", "skipped", ""]) assert.notEqual(run({ ...success, [key]: value }), 0, `${key}=${value}`);
   }
   // A pull request that cannot affect the desktop module: every child skips
-  // except the browser aggregate, which always runs and validates its own.
+  // except the browser and Windows Go aggregates, which validate their groups.
   assert.equal(run({ ...success, PREPARE_REQUIRED: "false", NATIVE_REQUIRED: "false", FRONTEND_REQUIRED: "false", BROWSER_REQUIRED: "false",
     PACKAGE_REQUIRED: "false", PREPARE_RESULT: "skipped", GO_RESULT: "skipped", GO_RACE_RESULT: "skipped", FRONTEND_RESULT: "skipped",
-    BROWSER_RESULT: "success", MACOS_RESULT: "skipped", WINDOWS_RESULT: "skipped", WINDOWS_GO_RESULT: "skipped", PACKAGE_RESULT: "skipped" }), 0);
+    BROWSER_RESULT: "success", MACOS_RESULT: "skipped", WINDOWS_RESULT: "skipped", WINDOWS_GO_RESULT: "success", PACKAGE_RESULT: "skipped" }), 0);
   // Any pull request: packaging is push-only, so it must be skipped there.
   assert.equal(run({ ...success, PACKAGE_REQUIRED: "false", PACKAGE_RESULT: "skipped" }), 0);
   assert.notEqual(run({ ...success, PACKAGE_REQUIRED: "false", PACKAGE_RESULT: "success" }), 0);
@@ -96,6 +96,7 @@ test("required desktop aggregate rejects every failed, cancelled or unexpectedly
     CHANGES_RESULT: "success", SHOULD_RUN: "false", PREPARE_RESULT: "skipped", GROUP_RESULT: "skipped" } });
   assert.equal(browser.status, 0, "an unneeded browser aggregate succeeds after validating skipped groups");
   assert.notEqual(run({ ...success, BROWSER_REQUIRED: "false", BROWSER_RESULT: "skipped" }), 0);
+  assert.notEqual(run({ ...success, NATIVE_REQUIRED: "false", WINDOWS_GO_RESULT: "skipped" }), 0);
 });
 
 test("required lint aggregates code lint and the deduplicated frontend suite", () => {
@@ -216,7 +217,7 @@ test("all desktop consumers verify the prepared build and reject a failed prepar
   assert.equal(ci.match(/test -n "\$\{\{ needs\.desktop-prepare\.outputs\.producer_attempt \}\}"/g)?.length, verifications);
   for (const [name, variant] of [
     ["desktop-go", "stable"], ["desktop-frontend", "stable"], ["desktop-browser-group", "stable"],
-    ["desktop-macos", "stable"], ["desktop-windows", "canary"], ["desktop-windows-go", "stable"],
+    ["desktop-macos", "stable"], ["desktop-windows", "canary"], ["desktop-windows-go-group", "stable"],
   ]) {
     const body = job(ci, name);
     if (["desktop-go", "desktop-frontend"].includes(name)) assert.ok(aggregate.includes(name));
@@ -264,17 +265,18 @@ test("browser matrix preserves five entry points and fails closed through deskto
 });
 
 test("Windows desktop Go partitions tests without verbose JSON cache overhead", () => {
-  const windowsGo = job(ci, "desktop-windows-go");
+  const windowsGo = job(ci, "desktop-windows-go-group");
   const suite = shellStep(windowsGo, "test (Windows desktop and update helper)");
-  const commands = suite.trim().split("\n").map(line => ({
+  const lines = suite.match(/^\s*go test [^\n]+/gm);
+  const commands = lines.map(line => ({
     run: line.match(/-run '([^']+)'/)?.[1],
     skip: line.match(/-skip '([^']+)'/)?.[1],
   }));
-  assert.equal(commands.length, 3);
+  assert.equal(commands.length, 4);
   assert.equal(suite.match(/^\s*go test /gm)?.length, commands.length);
   // Include non-test entry points and every possible first suffix character.
-  // The complement group must retain names outside the two selected ranges.
-  const names = ["Example", "ExampleSession", "FuzzSession", "Test"];
+  // The complement group must retain names outside the selected ranges.
+  const names = ["Example", "ExampleSession", "FuzzSession", "Test", "TestWindowsTerminalProcessConPTYSmoke"];
   for (let code = 0; code <= 127; code++) names.push(`Test${String.fromCharCode(code)}Session`);
   names.push("Test会话", "TestΩSession");
   for (const name of names) {
@@ -292,6 +294,39 @@ test("Windows desktop Go partitions tests without verbose JSON cache overhead", 
   assert.doesNotMatch(windowsGo, /go-test-timing/);
   assert.doesNotMatch(windowsGo, /go test -run ['"]?\^\$/);
 
+  const groups = windowsGo.match(/group: \[([^\]]+)\]/)[1].split(",").map(value => value.trim());
+  assert.deepEqual(groups, ["a-h", "i-p", "q-r", "s-z"]);
+  assert.match(windowsGo, /fail-fast: false/);
+  assert.match(windowsGo, /max-parallel: 4/);
+  assert.match(windowsGo, /WINDOWS_TEST_GROUP: \$\{\{ matrix.group \}\}/);
+  // Execute the actual dispatch with a harmless go stub: each runner selects
+  // exactly one command, and an unknown group cannot silently skip coverage.
+  const dispatch = group => spawnSync("bash", ["-e", "-c", 'go() { printf "%s\\n" "$*"; }\n' + suite], {
+    env: { ...process.env, WINDOWS_TEST_GROUP: group }, encoding: "utf8",
+  });
+  for (const [index, group] of groups.entries()) {
+    const result = dispatch(group);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), lines[index].trim().replace(/^go /, "").replaceAll("'", ""));
+  }
+  assert.notEqual(dispatch("unknown").status, 0);
+
   assert.match(windowsGo, /name: probe \(Windows ConPTY host integration\)[\s\S]*?continue-on-error: true[\s\S]*?run: go test -run '\^TestWindowsTerminalProcessConPTYSmoke\$' \./);
+  assert.match(windowsGo, /name: probe \(Windows ConPTY host integration\)\n\s+if: matrix.group == 's-z'/);
+  assert.match(windowsGo, /name: test \(vendored systray identity\)\n\s+if: matrix.group == 's-z'/);
   assert.match(windowsGo, /steps\.conpty-smoke\.outcome == 'failure'/);
+});
+
+test("Windows desktop Go aggregate rejects incomplete matrix results", () => {
+  const summary = job(ci, "desktop-windows-go");
+  assert.match(summary, /needs: \[changes, desktop-prepare, desktop-windows-go-group\]/);
+  const script = shellStep(summary, "Verify Windows desktop Go groups");
+  const success = { CHANGES_RESULT: "success", SHOULD_RUN: "true", PREPARE_RESULT: "success", GROUP_RESULT: "success" };
+  const run = patch => spawnSync("bash", ["-e", "-c", script], { env: { ...process.env, ...success, ...patch } }).status;
+  assert.equal(run({}), 0);
+  for (const key of ["CHANGES_RESULT", "PREPARE_RESULT", "GROUP_RESULT"])
+    for (const result of ["failure", "cancelled", "skipped", ""])
+      assert.notEqual(run({ [key]: result }), 0, `${key}=${result}`);
+  assert.equal(run({ SHOULD_RUN: "false", PREPARE_RESULT: "skipped", GROUP_RESULT: "skipped" }), 0);
+  assert.notEqual(run({ SHOULD_RUN: "false" }), 0);
 });
