@@ -62,8 +62,9 @@ try {
     });
     const { WorkspaceSessionBrowser } = await import("/src/components/WorkspaceSessionBrowser.tsx");
     const reactRoot = createRoot(document.getElementById("sidebar"));
-    window.renderArchived = () => reactRoot.render(React.createElement(LocaleProvider, null, React.createElement(ToastProvider, null, React.createElement(WorkspaceSessionBrowser, { archived: true }))));
-    reactRoot.render(React.createElement(LocaleProvider, null, React.createElement(ToastProvider, null, React.createElement(WorkspaceSessionBrowser))));
+    const navigation = { onOpenSession: async ref => { window.sidebarCalls.push(ref.sessionId); }, onCreateSession: async () => {} };
+    window.renderArchived = () => reactRoot.render(React.createElement(LocaleProvider, null, React.createElement(ToastProvider, null, React.createElement(WorkspaceSessionBrowser, { ...navigation, archived: true }))));
+    reactRoot.render(React.createElement(LocaleProvider, null, React.createElement(ToastProvider, null, React.createElement(WorkspaceSessionBrowser, navigation))));
   });
   const rows = page.locator(".workspace-browser__session");
   await rows.first().waitFor();

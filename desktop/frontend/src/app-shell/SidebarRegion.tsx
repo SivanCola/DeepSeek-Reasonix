@@ -27,6 +27,7 @@ export type SidebarRegionProps = {
     onReset: () => void;
   };
   projectTree: ComponentProps<typeof ProjectTree>;
+  workspaceSessions: ComponentProps<typeof WorkspaceSessionBrowser>;
   t: Translator;
   onNewSession: () => void;
   onOpenTrash: () => void;
@@ -77,7 +78,7 @@ export function SidebarRegion(props: SidebarRegionProps) {
           </section>
         )}
         <section className="sidebar__section sidebar__section--projects">
-          <Suspense fallback={null}>{props.workbench ? <WorkspaceSessionBrowser /> : <ProjectTree {...props.projectTree} />}</Suspense>
+          <Suspense fallback={null}>{props.workbench ? <WorkspaceSessionBrowser {...props.workspaceSessions} /> : <ProjectTree {...props.projectTree} />}</Suspense>
         </section>
         {props.workbench ? (
           <nav className="sidebar__nav sidebar__nav--footer">

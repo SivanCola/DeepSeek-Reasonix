@@ -168,7 +168,7 @@ export function useAppSessionComposition(input: AppSessionCompositionInput) {
     switchTab, switchRemoteTab, closeTab, reorderTabs, createIsolatedWorktree,
     noteNavigationIntent, registeredNavigationIntent, isNavigationIntentCurrent, reassertVisibleTabAfterStaleNavigation,
     commitSingleSurfaceNavigation, activateTopic,
-    ensureBlankSurface,
+    ensureBlankSurface, openCanonicalSession,
   } = runtime.navigation;
   const {
     setTransientOverlayDismissSignal, managementActive, desktopLayoutStyle,
@@ -679,7 +679,7 @@ export function useAppSessionComposition(input: AppSessionCompositionInput) {
     enqueue: useCommittedCommand((intent, seq) => enqueueNavigationWithIntent(intent, seq)) });  const { enqueueNavigation, enqueueNavigationWithIntent, openRemoteProject } = useDesktopNavigation({
     visible: { tabId: activeTabId ?? "", sessionKey: activeSessionIdentity },
     ports: { isNavigationIntentCurrent, activateTopic,
-      ensureBlankSurface, createIsolatedWorktree, openChannelSession, resumeSession,
+      ensureBlankSurface, openCanonicalSession, createIsolatedWorktree, openChannelSession, resumeSession,
       registeredNavigationIntent, switchRemoteTab, openRemoteProject: desktopBridge.openRemoteProjectTab,
       listTabs: desktopBridge.listTabs, applyTabs: setTabMetas, seedTab: seedActiveTabMeta, listSessions, topicAccepted },
     setTabRevealSignal, setProjectRevision, setHistory: setHistView, t, showToast,

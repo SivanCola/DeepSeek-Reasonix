@@ -38,6 +38,7 @@ export function buildSidebarRegionProps(input: {
     onVisibleTopicsChange: SidebarRegionProps["projectTree"]["onVisibleTopicsChange"];
   };
   topics: ProjectTopicCommands;
+  workspaceSessions: SidebarRegionProps["workspaceSessions"];
   commands: {
     onNewSession: () => void;
     onOpenTrash: () => void;
@@ -61,6 +62,7 @@ export function buildSidebarRegionProps(input: {
     togglePressed: shell.sidebarTogglePressed,
     toggleTitle: input.toggleTitle,
     t: input.t,
+    workspaceSessions: input.workspaceSessions,
     onNewSession: commands.onNewSession,
     onOpenTrash: commands.onOpenTrash,
     onOpenAutomation: commands.onOpenAutomation,

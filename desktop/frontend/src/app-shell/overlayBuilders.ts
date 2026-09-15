@@ -61,7 +61,7 @@ export function buildOverlayHostProps(input: {
       },
     } : undefined,
     trash: shell.visitedTrash ? { view: { active: input.pageKind === "trash" },
-      commands: { onBack: shell.returnToWorkspace, list: sessionActions.listTrashedSessions, restore: sessionActions.restoreSession, purge: sessionActions.purgeTrashedSession } } : undefined,
+      commands: { onBack: shell.returnToWorkspace, onOpenSession: navigation.openCanonicalSession, list: sessionActions.listTrashedSessions, restore: sessionActions.restoreSession, purge: sessionActions.purgeTrashedSession } } : undefined,
     automation: shell.visitedAutomation ? { view: { active: input.pageKind === "automation" },
       commands: { onBack: shell.returnToWorkspace, onOpenTopic: input.automationTopic } } : undefined,
     recovery: {

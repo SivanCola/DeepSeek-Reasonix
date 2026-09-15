@@ -9,11 +9,15 @@ import { refreshHistoryProjection, type HistoryViewState } from "./historyViewPr
 import { useCommittedCommand } from "../lib/useCommittedCommand";
 import { enqueueNavigationRequest, type NavigationCoalescingRefs } from "../lib/openTopicCoalescing";
 import { useResourceOperations, type SessionResource, type SessionOperationAuthority } from "./useResourceOperations";
-import { executeDesktopNavigation, type DesktopNavigationCapture, type DesktopNavigationIntent, type DesktopNavigationPorts, type NavigationNotice } from "./desktopNavigationOwner";
+import type { DesktopNavigationCapture, DesktopNavigationIntent, DesktopNavigationPorts, NavigationNotice } from "./desktopNavigationOwner";
 
 type QueueInput = { capture: DesktopNavigationCapture; authority: SessionOperationAuthority; result: { error?: unknown; tab?: TabMeta } };
+let executeNavigation: typeof import("./desktopNavigationOwner").executeDesktopNavigation | undefined;
 async function runQueuedRequest(request: QueueInput) {
-  try { request.result.tab = await executeDesktopNavigation(request.capture, request.authority); }
+  try {
+    executeNavigation ??= (await import("./desktopNavigationOwner")).executeDesktopNavigation;
+    request.result.tab = await executeNavigation(request.capture, request.authority);
+  }
   catch (error) { request.result.error = error; }
 }
 async function executeQueuedNavigation(input: { capture: DesktopNavigationCapture; queue: NavigationCoalescingRefs<QueueInput> }, authority: SessionOperationAuthority) {

@@ -80,6 +80,7 @@ export function useAppRuntimeAdapter() {
       closeTab: controller.closeTab,
       reorderTabs: controller.reorderTabs,
       activateTopic: controller.activateTopic,
+      openCanonicalSession: controller.openCanonicalSession,
       noteNavigationIntent: controller.noteNavigationIntent,
       registeredNavigationIntent: controller.registeredNavigationIntent,
       isNavigationIntentCurrent: controller.isNavigationIntentCurrent,

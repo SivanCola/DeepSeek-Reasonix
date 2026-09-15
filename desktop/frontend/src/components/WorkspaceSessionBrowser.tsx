@@ -26,7 +26,11 @@ export function workspaceSessionsForDisplay(rows: WorkspaceSessionSummary[], sea
   return provisional ? [...ordinary, provisional] : ordinary;
 }
 
-export function WorkspaceSessionBrowser({ archived = false }: { archived?: boolean }) {
+export function WorkspaceSessionBrowser({ archived = false, onOpenSession, onCreateSession }: {
+  archived?: boolean;
+  onOpenSession: (ref: WorkspaceSessionSummary["ref"]) => Promise<void>;
+  onCreateSession?: (workspace: WorkspaceSnapshot["workspaces"][number]) => Promise<void>;
+}) {
   const { showToast } = useToast();
   const { t } = useI18n();
   const [snapshot, setSnapshot] = useState<WorkspaceSnapshot | null>(null);
@@ -83,7 +87,7 @@ export function WorkspaceSessionBrowser({ archived = false }: { archived?: boole
   const openSession = async (session: WorkspaceSessionSummary) => {
     const sequence = ++openSequence.current;
     try {
-      await app.OpenSession(session.ref);
+      await onOpenSession(session.ref);
       if (sequence === openSequence.current) await reload();
     } catch (error) {
       if (sequence === openSequence.current) showToast(error instanceof Error ? error.message : String(error), "error");
@@ -145,8 +149,8 @@ export function WorkspaceSessionBrowser({ archived = false }: { archived?: boole
                   scope: workspace.id === GLOBAL_WORKSPACE_ID ? "global" : "project", root: workspace.root,
                 }} /></Suspense>
               </button>
-              {!archived && <button className="workspace-browser__workspace-create" type="button" aria-label={t("workspaceBrowser.create")}
-                onClick={() => void mutate(async () => { await app.CreateSession(workspace.id); })}>
+              {!archived && onCreateSession && <button className="workspace-browser__workspace-create" type="button" aria-label={t("workspaceBrowser.create")}
+                onClick={() => void mutate(() => onCreateSession(workspace))}>
                 <Plus size={13} />
               </button>}
             </div>
