@@ -116,7 +116,7 @@ func (b bash) Description() string {
 			chaining = "'&&' and '||' are parsed for conditional chaining; ';' runs both regardless."
 		}
 		return fmt.Sprintf("Execute a command in the shell and return combined stdout/stderr. "+
-			"NOTE: bash is not available on this host — commands run under %s, so write PowerShell, not bash:\n"+
+			"Commands run under %s on this host, so write PowerShell, not bash:\n"+
 			"  - chaining: %s\n"+
 			"  - redirect/vars: $null not /dev/null; $env:VAR not $VAR; '2>$null' drops stderr.\n"+
 			"  - file ops: Get-ChildItem (ls), Get-Content (cat), Remove-Item -Recurse -Force (rm -rf), Copy-Item (cp), Select-String (grep).\n"+
@@ -190,6 +190,9 @@ func (b bash) ExecuteDetailed(ctx context.Context, args json.RawMessage) (tool.D
 	}
 
 	sh := b.resolved()
+	if err := sandbox.ValidateShellPolicy(b.specForCall(ctx), sh); err != nil {
+		return bashPreflightFailure(ex, start, err)
+	}
 	if res, err, reject := rejectPowerShellChaining(ex, start, sh, p.Command); reject {
 		return res, err
 	}
@@ -235,6 +238,21 @@ func (b bash) ExecuteDetailed(ctx context.Context, args json.RawMessage) (tool.D
 
 	argv, wrapped := prepared.Argv, prepared.Wrapped
 	cmdEnv := applyEnvOverrides(bashCommandEnv(ctx), prepared.EnvOverrides)
+	probeEnv := cmdEnv
+	if b.shouldUsePersistent(ctx, p, sh) {
+		probeEnv = persistEnv(cmdEnv)
+	}
+	if failure := shellrun.CheckShellLaunch(ctx, shellrun.Request{
+		ProbeArgv: shellrun.WindowsProbeArgv(b.specForCall(ctx), sh, prepared.SessionTemp),
+		Dir:       b.workDir, Env: probeEnv, Timeout: b.foregroundTimeout(),
+		ShellKind: sh.Kind.String(), ShellPath: sh.Path,
+	}); failure != nil {
+		ex.State, ex.FailurePhase = failure.State, failure.FailurePhase
+		ex.ExitCode, ex.OutputTail = failure.ExitCode, failure.OutputTail
+		ex.MutationRisk = tool.ShellMutationNotStarted
+		ex.DurationMs = time.Since(start).Milliseconds()
+		return tool.DetailedResult{Output: failure.Combined, Execution: ex}, failure.Err
+	}
 
 	if res, err, used := b.tryPersistent(ctx, p, sh, prepared, persistEnv(cmdEnv), start, ex); used {
 		return res, err

@@ -3174,7 +3174,7 @@ export const zhTW: Record<DictKey, string> = {
   "settings.botListPlaceholder": "每行一個 ID，也可用逗號分隔",
   "settings.shellInterpreter": "Shell 直譯器",
   "settings.shellAuto": "自動（bash 優先）",
-  "settings.shellAutoWindows": "自動（bash 優先；Windows 無 bash 時用 PowerShell）",
+  "settings.shellAutoWindows": "自動（Windows 僅使用 PowerShell；其他平台優先 bash）",
   "settings.shellBash": "bash",
   "settings.shellPowershell": "PowerShell（Windows PowerShell）",
   "settings.shellPwsh": "pwsh（PowerShell 7+）",

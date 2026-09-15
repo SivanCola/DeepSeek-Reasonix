@@ -2278,7 +2278,7 @@ export const en = {
   "settings.reloadSessionConfigHint": "Changes made in Settings apply automatically; use this only after manually editing config.toml or reasonix.toml.",
   "settings.shellInterpreter": "Shell interpreter",
   "settings.shellAuto": "auto (bash first)",
-  "settings.shellAutoWindows": "auto (bash first; PowerShell on Windows if bash is missing)",
+  "settings.shellAutoWindows": "auto (PowerShell only on Windows; bash on other platforms)",
   "settings.shellBash": "bash",
   "settings.shellPowershell": "PowerShell (Windows PowerShell)",
   "settings.shellPwsh": "pwsh (PowerShell 7+)",

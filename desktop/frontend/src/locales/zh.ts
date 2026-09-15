@@ -2280,7 +2280,7 @@ export const zh: Record<DictKey, string> = {
   "settings.reloadSessionConfigHint": "设置页内修改会自动生效；此按钮用于应用手动编辑 config.toml / reasonix.toml 后的变更。",
   "settings.shellInterpreter": "Shell 解释器",
   "settings.shellAuto": "自动（bash 优先）",
-  "settings.shellAutoWindows": "自动（bash 优先；Windows 无 bash 时用 PowerShell）",
+  "settings.shellAutoWindows": "自动（Windows 仅使用 PowerShell；其他平台优先 bash）",
   "settings.shellBash": "bash",
   "settings.shellPowershell": "PowerShell（Windows PowerShell）",
   "settings.shellPwsh": "pwsh（PowerShell 7+）",

@@ -61,12 +61,27 @@ type Result struct {
 // it so hot rebuilds share the live shell; Rotate closes it so a new logical
 // session cannot inherit cwd or environment.
 type Manager struct {
-	mu     sync.Mutex
-	runMu  sync.Mutex
-	owners int
-	sealed bool
-	live   *session
+	mu                 sync.Mutex
+	runMu              sync.Mutex
+	owners             int
+	sealed             bool
+	live               *session
+	startupFailure     *StartupError
+	startupFingerprint string
+	startupFailedAt    time.Time
 }
+
+// StartupError preserves stderr from a PTY that opened but never became ready.
+// It must not be discarded in favor of retrying the same runtime one-shot.
+type StartupError struct {
+	Output string
+	Err    error
+}
+
+func (e *StartupError) Error() string {
+	return fmt.Sprintf("persistent shell startup failed; requested command was not run: %v", e.Err)
+}
+func (e *StartupError) Unwrap() error { return e.Err }
 
 type session struct {
 	mu          sync.Mutex
@@ -155,6 +170,7 @@ func (m *Manager) Rotate() {
 	}
 	live := m.live
 	m.live = nil
+	m.startupFailure = nil
 	m.mu.Unlock()
 	if live != nil {
 		live.close()
@@ -197,6 +213,11 @@ func (m *Manager) sessionFor(req Request) (*session, error) {
 		m.mu.Unlock()
 		return nil, fmt.Errorf("%w: manager closed", ErrUnavailable)
 	}
+	if m.startupFailure != nil && m.startupFingerprint == fp && time.Since(m.startupFailedAt) < 30*time.Second {
+		err := m.startupFailure
+		m.mu.Unlock()
+		return nil, err
+	}
 	if m.live != nil && m.live.fp != fp {
 		old := m.live
 		m.live = nil
@@ -217,6 +238,12 @@ func (m *Manager) sessionFor(req Request) (*session, error) {
 
 	sess, err := startSession(req, fp)
 	if err != nil {
+		var startup *StartupError
+		if errors.As(err, &startup) {
+			m.mu.Lock()
+			m.startupFailure, m.startupFingerprint, m.startupFailedAt = startup, fp, time.Now()
+			m.mu.Unlock()
+		}
 		return nil, err
 	}
 
@@ -269,11 +296,16 @@ func fingerprint(req Request) string {
 }
 
 func failResult(err error, phase string) Result {
-	return Result{
+	result := Result{
 		Err:          err,
 		State:        tool.ShellStateFailed,
 		FailurePhase: phase,
 	}
+	var startup *StartupError
+	if errors.As(err, &startup) {
+		result.Output = startup.Output
+	}
+	return result
 }
 
 func startSession(req Request, fp string) (*session, error) {
@@ -292,13 +324,16 @@ func startSession(req Request, fp string) (*session, error) {
 		s.close()
 		return nil, err
 	}
-	var buf strings.Builder
+	var buf []byte
 	if err := s.pump(ctx, func(text string) bool {
-		buf.WriteString(text)
-		return readyLine(buf.String())
+		buf = append(buf, text...)
+		if len(buf) > tool.OutputTailMaxBytes {
+			buf = buf[len(buf)-tool.OutputTailMaxBytes:]
+		}
+		return readyLine(string(buf))
 	}); err != nil {
 		s.close()
-		return nil, fmt.Errorf("persistent shell startup: %w", err)
+		return nil, &StartupError{Output: strings.ToValidUTF8(string(buf), "\uFFFD"), Err: err}
 	}
 	return s, nil
 }

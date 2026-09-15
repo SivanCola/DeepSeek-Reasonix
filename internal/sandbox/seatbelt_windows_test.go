@@ -48,6 +48,31 @@ func TestWindowsCommandWrapsWithHelper(t *testing.T) {
 	}
 }
 
+func TestWindowsPersistentShellUsesSameTokenLaneAsOneShot(t *testing.T) {
+	RegisterHelperDispatch()
+	if !winsandbox.Available() {
+		t.Skip("Windows sandbox APIs unavailable")
+	}
+	for _, readOnly := range []bool{false, true} {
+		spec := Spec{Mode: "enforce", Network: true, ReadOnly: readOnly, WriteRoots: []string{`C:\work`}}
+		sh := Shell{Kind: ShellPowerShell, Path: `C:\PowerShell\pwsh.exe`}
+		oneShot := PrepareShell(spec, sh, "exit 0", `C:\private-temp`)
+		persistent := PrepareShellArgs(spec, []string{sh.Path, "-NoLogo", "-NoProfile"}, `C:\private-temp`)
+		for _, launch := range []Prepared{oneShot, persistent} {
+			if !launch.Wrapped {
+				t.Fatal("shell escaped sandbox")
+			}
+			payload, err := decodeWindowsSandboxPayload(launch.Argv[2])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !payload.Writable || payload.Spec.ReadOnly != readOnly || payload.Spec.SessionTemp != `C:\private-temp` {
+				t.Fatalf("shell policy diverged: %+v", payload)
+			}
+		}
+	}
+}
+
 func TestWindowsCommandArgsWrapsReadOnly(t *testing.T) {
 	RegisterHelperDispatch()
 	if !winsandbox.Available() {

@@ -42,7 +42,9 @@ var errForegroundTimeout = errors.New("shell foreground timeout")
 // Request describes one foreground shell launch. Argv must already include the
 // interpreter and any sandbox wrapping; Command is only for diagnostics.
 type Request struct {
-	Argv              []string
+	Argv []string
+	// ProbeArgv is an optional same-policy Windows shell preflight.
+	ProbeArgv         []string
 	Dir               string
 	Env               []string
 	Timeout           time.Duration
@@ -80,6 +82,9 @@ type Result struct {
 // lock-safe collector, and classifies timeout / cancel / launch / execution
 // failures. Combined output is always returned so callers can feed the model.
 func RunForeground(ctx context.Context, req Request) Result {
+	if failure := CheckShellLaunch(ctx, req); failure != nil {
+		return *failure
+	}
 	if len(req.Argv) == 0 {
 		return Result{
 			State:        tool.ShellStateFailed,
@@ -189,6 +194,9 @@ func RunForeground(ctx context.Context, req Request) Result {
 		out.State = tool.ShellStateFailed
 		out.FailurePhase = tool.ShellPhaseExecution
 		out.Err = fmt.Errorf("command exited: %w", err)
+		if diagnostic := WindowsRuntimeDiagnostic(out.Combined); diagnostic != "" {
+			out.Err = fmt.Errorf("%s: %w", diagnostic, out.Err)
+		}
 		return out
 	}
 	// Process never produced an exit status — launch / dependency style failure.

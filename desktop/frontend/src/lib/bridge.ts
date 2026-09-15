@@ -1165,7 +1165,7 @@ function browserPreviewBashSandboxMode(): "enforce" | "off" {
 function browserPreviewEffectiveShell(prefer = "auto"): "bash" | "git-bash" | "powershell" | "pwsh" {
   const normalized = prefer.trim().toLowerCase();
   if (normalized === "powershell" || normalized === "pwsh") return normalized;
-  return browserPlatformOverride() === "windows" ? "git-bash" : "bash";
+  return browserPlatformOverride() === "windows" ? (normalized === "bash" ? "git-bash" : "pwsh") : "bash";
 }
 
 function mockScenario(): "demo" | "fresh" | "running" | "guidance" | "recovery" | "sandbox_escape" | "notice" | "deepseek_upgrade" | "bench" {
