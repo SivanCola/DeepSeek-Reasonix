@@ -1,9 +1,17 @@
 import { Archive, ChevronDown, ChevronRight, History, LoaderCircle, MessageSquare, Plus, RotateCcw, Search } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { WorkspaceSessionSummary, WorkspaceSnapshot } from "../generated/desktopContract.generated";
 import { app, onProjectTreeChanged } from "../lib/bridge";
 import { useI18n } from "../lib/i18n";
 import { useToast } from "../lib/toast";
+
+// Workspace activity comes from the runtime store, not from the session rows:
+// a background job keeps a workspace active after its turn goes idle, and the
+// row projection does not carry that state.
+const RuntimeActivity = lazy(() => import("./RuntimeActivityIndicator"));
+
+// Mirrors workspacestate.GlobalWorkspaceID; the global workspace has no root.
+const GLOBAL_WORKSPACE_ID = "global";
 
 type SessionRows = Record<string, WorkspaceSessionSummary[]>;
 
@@ -100,6 +108,9 @@ export function WorkspaceSessionBrowser() {
                 return next;
               })}>
                 {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}<span>{workspace.title || t("workspaceBrowser.workspace")}</span>
+                <Suspense fallback={null}><RuntimeActivity target={{
+                  scope: workspace.id === GLOBAL_WORKSPACE_ID ? "global" : "project", root: workspace.root,
+                }} /></Suspense>
               </button>
               <button className="workspace-browser__workspace-create" type="button" aria-label={t("workspaceBrowser.create")}
                 onClick={() => void mutate(async () => { await app.CreateSession(workspace.id); })}>

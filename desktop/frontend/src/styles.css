@@ -28852,7 +28852,7 @@ body > .mermaid-diagram--fullscreen {
 .project-tree__group-children {
   padding-left: 0;
 }
-.project-tree__folder-active-indicator {
+.runtime-activity-indicator {
   width: 10px;
   height: 10px;
   flex: 0 0 10px;
@@ -28864,7 +28864,7 @@ body > .mermaid-diagram--fullscreen {
   pointer-events: none;
 }
 @media (prefers-reduced-motion: reduce) {
-  .project-tree__folder-active-indicator {
+  .runtime-activity-indicator {
     animation: none;
     border-color: currentColor;
     opacity: 0.72;
