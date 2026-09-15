@@ -161,6 +161,14 @@ async function runProcess(index) {
     // reading look displaced. Settle and require consecutive identical readings
     // before accepting the baseline; an unsettled baseline is reported instead
     // of being judged as drift.
+    //
+    // Warm every measured fixture the same way first. The safety excursion is
+    // the only earlier windowed visit and it runs with deliberately invalid
+    // geometry, so without this round trip the windowed surface reaches its
+    // first healthy render after the baseline and its one-time bounded setup
+    // is reported as drift. Accumulation is still measured: each phase keeps
+    // sampling every 32 round trips against this baseline.
+    await selectFixture(page, fixtures.windowed);
     await selectFixture(page, fixtures.geometry);
     await selectFixture(page, fixtures.full);
     const samples = [];
