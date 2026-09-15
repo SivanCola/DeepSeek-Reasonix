@@ -448,6 +448,8 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // measure 2488853 B. Keep the next tenth; gzip, CSS, and chunk limits unchanged.
 // Combined model-settings and read-evidence integration measures 2492541 B,
 // adding 3688 B (0.148%) over the base. Retain the next one-decimal ceiling.
-const rawInitialBudgetKiB = 2_434.2;
+// SessionRef bridge methods and Workspace Session browser locale/type bindings
+// measure 2438.8 KiB in CI; retain 0.2 KiB bounded toolchain headroom.
+const rawInitialBudgetKiB = 2_439.0;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
