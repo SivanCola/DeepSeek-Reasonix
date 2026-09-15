@@ -163,7 +163,7 @@ func (a *App) validateDesktopWorkspaceMembership(ctx context.Context, workspaceI
 		return fmt.Errorf("desktop session %q has no immutable workspace header", ref.SessionID)
 	}
 	if !sameDesktopPath(info.CWD, workspace.Root) {
-		return fmt.Errorf("desktop session %q belongs to a different workspace", ref.SessionID)
+		return errSessionWorkspaceConflict
 	}
 	return nil
 }
@@ -222,6 +222,9 @@ func (a *App) verifyCanonicalTabRegistryBeforePrune(tab *WorkspaceTab) error {
 }
 
 func (a *App) persistHiddenTabBeforePrune(id string, tab *WorkspaceTab) error {
+	if tab != nil && tab.hasActiveRuntimeWork() {
+		return nil
+	}
 	if err := a.snapshotTab(tab); err != nil {
 		a.desktopSessions.pruneBlockedPersistence.Add(1)
 		slog.Warn("desktop: snapshot before pruning hidden tab failed", "tab", id, "err", err)

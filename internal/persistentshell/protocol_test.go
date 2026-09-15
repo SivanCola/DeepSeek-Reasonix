@@ -1,6 +1,8 @@
 package persistentshell
 
 import (
+	"bytes"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -21,6 +23,39 @@ func TestExtractOutputIgnoresEchoedScript(t *testing.T) {
 	}
 	if body != "/tmp/work" {
 		t.Fatalf("body=%q", body)
+	}
+}
+
+func TestAnsiCQuoteASCIIByteRoundTrip(t *testing.T) {
+	skipNonPOSIX(t)
+	// NUL cannot occur in a shell argument. Include every other byte followed
+	// by octal digits to catch escapes that accidentally consume the suffix.
+	var input []byte
+	for c := 1; c <= 255; c++ {
+		input = append(input, byte(c), '7', '0')
+	}
+	quoted := ansiCQuote(string(input))
+	for _, c := range []byte(quoted) {
+		if c < 0x20 || c >= 0x7f {
+			t.Fatalf("unsafe terminal input byte: %02x", c)
+		}
+	}
+	for _, name := range []string{"bash", "zsh"} {
+		t.Run(name, func(t *testing.T) {
+			path, err := exec.LookPath(name)
+			if err != nil {
+				t.Skipf("%s not installed", name)
+			}
+			cmd := exec.Command(path, "-c", "printf '%s' "+quoted)
+			cmd.Env = []string{"LC_ALL=C"}
+			got, err := cmd.Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(got, input) {
+				t.Fatalf("shell decoded %x, want %x", got, input)
+			}
+		})
 	}
 }
 
@@ -85,7 +120,7 @@ func TestAnsiCQuoteKeepsOnePhysicalLine(t *testing.T) {
 	if got := ansiCQuote("a'b\nc\\d\te"); got != `$'a\'b\nc\\d\te'` {
 		t.Fatalf("quote=%q", got)
 	}
-	if got := ansiCQuote("\x01"); got != `$'\1'` {
+	if got := ansiCQuote("\x01"); got != `$'\001'` {
 		t.Fatalf("control quote=%q", got)
 	}
 }
@@ -95,6 +130,42 @@ func TestAnsiCQuoteKeepsOnePhysicalLine(t *testing.T) {
 func TestCommandScriptClosesStdin(t *testing.T) {
 	if !strings.Contains(posixCommandScript("read x", "S", "E:"), "</dev/null") {
 		t.Fatal("wrapper must detach stdin")
+	}
+}
+
+func TestLongCommandScriptBoundsPhysicalLinesAndPreservesState(t *testing.T) {
+	skipNonPOSIX(t)
+	text := strings.Repeat("中文😀'\\\n", 2000)
+	stages := commandStages("value="+posixQuote(text)+"; printf '%s' \"$value\"; false", "S", "E:")
+	var script, acknowledgements string
+	for _, stage := range stages {
+		script += stage.script
+		if stage.ack != "" {
+			acknowledgements += stage.ack + "\n"
+		}
+	}
+	for line := range strings.SplitSeq(script, "\n") {
+		if len(line) > 768 {
+			t.Fatalf("physical input line has %d bytes; canonical PTYs can discard excess bytes", len(line))
+		}
+	}
+	if _, _, ok := extractOutput(script, "S", "E:"); ok {
+		t.Fatal("echoed multi-line source fabricated completion")
+	}
+	for _, name := range []string{"bash", "zsh"} {
+		t.Run(name, func(t *testing.T) {
+			path, err := exec.LookPath(name)
+			if err != nil {
+				t.Skipf("%s not installed", name)
+			}
+			cmd := exec.CommandContext(t.Context(), path, "-c", script+"printf '%s' \"$value\"")
+			cmd.Env = []string{"LC_ALL=C"}
+			got, err := cmd.Output()
+			want := acknowledgements + "S\n" + text + "E:1\n" + text
+			if err != nil || string(got) != want {
+				t.Fatalf("wrapper changed output, state or status: err=%v bytes=%d want=%d", err, len(got), len(want))
+			}
+		})
 	}
 }
 

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 import { darwinRoots, selectPackages, testArgs } from "./macos-go-tests.mjs";
 
@@ -55,7 +56,18 @@ test("CI runs the darwin group on pull requests and the full sweep on pushes", (
   const source = readFileSync(path.join(root, ".github/workflows/ci.yml"), "utf8");
   assert.match(source, /run: node scripts\/macos-go-tests\.mjs darwin\n/);
   assert.match(source, /node --test[^\n]*scripts\/macos-go-tests\.test\.mjs/);
-  const step = source.match(/\n      - name: test\n([\s\S]*?)(?=\n      - name: )/)?.[1];
-  assert.ok(step, "the root test step must still exist");
-  assert.match(step, /runner\.os == 'Linux' \|\| github\.event_name != 'pull_request'/);
+  const enabled = (name, event, run) => {
+    const step = source.split(`      - name: ${name}\n`)[1]?.split(/\n      - /)[0];
+    assert.ok(step, `${name} must still exist`);
+    const expression = step.match(/^        if: (.+)$/m)[1];
+    return vm.runInNewContext(expression, {
+      env: { RUN_STEPS: run }, runner: { os: "macOS" }, github: { event_name: event },
+    });
+  };
+  for (const event of ["pull_request", "push", "workflow_dispatch"]) {
+    for (const run of ["true", "false"]) {
+      assert.equal(enabled("test", event, run), run === "true" && event !== "pull_request");
+      assert.equal(enabled("test (macOS platform packages)", event, run), run === "true" && event === "pull_request");
+    }
+  }
 });

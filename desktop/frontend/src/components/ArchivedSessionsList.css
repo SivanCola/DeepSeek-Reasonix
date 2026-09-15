@@ -1,0 +1,10 @@
+.archived-sessions { display: flex; min-height: 0; flex-direction: column; gap: 8px; }
+.archived-sessions__search { display: flex; align-items: center; gap: 6px; border: 1px solid var(--border-soft); border-radius: 7px; padding: 5px 7px; color: var(--fg-faint); }
+.archived-sessions__search input { min-width: 0; flex: 1; border: 0; background: transparent; color: var(--fg); font: inherit; }
+.archived-sessions__title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.archived-sessions__row { display: flex; align-items: center; gap: 8px; border-radius: 7px; }
+.archived-sessions__row:hover { background: var(--sidebar-hover); }
+.archived-sessions__open { display: flex; min-width: 0; flex: 1; align-items: center; gap: 7px; border: 0; background: transparent; padding: 5px; color: var(--fg); text-align: left; }
+.archived-sessions__open svg { flex-shrink: 0; }
+.archived-sessions__open span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 20px; }
+.archived-sessions__empty { padding: 8px; color: var(--fg-faint); }

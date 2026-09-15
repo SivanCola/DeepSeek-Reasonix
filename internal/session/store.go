@@ -499,8 +499,8 @@ func loadStartupSessionState(ctx context.Context, dir, eventsPath string, extern
 		}
 		if externalHistory {
 			for _, message := range state.projection.Messages {
-				if message.Role == provider.RoleUser && state.catalogPreview == "" {
-					state.catalogPreview = messagePreview(message)
+				if state.catalogPreview == "" {
+					state.catalogPreview = catalogMessagePreview(message)
 				}
 			}
 			state.projection.Messages = nil

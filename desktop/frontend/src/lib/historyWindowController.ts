@@ -81,7 +81,10 @@ export async function loadHistoryWindow(input: LoadInput): Promise<HistoryWindow
   const sessionIdentity = state.meta ?? {};
   const expectedRevision = state.transcriptProtocol === 2 ? undefined : state.meta?.sessionRevision ?? state.historyRevision;
   const expectedDigest = state.transcriptProtocol === 2 ? state.historyDigest : state.meta?.sessionDigest ?? state.historyDigest;
-  const request = historyPageRequestBudget(state.historyStartTurn, state.historyTotalTurns, input.targetTurn);
+  const request = {
+    ...historyPageRequestBudget(state.historyStartTurn, state.historyTotalTurns, input.targetTurn),
+    current: () => input.isCurrent(input.requestSeq) && hydrateIdentityCurrent(sessionIdentity, input.currentState()?.meta),
+  };
   input.dispatch({ type: direction === "older" ? "history_older_start" : "history_newer_start" });
   const startedAt = Date.now();
   try {

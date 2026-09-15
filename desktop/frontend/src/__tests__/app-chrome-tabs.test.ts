@@ -251,7 +251,7 @@ ok(
 );
 
 ok(
-  /workbenchChromeHidden\s*=\s*sidebarWorkbench/.test(appViewSource),
+  /const workbenchChromeHidden = true/.test(appViewSource),
   "workbench chrome is hidden for every desktop platform",
 );
 

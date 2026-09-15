@@ -26,6 +26,9 @@ const windowsSandboxPayloadVersion = 1
 // helper. The helper applies the native Windows sandbox backend and a Job
 // Object before starting the requested command.
 func Command(spec Spec, sh Shell, command string) ([]string, bool) {
+	if ValidateShellPolicy(spec, sh) != nil {
+		return nil, false
+	}
 	// Shells must remain able to read ordinary user files, so they use the
 	// restricted-token lane in every constrained preset. Read-only receives no
 	// workspace write ACL; workspace access receives only its canonical roots.

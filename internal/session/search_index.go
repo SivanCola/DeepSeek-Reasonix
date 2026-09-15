@@ -16,7 +16,7 @@ import (
 	"reasonix/internal/sessioncontent"
 )
 
-const searchIndexVersion = 1
+const searchIndexVersion = 3
 
 var searchMigrations = []projectiondb.Migration{{Version: 1, Apply: func(ctx context.Context, tx *sql.Tx) error {
 	for _, statement := range []string{
@@ -235,10 +235,8 @@ func ensureSearchIndex(ctx context.Context, persistence *FilesystemPersistence, 
 
 func rebuildSearchIndex(ctx context.Context, dir, path, sessionID string, revision logRevision) error {
 	return projectiondb.Rebuild(ctx, projectiondb.OpenOptions{Path: path, Migrations: searchMigrations, RequireDisk: true, MaxOpenConns: 1, QuickCheck: true}, func(ctx context.Context, db *sql.DB) error {
-		for _, pragma := range []string{`PRAGMA journal_mode=OFF`, `PRAGMA synchronous=OFF`, `PRAGMA locking_mode=EXCLUSIVE`, `PRAGMA cache_size=-8192`, `PRAGMA temp_store=FILE`} {
-			if _, err := db.ExecContext(ctx, pragma); err != nil {
-				return err
-			}
+		if err := configureHistoryRebuild(ctx, db); err != nil {
+			return err
 		}
 		metadata := searchMetadata{sessionID: sessionID, storageRevision: StorageRevision, projection: searchIndexVersion, generation: randomID()}
 		return populateSearchIndex(ctx, dir, db, 0, 1, revision, metadata, searchBuildState{positions: map[string]int64{}, versions: map[string]int{}})
@@ -304,27 +302,24 @@ func populateSearchIndex(ctx context.Context, dir string, db *sql.DB, startOffse
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	durable, durableEnd := metadata.durableSequence, startOffset
 	content := contentStoreForSessionDir(dir)
 	var buildErr error
-	err = scanV4CommitFileRefs(ctx, log, startOffset, nextSequence, content, nil, func(_ int64, commit Commit) bool {
+	progress, err := scanHistoryLog(ctx, log, startOffset, nextSequence, revision.Size, content, func(commit Commit) bool {
 		for _, event := range commit.Events {
 			if err := indexSearchEvent(ctx, tx, content, &state, event); err != nil {
 				buildErr = err
 				return false
 			}
-			durable = event.Sequence
 		}
-		durableEnd, _ = log.Seek(0, 1)
 		return true
 	})
 	if err != nil || buildErr != nil {
 		return errors.Join(err, buildErr)
 	}
 	values := map[string]string{
-		"session_id": metadata.sessionID, "log_size": fmt.Sprint(durableEnd),
-		"log_mtime_ns": fmt.Sprint(revision.ModTimeNS), "storage_revision": fmt.Sprint(StorageRevision),
-		"projection_version": fmt.Sprint(searchIndexVersion), "durable_sequence": fmt.Sprint(durable),
+		"session_id": metadata.sessionID, "log_size": fmt.Sprint(progress.end),
+		"log_mtime_ns": fmt.Sprint(progress.modTimeNS), "storage_revision": fmt.Sprint(StorageRevision),
+		"projection_version": fmt.Sprint(searchIndexVersion), "durable_sequence": fmt.Sprint(progress.sequence),
 		"generation": metadata.generation,
 	}
 	for key, value := range values {

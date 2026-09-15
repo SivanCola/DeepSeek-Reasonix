@@ -58,6 +58,11 @@ system_prompt = "BASE SYSTEM PROMPT"
 [environment]
 enabled = false
 
+[tools.shell]
+# This golden records the Bash contract; Windows auto selects PowerShell.
+# Pin the dialect just as the search engine below is pinned.
+prefer = "bash"
+
 [tools.search]
 # Pin the grep engine: on "auto" the tool's description (and with it the tool
 # schemas, provider request, and cache prefix) changes depending on whether rg

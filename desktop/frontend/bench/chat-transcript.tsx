@@ -5,6 +5,8 @@ import { LocaleProvider } from "../src/lib/i18n";
 import { ToastProvider } from "../src/lib/toast";
 import { getMarkdownWorkerClient } from "../src/lib/markdownWorkerClient";
 import { Composer } from "../src/components/Composer";
+import { canonicalMessage } from "../src/lib/canonicalTranscriptBackend";
+import { historyMessagesToItems } from "../src/lib/historyItems";
 import type { ControllerLiveStore, Item, LiveStream } from "../src/lib/useController";
 import "../src/styles.css";
 
@@ -32,7 +34,7 @@ function weatherTurn(): Item[] {
     { ...end, id: "weather-final", text: "今天上海天气如下。以下为界面回放测试数据。\n\n## 上海 · 今日实况\n\n| 项目 | 数值 |\n|---|---|\n| 天气 | 晴 ☀️ |\n| 气温 | **25.5 °C** |\n| 湿度 | 66% |\n\n**全天**：多云转晴，23～30 °C。", reasoning: "" } as Item,
   ];
 }
-declare global { interface Window { chatFixture: { weather(): void; replace(count: number): void; reset(count: number): void; older(): void; tick(index: number): void; settle(): void; switchSession(): void; prepend(): void; ready: number; pending(): number } } }
+declare global { interface Window { chatFixture: { authored(): void; weather(): void; replace(count: number): void; reset(count: number): void; older(): void; tick(index: number): void; settle(): void; switchSession(): void; prepend(): void; ready: number; pending(): number } } }
 function Fixture() {
   const [items, setItems] = useState(() => makeTurns(20));
   const [session, setSession] = useState(0);
@@ -57,6 +59,16 @@ function Fixture() {
   useLayoutEffect(() => {
     window.chatFixture = {
       ready, pending: () => getMarkdownWorkerClient().stats().pending,
+      authored: () => {
+        const messages = [
+          { role: "user", origin: "host", content: '<session-context version="1">private environment</session-context>' },
+          { role: "user", origin: "user", content: '<response-language>internal policy</response-language>你是谁', raw_content: "你是谁" },
+          { role: "user", content: '<capability-route>legacy internal route</capability-route>旧会话问题' },
+          { role: "user", origin: "user", raw_content: '<response-language>用户引用的 XML</response-language>' },
+          { role: "assistant", content: "我是 Reasonix。" },
+        ].map((raw, i) => canonicalMessage({ messageId: `authored-${i}`, position: i, version: 1, role: raw.role }, raw));
+        clearLive(); setItems(historyMessagesToItems(messages, "authored").items); setRunning(false); setSession(value => value + 1);
+      },
       weather: () => { clearLive(); setItems(weatherTurn()); setRunning(false); setSession(value => value + 1); },
       replace: count => { clearLive(); setItems(makeTurns(count)); setRunning(false); setReady(value => value + 1); },
       reset: count => { clearLive(); setItems(makeTurns(Math.min(60, count), Math.max(0, count - 60))); setRunning(false); setSession(value => value + 1); setReady(value => value + 1); },

@@ -47,10 +47,16 @@ func (o *BoundedOutput) Truncated() bool {
 	return o.buf.truncated
 }
 
+// ProgressWriter buffers partial UTF-8 characters until its owner ends the stream.
+type ProgressWriter interface {
+	io.Writer
+	Flush()
+}
+
 // NewProgressWriter returns the shared live-progress sink. Live output crosses
 // async UI queues and append-only reducers before the bounded final result
 // replaces it, so it is capped far below the final output cap; a never-ending
 // command must not exhaust memory on the transient path.
-func NewProgressWriter(emit func(string)) io.Writer {
+func NewProgressWriter(emit func(string)) ProgressWriter {
 	return newProgressWriter(emit, progressOutputMaxBytes, progressOutputTruncated)
 }

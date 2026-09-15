@@ -1807,6 +1807,7 @@ func (c *Controller) RunShell(command string) {
 		start := time.Now()
 		res := shellrun.RunForeground(ctx, shellrun.Request{
 			Argv:           argv,
+			ProbeArgv:      shellrun.WindowsProbeArgv(sandbox.Spec{}, sh, ""),
 			Dir:            c.workspaceRoot,
 			Timeout:        shellTimeout,
 			WaitDelay:      shellWaitDelay,

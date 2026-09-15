@@ -576,10 +576,8 @@ func (a *App) detachSessionRuntime(tab *WorkspaceTab) bool {
 		sink.clearContext()
 	}
 	a.mu.Lock()
-	a.ensureDetachedSessionsLocked()
 	setTabSessionIdentity(tab, identity)
-	a.bindSessionRuntimeKeyLocked(tab, identity)
-	a.detachedSessions[key] = tab
+	a.registerDetachedRuntimeLocked(tab)
 	a.mu.Unlock()
 	return true
 }
@@ -711,8 +709,7 @@ func (a *App) detachRuntimeForReplacementLocked(tab *WorkspaceTab) bool {
 		// (#5352 — stale "AI 不断输出" on the now-visible session).
 		detached.sink.clearContext()
 	}
-	a.ensureDetachedSessionsLocked()
-	a.detachedSessions[key] = detached
+	a.registerDetachedRuntimeLocked(detached)
 	return true
 }
 
@@ -836,13 +833,14 @@ func (a *App) attachExistingSessionRuntimeCore(tab *WorkspaceTab, path string, a
 		// process-local registry existed.
 		return source.Ready
 	}
-	detached := a.detachedSessions[key]
-	if detached == nil {
+	detached := a.liveRuntimeTabMatchingLocked(tab, path)
+	if detached != nil && a.tabs[detached.ID] == detached {
+		detached = nil
+	}
+	if detached == nil && key != "" {
 		if rt := a.runtimeBySessionKey[key]; rt != nil && rt.Owner != nil && rt.Owner != tab {
 			detached = rt.Owner
-			if a.tabs[detached.ID] != detached {
-				delete(a.detachedSessions, key)
-			} else {
+			if a.tabs[detached.ID] == detached {
 				detached = nil
 			}
 		}
@@ -852,8 +850,8 @@ func (a *App) attachExistingSessionRuntimeCore(tab *WorkspaceTab, path string, a
 			a.mu.Unlock()
 			return false
 		}
-		delete(a.detachedSessions, key)
-		applyRuntimeTab(tab, detached, path, appCtx, a)
+		a.unregisterDetachedRuntimeLocked(detached)
+		applyRuntimeTab(tab, detached, runtimeAttachIdentity(detached, path), appCtx, a)
 		if current := a.tabs[tab.ID]; current == tab {
 			a.saveTabsLocked()
 		}
@@ -865,20 +863,10 @@ func (a *App) attachExistingSessionRuntimeCore(tab *WorkspaceTab, path string, a
 		return true
 	}
 
-	var source *WorkspaceTab
-	if rt := a.runtimeBySessionKey[key]; rt != nil && rt.Owner != nil && rt.Owner != tab {
-		source = rt.Owner
-	}
-	for _, candidate := range a.tabs {
-		if source != nil {
-			break
-		}
-		if candidate == nil || candidate == tab {
-			continue
-		}
-		if sessionRuntimeKey(candidate.currentSessionPath()) == key {
-			source = candidate
-			break
+	source := a.liveRuntimeTabMatchingLocked(tab, path)
+	if source == nil && key != "" {
+		if rt := a.runtimeBySessionKey[key]; rt != nil && rt.Owner != nil && rt.Owner != tab {
+			source = rt.Owner
 		}
 	}
 	if source == nil {
@@ -894,7 +882,7 @@ func (a *App) attachExistingSessionRuntimeCore(tab *WorkspaceTab, path string, a
 	if a.activeTabID == source.ID {
 		a.activeTabID = tab.ID
 	}
-	applyRuntimeTab(tab, source, path, appCtx, a)
+	applyRuntimeTab(tab, source, runtimeAttachIdentity(source, path), appCtx, a)
 	a.saveTabsLocked()
 	attachedCtrl := tab.Ctrl
 	attachedSink := tab.sink
@@ -2298,7 +2286,7 @@ func (a *App) openTopicTabWithActivation(scope, workspaceRoot, topicID, sessionP
 			if tab == nil {
 				continue
 			}
-			if sessionRuntimeKey(tab.currentSessionPath()) == targetKey {
+			if sessionRuntimeKeysOverlap(tab, sessionPath) {
 				if activate {
 					a.activeTabID = tab.ID
 				}
@@ -2315,7 +2303,7 @@ func (a *App) openTopicTabWithActivation(scope, workspaceRoot, topicID, sessionP
 			if activate {
 				a.activeTabID = tab.ID
 			}
-			sameSession := targetKey == "" || sessionRuntimeKey(tab.currentSessionPath()) == targetKey
+			sameSession := targetKey == "" || sessionRuntimeKeysOverlap(tab, sessionPath)
 			meta := a.tabMeta(tab, tab.ID == a.activeTabID)
 			a.saveTabsLocked()
 			a.mu.Unlock()
@@ -2330,6 +2318,13 @@ func (a *App) openTopicTabWithActivation(scope, workspaceRoot, topicID, sessionP
 			a.mu.RUnlock()
 			return enrichTabMeta(meta), nil
 		}
+	}
+	source := a.liveRuntimeTabMatchingLocked(nil, sessionPath)
+	if source == nil {
+		source = a.liveRuntimeTabMatchingTopicLocked(nil, scope, workspaceRoot, topicID)
+	}
+	if source != nil && a.tabs[source.ID] == source {
+		source = nil
 	}
 
 	tabID := a.newUniqueTabIDLocked()
@@ -2368,6 +2363,17 @@ func (a *App) openTopicTabWithActivation(scope, workspaceRoot, topicID, sessionP
 	meta := a.tabMeta(tab, tab.ID == a.activeTabID)
 	a.mu.Unlock()
 
+	if source != nil {
+		if a.attachExistingSessionRuntime(tab, runtimeAttachIdentity(source, sessionPath), a.ctx) {
+			a.mu.RLock()
+			meta = a.tabMeta(tab, tab.ID == a.activeTabID)
+			a.mu.RUnlock()
+			if scope == "project" {
+				a.emitProjectTreeRuntimeChangedWithLegacy()
+			}
+			return enrichTabMeta(meta), nil
+		}
+	}
 	a.startTabControllerBuild(tab)
 	if scope == "project" {
 		a.emitProjectTreeRuntimeChangedWithLegacy()
@@ -3263,16 +3269,16 @@ func (a *App) removeVisibleTabRuntimeAdmissionHeld(tab *WorkspaceTab) {
 	if tab == nil {
 		return
 	}
-	if err := a.snapshotTab(tab); err != nil {
-		slog.Warn("desktop: snapshot before removing visible tab runtime failed", "tab", tab.ID, "err", err)
-	}
-	discardPath, discardTransientBlank := a.transientBlankSessionArtifactPath(tab)
 	a.mu.RLock()
 	ctrl := tab.Ctrl
 	a.mu.RUnlock()
 	if ctrl != nil && controllerHasActiveRuntimeWork(ctrl) && a.detachSessionRuntime(tab) {
 		return
 	}
+	if err := a.snapshotTab(tab); err != nil {
+		slog.Warn("desktop: snapshot before removing visible tab runtime failed", "tab", tab.ID, "err", err)
+	}
+	discardPath, discardTransientBlank := a.transientBlankSessionArtifactPath(tab)
 	a.markTabRemoved(tab)
 	a.closeTabRuntimeAdmissionHeld(tab)
 	if discardTransientBlank {
@@ -3534,22 +3540,9 @@ func (a *App) buildTabControllerWithContextCore(tab *WorkspaceTab, loadedSession
 	if a.tabBuildSuperseded(tab, buildGeneration) {
 		return
 	}
-	a.mu.Lock()
-	if !tab.removed && tab.Ctrl == nil {
-		// A lease-blocked tab keeps its blocked banner steady while the
-		// deferred-rebuild loop retries every 2s: resetting to "starting" on
-		// each attempt makes the frontend's takeover banner (and the dialog
-		// built from it) mount/unmount in a 2s cycle. The state flips to ready
-		// only when a retry actually wins the lease. Deliberate user rebuilds
-		// never carry StartupErrLeaseHeld, so they reset as before.
-		if !tab.StartupErrLeaseHeld {
-			tab.Ready = false
-			clearTabStartupError(tab)
-			a.setSessionRuntimePhaseLocked(tab, sessionRuntimeStarting, nil)
-		}
+	if !a.prepareTabControllerWorkspace(tab, buildCtx, buildGeneration, appCtx) {
+		return
 	}
-	a.mu.Unlock()
-	a.reconcileTabWithPinnedSessionMeta(tab)
 
 	// Snapshot the identity/profile fields under a.mu before the off-lock
 	// stretch: session rebinding, recovery, and topic assignment write them

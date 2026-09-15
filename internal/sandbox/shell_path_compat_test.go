@@ -81,7 +81,7 @@ func TestResolveShellRejectsExplicitWSLLauncher(t *testing.T) {
 	}
 }
 
-func TestResolveShellAutoPrefersConfiguredWindowsBashOverPath(t *testing.T) {
+func TestResolveShellAutoDoesNotUsePersistedWindowsBashPath(t *testing.T) {
 	const (
 		configured = `E:\Portable\Git\bin\bash.exe`
 		onPath     = `C:\Program Files\Git\bin\bash.exe`
@@ -99,8 +99,8 @@ func TestResolveShellAutoPrefersConfiguredWindowsBashOverPath(t *testing.T) {
 		func(string) bool { return true },
 		func(string) bool { return false },
 	)
-	if got.Kind != ShellBash || got.Path != configured {
-		t.Fatalf("resolved shell = {%s %q}, want configured Bash %q before PATH", got.Kind, got.Path, configured)
+	if got.Kind != ShellPowerShell || got.Path != "pwsh" {
+		t.Fatalf("auto selected a non-native shell: {%s %q}", got.Kind, got.Path)
 	}
 }
 

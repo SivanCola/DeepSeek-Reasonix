@@ -134,17 +134,17 @@ func TestResolveShellDecisionTable(t *testing.T) {
 		wantKind   ShellKind
 		wantPath   string
 	}{
-		{"bash on PATH wins", "windows", onPath("bash", "powershell"), gitBash, never, always, never, ShellBash, `C:\fake\bash.exe`},
+		{"native PowerShell precedes Bash", "windows", onPath("bash", "powershell"), gitBash, never, always, never, ShellPowerShell, `C:\fake\powershell.exe`},
 		{"bash on PATH but probe fails", "windows", onPath("bash", "powershell"), gitBash, never, never, never, ShellPowerShell, ""},
-		{"no bash, git-bash on disk", "windows", onPath("powershell"), gitBash, always, always, never, ShellBash, ""},
+		{"no Bash fallback when native shell absent", "windows", onPath(), gitBash, always, always, never, ShellPowerShell, "pwsh"},
 		{"git-bash on disk but probe fails", "windows", onPath("powershell"), gitBash, always, never, never, ShellPowerShell, ""},
 		{"no bash anywhere, pwsh", "windows", onPath("pwsh", "powershell"), gitBash, never, never, never, ShellPowerShell, ""},
 		{"no bash, only powershell", "windows", onPath("powershell"), gitBash, never, never, never, ShellPowerShell, ""},
-		{"windows, nothing found", "windows", onPath(), nil, never, never, never, ShellBash, ""},
+		{"windows, nothing found", "windows", onPath(), nil, never, never, never, ShellPowerShell, "pwsh"},
 		{"linux, no bash → no PS fallback", "linux", onPath("powershell"), gitBash, always, always, never, ShellBash, ""},
 		{"macOS, no bash → zsh", "darwin", onPath("zsh", "sh"), nil, never, always, never, ShellZsh, `C:\fake\zsh.exe`},
 		{"macOS, no bash or zsh → sh", "darwin", onPath("sh"), nil, never, always, never, ShellSh, `C:\fake\sh.exe`},
-		{"wsl bash on PATH skipped for git-bash", "windows", onPath("bash", "powershell"), gitBash, always, always, wslIsPathBash, ShellBash, `C:\fake\Git\bin\bash.exe`},
+		{"auto never falls back to WSL or Git Bash", "windows", onPath("bash"), gitBash, always, always, wslIsPathBash, ShellPowerShell, "pwsh"},
 		{"wsl bash on PATH, no git → powershell not wsl", "windows", onPath("bash", "powershell"), gitBash, never, always, wslIsPathBash, ShellPowerShell, ""},
 	}
 	for _, c := range cases {
@@ -215,8 +215,8 @@ func TestResolveShellPrefer(t *testing.T) {
 
 	// An unrecognised value is treated as auto, not an error.
 	got = resolveShell("fish", "", nil, "windows", onPath("bash"), never, gitBash, nil, always, noWSL)
-	if got.Kind != ShellBash {
-		t.Errorf("unknown prefer should auto-detect, got %s", got.Kind)
+	if got.Kind != ShellPowerShell {
+		t.Errorf("unknown prefer should use native Windows auto-selection, got %s", got.Kind)
 	}
 
 	// git-bash.exe is automatically rewritten to bin/bash.exe when present.
@@ -295,6 +295,12 @@ func TestCommandNonDarwin(t *testing.T) {
 	}
 	spec := Spec{Mode: "enforce", WriteRoots: []string{"/tmp"}}
 	cmd, wrapped := Command(spec, Shell{Kind: ShellBash, Path: "sh"}, "echo hi")
+	if runtime.GOOS == "windows" {
+		if wrapped || len(cmd) != 0 {
+			t.Fatalf("restricted Windows Bash must be rejected before launch: %v wrapped=%v", cmd, wrapped)
+		}
+		return
+	}
 	if Available() {
 		if !wrapped || cmd[0] == "sh" {
 			t.Fatalf("non-darwin enforce with available sandbox should wrap: %v wrapped=%v", cmd, wrapped)

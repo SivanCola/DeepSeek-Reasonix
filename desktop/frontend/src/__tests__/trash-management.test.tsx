@@ -19,7 +19,7 @@ const list = async () => { if (listFails) throw new Error("read failure"); retur
 const purge = async (path: string) => { calls.push(path); if (path === "b") throw new Error("busy"); sessions = sessions.filter((item) => item.path !== path); };
 const restore = async (path: string) => { sessions = sessions.filter((item) => item.path !== path); listFails = true; };
 const root = createRoot(document.getElementById("root")!);
-const render = (active = true) => <LocaleProvider><TrashPage active={active} onBack={() => {}} list={list} purge={purge} restore={restore} /></LocaleProvider>;
+const render = (active = true) => <LocaleProvider><TrashPage active={active} onBack={() => {}} onOpenSession={async () => {}} list={list} purge={purge} restore={restore} /></LocaleProvider>;
 const button = (text: string) => Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((node) => node.textContent?.trim() === text)!;
 await act(async () => root.render(render()));
 assert.equal(document.querySelector(".management-modal-backdrop"), null);
