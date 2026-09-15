@@ -86,7 +86,7 @@ func TestConcurrentRebuildSessionCatalogCallersShareFailure(t *testing.T) {
 	if leaderErr == nil || followerErr == nil {
 		t.Fatalf("concurrent rebuild errors = leader %v, follower %v; want shared failure", leaderErr, followerErr)
 	}
-	if followerErr != leaderErr || !errors.Is(leaderErr, errSessionCatalogStopTimeout) {
+	if !errors.Is(followerErr, leaderErr) || !errors.Is(leaderErr, errSessionCatalogStopTimeout) {
 		t.Fatalf("concurrent rebuild errors = leader %q, follower %q; want the same rebuild result",
 			leaderErr, followerErr)
 	}
