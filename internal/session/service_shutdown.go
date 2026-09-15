@@ -33,7 +33,9 @@ func (s *Service) Shutdown(ctx context.Context) error {
 	if s == nil {
 		return nil
 	}
-	err := s.CloseAll(ctx)
+	// Stop and join cold-query workers before closing live runtimes. Otherwise
+	// a worker can open a recovery projection after CloseAll collected its
+	// runtime set and leave the Bolt handle behind during Windows cleanup.
 	s.query.Close()
-	return err
+	return s.CloseAll(ctx)
 }
