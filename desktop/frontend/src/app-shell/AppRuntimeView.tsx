@@ -245,6 +245,10 @@ export function AppRuntimeView(props: AppRuntimeViewProps) {
             onVisibleTopicsChange: navigation.topicShortcuts.handleVisibleTopicsChange,
           },
           topics: navigation.projectTopicCommands,
+          workspaceSessions: {
+            onOpenSession: navigationCommands.openCanonicalSession,
+            onCreateSession: (workspace) => navigationCommands.openBlankSession(workspace.id === "global" ? "global" : "project", workspace.root),
+          },
           commands: {
             onNewSession: () => void navigationCommands.handleNewTab(),
             onOpenTrash: () => void navigation.historyCommands.openTrash(),
