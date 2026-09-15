@@ -37,6 +37,9 @@ type Projection struct {
 	Title         string
 	ModelRef      string
 	ModelIdentity string
+	// ImageOffload is the accumulated optional omission overlay. Later
+	// ModelMessages replacements re-apply it so resume/fork keep the same set.
+	ImageOffload []provider.ImageOffloadTarget
 }
 
 type TurnBoundary struct {
@@ -155,6 +158,7 @@ func applyProjectionCommit(projection *Projection, commit Commit) error {
 	for index := closedBefore; index < len(projection.Turns); index++ {
 		projection.Turns[index].Availability = forkProjectionAvailability(*projection, projection.Turns[index].BoundarySequence)
 	}
+	applyAccumulatedImageOffload(projection)
 	return nil
 }
 
@@ -559,6 +563,7 @@ func cloneProjection(projection Projection) Projection {
 	}
 	projection.PlanState = cloneRaw(projection.PlanState)
 	projection.GoalState = cloneRaw(projection.GoalState)
+	projection.ImageOffload = cloneImageOffload(projection.ImageOffload)
 	return projection
 }
 

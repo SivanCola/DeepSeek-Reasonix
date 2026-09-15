@@ -31,6 +31,35 @@ func TestProjectImageOffloadDoesNotRewriteUIHistory(t *testing.T) {
 	}
 }
 
+func TestImageOffloadSurvivesModelContextReplace(t *testing.T) {
+	original := provider.Message{
+		ID: "u1", Role: provider.RoleUser, Content: "see",
+		Images: []string{"data:image/png;base64,AA==", "data:image/png;base64,BB=="},
+	}
+	message, _ := json.Marshal(map[string]any{"message": original})
+	offload, _ := json.Marshal(provider.ImageOffloadPayload{Targets: []provider.ImageOffloadTarget{{MessageID: "u1", ImageIndexes: []int{0}}}})
+	replace, _ := json.Marshal(map[string]any{"messages": []provider.Message{original}, "reason": "compaction", "sourceSequences": []uint64{1}})
+	proj, err := Project([]Commit{{
+		Events: []Event{
+			{Sequence: 1, Kind: "message/complete", Payload: message},
+			{Sequence: 2, Kind: EventImageOffload, Optional: true, Payload: offload},
+			{Sequence: 3, Kind: "model/context-replace", Payload: replace},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proj.Messages[0].Images[0] != "data:image/png;base64,AA==" {
+		t.Fatalf("UI history mutated: %v", proj.Messages[0].Images)
+	}
+	if proj.ModelMessages[0].Images[0] != provider.ImageOffloadedRef {
+		t.Fatalf("compaction restored omitted image: %v", proj.ModelMessages[0].Images)
+	}
+	if proj.ModelMessages[0].Images[1] != "data:image/png;base64,BB==" {
+		t.Fatalf("kept image dropped: %v", proj.ModelMessages[0].Images)
+	}
+}
+
 func TestUnknownOptionalOffloadDoesNotBlockOldShape(t *testing.T) {
 	if !ProjectionKinds[EventImageOffload] {
 		t.Fatal("image/offload must be a known projection kind")
