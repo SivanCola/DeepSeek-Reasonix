@@ -178,11 +178,6 @@ func TestHistoryScanStopsAtCapturedSnapshot(t *testing.T) {
 func TestHistoryScanRejectsReplacedFile(t *testing.T) {
 	_, _, dir, _ := historyBoundaryFixture(t)
 	path := filepath.Join(dir, "events.frames")
-	log, err := os.Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer log.Close()
 	generation, err := historyProjectionGeneration(dir, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -191,12 +186,18 @@ func TestHistoryScanRejectsReplacedFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path+".new", data, 0o600); err != nil {
+	// Model the reader retained after a replacement: identical bytes, but a
+	// different file identity from the manifest's current log. Windows prevents
+	// renaming over an open file, so construct that state without a live rename.
+	previousPath := filepath.Join(t.TempDir(), "previous.frames")
+	if err := os.WriteFile(previousPath, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Rename(path+".new", path); err != nil {
+	log, err := os.Open(previousPath)
+	if err != nil {
 		t.Fatal(err)
 	}
+	defer log.Close()
 	if err := validateHistoryLog(t.Context(), dir, log, generation); !errors.Is(err, ErrStaleGeneration) {
 		t.Fatalf("replacement accepted: %v", err)
 	}
