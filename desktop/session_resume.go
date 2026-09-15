@@ -92,7 +92,7 @@ func (a *App) resumeCanonicalSessionForTranscript(tab *WorkspaceTab, ctrl contro
 	}
 	workspaceChanged := canonicalWorkspaceChanged(a.tabRuntimeSnapshot(tab), workspace)
 	if current == nil || currentRef != ref || workspaceChanged {
-		if current != nil {
+		if current != nil && !controllerHasActiveRuntimeWork(current) {
 			if err := current.Snapshot(); err != nil {
 				return HistoryPage{}, err
 			}

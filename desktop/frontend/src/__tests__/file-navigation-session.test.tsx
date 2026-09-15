@@ -25,7 +25,7 @@ const { dom, root, dockTabId } = await renderFilesWorkspace({
   ListDirForTab: async (_tab, dir) => dir === "" ? [{ name: "app.ts", isDir: false }] : [],
 });
 const props: WorkspaceDockRegionProps = {
-  visible: true, overlay: false, mode: "files", creation: false, showContext: false,
+  visible: true, overlay: false, mode: "files", showContext: false,
   t: key => key, onPickEntry: () => {}, remote: { onClose: () => {} }, context: {} as WorkspaceDockRegionProps["context"],
   workspace: { open: true, tabId: "session-tab", cwd: "/repo", maximized: false, onClose: () => {}, onToggleMaximized: () => {} },
   workspaceKey: "session-test", workspaceRoot: "/repo",

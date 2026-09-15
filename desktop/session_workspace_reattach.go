@@ -9,20 +9,13 @@ import (
 // runtimeRebuildMu and the destination turnStartMu are held. Reuse the exact
 // live owner before asking the writer registry for a competing controller.
 func (a *App) reattachCanonicalSessionRuntime(tab *WorkspaceTab, current control.SessionAPI, ref session.SessionRef, workspace workspacestate.Workspace, navigation uint64) (control.SessionAPI, error) {
-	key := sessionRuntimeKey(sessionRoute(ref.SessionID))
 	preserveSource := controllerHasActiveRuntimeWork(current)
 	a.mu.Lock()
 	if navigation != 0 && a.desktopSessions.navigationSeq.Load() != navigation {
 		a.mu.Unlock()
 		return nil, errSessionNavigationSuperseded
 	}
-	var source *WorkspaceTab
-	if rt := a.runtimeBySessionKey[key]; rt != nil && rt.Owner != tab && a.runtimeOwnerLiveLocked(rt) && rt.Phase == sessionRuntimeReady {
-		source = rt.Owner
-	}
-	if source == nil {
-		source = a.detachedSessions[key]
-	}
+	source := a.liveRuntimeTabMatchingLocked(tab, sessionRoute(ref.SessionID))
 	if source == nil || source == tab || source.Ctrl == nil || !source.Ready {
 		a.mu.Unlock()
 		return nil, nil
@@ -49,7 +42,7 @@ func (a *App) reattachCanonicalSessionRuntime(tab *WorkspaceTab, current control
 	} else {
 		a.releaseSessionRuntimeLocked(tab)
 	}
-	delete(a.detachedSessions, key)
+	a.unregisterDetachedRuntimeLocked(source)
 	if a.tabs[source.ID] == source {
 		delete(a.tabs, source.ID)
 		a.removeTabOrderLocked(source.ID)

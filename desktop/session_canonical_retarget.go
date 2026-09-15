@@ -30,20 +30,12 @@ func (a *App) resolveOpenTopicSessionPath(scope, workspaceRoot, sessionPath stri
 }
 
 func (a *App) sessionHasLiveController(path string) bool {
-	key := sessionRuntimeKey(path)
-	if a == nil || key == "" {
+	if a == nil {
 		return false
 	}
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	for _, tabs := range []map[string]*WorkspaceTab{a.tabs, a.detachedSessions} {
-		for _, tab := range tabs {
-			if tab != nil && tab.Ctrl != nil && sessionRuntimeKey(tab.currentSessionPath()) == key {
-				return true
-			}
-		}
-	}
-	return false
+	return a.liveRuntimeTabMatchingLocked(nil, path) != nil
 }
 
 func (a *App) skipContinuationRebind(tab *WorkspaceTab, target string) bool {

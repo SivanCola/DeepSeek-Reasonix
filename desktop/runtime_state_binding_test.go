@@ -33,6 +33,34 @@ func (r *bindingRuntimeReader) RuntimeStateSnapshot() event.RuntimeStateSnapshot
 	return r.state
 }
 
+func TestRuntimeStateProjectionDoesNotHoldMutexAcrossControllerRead(t *testing.T) {
+	reader := &bindingRuntimeReader{
+		state:   event.RuntimeStateSnapshot{SchemaVersion: 1, Phase: "executing", Running: true},
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	tab := &WorkspaceTab{ID: "running", Scope: "global", TopicID: "topic", SessionPath: "/run.jsonl", Ctrl: reader}
+	app := &App{tabs: map[string]*WorkspaceTab{tab.ID: tab}, detachedSessions: map[string]*WorkspaceTab{}}
+	done := make(chan RuntimeStateProjection, 1)
+	go func() { done <- app.GetRuntimeStateSnapshot() }()
+	select {
+	case <-reader.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("projection did not reach controller read")
+	}
+	if !app.runtimeStateProjection.mu.TryLock() {
+		close(reader.release)
+		t.Fatal("GetRuntimeStateSnapshot held its projection mutex across a controller read")
+	}
+	app.runtimeStateProjection.mu.Unlock()
+	close(reader.release)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("gated projection did not finish")
+	}
+}
+
 func TestLocalBindingUsesControllerIdentityNotMutableContents(t *testing.T) {
 	first, second := &bindingRuntimeReader{}, &bindingRuntimeReader{}
 	tab := &WorkspaceTab{ID: "identity"}

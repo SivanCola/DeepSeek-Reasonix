@@ -1152,12 +1152,6 @@ function browserPlatformOverride(): "darwin" | "windows" | "linux" | "" {
   return value === "darwin" || value === "windows" || value === "linux" ? value : "";
 }
 
-function browserMockDesktopLayoutStyle(): "workbench" | "creation" {
-  if (typeof window === "undefined" || desktopHost().app) return "workbench";
-  const value = new URLSearchParams(window.location.search).get("layout");
-  return value === "creation" ? value : "workbench";
-}
-
 function browserPreviewBashSandboxMode(): "enforce" | "off" {
   return browserPlatformOverride() === "windows" ? "off" : "enforce";
 }
@@ -1780,7 +1774,6 @@ function makeMockApp(): AppBindings {
     },
     desktopLanguage: "",
     desktopCurrency: "",
-    desktopLayoutStyle: browserMockDesktopLayoutStyle(),
     desktopTheme: "auto",
     desktopThemeStyle: "graphite",
     desktopTerminalTheme: "auto",
@@ -4434,11 +4427,10 @@ function makeMockApp(): AppBindings {
       return this.SaveDoc(path, body);
     },
     async DesktopStartupSettings() {
-      const { bot, desktopLanguage, desktopLayoutStyle, desktopTheme, desktopThemeStyle, desktopTerminalTheme, displayMode, sessionExperience, reasoningDisplayMode, reasoningDisplayModeExplicit, statusBarStyle, statusBarItems, checkUpdates, conversationWidth } = settings;
+      const { bot, desktopLanguage, desktopTheme, desktopThemeStyle, desktopTerminalTheme, displayMode, sessionExperience, reasoningDisplayMode, reasoningDisplayModeExplicit, statusBarStyle, statusBarItems, checkUpdates, conversationWidth } = settings;
       return JSON.parse(JSON.stringify({
         bot,
         desktopLanguage,
-        desktopLayoutStyle,
         desktopTheme,
         desktopThemeStyle,
         desktopTerminalTheme,
@@ -5003,9 +4995,9 @@ function makeMockApp(): AppBindings {
         async PickThemeBackground() {
           return "";
         },
-        async SetDesktopLayoutStyle(style: string) {
-          settings.desktopLayoutStyle = style === "creation" ? "creation" : "workbench";
-        },
+        // The layout-style preference was removed from the UI; the binding
+        // stays because the generated host contract still declares it.
+        async SetDesktopLayoutStyle(_style: string) {},
         async SetDesktopZoomFactor(factor: number) {
           mockDesktopZoomFactor = Math.min(2.0, Math.max(0.5, Number.isFinite(factor) ? factor : 1.0));
         },

@@ -7,13 +7,13 @@ import { useT } from "../lib/i18n";
 import { useManagementT } from "../lib/managementLocale";
 import { ManagementPageShell } from "./ManagementPageShell";
 import { HistoryPanel } from "./HistoryPanel";
-import { WorkspaceSessionBrowser } from "./WorkspaceSessionBrowser";
+import { ArchivedSessionsList } from "./ArchivedSessionsList";
 import { useConfirmDialog } from "./ConfirmDialog";
 import "./TrashPage.css";
 
 const noop = () => {};
 export function TrashPage({ active, onBack, list, restore, purge, onOpenSession }: {
-  onOpenSession: React.ComponentProps<typeof WorkspaceSessionBrowser>["onOpenSession"];
+  onOpenSession: React.ComponentProps<typeof ArchivedSessionsList>["onOpenSession"];
   active: boolean; onBack: () => void; list: () => Promise<SessionMeta[]>;
   restore: (path: string) => Promise<void>; purge: (path: string) => Promise<void>;
 }) {
@@ -68,10 +68,10 @@ export function TrashPage({ active, onBack, list, restore, purge, onOpenSession 
   return <ManagementPageShell active={active} onBack={onBack} title={t("history.trashTitle")}
     description={t("history.recoveryDescription")} actions={section === "deleted" ? <><button className="btn btn--small" disabled={busy || loading} onClick={() => void refresh()}><RotateCw size={14} />{m("refresh")}</button><button className="btn btn--small btn--danger history-clear" disabled={busy || !sessions.some((item) => !item.recoveryCopy)} onClick={() => void requestPurge(sessions.filter((item) => !item.recoveryCopy).map((item) => item.path), true)}>{t("history.clearTrash")}</button></> : undefined}>
     <div className="trash-page__sections" role="group" aria-label={t("history.trashTitle")}>
-      <button className="btn btn--small" aria-pressed={section === "archived"} disabled={busy} onClick={() => { dismiss(); setSection("archived"); }}>{t("workspaceBrowser.archived")}</button>
+      <button className="btn btn--small" aria-pressed={section === "archived"} disabled={busy} onClick={() => { dismiss(); setSection("archived"); }}>{t("history.archivedSection")}</button>
       <button className="btn btn--small" aria-pressed={section === "deleted"} disabled={busy} onClick={() => { dismiss(); setSection("deleted"); }}>{t("history.deletedSection")} · {sessions.filter((item) => !item.recoveryCopy).length}</button>
     </div>
-    {section === "archived" ? <div className="trash-page__archived"><WorkspaceSessionBrowser archived active={active} onOpenSession={onOpenSession} /></div> : <>
+    {section === "archived" ? <div className="trash-page__archived"><ArchivedSessionsList active={active} onOpenSession={onOpenSession} /></div> : <>
     {loadFailed && <div className="management-notice" role="alert">{m("loadFailed")}<button className="btn btn--small" disabled={busy} onClick={() => void refresh()}>{m("retry")}</button></div>}
     {notice && <div className="management-notice" role="status">{notice}{failedPaths.length > 0 && <button className="btn btn--small" disabled={busy} onClick={() => void mutate(failedPaths, lastKind)}>{m("retryFailed")}</button>}</div>}
     {loading && <div className="management-notice" role="status">{m("loading")}</div>}

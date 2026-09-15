@@ -123,7 +123,7 @@ await act(async () => {
 
 const generalFieldLabels = Array.from(rootEl.querySelectorAll(".settings-section__body > .settings-field .settings-field__label"))
   .map((label) => label.textContent?.trim());
-eq(generalFieldLabels[0], "Desktop style", "general settings place desktop style first");
+eq(generalFieldLabels[0], "Language", "general settings place language first");
 eq(document.querySelectorAll(".step-limit-control").length, 0, "general settings hide executor and planner step-limit controls");
 ok(!rootEl.textContent?.includes("Session experience"), "general settings remove the retired session experience field");
 ok(!rootEl.textContent?.includes("Conversation density"), "general settings do not render the retired density field");
@@ -388,7 +388,7 @@ await act(async () => {
   retryButton.click();
   await flushPromises();
 });
-await waitFor("settings retry success", () => document.body.textContent?.includes("Desktop style") === true);
+await waitFor("settings retry success", () => document.body.textContent?.includes("Desktop & language") === true);
 
 eq(failingSettingsCalls, 2, "settings retry calls Settings again");
 ok(document.body.textContent?.includes("Settings could not be loaded.") === false, "settings retry clears the load error");

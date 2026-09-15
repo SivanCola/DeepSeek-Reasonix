@@ -392,7 +392,7 @@ export function SettingsPanel({
     label: settingsTabLabel(id, t),
     meta: s ? settingsTabMeta(id, s, t) : "",
     searchTerms: id === "general" ? [
-      "settings.desktopLayoutStyle", "settings.language", "settings.currency",
+      "settings.language", "settings.currency",
       "settings.closeBehavior",
       "settings.defaultToolApprovalMode", "settings.sound", "settings.statusBarStyle", "settings.statusBarItems",
       "settings.hardwareAcceleration", "GPU", "白屏", "闪烁", "渲染",
@@ -634,7 +634,7 @@ function settingsTabMeta(id: SettingsTab, s: SettingsView, t: ReturnType<typeof 
     case "models":
       return settingsModelMeta(s, t);
     case "general":
-      return desktopLayoutStyleLabel(normalizeDesktopLayoutStyle(s.desktopLayoutStyle), t);
+      return s.sessionExperience === "deep" ? t("settings.sessionExperience.deep") : t("settings.sessionExperience.standard");
     case "providers":
       return t("settings.providerCount", { n: s.providers.length });
     case "bots":
@@ -1514,7 +1514,6 @@ function normalizeSettingsView(view: SettingsView | null | undefined): SettingsV
     bypass: Boolean(view.autoApproveTools ?? view.bypass),
     desktopLanguage: normalizeLangPref(view.desktopLanguage),
     desktopCurrency: normalizeDesktopCurrency(view.desktopCurrency),
-    desktopLayoutStyle: normalizeDesktopLayoutStyle(view.desktopLayoutStyle),
     desktopTheme: normalizeThemePreference(view.desktopTheme),
     desktopThemeStyle: normalizeThemeStyleForTheme(view.desktopThemeStyle, normalizeThemePreference(view.desktopTheme)),
     desktopTerminalTheme: normalizeTerminalThemePreference(view.desktopTerminalTheme),
@@ -1539,17 +1538,6 @@ type CloseBehavior = "background" | "quit";
 
 function normalizeCloseBehavior(mode: string | undefined): CloseBehavior {
   return mode === "quit" ? "quit" : "background";
-}
-
-type DesktopLayoutStyle = "workbench" | "creation";
-
-// A stored "classic" predates the style's removal; those installs land on workbench.
-function normalizeDesktopLayoutStyle(style: string | undefined): DesktopLayoutStyle {
-  return style === "creation" ? "creation" : "workbench";
-}
-
-function desktopLayoutStyleLabel(style: DesktopLayoutStyle, t: ReturnType<typeof useT>): string {
-  return t(`settings.desktopLayoutStyle.${style}`);
 }
 
 type StatusBarStyle = "icon" | "text";
@@ -1637,7 +1625,6 @@ function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agent
   const soundPanelId = useId();
   const languagePref = normalizeLangPref(s.desktopLanguage);
   const desktopCurrency = normalizeDesktopCurrency(s.desktopCurrency);
-  const desktopLayoutStyle = normalizeDesktopLayoutStyle(s.desktopLayoutStyle);
   const [genMusicPreset, setGenMusicPreset] = useState<GenerativePreset>(getGenerativePreset());
   const [soundPref, setSoundPref] = useState<SoundWavPref>(getSuccessPreference());
   const [attentionPref, setAttentionPref] = useState<SoundWavPref>(getAttentionPreference());
@@ -1684,20 +1671,6 @@ function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agent
   return (
     <>
       <SettingsSection title={t("settings.general.sectionAppearance")} description={t("settings.general.sectionAppearanceHint")}>
-      <SettingsField label={t("settings.desktopLayoutStyle")} hint={t("settings.desktopLayoutStyleHint")} icon={<Monitor size={18} />}>
-        <SettingsOptions layout="field" className="set-seg">
-          {(["workbench", "creation"] as const).map((style) => (
-            <button
-              key={style}
-              className={`set-seg__btn${desktopLayoutStyle === style ? " set-seg__btn--on" : ""}`}
-              disabled={busy}
-              onClick={() => void apply(() => app.SetDesktopLayoutStyle(style))}
-            >
-              {desktopLayoutStyleLabel(style, t)}
-            </button>
-          ))}
-        </SettingsOptions>
-      </SettingsField>
       <SettingsField label={t("settings.language")} hint={t("settings.languageHint")} icon={<Languages size={18} />}>
         <SettingsOptions layout="field" className="set-seg">
           {LANGUAGE_PREFS.map((pref) => (
