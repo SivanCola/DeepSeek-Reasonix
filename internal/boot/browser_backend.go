@@ -18,7 +18,9 @@ const browserLaunchTimeout = 45 * time.Second
 // responsible for its lifetime. Otherwise a configured CDP backend gives CLI,
 // Serve, and headless sessions the same browser_* tools; nothing is launched
 // until the first browser tool call.
-func browserBackend(host browser.Executor, cfg config.BrowserConfig) (browser.Executor, func()) {
+// uploadRoots are the session's write roots: a page is untrusted, so a file
+// input may only receive files this task already owns.
+func browserBackend(host browser.Executor, cfg config.BrowserConfig, uploadRoots []string) (browser.Executor, func()) {
 	if host != nil {
 		return host, nil
 	}
@@ -33,6 +35,7 @@ func browserBackend(host browser.Executor, cfg config.BrowserConfig) (browser.Ex
 		UserDataDir:         cfg.UserDataDir,
 		Headless:            cfg.Headless,
 		LaunchTimeout:       browserLaunchTimeout,
+		UploadRoots:         uploadRoots,
 	})
 	return lazy, lazy.Shutdown
 }

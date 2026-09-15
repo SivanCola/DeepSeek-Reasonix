@@ -101,6 +101,13 @@ A DevTools endpoint grants full control of that browser and of every file it can
 read. A non-loopback `endpoint` is therefore refused unless
 `allow_remote_endpoint` is set explicitly.
 
+`browser_upload` may only read from the session's write roots — the workspace
+and any additional directories — plus the executor's own artifact directory, so
+a file the agent just downloaded stays attachable. Symlinks are resolved before
+that check, so a link inside the workspace cannot point a file input at a key
+outside it. Any other path is refused with a reason rather than handed to the
+page: the page is untrusted, and a file input is an upload channel.
+
 ## Cache
 
 Nothing here is provider-visible. The tools stay registry-only and reachable

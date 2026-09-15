@@ -43,6 +43,10 @@ type Options struct {
 	// ArtifactDir receives screenshots and downloads. Empty uses a temporary
 	// directory that is removed on Shutdown.
 	ArtifactDir string
+	// UploadRoots are the directories browser_upload may read from, beside the
+	// artifact directory. Empty leaves only the artifact directory, because a
+	// file input on an untrusted page must never reach the whole filesystem.
+	UploadRoots []string
 	HTTPClient  *http.Client
 }
 
@@ -55,6 +59,7 @@ type Executor struct {
 	artifacts string
 	ownedDir  bool
 	navWait   time.Duration
+	uploads   uploadRoots
 
 	mu        sync.Mutex
 	pages     map[string]*page
@@ -79,6 +84,7 @@ func New(ctx context.Context, opts Options) (*Executor, error) {
 	e := &Executor{
 		opts: opts, artifacts: artifacts, ownedDir: ownedDir,
 		navWait:   cmpDuration(opts.NavigateTimeout, defaultNavigateTimeout),
+		uploads:   newUploadRoots(opts.UploadRoots, artifacts),
 		pages:     map[string]*page{},
 		ops:       map[string]string{},
 		contexts:  map[string]int{},
@@ -499,7 +505,13 @@ func artifactDir(configured string) (string, bool, error) {
 	return dir, true, nil
 }
 
+// artifactPath names a file inside the executor's own directory. A name is a
+// leaf, never a path: nothing this package writes may be steered out of the
+// directory the session cleans up.
 func (e *Executor) artifactPath(kind, name string) (string, error) {
+	if name != "" && (name != filepath.Base(name) || strings.ContainsAny(name, `/\`)) {
+		return "", fmt.Errorf("%s name %q is not a plain file name", kind, name)
+	}
 	dir := filepath.Join(e.artifacts, kind)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("prepare %s directory: %w", kind, err)

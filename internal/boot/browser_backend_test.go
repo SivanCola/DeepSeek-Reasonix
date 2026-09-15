@@ -54,14 +54,15 @@ func TestBrowserBackendPrefersTheHostBrowser(t *testing.T) {
 	host := bootBrowserExecutor{}
 	// A host that already brought a browser keeps it, and owes no shutdown:
 	// the desktop shell and the SSH broker outlive one controller.
-	exec, shutdown := browserBackend(host, config.BrowserConfig{Enabled: true})
+	roots := []string{t.TempDir()}
+	exec, shutdown := browserBackend(host, config.BrowserConfig{Enabled: true}, roots)
 	if exec == nil || shutdown != nil {
 		t.Fatalf("host browser = %v with shutdown %v, want the host executor and no shutdown", exec, shutdown != nil)
 	}
-	if exec, shutdown := browserBackend(nil, config.BrowserConfig{}); exec != nil || shutdown != nil {
+	if exec, shutdown := browserBackend(nil, config.BrowserConfig{}, roots); exec != nil || shutdown != nil {
 		t.Fatalf("disabled backend = %v, want no browser", exec)
 	}
-	exec, shutdown = browserBackend(nil, config.BrowserConfig{Enabled: true})
+	exec, shutdown = browserBackend(nil, config.BrowserConfig{Enabled: true}, roots)
 	if exec == nil || shutdown == nil {
 		t.Fatal("an enabled backend must return an executor and the shutdown that reaps it")
 	}

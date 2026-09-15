@@ -8,8 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"reasonix/internal/browser"
@@ -287,15 +285,12 @@ func (e *Executor) selectOptions(ctx context.Context, p *page, req browser.ActRe
 
 func (e *Executor) upload(ctx context.Context, p *page, req browser.ActRequest) (bool, string, error) {
 	files := make([]string, 0, len(req.Files))
-	for _, f := range req.Files {
-		abs, err := filepath.Abs(f)
-		if err != nil {
-			return false, fmt.Sprintf("file %s: %v", f, err), nil
+	for _, candidate := range req.Files {
+		resolved, refusal := e.uploads.resolve(candidate)
+		if refusal != "" {
+			return false, refusal, nil
 		}
-		if _, err := os.Stat(abs); err != nil {
-			return false, fmt.Sprintf("file %s is not readable: %v", f, err), nil
-		}
-		files = append(files, abs)
+		files = append(files, resolved)
 	}
 	handle, err := e.evalHandle(ctx, p, fmt.Sprintf("__rx.element(%s)", quote(req.Ref)))
 	if err != nil {

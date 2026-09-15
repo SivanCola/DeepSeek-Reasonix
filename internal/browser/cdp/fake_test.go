@@ -285,9 +285,19 @@ func fakePNG(t *testing.T) string {
 // the test's own directory.
 func newTestExecutor(t *testing.T, f *fakeBrowser) *Executor {
 	t.Helper()
+	return newTestExecutorWithRoots(t, f)
+}
+
+// newTestExecutorWithRoots is newTestExecutor with the directories
+// browser_upload may read from.
+func newTestExecutorWithRoots(t *testing.T, f *fakeBrowser, uploadRoots ...string) *Executor {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	exec, err := New(ctx, Options{Endpoint: f.srv.URL, ArtifactDir: t.TempDir(), NavigateTimeout: 5 * time.Second})
+	exec, err := New(ctx, Options{
+		Endpoint: f.srv.URL, ArtifactDir: t.TempDir(),
+		NavigateTimeout: 5 * time.Second, UploadRoots: uploadRoots,
+	})
 	if err != nil {
 		t.Fatalf("new executor: %v", err)
 	}

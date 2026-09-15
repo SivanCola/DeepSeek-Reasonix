@@ -62,7 +62,9 @@ func (e *Executor) Screenshot(ctx context.Context, req browser.ScreenshotRequest
 	if err != nil {
 		return browser.Screenshot{}, fmt.Errorf("decode screenshot: %w", err)
 	}
-	name := fmt.Sprintf("%s-%d.png", req.TabID, time.Now().UnixNano())
+	// The tab's registered ID, not the caller's argument: a screenshot names a
+	// file, and only IDs this executor minted may reach a path.
+	name := fmt.Sprintf("%s-%d.png", p.id, time.Now().UnixNano())
 	path, err := e.artifactPath("screenshots", name)
 	if err != nil {
 		return browser.Screenshot{}, err
