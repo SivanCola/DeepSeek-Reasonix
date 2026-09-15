@@ -11,7 +11,6 @@ import (
 
 	"reasonix/internal/agent"
 	"reasonix/internal/event"
-	"reasonix/internal/eventwire"
 	"reasonix/internal/evidence"
 	"reasonix/internal/session"
 	"reasonix/internal/sessioninbox"
@@ -55,6 +54,10 @@ type turnEventState struct {
 	// candidate and consumed atomically with Runtime execution activation.
 	// commitMu owns it and its queue reservation.
 	pendingExecutionCommit *session.PreparedBatch
+	pendingTermination     *TerminationPlan
+	turnMessageIDs         map[string]bool
+	finalizedTurn          string
+	terminationBoundary    *terminationBoundary
 }
 
 // projectVolatileTodo keeps the same event-derived projection for controllers
@@ -237,7 +240,6 @@ func (s *turnEventSink) persistAndPublish(e event.Event) error {
 		status = event.TurnWaitingUser
 	case event.TurnDone:
 		status = terminalTurnStatus(e)
-		e.ReadCompletion = s.c.updateTurnLedgerTranscript(ledger)
 	case event.TurnStatusChanged:
 		// The emitter supplied the exact transition in e.Status.
 	}
@@ -293,14 +295,27 @@ func lateBusinessEvent(kind event.Kind) bool {
 }
 
 func (s *turnEventSink) commitEnvelope(ledger *turnevent.Ledger, e event.Event, status event.TurnStatus) (event.Event, turnevent.Envelope, bool, error) {
+	if e.Kind == event.TurnDone {
+		s.c.snapshotMu.Lock()
+		defer s.c.snapshotMu.Unlock()
+	}
 	s.c.turnEvents.commitMu.Lock()
 	defer s.c.turnEvents.commitMu.Unlock()
 	if s.c.discardLateTurnEvent(e) {
 		slog.Info("controller: discarded late turn event", "kind", e.Kind, "turnId", e.TurnID)
 		return e, turnevent.Envelope{}, false, nil
 	}
-	if err := s.c.appendSessionEventLocked(context.Background(), e); err != nil {
+	ctx := context.Background()
+	if e.Kind == event.TurnDone {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, terminationFlushTimeout)
+		defer cancel()
+	}
+	if err := s.c.appendSessionEventLocked(ctx, e); err != nil {
 		return e, turnevent.Envelope{}, false, err
+	}
+	if e.Kind == event.TurnDone {
+		e.ReadCompletion = s.c.updateTurnLedgerTranscript(ledger)
 	}
 	stamped, envelope, ok, err := ledger.AppendEnvelope(e, status)
 	if err != nil || !ok || stamped.Sequence == 0 {
@@ -608,6 +623,9 @@ func classifyCommitError(err error) commitFailureKind {
 	if err == nil {
 		return commitOK
 	}
+	if errors.Is(err, errTerminationDurability) {
+		return commitUnexpected
+	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return commitLifecycle
 	}
@@ -775,19 +793,4 @@ func (c *Controller) TurnIDForSubmission(submissionID string) string {
 		return ""
 	}
 	return ledger.TurnIDForSubmission(submissionID)
-}
-
-func (s *turnEventSink) publishOutsideTurn(ledger *turnevent.Ledger, e event.Event) error {
-	if ledger.CurrentStatus() == event.TurnRecoveryRequired && lateBusinessEvent(e.Kind) {
-		return nil
-	}
-	s.c.refreshRuntimeState(e)
-	if _, runtime, exclusive := s.c.v3Binding(); exclusive && runtime != nil {
-		wire := eventwire.ToWire(e)
-		if err := runtime.PublishTranscriptFrame(turnevent.Envelope{Kind: wire.Kind, Event: wire, CreatedAt: time.Now().UnixMilli()}); err != nil {
-			return err
-		}
-	}
-	s.publishInner(e)
-	return nil
 }

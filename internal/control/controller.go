@@ -3924,6 +3924,9 @@ func (c *Controller) stripTurnMessagesAfter(idx int) {
 	}
 	msgs := c.executor.Session().Snapshot()
 	if len(msgs) <= idx {
+		// Compaction may have removed the entire synthetic workset. The
+		// explicit turn identities still need retraction from display history.
+		c.replaceSessionAfterCancel(msgs)
 		return
 	}
 	c.replaceSessionAfterCancel(msgs[:idx])
@@ -3959,118 +3962,11 @@ func (c *Controller) stripCancelledVisibleTurnMessagesAfterWithFallbackAt(idx in
 	if c.executor == nil {
 		return
 	}
-	msgs := c.executor.Session().Snapshot()
-	if start, ok := resolveInterruptedTurnStart(msgs, idx, true, startedAt, fallback); ok {
-		idx = start
+	before := c.executor.Session().Snapshot()
+	next := planCancelledMessages(before, idx, fallback, startedAt, c.executor.CanReplayAssistantMessage, c.ledgerTailEvidence())
+	if next != nil {
+		c.replaceSessionAfterCancelFrom(before, next)
 	}
-	if idx < 0 {
-		idx = 0
-	}
-	if idx > len(msgs) {
-		idx = len(msgs)
-	}
-	next := append([]provider.Message{}, msgs[:idx]...)
-	keptUser := false
-	userEnd := idx
-	for i, m := range msgs[idx:] {
-		if !agent.IsUserAuthoredTurnMessage(m) {
-			continue
-		}
-		m.Content = StripComposePrefixes(m.Content)
-		next = append(next, m)
-		keptUser = true
-		userEnd = idx + i + 1
-		break
-	}
-	if !keptUser && agent.IsUserAuthoredTurnMessage(fallback) {
-		fallback.Content = StripComposePrefixes(fallback.Content)
-		if strings.TrimSpace(fallback.Content) != "" {
-			fallback.Images = append([]string(nil), fallback.Images...)
-			next = append(next, fallback)
-			keptUser = true
-			userEnd = idx
-		}
-	}
-	if !keptUser && len(msgs) <= idx {
-		return
-	}
-	recovery := &provider.InterruptedTurnRecovery{Pending: true}
-	localIndexes := make([]int, 0, 1)
-	for i := userEnd; i < len(msgs); {
-		m := msgs[i]
-		if m.LocalOnly {
-			m.Role = provider.RoleTool
-			m.ToolCallID = provider.LocalOnlyToolID
-			m.Name = provider.LocalOnlyToolName
-			previousRecovery := m.InterruptedTurn
-			m.InterruptedTurn = nil
-			next = append(next, m)
-			localIndexes = append(localIndexes, len(next)-1)
-			recovery.DroppedPartialText = recovery.DroppedPartialText || strings.TrimSpace(m.Content) != ""
-			recovery.DroppedPartialReasoning = recovery.DroppedPartialReasoning || strings.TrimSpace(m.ReasoningContent) != ""
-			if previousRecovery != nil {
-				recovery.CompletedTools = append(recovery.CompletedTools, previousRecovery.CompletedTools...)
-				recovery.InterruptedTools = append(recovery.InterruptedTools, previousRecovery.InterruptedTools...)
-				recovery.NotStartedTools = append(recovery.NotStartedTools, previousRecovery.NotStartedTools...)
-				recovery.UnknownTools = append(recovery.UnknownTools, previousRecovery.UnknownTools...)
-			} else {
-				for _, call := range m.ToolCalls {
-					provider.RecordToolRecovery(recovery, interruptedToolSummary(call), provider.ToolRunUnknown)
-				}
-			}
-			i++
-			continue
-		}
-		// Auto-compaction can install a digest between the pinned current user
-		// message and its recent tool tail. It summarizes pre-turn/current work
-		// that is no longer present verbatim, so keep it provider-visible rather
-		// than silently dropping context during recovery.
-		if agent.IsCompactionSummary(m) {
-			next = append(next, m)
-			i++
-			continue
-		}
-		if m.Role == provider.RoleAssistant {
-			recordInterruptedAssistantRecovery(recovery, msgs, i, c.ledgerTailEvidence())
-		}
-		if end, ok := completeToolTurnEnd(msgs, i); ok && c.executor.CanReplayAssistantMessage(m) {
-			next = append(next, msgs[i:end]...)
-			i = end
-			continue
-		}
-		switch m.Role {
-		case provider.RoleAssistant:
-			local := m
-			local.Role = provider.RoleTool
-			local.LocalOnly = true
-			local.ToolCallID = provider.LocalOnlyToolID
-			local.Name = provider.LocalOnlyToolName
-			local.InterruptedTurn = nil
-			next = append(next, local)
-			localIndexes = append(localIndexes, len(next)-1)
-			recovery.DroppedPartialText = recovery.DroppedPartialText || strings.TrimSpace(local.Content) != ""
-			recovery.DroppedPartialReasoning = recovery.DroppedPartialReasoning || strings.TrimSpace(local.ReasoningContent) != ""
-		case provider.RoleTool:
-			local := m
-			local.LocalOnly = true
-			local.ToolCalls = []provider.ToolCall{{ID: m.ToolCallID, Name: m.Name}}
-			local.ToolCallID = provider.LocalOnlyToolID
-			local.Name = provider.LocalOnlyToolName
-			next = append(next, local)
-			localIndexes = append(localIndexes, len(next)-1)
-		}
-		i++
-	}
-	if len(localIndexes) == 0 {
-		next = append(next, provider.Message{
-			Role: provider.RoleTool, ToolCallID: provider.LocalOnlyToolID,
-			Name: provider.LocalOnlyToolName, LocalOnly: true,
-		})
-		localIndexes = append(localIndexes, len(next)-1)
-	}
-	c.applyLedgerRecoveryFacts(recovery)
-	next[localIndexes[len(localIndexes)-1]].InterruptedTurn = recovery
-	c.replaceSessionAfterCancel(next)
 }
 
 func (c *Controller) inFlightTurnStartedAt() time.Time {
@@ -4219,18 +4115,20 @@ func interruptedToolSummary(call provider.ToolCall) provider.InterruptedToolSumm
 }
 
 func (c *Controller) replaceSessionAfterCancel(msgs []provider.Message) {
+	if c.executor == nil {
+		return
+	}
+	c.replaceSessionAfterCancelFromScoped(c.executor.Session().Snapshot(), msgs, true)
+}
+
+func (c *Controller) replaceLegacySessionAfterCancelLocked(msgs []provider.Message) {
 	// The whole cleanup is a save/recovery handoff like snapshot's: hold
 	// snapshotMu from the in-memory truncation onward. Truncating outside the
 	// lock would let an in-flight save capture the shortened transcript, read
 	// the longer partial autosave on disk as a stale-prefix conflict, and
 	// adopt it back into the executor — silently undoing the cancel cleanup
 	// before the flush below could persist it.
-	c.snapshotMu.Lock()
-	defer c.snapshotMu.Unlock()
 	c.executor.Session().Replace(append([]provider.Message(nil), msgs...))
-	if err := c.replaceSessionEventProjection(context.Background(), "cancel-or-recovery-rewrite", msgs); err != nil {
-		slog.Warn("controller: record cancel/recovery transcript rewrite", "err", err)
-	}
 	// The mid-turn autosave may have already written a partial transcript to
 	// disk. snapshotActivityIfChanged skips the write when messageCount()
 	// returns to startMessages, so flush the cleaned transcript here. SaveRewrite

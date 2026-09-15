@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	historyIndexVersion     = 7
+	historyIndexVersion     = 8
 	HistoryPageDefaultLimit = 100
 	HistoryPageMaxLimit     = 500
 	HistoryPageMaxBytes     = 2 << 20
@@ -188,13 +188,16 @@ var historyMigrations = []projectiondb.Migration{{Version: 1, Apply: func(ctx co
 	_, err := tx.ExecContext(ctx, `SELECT 1`)
 	return err
 }}, {Version: 6, Apply: func(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `ALTER TABLE messages ADD COLUMN visible_user INTEGER NOT NULL DEFAULT 0`)
+	return err
+}}, {Version: 7, Apply: func(ctx context.Context, tx *sql.Tx) error {
 	_, err := tx.ExecContext(ctx, `CREATE TABLE turn_summaries (turn_id TEXT PRIMARY KEY, start_sequence INTEGER NOT NULL DEFAULT 0, end_sequence INTEGER NOT NULL DEFAULT 0, started_at INTEGER NOT NULL DEFAULT 0, ended_at INTEGER NOT NULL DEFAULT 0, final_message_id TEXT NOT NULL DEFAULT '')`)
 	if err != nil {
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `CREATE INDEX turn_summaries_final ON turn_summaries(final_message_id)`)
 	return err
-}}, {Version: 7, Apply: func(ctx context.Context, tx *sql.Tx) error {
+}}, {Version: 8, Apply: func(ctx context.Context, tx *sql.Tx) error {
 	_, err := tx.ExecContext(ctx, `CREATE TABLE turn_counts (turn_id TEXT NOT NULL, kind TEXT NOT NULL, id TEXT NOT NULL, sequence INTEGER NOT NULL, PRIMARY KEY(turn_id,kind,id))`)
 	return err
 }}}

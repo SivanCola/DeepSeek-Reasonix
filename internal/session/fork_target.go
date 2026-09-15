@@ -79,9 +79,12 @@ func forkProjectionAvailability(projection Projection, boundary uint64) ForkAvai
 // forkable yet without disabling the turns that already finished.
 func ForkTargets(projection Projection) ForkTargetSet {
 	targets := make([]ForkTarget, 0, len(projection.Turns)+1)
-	for index, turn := range projection.Turns {
+	for _, turn := range projection.Turns {
+		if projection.HiddenTurns[turn.TurnID] {
+			continue
+		}
 		target := ForkTarget{
-			TurnID: turn.TurnID, TurnNumber: index + 1,
+			TurnID: turn.TurnID, TurnNumber: len(targets) + 1,
 			StartSequence: turn.StartSequence, EndSequence: turn.EndSequence,
 			BoundarySequence: turn.BoundarySequence,
 			Status:           turn.Status, MessageID: turn.MessageID,
@@ -111,6 +114,9 @@ func ForkSequence(projection Projection, turnID string) (uint64, ForkAvailabilit
 	turnID = strings.TrimSpace(turnID)
 	if turnID == "" {
 		return 0, "", fmt.Errorf("session: fork needs a turn id")
+	}
+	if projection.HiddenTurns[turnID] {
+		return 0, ForkHistoryUnverifiable, nil
 	}
 	if projection.TurnID == turnID {
 		return 0, ForkTurnOpen, nil

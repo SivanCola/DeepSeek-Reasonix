@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"reasonix/internal/event"
+	"reasonix/internal/provider"
 )
 
 // RecoverInterrupted closes persisted runtime authority that cannot survive a
@@ -30,32 +31,10 @@ func (s *Session) RecoverInterrupted(ctx context.Context) (Commit, bool, error) 
 	if turnID == "" {
 		return Commit{}, false, nil
 	}
-	events := make([]Event, 0, len(snapshot.Projection.ActiveTools)+len(snapshot.Projection.Interactions)+1)
-	toolIDs := make([]string, 0, len(snapshot.Projection.ActiveTools))
-	for id := range snapshot.Projection.ActiveTools {
-		toolIDs = append(toolIDs, id)
-	}
-	sort.Strings(toolIDs)
-	for _, id := range toolIDs {
-		payload, _ := json.Marshal(map[string]any{"id": id, "name": snapshot.Projection.ActiveTools[id], "state": "result_unknown", "error": "previous runtime exited before recording a result"})
-		events = append(events, Event{Kind: "tool/result", Payload: payload})
-	}
-	requestIDs := make([]string, 0, len(snapshot.Projection.Interactions))
-	for id := range snapshot.Projection.Interactions {
-		requestIDs = append(requestIDs, id)
-	}
-	sort.Strings(requestIDs)
-	for _, id := range requestIDs {
-		payload, _ := json.Marshal(map[string]any{"id": id, "state": "unavailable"})
-		events = append(events, Event{Kind: "interaction/resolved", Payload: payload})
-	}
-	// turn/end uses a strict stable payload; diagnostic detail remains outside
-	// the required event until the codec explicitly versions that field.
+	events := ClosureEvents(snapshot.Projection, "unavailable", "previous runtime exited before recording a result")
 	terminal, _ := json.Marshal(map[string]any{"status": event.TurnInterrupted})
 	events = append(events, Event{Kind: "turn/end", Payload: terminal})
-	manifest := s.Manifest()
-	operationID := fmt.Sprintf("restart-recovery:%d:%s", manifest.WriterGeneration, turnID)
-	commit, err := s.Append(ctx, Batch{OperationID: operationID, TurnID: turnID, Events: events})
+	commit, err := s.Append(ctx, Batch{OperationID: "turn-finalize:" + turnID, TurnID: turnID, Events: events})
 	if err != nil {
 		return Commit{}, false, err
 	}
@@ -63,4 +42,44 @@ func (s *Session) RecoverInterrupted(ctx context.Context) (Commit, bool, error) 
 		return Commit{}, false, err
 	}
 	return commit, true, nil
+}
+
+// ClosureEvents derives deterministic terminal facts without executing tools
+// or changing the provider workset. Live termination and restart share it.
+func ClosureEvents(projection Projection, interactionState, detail string) []Event {
+	events := make([]Event, 0, len(projection.ActiveTools)+len(projection.Interactions)+len(projection.ActiveSteps))
+	toolIDs := make([]string, 0, len(projection.ActiveTools))
+	for id := range projection.ActiveTools {
+		toolIDs = append(toolIDs, id)
+	}
+	sort.Strings(toolIDs)
+	for _, id := range toolIDs {
+		state := provider.ToolRunNotStarted
+		legacyState := "not_started"
+		if projection.StartedTools[id] {
+			state = provider.ToolRunUnknown
+			legacyState = "result_unknown"
+		}
+		payload, _ := json.Marshal(map[string]any{"id": id, "name": projection.ActiveTools[id], "state": legacyState, "runState": state, "error": detail})
+		events = append(events, Event{Kind: "tool/result", Payload: payload})
+	}
+	requestIDs := make([]string, 0, len(projection.Interactions))
+	for id := range projection.Interactions {
+		requestIDs = append(requestIDs, id)
+	}
+	sort.Strings(requestIDs)
+	for _, id := range requestIDs {
+		payload, _ := json.Marshal(map[string]any{"id": id, "state": interactionState})
+		events = append(events, Event{Kind: "interaction/resolved", Payload: payload})
+	}
+	stepIDs := make([]string, 0, len(projection.ActiveSteps))
+	for id := range projection.ActiveSteps {
+		stepIDs = append(stepIDs, id)
+	}
+	sort.Strings(stepIDs)
+	for _, id := range stepIDs {
+		payload, _ := json.Marshal(map[string]any{"id": id})
+		events = append(events, Event{Kind: "step/end", Payload: payload})
+	}
+	return events
 }

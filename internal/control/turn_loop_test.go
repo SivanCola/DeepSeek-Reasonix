@@ -199,11 +199,23 @@ func TestEachStartedTurnHasOneTerminalEvent(t *testing.T) {
 
 func TestStopHistoryReplaceThenSendGetsNewTurnID(t *testing.T) {
 	done := make(chan event.Event, 8)
-	c, _, runtime := exclusiveTestController(t, event.FuncSink(func(e event.Event) {
+	c, service, runtime := exclusiveTestController(t, event.FuncSink(func(e event.Event) {
 		if e.Kind == event.TurnDone {
 			done <- e
 		}
 	}))
+	if err := c.RecordSessionMessages(t.Context(), "before-stop", []provider.Message{
+		{ID: "retained-question", Role: provider.RoleUser, Content: "keep this question"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c.restoreExecutorFromSessionEvents()
+	if _, err := runtime.Session().Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Query().HistoryShape(t.Context(), runtime.Ref()); err != nil {
+		t.Fatal(err)
+	}
 	started := make(chan struct{})
 	c.runGuarded(func(ctx context.Context) error {
 		close(started)
@@ -220,6 +232,33 @@ func TestStopHistoryReplaceThenSendGetsNewTurnID(t *testing.T) {
 	waitIdleAdmission(t, c)
 	if err := c.turnEventLedgerError(); err != nil {
 		t.Fatalf("cancel poisoned admission: %v", err)
+	}
+	// Switching after Stop reads the same durable rewrite through the history
+	// index. Admission alone used to pass while these reads failed with a
+	// duplicate (message_id, version) key.
+	other, err := service.Create(t.Context(), session.CreateOptions{SessionID: "other"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.OpenSession(t.Context(), other.Ref()); err != nil {
+		t.Fatalf("switch away after stop: %v", err)
+	}
+	if _, err := service.Query().HistoryShape(t.Context(), runtime.Ref()); err != nil {
+		t.Fatalf("read stopped session after switching away: %v", err)
+	}
+	if _, err := c.OpenSession(t.Context(), runtime.Ref()); err != nil {
+		t.Fatalf("switch back after stop: %v", err)
+	}
+	page, err := service.Query().ReadHistoryWindow(t.Context(), runtime.Ref(), session.HistoryWindowRequest{Anchor: "newest"})
+	if err != nil || page.Status != "ready" {
+		t.Fatalf("reopened stopped history: %+v, %v", page, err)
+	}
+	found := false
+	for _, message := range page.Messages {
+		found = found || message.MessageID == "retained-question"
+	}
+	if !found {
+		t.Fatal("stopped history lost the retained question")
 	}
 	secondStarted := make(chan struct{})
 	if got := c.runGuarded(func(context.Context) error {

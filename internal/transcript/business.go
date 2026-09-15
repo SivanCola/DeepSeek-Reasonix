@@ -26,6 +26,16 @@ func (p *Projection) RestoreRuntime(runtime Runtime, durable uint64) {
 // never from a wire-event ledger. Mutable stream owners are retained separately
 // from the bounded settled tail.
 func (p *Projection) AcceptBusiness(rows []Message, covered uint64, turnID string, rewrite bool, finalMessageID ...string) {
+	p.acceptBusiness(rows, nil, covered, turnID, rewrite, finalMessageID...)
+}
+
+// AcceptRetractions invalidates the reading cut while retaining unrelated
+// active output. The canonical reader supplies the new visible history.
+func (p *Projection) AcceptRetractions(rows []Message, removed []string, covered uint64, turnID, finalMessageID string) {
+	p.acceptBusiness(rows, removed, covered, turnID, false, finalMessageID)
+}
+
+func (p *Projection) acceptBusiness(rows []Message, removed []string, covered uint64, turnID string, rewrite bool, finalMessageID ...string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if covered <= p.covered {
@@ -33,6 +43,26 @@ func (p *Projection) AcceptBusiness(rows []Message, covered uint64, turnID strin
 	}
 	if rewrite {
 		p.buffer.Reset()
+	}
+	for _, id := range removed {
+		for index := len(p.buffer.messages) - 1; index >= 0; index-- {
+			if p.buffer.messages[index].message.MessageID == id {
+				if p.buffer.messages[index].message.Role == "user" {
+					p.buffer.userTurns--
+				}
+				p.buffer.messages = append(p.buffer.messages[:index], p.buffer.messages[index+1:]...)
+			}
+		}
+		delete(p.buffer.byMessageID, id)
+		delete(p.results, id)
+		for key, attempt := range p.attempts {
+			if attempt.MessageID == id {
+				delete(p.attempts, key)
+			}
+		}
+	}
+	reset := rewrite || len(removed) > 0
+	if reset {
 		p.identity.RewriteEpoch++
 		clear(p.snapshots)
 		p.snapshotOrder = nil
@@ -83,7 +113,7 @@ func (p *Projection) AcceptBusiness(rows []Message, covered uint64, turnID strin
 	p.covered = covered
 	p.revision++
 	p.trimSettledLocked()
-	p.publishChangeLocked(Change{FirstSeq: first, Records: rows, ResetRequired: rewrite})
+	p.publishChangeLocked(Change{FirstSeq: first, Records: rows, ResetRequired: reset})
 }
 
 func (p *Projection) trimSettledLocked() {

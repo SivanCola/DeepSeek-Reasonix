@@ -543,7 +543,7 @@ func readManifest(path string) (Manifest, error) {
 	if err := json.Unmarshal(b, &m); err != nil {
 		return Manifest{}, err
 	}
-	if m.SchemaVersion != SchemaVersion || m.Codec != Codec || m.StorageRevision != StorageRevision {
+	if !currentStoredManifest(m) {
 		return Manifest{}, fmt.Errorf("%w: manifest schema or codec", ErrUnsupportedVersion)
 	}
 	return m, nil

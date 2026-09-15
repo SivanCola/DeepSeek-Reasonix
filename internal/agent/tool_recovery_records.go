@@ -142,6 +142,12 @@ func unresolvedToolRecord(r provider.ToolCallRecord) bool {
 // Rewriting model history cannot erase an unresolved external-effect fact. A
 // local-only record survives compaction/rewind on the same session, but does
 // not restrict later tool admission.
+// PlanRetainedToolRecords applies the same retention rule as Session.Replace
+// without changing the session. Callers assign stable IDs before committing.
+func PlanRetainedToolRecords(previous, next []provider.Message) []provider.Message {
+	return retainUnresolvedToolRecords(previous, next)
+}
+
 func retainUnresolvedToolRecords(previous, next []provider.Message) []provider.Message {
 	seen := map[string]bool{}
 	for _, m := range next {

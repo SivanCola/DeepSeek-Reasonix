@@ -244,7 +244,13 @@ func incrementHistoryIndex(ctx context.Context, dir, path, sessionID string, rev
 
 func loadCurrentHistoryState(ctx context.Context, db *sql.DB) (historyBuildState, error) {
 	state := historyBuildState{positions: map[string]int64{}, turns: map[string]int{}, versions: map[string]int{}}
-	rows, err := db.QueryContext(ctx, `SELECT message_id,position,visible_turn,version FROM messages WHERE current=1`)
+	// Versions belong to the stable message identity, including retired rows.
+	// A later rewrite can restore a removed message; its next version must not
+	// collide with the versions retained for older snapshots.
+	rows, err := db.QueryContext(ctx, `SELECT message_id,
+		COALESCE(MAX(CASE WHEN current=1 THEN position END),0),
+		COALESCE(MAX(CASE WHEN current=1 THEN visible_turn END),0),MAX(version)
+		FROM messages GROUP BY message_id`)
 	if err != nil {
 		return historyBuildState{}, err
 	}
@@ -256,7 +262,11 @@ func loadCurrentHistoryState(ctx context.Context, db *sql.DB) (historyBuildState
 			_ = rows.Close()
 			return historyBuildState{}, err
 		}
-		state.positions[id], state.turns[id], state.versions[id] = position, visibleTurn, version
+		state.versions[id] = version
+		if position == 0 {
+			continue
+		}
+		state.positions[id], state.turns[id] = position, visibleTurn
 		state.nextPosition = max(state.nextPosition, position)
 		state.visibleTurn = max(state.visibleTurn, visibleTurn)
 	}
@@ -453,7 +463,7 @@ func flushHistoryBuildRows(ctx context.Context, tx *sql.Tx, state *historyBuildS
 	if err := insertHistoryRows(ctx, tx, `INSERT OR IGNORE INTO content_refs(digest,bytes,index_digest) VALUES `, 3, state.contentRefs); err != nil {
 		return err
 	}
-	if err := insertHistoryRows(ctx, tx, `INSERT INTO messages(message_id,version,position,event_sequence,valid_to,role,preview,inline,content_digest,content_bytes,content_index_digest,current,search_text,visible_turn) VALUES `, 14, state.messages); err != nil {
+	if err := insertHistoryRows(ctx, tx, `INSERT INTO messages(message_id,version,position,event_sequence,valid_to,role,preview,inline,content_digest,content_bytes,content_index_digest,current,search_text,visible_turn,visible_user) VALUES `, 15, state.messages); err != nil {
 		return err
 	}
 	state.transactions = state.transactions[:0]
@@ -498,7 +508,7 @@ func indexMessageEvent(ctx context.Context, content *sessioncontent.Store, state
 	if err := indexTurnEvent(ctx, content, state, event); err != nil {
 		return err
 	}
-	if event.Kind != "message/complete" && event.Kind != "message/upsert" && event.Kind != "history/replace" && event.Kind != "legacy/import" {
+	if event.Kind != "message/complete" && event.Kind != "message/upsert" && event.Kind != "message/retract" && event.Kind != "history/replace" && event.Kind != "legacy/import" {
 		return nil
 	}
 	payload := event.Payload
@@ -510,6 +520,22 @@ func indexMessageEvent(ctx context.Context, content *sessioncontent.Store, state
 		}
 	}
 	switch event.Kind {
+	case "message/retract":
+		ids, err := retractedMessageIDs(event, payload)
+		if err != nil {
+			return err
+		}
+		if err := flushHistoryBuildRows(ctx, state.tx, state); err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if _, err := state.statements.expire.ExecContext(ctx, event.Sequence, id); err != nil {
+				return err
+			}
+			delete(state.positions, id)
+			delete(state.turns, id)
+		}
+		return renumberVisibleTurns(ctx, state, event.Sequence)
 	case "message/complete", "message/upsert":
 		var body struct {
 			Message *provider.Message `json:"message"`
@@ -524,22 +550,12 @@ func indexMessageEvent(ctx context.Context, content *sessioncontent.Store, state
 			}
 		}
 		return indexOneMessage(ctx, content, state, *body.Message, event.Sequence, event.Kind == "message/upsert")
-	case "history/replace":
-		var body struct {
-			Messages []provider.Message `json:"messages"`
+	case "history/replace", "legacy/import":
+		messages, err := replacementEventMessages(event, payload)
+		if err != nil {
+			return err
 		}
-		if err := strictPayload(payload, &body); err != nil || body.Messages == nil {
-			return damagedPayload(event, err)
-		}
-		return replaceIndexedMessages(ctx, content, state, body.Messages, event.Sequence)
-	case "legacy/import":
-		var body struct {
-			Messages []provider.Message `json:"messages"`
-		}
-		if err := strictPayload(payload, &body); err != nil || body.Messages == nil {
-			return damagedPayload(event, err)
-		}
-		return replaceIndexedMessages(ctx, content, state, body.Messages, event.Sequence)
+		return replaceIndexedMessages(ctx, content, state, messages, event.Sequence)
 	}
 	return nil
 }
@@ -555,7 +571,8 @@ func replaceIndexedMessages(ctx context.Context, content *sessioncontent.Store, 
 	state.visibleTurn = 0
 	state.positions = map[string]int64{}
 	state.turns = map[string]int{}
-	state.versions = map[string]int{}
+	// Keep each identity's version watermark when replacing its visible row.
+	// Retired versions remain in SQLite for fixed-snapshot readers.
 	legacyTurn := 0
 	var final *provider.Message
 	flushLegacyTurn := func() error {
@@ -624,7 +641,51 @@ func indexOneMessage(ctx context.Context, content *sessioncontent.Store, state *
 	if err := insertContentRef(ctx, state, ref); err != nil {
 		return err
 	}
-	state.messages = append(state.messages, []any{id, version, position, sequence, 0, string(message.Role), messagePreview(message), nil, ref.Digest, ref.Bytes, ref.IndexDigest, 1, "", visibleTurn})
+	visibleUser := 0
+	if agent.IsUserAuthoredTurnMessage(message) {
+		visibleUser = 1
+	}
+	state.messages = append(state.messages, []any{id, version, position, sequence, 0, string(message.Role), messagePreview(message), nil, ref.Digest, ref.Bytes, ref.IndexDigest, 1, "", visibleTurn, visibleUser})
+	return nil
+}
+
+// Re-number only rows whose visible user boundary changed. New versions keep
+// previous numbering available to fixed-snapshot cursors.
+func renumberVisibleTurns(ctx context.Context, state *historyBuildState, sequence uint64) error {
+	rows, err := state.tx.QueryContext(ctx, `SELECT message_id,ordinal FROM (SELECT message_id,visible_turn,SUM(visible_user) OVER (ORDER BY position) AS ordinal FROM messages WHERE current=1) WHERE visible_turn<>ordinal`)
+	if err != nil {
+		return err
+	}
+	type changedTurn struct {
+		id   string
+		turn int
+	}
+	var changed []changedTurn
+	for rows.Next() {
+		var item changedTurn
+		if err := rows.Scan(&item.id, &item.turn); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		changed = append(changed, item)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+	for _, item := range changed {
+		version := state.versions[item.id] + 1
+		if _, err := state.statements.expire.ExecContext(ctx, sequence, item.id); err != nil {
+			return err
+		}
+		if _, err := state.tx.ExecContext(ctx, `INSERT INTO messages(message_id,version,position,event_sequence,valid_to,role,preview,inline,content_digest,content_bytes,content_index_digest,current,search_text,visible_turn,visible_user) SELECT message_id,?,position,?,0,role,preview,inline,content_digest,content_bytes,content_index_digest,1,search_text,?,visible_user FROM messages WHERE message_id=? ORDER BY version DESC LIMIT 1`, version, sequence, item.turn, item.id); err != nil {
+			return err
+		}
+		state.versions[item.id], state.turns[item.id] = version, item.turn
+	}
+	state.visibleTurn = 0
+	for _, turn := range state.turns {
+		state.visibleTurn = max(state.visibleTurn, turn)
+	}
 	return nil
 }
 
@@ -714,39 +775,4 @@ func scanMetadataUint(row *sql.Row, target *uint64) error {
 	}
 	_, err := fmt.Sscan(value, target)
 	return err
-}
-
-func indexTurnEvent(ctx context.Context, content *sessioncontent.Store, state *historyBuildState, event Event) error {
-	if state.commitTurn != "" && (event.Kind == "assistant/attempt" || event.Kind == "tool/call") {
-		payload := event.Payload
-		if event.PayloadRef != nil {
-			var err error
-			payload, err = resolveContentPayload(ctx, content, *event.PayloadRef)
-			if err != nil {
-				return err
-			}
-		}
-		var body struct {
-			ID     string `json:"id"`
-			Action string `json:"action"`
-		}
-		if err := json.Unmarshal(payload, &body); err != nil {
-			return err
-		}
-		if body.ID != "" && (event.Kind == "tool/call" || body.Action == "begin") {
-			_, err := state.tx.ExecContext(ctx, `INSERT OR IGNORE INTO turn_counts(turn_id,kind,id,sequence) VALUES(?,?,?,?)`, state.commitTurn, event.Kind, body.ID, event.Sequence)
-			return err
-		}
-	}
-	if state.commitTurn != "" {
-		switch event.Kind {
-		case "turn/start":
-			_, err := state.tx.ExecContext(ctx, `INSERT INTO turn_summaries(turn_id,start_sequence,started_at) VALUES(?,?,?) ON CONFLICT(turn_id) DO UPDATE SET start_sequence=excluded.start_sequence,started_at=excluded.started_at`, state.commitTurn, event.Sequence, state.commitTime)
-			return err
-		case "turn/end":
-			_, err := state.tx.ExecContext(ctx, `UPDATE turn_summaries SET end_sequence=?,ended_at=MAX(ended_at,?) WHERE turn_id=?`, event.Sequence, state.commitTime, state.commitTurn)
-			return err
-		}
-	}
-	return nil
 }

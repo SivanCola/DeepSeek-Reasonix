@@ -198,6 +198,9 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 		return nil
 	}
 	startMessages := c.messageCount()
+	fallback := persistedUserTurn(input, turn.raw, userImages, time.Now().UnixMilli())
+	fallback.ID = userMessageID
+	c.noteTerminationBoundary(fallback, !turn.synthetic)
 	var marker agent.InFlightTurnMeta
 	defer func() { c.finishInFlightTurn(startMessages, marker) }()
 	defer c.recordDisplayForNewUser(startMessages, turn.display)

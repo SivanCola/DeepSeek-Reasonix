@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"slices"
 
 	"reasonix/internal/provider"
 	"reasonix/internal/transcript"
@@ -40,6 +41,7 @@ func (s *Session) acceptTranscriptCommit(commit Commit) {
 		return
 	}
 	var messages []provider.Message
+	var removed []string
 	rewrite := false
 	for _, e := range commit.Events {
 		switch e.Kind {
@@ -48,7 +50,14 @@ func (s *Session) acceptTranscriptCommit(commit Commit) {
 				Message provider.Message `json:"message"`
 			}
 			if json.Unmarshal(e.Payload, &payload) == nil {
+				removed = slices.DeleteFunc(removed, func(id string) bool { return id == payload.Message.ID })
 				messages = append(messages, payload.Message)
+			}
+		case "message/retract":
+			ids, err := retractedMessageIDs(e, e.Payload)
+			if err == nil {
+				removed = append(removed, ids...)
+				messages = slices.DeleteFunc(messages, func(message provider.Message) bool { return slices.Contains(ids, message.ID) })
 			}
 		case "history/replace", "legacy/import":
 			var payload struct {
@@ -56,6 +65,7 @@ func (s *Session) acceptTranscriptCommit(commit Commit) {
 			}
 			if json.Unmarshal(e.Payload, &payload) == nil {
 				messages, rewrite = payload.Messages, true
+				removed = nil
 			}
 		}
 	}
@@ -66,5 +76,10 @@ func (s *Session) acceptTranscriptCommit(commit Commit) {
 			finalID = last.MessageID
 		}
 	}
-	s.transcript.AcceptBusiness(transcript.History(messages, transcript.HistoryOptions{}), commit.LastSequence(), commit.TurnID, rewrite, finalID)
+	rows := transcript.History(messages, transcript.HistoryOptions{})
+	if len(removed) > 0 && !rewrite {
+		s.transcript.AcceptRetractions(rows, removed, commit.LastSequence(), commit.TurnID, finalID)
+	} else {
+		s.transcript.AcceptBusiness(rows, commit.LastSequence(), commit.TurnID, rewrite, finalID)
+	}
 }

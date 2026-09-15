@@ -404,16 +404,26 @@ func (c *Controller) appendSessionEventLocked(ctx context.Context, e event.Event
 		if _, turnID, active := c.currentTurnToken(); active {
 			e.TurnID = turnID
 		}
+		if e.TurnID == "" {
+			e.TurnID = projection.TurnID
+		}
 	}
 	events, err := c.v3EventsFor(e, projection)
 	if err != nil || len(events) == 0 {
 		return err
+	}
+	if e.Kind == event.TurnDone {
+		if err := c.appendTerminationLocked(ctx, e, store, events); err != nil {
+			return fmt.Errorf("%w: %w", turnevent.ErrTurnLedgerUnavailable, err)
+		}
+		return nil
 	}
 	op := fmt.Sprintf("runtime:%s:%d:%d", e.TurnID, snapshot.EventSequence+1, e.Kind)
 	_, err = c.appendSessionBatch(ctx, store, session.Batch{OperationID: op, TurnID: e.TurnID, Events: events})
 	if err != nil {
 		return fmt.Errorf("%w: %w", turnevent.ErrTurnLedgerUnavailable, err)
 	}
+	c.noteCommittedMessagesLocked(events)
 	return nil
 }
 
@@ -538,13 +548,7 @@ func (c *Controller) v3EventsFor(e event.Event, projection session.Projection) (
 		if e.Cancelled || e.Status == event.TurnInterrupted {
 			interactionState = "cancelled"
 		}
-		for id := range projection.Interactions {
-			interactionPayload, marshalErr := makePayload(map[string]any{"id": id, "state": interactionState})
-			if marshalErr != nil {
-				return nil, marshalErr
-			}
-			out = append(out, session.Event{Kind: "interaction/resolved", Payload: interactionPayload})
-		}
+		out = append(out, session.ClosureEvents(projection, interactionState, "turn ended before recording a result")...)
 		if e.Recovery != nil && e.Recovery.State == "recovery_required" {
 			recoveryPayload, marshalErr := makePayload(e.Recovery)
 			if marshalErr != nil {
@@ -606,6 +610,9 @@ func (c *Controller) RecordSessionMessages(ctx context.Context, reason string, m
 	}
 	c.turnEvents.commitMu.Lock()
 	defer c.turnEvents.commitMu.Unlock()
+	if !c.messageCommitAllowedLocked(ctx, store) {
+		return nil
+	}
 	events := make([]session.Event, 0, len(messages))
 	for _, message := range messages {
 		if strings.TrimSpace(message.ID) == "" {
@@ -620,6 +627,9 @@ func (c *Controller) RecordSessionMessages(ctx context.Context, reason string, m
 	snapshot := store.ExecutionSnapshot()
 	op := fmt.Sprintf("messages:%s:%d", reason, snapshot.EventSequence+1)
 	_, err := c.appendSessionBatch(ctx, store, session.Batch{OperationID: op, TurnID: snapshot.Projection.TurnID, Events: events})
+	if err == nil {
+		c.noteCommittedMessagesLocked(events)
+	}
 	return err
 }
 
@@ -644,6 +654,9 @@ func (c *Controller) RecordSessionMessageUpsert(ctx context.Context, reason stri
 	}
 	c.turnEvents.commitMu.Lock()
 	defer c.turnEvents.commitMu.Unlock()
+	if !c.messageCommitAllowedLocked(ctx, store) {
+		return nil
+	}
 	snapshot := store.ExecutionSnapshot()
 	op := fmt.Sprintf("message-upsert:%s:%s:%d", reason, message.ID, snapshot.EventSequence+1)
 	_, err = c.appendSessionBatch(ctx, store, session.Batch{OperationID: op, TurnID: snapshot.Projection.TurnID, Events: []session.Event{{Kind: "message/upsert", Payload: payload}}})
@@ -702,6 +715,9 @@ func (c *Controller) appendDomainState(kind string, payload json.RawMessage, rea
 	}
 	c.turnEvents.commitMu.Lock()
 	defer c.turnEvents.commitMu.Unlock()
+	if !c.messageCommitAllowedLocked(context.Background(), store) {
+		return nil
+	}
 	snapshot := store.ExecutionSnapshot()
 	op := fmt.Sprintf("domain:%s:%s:%d", kind, reason, snapshot.EventSequence+1)
 	_, err := c.appendSessionBatch(context.Background(), store, session.Batch{OperationID: op, TurnID: snapshot.Projection.TurnID, Events: []session.Event{{Kind: kind, Payload: append(json.RawMessage(nil), payload...)}}})

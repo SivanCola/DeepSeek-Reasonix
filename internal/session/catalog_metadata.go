@@ -13,8 +13,21 @@ import (
 	"reasonix/internal/provider"
 )
 
-// Rebuild previews derived from provider content by older versions.
-const catalogMetadataVersion = 2
+// Rebuild both authored previews and retracted input/turn metadata.
+const catalogMetadataVersion = 3
+
+// metadataForDurable publishes catalog metadata only for a durable prefix.
+func (s *Session) metadataForDurable(durable uint64) (catalogMetadata, bool) {
+	if s == nil {
+		return catalogMetadata{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if durable+1 != s.next {
+		return catalogMetadata{}, false
+	}
+	return metadataFromProjection(s.manifest, durable, s.projection), true
+}
 
 const (
 	MetadataReady   = "ready"
@@ -51,10 +64,15 @@ func metadataFromProjection(manifest Manifest, sequence uint64, projection Proje
 		CreatedAt: manifest.CreatedAt.UTC().Format(time.RFC3339Nano), Sequence: sequence,
 		Title: projection.Title, ModelRef: projection.ModelRef, ModelIdentity: projection.ModelIdentity,
 	}
-	for _, turn := range projection.Turns {
-		if turn.EndSequence != 0 {
-			metadata.Turns++
+	metadata.Turns = visibleBoundaryCount(projection, true)
+	for _, input := range projection.TranscriptInputs {
+		if input.Preview != "" {
+			metadata.Preview = input.Preview
+			return metadata
 		}
+	}
+	if len(projection.TranscriptInputs) > 0 {
+		return metadata
 	}
 	for _, message := range projection.Messages {
 		if preview := catalogMessagePreview(message); preview != "" {

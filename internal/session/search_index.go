@@ -16,7 +16,7 @@ import (
 	"reasonix/internal/sessioncontent"
 )
 
-const searchIndexVersion = 3
+const searchIndexVersion = 4
 
 var searchMigrations = []projectiondb.Migration{{Version: 1, Apply: func(ctx context.Context, tx *sql.Tx) error {
 	for _, statement := range []string{
@@ -331,7 +331,7 @@ func populateSearchIndex(ctx context.Context, dir string, db *sql.DB, startOffse
 }
 
 func indexSearchEvent(ctx context.Context, tx *sql.Tx, content *sessioncontent.Store, state *searchBuildState, event Event) error {
-	if event.Kind != "message/complete" && event.Kind != "message/upsert" && event.Kind != "history/replace" && event.Kind != "legacy/import" {
+	if event.Kind != "message/complete" && event.Kind != "message/upsert" && event.Kind != "message/retract" && event.Kind != "history/replace" && event.Kind != "legacy/import" {
 		return nil
 	}
 	payload := event.Payload
@@ -343,6 +343,18 @@ func indexSearchEvent(ctx context.Context, tx *sql.Tx, content *sessioncontent.S
 		}
 	}
 	switch event.Kind {
+	case "message/retract":
+		ids, err := retractedMessageIDs(event, payload)
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if _, err := tx.ExecContext(ctx, `UPDATE documents SET current=0,valid_to=? WHERE message_id=? AND current=1`, event.Sequence, id); err != nil {
+				return err
+			}
+			delete(state.positions, id)
+		}
+		return nil
 	case "message/complete", "message/upsert":
 		var body struct {
 			Message *provider.Message `json:"message"`
@@ -352,18 +364,16 @@ func indexSearchEvent(ctx context.Context, tx *sql.Tx, content *sessioncontent.S
 		}
 		return indexSearchMessage(ctx, tx, state, *body.Message, event.Sequence, event.Kind == "message/upsert")
 	case "history/replace", "legacy/import":
-		var body struct {
-			Messages []provider.Message `json:"messages"`
-		}
-		if err := strictPayload(payload, &body); err != nil || body.Messages == nil {
-			return damagedPayload(event, err)
+		messages, err := replacementEventMessages(event, payload)
+		if err != nil {
+			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE documents SET current=0,valid_to=? WHERE current=1`, event.Sequence); err != nil {
 			return err
 		}
 		state.positions = map[string]int64{}
 		state.nextPosition = 0
-		for _, message := range body.Messages {
+		for _, message := range messages {
 			if err := indexSearchMessage(ctx, tx, state, message, event.Sequence, false); err != nil {
 				return err
 			}

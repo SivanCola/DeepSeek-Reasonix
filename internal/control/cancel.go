@@ -3,7 +3,6 @@ package control
 import (
 	"reasonix/internal/agent"
 	"reasonix/internal/event"
-	"reasonix/internal/session"
 )
 
 // CancelReceipt acknowledges a session-scoped Stop request. Accepted means the
@@ -33,23 +32,16 @@ func (c *Controller) CancelSession() CancelReceipt {
 	epoch := c.runtimeState.snapshot.RuntimeEpoch
 	recoveryRequired := c.runtimeState.snapshot.Phase == "recovery_required"
 	c.runtimeState.mu.Unlock()
-	service, runtime, exclusive := c.v3Binding()
+	_, runtime, exclusive := c.v3Binding()
 	if exclusive && runtime != nil {
 		sessionRef = runtime.Ref().SessionID
 		headID = ""
 	}
-	cancelled := c.signalTurnCancel()
-	if exclusive && runtime != nil && service != nil {
-		if v3Receipt, err := service.CancelSession(runtime.Ref()); err == nil {
-			epoch = v3Receipt.RuntimeEpoch
-			alreadyIdle = v3Receipt.Phase == session.RuntimeIdle
-			recoveryRequired = v3Receipt.Phase == session.RuntimeRecoveryRequired
-		}
-	}
+	token, turnID, cancelled := c.signalTurnCancelIdentity()
 	if cancelled {
 		alreadyIdle = false
 	}
-	go c.finishCancellation(cancelled)
+	go c.finishCancellation(token, turnID, cancelled)
 	receipt := CancelReceipt{
 		SessionRef: sessionRef, HeadID: headID, RuntimeEpoch: epoch,
 		Accepted: true, AlreadyIdle: alreadyIdle, RecoveryRequired: recoveryRequired,
@@ -75,26 +67,22 @@ func (c *Controller) cancelLocked() {
 // emit that follows is a synchronous event barrier, and a stalled event lane
 // must never keep the provider stream or a tool process alive after Stop.
 func (c *Controller) cancelTurnLocked() (string, bool) {
-	cancelled := c.signalTurnCancel()
+	_, turnID, cancelled := c.signalTurnCancelIdentity()
 	if !cancelled {
 		return "", false
 	}
-	turnID := ""
-	if ledger := c.turnEventLedger(); ledger != nil {
-		turnID = ledger.ActiveTurnID()
-	}
-	c.promptOwner.CancelAll()
-	c.approval.clearAll()
+	c.promptOwner.CancelTurn(turnID)
 	return turnID, true
 }
 
-func (c *Controller) finishCancellation(cancelled bool) {
-	turnID := ""
-	if ledger := c.turnEventLedger(); ledger != nil {
-		turnID = ledger.ActiveTurnID()
+func (c *Controller) finishCancellation(token uint64, turnID string, cancelled bool) {
+	c.mu.Lock()
+	current := c.turns.token == token
+	c.mu.Unlock()
+	if !current {
+		return
 	}
-	c.promptOwner.CancelAll()
-	c.approval.clearAll()
+	c.promptOwner.CancelTurn(turnID)
 	c.finishCancel(turnID, cancelled)
 }
 
@@ -102,6 +90,12 @@ func (c *Controller) finishCancel(turnID string, cancelled bool) {
 	defer c.refreshRuntimeState(event.Event{})
 	if cancelled {
 		c.emitTurnStatus(event.TurnCancelling, turnID)
+	}
+	c.mu.Lock()
+	stale := turnID != "" && c.turns.turnID != "" && c.turns.turnID != turnID
+	c.mu.Unlock()
+	if stale {
+		return
 	}
 	if c.goals.active() {
 		c.stopGoal(GoalStatusStopped)

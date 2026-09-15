@@ -23,9 +23,9 @@ import (
 	"reasonix/internal/sessioncontent"
 )
 
-// Version 4 suppresses host protocol text in reference-only message previews.
+// Version 5 combines authored previews with retraction and execution closure.
 // Older projections are disposable and rebuild from the unchanged durable log.
-const recoveryProjectionVersion = 4
+const recoveryProjectionVersion = 5
 
 const (
 	recoveryFormatVersion = 1
@@ -443,7 +443,7 @@ func (s *recoveryStore) publish(ctx context.Context, checkpoint recoveryCheckpoi
 		StorageGeneration: checkpoint.StorageGeneration, DurableSequence: checkpoint.DurableSequence,
 		Title:    checkpoint.Projection.Title,
 		ModelRef: checkpoint.Projection.ModelRef, ModelIdentity: checkpoint.Projection.ModelIdentity,
-		TotalTurns: len(checkpoint.Projection.Turns),
+		TotalTurns: visibleBoundaryCount(checkpoint.Projection, false),
 	}
 	recent.Entries, err = buildRecentEntries(ctx, s.sessionDir, checkpoint.RecentMessages, checkpoint.DurableSequence, recent.TotalTurns)
 	if err != nil {
@@ -675,7 +675,7 @@ func applyRecentCommit(messages *[]provider.Message, commit Commit) error {
 	recent.Events = nil
 	for _, event := range commit.Events {
 		switch event.Kind {
-		case "message/complete", "message/upsert", "history/replace", "legacy/import":
+		case "message/complete", "message/upsert", "message/retract", "history/replace", "legacy/import":
 			recent.Events = append(recent.Events, event)
 		}
 	}

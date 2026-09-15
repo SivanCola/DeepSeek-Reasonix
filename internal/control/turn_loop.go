@@ -257,6 +257,7 @@ func (c *Controller) startTurnLocked(parent context.Context, next queuedTurn) (c
 	c.turns.phase = session.RuntimeRunning
 	c.turns.cancelRequested = false
 	c.turns.token++
+	ctx = context.WithValue(ctx, executionTokenKey{}, c.turns.token)
 	c.turns.turnID = ""
 	return ctx, cancel, true
 }
@@ -281,7 +282,13 @@ func (c *Controller) queueTurnLocked(item queuedTurn) {
 }
 
 func (c *Controller) signalTurnCancel() bool {
+	_, _, cancelled := c.signalTurnCancelIdentity()
+	return cancelled
+}
+
+func (c *Controller) signalTurnCancelIdentity() (uint64, string, bool) {
 	c.mu.Lock()
+	token, turnID := c.turns.token, c.turns.turnID
 	cancel := c.turns.cancel
 	first := cancel != nil && c.turns.phase == session.RuntimeRunning
 	if cancel != nil && (c.turns.phase == session.RuntimeRunning || c.turns.phase == session.RuntimeCancelling) {
@@ -291,13 +298,13 @@ func (c *Controller) signalTurnCancel() bool {
 	done := c.turns.done
 	c.mu.Unlock()
 	if cancel == nil {
-		return false
+		return token, turnID, false
 	}
 	cancel()
 	if first {
 		c.startCancellationWatchdog(done)
 	}
-	return true
+	return token, turnID, true
 }
 
 func (c *Controller) enterRecoveryLocked(reason string) {
@@ -507,7 +514,7 @@ func (c *Controller) startCancellationWatchdog(done chan struct{}) {
 		}
 
 		c.mu.Lock()
-		stillRunning := c.turns.phase == session.RuntimeRunning || c.turns.phase == session.RuntimeCancelling
+		stillRunning := c.turns.done == done && (c.turns.phase == session.RuntimeRunning || c.turns.phase == session.RuntimeCancelling)
 		turnID := c.turns.turnID
 		if stillRunning {
 			c.enterRecoveryLocked("cancellation_grace_expired")

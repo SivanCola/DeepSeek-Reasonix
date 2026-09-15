@@ -34,7 +34,7 @@ const (
 	// StorageRevision distinguishes the final v4 layout from unpublished v4
 	// drafts. Physical layout changes are migration boundaries even when the
 	// logical codec remains v4.
-	StorageRevision = 1
+	StorageRevision = 2
 	// Codec identifies the current framed linear session format. Earlier linear
 	// and prototype stores are immutable migration inputs.
 	Codec             = V4Codec
@@ -437,6 +437,9 @@ func openExistingHandle(dir, sessionID string, opts OpenOptions) (*Store, error)
 			startup.operations = map[string]operationRecord{}
 		}
 	}
+	// Upgrade only after the exclusive writer validated the complete log. Old
+	// readers reject revision 2 before using caches or accepting new writes.
+	manifest.StorageRevision = StorageRevision
 	manifest.WriterGeneration++
 	if err := writeManifestFile(manifestPath, manifest); err != nil {
 		return failRecovery(err)
@@ -563,13 +566,14 @@ func loadBoundedStartupSessionState(ctx context.Context, dir string, file *os.Fi
 		recent.Events = nil
 		for _, event := range commit.Events {
 			switch event.Kind {
-			case "message/complete", "message/upsert", "history/replace", "legacy/import":
+			case "message/complete", "message/upsert", "message/retract", "history/replace", "legacy/import":
 				resolved, err := resolveProjectionEvent(ctx, content, event)
 				if err != nil {
 					projectionErr = err
 					return false
 				}
 				recent.Events = append(recent.Events, resolved)
+				applyTranscriptMetadata(&state.projection, commit, resolved)
 			}
 		}
 		if err := applyRecentCommit(&state.recentMessages, recent); err != nil {
@@ -589,9 +593,12 @@ func loadBoundedStartupSessionState(ctx context.Context, dir string, file *os.Fi
 		return nil, 0, false, projectionErr
 	}
 	if sawModelEvent {
+		inputs, hidden, retracted := state.projection.TranscriptInputs, state.projection.HiddenTurns, state.projection.RetractedInputs
 		if err := loadCurrentModelProjection(ctx, file, content, state, modelOffset, modelSequence); err != nil {
 			return nil, 0, false, err
 		}
+		state.projection.TranscriptInputs, state.projection.HiddenTurns = inputs, hidden
+		state.projection.RetractedInputs = retracted
 	}
 	state.projection.Messages = nil
 	state.projection.CommittedSequence = state.durable
@@ -640,7 +647,7 @@ func resolveProjectionEvent(ctx context.Context, content *sessioncontent.Store, 
 
 func modelProjectionEvent(kind string) bool {
 	switch kind {
-	case "message/complete", "message/upsert", "history/replace", "model/context-replace", "compaction", "legacy/import":
+	case "message/complete", "message/upsert", "message/retract", "history/replace", "model/context-replace", "compaction", "legacy/import":
 		return true
 	default:
 		return false
@@ -683,27 +690,6 @@ func bindSession(handle *Store, opts OpenOptions) (*Session, error) {
 	return session, nil
 }
 
-// metadataForDurable rebuilds the list projection for the catalog cache once
-// the accepted prefix is fully durable.
-func (s *Session) metadataForDurable(durable uint64) (catalogMetadata, bool) {
-	if s == nil {
-		return catalogMetadata{}, false
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if durable+1 != s.next {
-		return catalogMetadata{}, false
-	}
-	metadata := metadataFromProjection(s.manifest, durable, s.projection)
-	if s.catalogPreview == "" && metadata.Preview != "" {
-		s.catalogPreview = metadata.Preview
-	}
-	if metadata.Preview == "" {
-		metadata.Preview = s.catalogPreview
-	}
-	return metadata, true
-}
-
 func writeManifestFile(path string, manifest Manifest) error {
 	b, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
@@ -737,11 +723,16 @@ func logPathForManifest(dir string, manifest Manifest) string {
 }
 
 func supportedStoredManifest(manifest Manifest) bool {
-	if manifest.SchemaVersion == SchemaVersion && manifest.Codec == Codec && manifest.StorageRevision == StorageRevision {
+	if currentStoredManifest(manifest) {
 		return true
 	}
 	return manifest.SchemaVersion == 3 &&
 		(manifest.Codec == FinalV31Codec || manifest.Codec == LegacyLinearCodec || manifest.Codec == PrototypeCodec)
+}
+
+func currentStoredManifest(manifest Manifest) bool {
+	return manifest.SchemaVersion == SchemaVersion && manifest.Codec == Codec &&
+		(manifest.StorageRevision == 1 || manifest.StorageRevision == StorageRevision)
 }
 
 func readStoredManifest(path string) (Manifest, error) {

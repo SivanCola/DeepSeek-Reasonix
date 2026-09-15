@@ -349,18 +349,33 @@ func (o *PendingPromptOwner) Clear() {
 	o.mu.Unlock()
 }
 func (o *PendingPromptOwner) CancelAll() {
+	o.cancelMatching(func(PromptIdentity) bool { return true })
+}
+
+// CancelTurn cannot close prompts registered by a successor while an older
+// Stop request was waiting on its asynchronous publication lane.
+func (o *PendingPromptOwner) CancelTurn(turnID string) {
+	o.cancelMatching(func(identity PromptIdentity) bool { return identity.TurnID == turnID })
+}
+
+func (o *PendingPromptOwner) cancelMatching(matches func(PromptIdentity) bool) {
 	o.mu.Lock()
 	cancels := make([]func() error, 0, len(o.pending))
 	identities := make([]PromptIdentity, 0, len(o.pending))
 	prompts := make([]PendingPrompt, 0, len(o.pending))
 	for _, prompt := range o.pending {
+		if !matches(prompt.Identity) {
+			continue
+		}
 		prompts = append(prompts, prompt)
 		identities = append(identities, prompt.Identity)
 		if prompt.Cancel != nil {
 			cancels = append(cancels, prompt.Cancel)
 		}
 	}
-	o.pending = make(map[string]PendingPrompt)
+	for _, identity := range identities {
+		delete(o.pending, identity.PromptID)
+	}
 	if o.resolved == nil {
 		o.resolved = make(map[string]PromptResolution)
 	}

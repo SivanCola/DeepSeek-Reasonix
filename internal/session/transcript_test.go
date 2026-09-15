@@ -81,3 +81,32 @@ func TestRuntimeTranscriptSurvivesExecutionReplacement(t *testing.T) {
 		t.Fatal("original publisher stopped observing commits after replacement")
 	}
 }
+
+func TestRuntimeTranscriptRetractionResetsReadersAndPreservesActiveOutput(t *testing.T) {
+	_, runtime := reviewRuntime(t)
+	ctx := t.Context()
+	if _, err := runtime.Session().AppendBatch(ctx, "input", []Event{{Kind: "message/complete", Payload: []byte(`{"message":{"id":"withdrawn","role":"user","content":"synthetic input"}}`)}}); err != nil {
+		t.Fatal(err)
+	}
+	e := eventwire.ToWire(event.Event{Kind: event.Text, MessageID: "active-answer", AttemptID: "active-answer", Text: "retained output"})
+	if err := runtime.PublishTranscriptFrame(turnevent.Envelope{SessionID: runtime.Ref().SessionID, RuntimeEpoch: runtime.StateSnapshot().Epoch, Kind: e.Kind, Event: e}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := runtime.FollowTranscript(ctx, transcript.FollowRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.Session().AppendBatch(ctx, "withdraw", []Event{{Kind: "message/retract", Payload: []byte(`{"messageIds":["withdrawn"]}`)}}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := runtime.Transcript().Snapshot(transcript.PageRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Identity.RewriteEpoch <= before.Snapshot.Identity.RewriteEpoch || after.CoveredThroughSeq != runtime.StateSnapshot().Session.EventSequence {
+		t.Fatal("retraction did not invalidate the old reading cut at its committed sequence")
+	}
+	if len(after.Records) != 1 || after.Records[0].Message.Content != "retained output" {
+		t.Fatalf("retraction lost unrelated active output: %+v", after.Records)
+	}
+}

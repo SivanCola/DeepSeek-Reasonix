@@ -133,6 +133,23 @@ func (r *Runtime) CommitPreparedForExecution(generation uint64, prepared Prepare
 	return r.session.CommitPrepared(prepared)
 }
 
+// CommitPreparedForTurn makes the owner/turn check and terminal acceptance one
+// critical section. A prepared completion cannot close a successor's turn.
+func (r *Runtime) CommitPreparedForTurn(generation uint64, turnID string, prepared PreparedBatch) (Commit, error) {
+	if r == nil || generation == 0 {
+		prepared.Release()
+		return Commit{}, ErrStaleExecution
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cur := r.execution.Load()
+	if cur == nil || cur.generation != generation || r.session.StateSnapshot().Projection.TurnID != turnID {
+		prepared.Release()
+		return Commit{}, ErrStaleExecution
+	}
+	return r.session.CommitPrepared(prepared)
+}
+
 // UnbindExecution releases only the exact generation. A superseded controller
 // cannot clear the replacement's control binding.
 func (r *Runtime) UnbindExecution(generation uint64) {

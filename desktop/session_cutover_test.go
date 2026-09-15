@@ -67,6 +67,34 @@ func TestDesktopHistorySliceUsesCanonicalDurableIndex(t *testing.T) {
 	if stale := app.HistoryContentForTab(tab.ID, assistant.Refs[0], 0); !stale.Stale {
 		t.Fatal("content ref from older durable snapshot must become stale after append")
 	}
+	// Stop/recovery keeps message identities while rewriting their transcript.
+	// All desktop readers must accept the runtime's reason metadata and index
+	// new versions without colliding with the previously displayed messages.
+	payload, err := json.Marshal(map[string]any{
+		"reason": "cancel-or-recovery-rewrite",
+		"messages": []provider.Message{
+			{ID: "history-user", Role: provider.RoleUser, Origin: provider.MessageOriginUser, Content: "durable user turn"},
+			{ID: "history-assistant", Role: provider.RoleAssistant, Content: large},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.Session().Append(t.Context(), session.Batch{OperationID: "cancel-rewrite", Events: []session.Event{{Kind: "history/replace", Payload: payload}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.Session().Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if page := app.HistorySliceForTab(tab.ID, HistorySliceRequest{Turns: 12}); page.Error != "" || len(page.Entries) != 2 {
+		t.Fatalf("compatibility reader after cancel rewrite: %+v", page)
+	}
+	if page, err := app.SessionHistoryWindowForTab(tab.ID, session.HistoryWindowRequest{Anchor: "newest"}); err != nil || page.Status != "ready" || len(page.Messages) != 2 {
+		t.Fatalf("window reader after cancel rewrite: %+v, %v", page, err)
+	}
+	if page, err := app.SessionHistoryPageForTab(tab.ID, "", 10); err != nil || page.Status != "ready" || len(page.Messages) != 2 {
+		t.Fatalf("page reader after cancel rewrite: %+v, %v", page, err)
+	}
 }
 
 func TestDesktopCanonicalHistoryRemainsReadableBeforeControllerReady(t *testing.T) {

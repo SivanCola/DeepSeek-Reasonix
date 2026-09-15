@@ -63,7 +63,7 @@ lack count records do not invent counts.
 | --- | --- |
 | Desktop ↔ Serve | Both must advertise/support `transcript-v2`; old Serve gets an upgrade error, no legacy chat fallback. / 双端必须支持 v2；旧 Serve 提示升级，不回退拼接。 |
 | Session log / 会话日志 | Existing encoding and event kinds unchanged; old files remain readable. / 编码与事件种类不变，旧文件继续可读。 |
-| Derived history index / 派生索引 | Schema v7 adds turn summaries/counts; disposable index can be rebuilt from the unchanged log. / v7 添加回合摘要与计数，可由原日志重建。 |
+| Derived history index / 派生索引 | Schema v8 adds turn summaries/counts; disposable index can be rebuilt from the unchanged log. / v8 添加回合摘要与计数，可由原日志重建。 |
 | Provider boundary / 模型边界 | No message fields, tool schemas, prompt/context or compaction policy changes. / 不修改消息字段、工具 schema、提示上下文或压缩策略。 |
 | CLI ledger | May remain internal; never supplies v2 chat coverage. / 可保留内部实现，不提供 v2 聊天覆盖游标。 |
 

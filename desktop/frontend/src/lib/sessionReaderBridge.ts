@@ -77,6 +77,9 @@ export function publishMockTranscriptEvent(event: WireEvent): void {
     const epoch = mockMetadata.get(tab)?.runtime?.epoch;
     if (event.runtimeEpoch && epoch && event.runtimeEpoch !== epoch) return;
     if (event.kind === "turn_started") setMockTranscriptMetadata(tab, { running: true });
+    if (event.kind === "stream_attempt" && event.streamAttempt?.action === "begin" && event.messageId) {
+      mockActive.set(tab, { id: event.messageId, text: "", reasoning: "" });
+    }
     if (event.kind === "text" || event.kind === "reasoning") {
       const active = mockActive.get(tab) ?? { id: event.messageId ?? `mock-active:${tab}:${++mockMessage}`, text: "", reasoning: "" };
       if (event.kind === "text") active.text += event.text ?? ""; else active.reasoning += event.text ?? "";
