@@ -202,14 +202,7 @@ func (b bash) ExecuteDetailed(ctx context.Context, args json.RawMessage) (tool.D
 	// so a failed start still releases the lease.
 	prepared, lease, err := b.prepareLaunch(ctx, sh, p.Command, args)
 	if err != nil {
-		ex.State = tool.ShellStateNotRun
-		ex.FailurePhase = tool.ShellPhaseAuthorization
-		if strings.Contains(err.Error(), "session temporary") {
-			ex.FailurePhase = tool.ShellPhaseLaunch
-		}
-		ex.MutationRisk = tool.ShellMutationNotStarted
-		ex.DurationMs = time.Since(start).Milliseconds()
-		return tool.DetailedResult{Execution: ex}, err
+		return bashLaunchFailure(ex, start, err)
 	}
 	// Background jobs take ownership of the lease until the job goroutine ends.
 	// Foreground/terminal paths release after the process exits.
@@ -238,20 +231,8 @@ func (b bash) ExecuteDetailed(ctx context.Context, args json.RawMessage) (tool.D
 
 	argv, wrapped := prepared.Argv, prepared.Wrapped
 	cmdEnv := applyEnvOverrides(bashCommandEnv(ctx), prepared.EnvOverrides)
-	probeEnv := cmdEnv
-	if b.shouldUsePersistent(ctx, p, sh) {
-		probeEnv = persistEnv(cmdEnv)
-	}
-	if failure := shellrun.CheckShellLaunch(ctx, shellrun.Request{
-		ProbeArgv: shellrun.WindowsProbeArgv(b.specForCall(ctx), sh, prepared.SessionTemp),
-		Dir:       b.workDir, Env: probeEnv, Timeout: b.foregroundTimeout(),
-		ShellKind: sh.Kind.String(), ShellPath: sh.Path,
-	}); failure != nil {
-		ex.State, ex.FailurePhase = failure.State, failure.FailurePhase
-		ex.ExitCode, ex.OutputTail = failure.ExitCode, failure.OutputTail
-		ex.MutationRisk = tool.ShellMutationNotStarted
-		ex.DurationMs = time.Since(start).Milliseconds()
-		return tool.DetailedResult{Output: failure.Combined, Execution: ex}, failure.Err
+	if res, err, failed := b.checkLaunch(ctx, p, sh, prepared, cmdEnv, start, ex); failed {
+		return res, err
 	}
 
 	if res, err, used := b.tryPersistent(ctx, p, sh, prepared, persistEnv(cmdEnv), start, ex); used {

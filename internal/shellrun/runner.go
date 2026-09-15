@@ -154,6 +154,10 @@ func RunForeground(ctx context.Context, req Request) Result {
 		Cmd:        cmd,
 	}
 
+	return classifyForegroundResult(runCtx, req, out, err)
+}
+
+func classifyForegroundResult(runCtx context.Context, req Request, out Result, err error) Result {
 	if req.PreserveWaitDelay && runCtx.Err() == nil && errors.Is(err, exec.ErrWaitDelay) {
 		err = nil
 	}

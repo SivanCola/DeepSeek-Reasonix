@@ -59,10 +59,9 @@ func ansiCQuote(s string) string {
 			b.WriteString(`\t`)
 		default:
 			if c < 0x20 || c >= 0x7f {
-				// Octal escapes are the portable $'...' form; \xHH is not
-				// available in every POSIX shell this package can drive.
-				// Always use three digits so a following command digit cannot
-				// become part of this escape (e.g. byte 1 followed by "70").
+				// Octal escapes work across supported POSIX shells; \xHH does not.
+				// Three digits prevent a following command digit joining the escape
+				// (e.g. byte 1 followed by "70").
 				b.WriteByte('\\')
 				b.WriteByte('0' + (c >> 6))
 				b.WriteByte('0' + ((c >> 3) & 7))
