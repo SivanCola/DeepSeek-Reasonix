@@ -1,5 +1,5 @@
 import { runtimeStateStore, type RuntimeSession } from "./runtimeStateStore";
-import { clearAttentionChimeKeys, playAttentionChime, playSuccessChime, shouldPlayAttentionChimeForEvent, type AttentionChimeEvent } from "./sound";
+import { attentionChimeEventKey, clearAttentionChimeKeys, playAttentionChime, playSuccessChime, shouldPlayAttentionChimeForEvent, type AttentionChimeEvent } from "./sound";
 import type { Translator } from "./i18n";
 import type { ToastContextValue } from "./toast";
 
@@ -9,9 +9,13 @@ type NotificationPorts = { activeTabId: string | undefined; t: Translator; showT
 /** One owner deduplicates view events and authoritative background snapshots. */
 export function createRuntimeNotifications(readPorts: () => NotificationPorts | undefined) {
   const seen = new Set<string>();
+  // Live requests cannot be evicted with historical replay keys. Replace this
+  // set on each trusted snapshot so resolved requests do not accumulate.
+  let pendingSeen = new Set<string>();
   const handleAttention = (event: AttentionChimeEvent, source?: RuntimeSession) => {
     const ports = readPorts();
-    if (!ports || !shouldPlayAttentionChimeForEvent(event, seen)) return;
+    const key = attentionChimeEventKey(event);
+    if (!ports || !key || pendingSeen.has(key) || !shouldPlayAttentionChimeForEvent(event, seen)) return;
     playAttentionChime();
     const { activeTabId, t, showToast } = ports;
     const snapshot = runtimeStateStore.getSnapshot();
@@ -28,23 +32,38 @@ export function createRuntimeNotifications(readPorts: () => NotificationPorts | 
   };
   const handleSnapshot = () => {
     if (runtimeStateStore.getFailed()) return;
+    const nextPending = new Set<string>();
+    const visit = (event: AttentionChimeEvent, session: RuntimeSession) => {
+      const key = attentionChimeEventKey(event);
+      if (!key || nextPending.has(key)) return;
+      if (session.freshness !== "synced") {
+        // Disconnects retain known prompts but cannot announce unseen ones.
+        if (pendingSeen.has(key)) nextPending.add(key);
+        return;
+      }
+      handleAttention(event, session);
+      nextPending.add(key);
+    };
     for (const session of runtimeStateStore.getSnapshot()?.sessions ?? []) {
-      if (session.freshness !== "synced" || !session.state.pendingPrompt) continue;
+      if (!session.state.pendingPrompt) continue;
       for (const prompt of session.state.pendingInteractions ?? []) {
         const identity = { id: prompt.requestId, turnId: prompt.turnId || session.state.turnId };
         // Plan/recovery decisions use the same approval card/event path.
-        if (prompt.kind === "ask") handleAttention({ kind: "ask_request", tabId: session.tabId, ask: identity }, session);
+        if (prompt.kind === "ask") visit({ kind: "ask_request", tabId: session.tabId, ask: identity }, session);
         else if (["approval", "plan", "recovery"].includes(prompt.kind)) {
-          handleAttention({ kind: "approval_request", tabId: session.tabId, approval: identity }, session);
+          visit({ kind: "approval_request", tabId: session.tabId, approval: identity }, session);
         }
       }
     }
+    pendingSeen = nextPending;
   };
   let stop: (() => void) | undefined;
   return {
     accept(operation: NotificationOperation) {
-      if (!("event" in operation)) clearAttentionChimeKeys(seen, operation.resetTabId);
-      else if (operation.event.kind === "turn_done") {
+      if (!("event" in operation)) {
+        clearAttentionChimeKeys(seen, operation.resetTabId);
+        clearAttentionChimeKeys(pendingSeen, operation.resetTabId);
+      } else if (operation.event.kind === "turn_done") {
         if (readPorts() && !operation.event.err) playSuccessChime();
       } else handleAttention(operation.event);
     },

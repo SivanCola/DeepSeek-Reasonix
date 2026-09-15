@@ -9,7 +9,8 @@ import { createServer } from "vite";
 import { selectSession, readActiveSessionLabel } from "./app-page-actions.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-if (!process.env.PLAYWRIGHT_BROWSERS_PATH && existsSync(path.join(root, ".pw-browsers"))) {
+if (process.env.PLAYWRIGHT_BROWSERS_PATH === ".pw-browsers" ||
+    (!process.env.PLAYWRIGHT_BROWSERS_PATH && existsSync(path.join(root, ".pw-browsers")))) {
   process.env.PLAYWRIGHT_BROWSERS_PATH = path.join(root, ".pw-browsers");
 }
 const { chromium } = await import("playwright");
