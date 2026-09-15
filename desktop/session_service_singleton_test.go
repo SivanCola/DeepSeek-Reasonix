@@ -9,6 +9,7 @@ import (
 
 func TestDesktopSessionServiceIsSharedAcrossWorkspaces(t *testing.T) {
 	app := NewApp()
+	t.Cleanup(app.closeSessionServices)
 	app.desktopSessions.root = filepath.Join(t.TempDir(), "desktop-sessions-v5", "by-id")
 
 	first := app.desktopSessionService(filepath.Join(t.TempDir(), "project-a", "sessions"))
@@ -20,7 +21,8 @@ func TestDesktopSessionServiceIsSharedAcrossWorkspaces(t *testing.T) {
 		t.Fatal("workspace directories selected different canonical services")
 	}
 
-	runtime, err := first.Create(t.Context(), session.CreateOptions{SessionID: "shared-session", CWD: "/project/a", Origin: session.SessionOriginNew})
+	workspaceRoot := filepath.Join(t.TempDir(), "project-a")
+	runtime, err := first.Create(t.Context(), session.CreateOptions{SessionID: "shared-session", CWD: workspaceRoot, Origin: session.SessionOriginNew})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -31,7 +33,7 @@ func TestDesktopSessionServiceIsSharedAcrossWorkspaces(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List through second workspace: %v", err)
 	}
-	if len(page.Sessions) != 1 || page.Sessions[0].CWD != "/project/a" {
+	if len(page.Sessions) != 1 || !sameDesktopPath(page.Sessions[0].CWD, workspaceRoot) {
 		t.Fatalf("sessions = %#v", page.Sessions)
 	}
 }

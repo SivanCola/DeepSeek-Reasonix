@@ -17,6 +17,7 @@ func TestWorkspaceSessionListSurvivesRuntimePruneAndAppRestart(t *testing.T) {
 	projectRoot := filepath.Join(root, "project")
 
 	first := NewApp()
+	t.Cleanup(first.closeSessionServices)
 	first.desktopSessions.root = sessionRoot
 	first.desktopSessions.workspaceState = workspacestate.NewStore(statePath)
 	service := first.desktopSessionService(filepath.Join(projectRoot, "sessions"))
@@ -44,6 +45,7 @@ func TestWorkspaceSessionListSurvivesRuntimePruneAndAppRestart(t *testing.T) {
 	first.closeSessionServices()
 
 	second := NewApp()
+	t.Cleanup(second.closeSessionServices)
 	second.desktopSessions.root = sessionRoot
 	second.desktopSessions.workspaceState = workspacestate.NewStore(statePath)
 	page, err := second.ListWorkspaceSessions(workspaceID, "", "", 10, false)
@@ -78,6 +80,7 @@ func TestWorkspaceSessionListSurvivesRuntimePruneAndAppRestart(t *testing.T) {
 func TestSessionRefHistoryAndRenameDoNotNeedController(t *testing.T) {
 	root := t.TempDir()
 	app := NewApp()
+	t.Cleanup(app.closeSessionServices)
 	app.desktopSessions.root = filepath.Join(root, "desktop-sessions-v5", "by-id")
 	app.desktopSessions.workspaceState = workspacestate.NewStore(filepath.Join(root, "desktop", "workspace-state-v1.json"))
 	service := app.desktopSessionService("")
@@ -131,6 +134,7 @@ func TestSessionRefHistoryAndRenameDoNotNeedController(t *testing.T) {
 func TestForkSessionPublishesHeaderBackedChildAfterParent(t *testing.T) {
 	root := t.TempDir()
 	app := NewApp()
+	t.Cleanup(app.closeSessionServices)
 	app.ctx = t.Context()
 	app.desktopSessions.root = filepath.Join(root, "desktop-sessions-v5", "by-id")
 	app.desktopSessions.workspaceState = workspacestate.NewStore(filepath.Join(root, "desktop", "workspace-state-v1.json"))

@@ -30,6 +30,7 @@ func (c registrySessionCreator) BindFreshSessionWithOptions(ctx context.Context,
 func TestFreshDesktopSessionIsDurableRegistryMemberBeforeReturn(t *testing.T) {
 	root := t.TempDir()
 	app := NewApp()
+	t.Cleanup(app.closeSessionServices)
 	app.desktopSessions.root = filepath.Join(root, "desktop-sessions-v5", "by-id")
 	app.desktopSessions.workspaceState = workspacestate.NewStore(filepath.Join(root, "desktop", "workspace-state-v1.json"))
 	service := app.desktopSessionService(filepath.Join(root, "old-project-sessions"))
