@@ -494,11 +494,12 @@ loading model are documented in [the Chinese desktop hooks guide](./DESKTOP_HOOK
 ## Keyboard shortcuts
 
 Shortcuts are documented by client because users usually look for the keys that
-work in the surface they are using. `Shift+Tab` toggles the Plan collaboration
-workflow. Permission presets are selected explicitly from the composer menu and
-are never changed by a typing shortcut. Desktop paste stays on the platform
-paste key; in the CLI, terminal-native text paste and application-owned image
-paste use separate shortcuts.
+work in the surface they are using. On Desktop, `Shift+Tab` toggles Plan and
+permission presets stay in the composer menu. In the CLI, `Shift+Tab` cycles
+Read only → Workspace write → YOLO → Plan, while `Ctrl+Y` toggles YOLO
+directly. YOLO is the visible label for the canonical `danger-full-access`
+permission preset. Desktop paste stays on the platform paste key; in the CLI,
+terminal-native text paste and application-owned image paste use separate shortcuts.
 
 `[ui].shortcut_layout` is still accepted for old configs, but the shortcut
 behavior below is unified across layouts.
@@ -615,7 +616,8 @@ Mode and display shortcuts:
 
 | Key or command | What it does | Notes |
 | --- | --- | --- |
-| `Shift+Tab` | Toggles Plan on/off | The active permission preset does not change. |
+| `Shift+Tab` | Cycles Read only → Workspace write → YOLO → Plan | YOLO applies `danger-full-access`; leaving Plan returns to Read only. |
+| `Ctrl+Y` | Toggles YOLO | Entering YOLO applies `danger-full-access`; pressing it again restores the prior safe permission preset. |
 | `--permission-mode read-only|workspace-write|danger-full-access` | Selects the initial permission preset | New sessions default to `workspace-write`. |
 | `/theme [auto|light|dark|style]` | Shows or switches the CLI theme | Bare `/theme` lists background modes and named accent palettes. The choice is saved to the user config; `REASONIX_THEME` and `REASONIX_THEME_STYLE` can override it for one run. |
 | `Ctrl+O` | Toggles verbose reasoning display | Also available through `/verbose`. |

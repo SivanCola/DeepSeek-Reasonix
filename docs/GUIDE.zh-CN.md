@@ -394,8 +394,7 @@ Thinking 覆盖选项：
 ## 快捷键
 
 这里按使用端来写，因为用户通常是先知道“我现在在桌面端/CLI”，再找对应按键。
-`Shift+Tab` 只切换 Plan 协作流程。权限预设必须在输入框菜单中显式选择，输入快捷键不会改变权限。
-桌面端粘贴继续走系统快捷键；CLI 则把终端原生文本粘贴和应用接管的图片粘贴拆成不同快捷键。
+桌面端的 `Shift+Tab` 只切换 Plan，权限预设仍在输入框菜单中选择。CLI 中，`Shift+Tab` 按“仅可查看 → 工作区内修改 → YOLO → Plan”循环，`Ctrl+Y` 直接切换 YOLO；YOLO 是规范权限值 `danger-full-access` 的可见名称。桌面端粘贴继续走系统快捷键；CLI 则把终端原生文本粘贴和应用接管的图片粘贴拆成不同快捷键。
 
 `[ui].shortcut_layout` 仍被接受以兼容旧配置，但下面的快捷键行为已经跨布局统一。
 
@@ -494,7 +493,8 @@ CLI/TUI 文本输入可通过 `[ui].cursor_shape` 设置光标形状，支持 `u
 
 | 按键或命令 | 作用 | 说明 |
 | --- | --- | --- |
-| `Shift+Tab` | 切换 Plan 开/关 | 当前权限预设保持不变。 |
+| `Shift+Tab` | 按“仅可查看 → 工作区内修改 → YOLO → Plan”循环 | YOLO 设置 `danger-full-access`；离开 Plan 后回到仅可查看。 |
+| `Ctrl+Y` | 切换 YOLO | 进入 YOLO 时设置 `danger-full-access`；再按一次恢复之前的安全权限预设。 |
 | `--permission-mode read-only|workspace-write|danger-full-access` | 选择启动权限 | 新会话默认使用 `workspace-write`。 |
 | `/theme [auto|light|dark|style]` | 查看或切换 CLI 主题 | 不带参数会列出背景模式和命名配色。选择会保存到用户配置；单次运行可用 `REASONIX_THEME` 和 `REASONIX_THEME_STYLE` 覆盖。 |
 | `Ctrl+O` | 切换详细 reasoning 显示 | 也可通过 `/verbose` 使用。 |

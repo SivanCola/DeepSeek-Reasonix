@@ -36,7 +36,7 @@ reasonix --permission-mode danger-full-access
 reasonix run --permission-mode workspace-write "运行测试"
 ```
 
-交互式 CLI 中，`Shift+Tab` 按“仅可查看 → 工作区内修改 → 计划”循环；完全权限必须显式选择。旧配置会保守迁移：`ask` 映射为仅可查看，`auto` 和 `yolo` 映射为工作区内修改，旧值不会开启完全权限。
+交互式 CLI 中，`Shift+Tab` 按“仅可查看 → 工作区内修改 → YOLO → 计划”循环，`Ctrl+Y` 可直接切换 YOLO。两个快捷键进入 YOLO 时都会设置规范权限值 `danger-full-access`。旧配置仍保守迁移：`ask` 映射为仅可查看，`auto` 和 `yolo` 映射为工作区内修改，旧值不会开启完全权限。
 
 ## 远程兼容
 

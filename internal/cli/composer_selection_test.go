@@ -349,6 +349,9 @@ func TestComposerSelectionDoesNotTurnCommandShortcutIntoText(t *testing.T) {
 	if got := m.input.Value(); got != "keep this" {
 		t.Fatalf("Ctrl+Y changed selected composer text to %q", got)
 	}
+	if got := m.ctrl.ToolApprovalMode(); got != control.ToolApprovalDangerFullAccess {
+		t.Fatalf("Ctrl+Y permission mode = %q, want danger-full-access", got)
+	}
 }
 
 func TestComposerImagePasteShortcutKeepsSelectionUntilImageArrives(t *testing.T) {

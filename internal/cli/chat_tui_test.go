@@ -4132,64 +4132,7 @@ func TestEscInPlanModeDoesNotExitPlan(t *testing.T) {
 	}
 }
 
-func TestDesktopShortcutLayoutShiftTabCyclesSafeModes(t *testing.T) {
-	m := newTestChatTUI()
-	m.ctrl = newOwnedTestController(t, control.Options{})
-	m.ctrl.SetToolApprovalMode(control.ToolApprovalAuto)
-	m.cfg = config.Default()
-	if err := m.cfg.SetUIShortcutLayout("desktop"); err != nil {
-		t.Fatal(err)
-	}
-
-	shiftTab := tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}
-	out, _ := m.Update(shiftTab)
-	m = out.(chatTUI)
-	if !m.planMode || !m.ctrl.PlanMode() {
-		t.Fatalf("first Shift+Tab should enter plan mode, tui=%v controller=%v", m.planMode, m.ctrl.PlanMode())
-	}
-	if got := m.ctrl.ToolApprovalMode(); got != control.ToolApprovalAsk {
-		t.Fatalf("plan mode approval = %q, want ask", got)
-	}
-
-	out, _ = m.Update(shiftTab)
-	m = out.(chatTUI)
-	if m.planMode || m.ctrl.PlanMode() {
-		t.Fatalf("second Shift+Tab should leave plan mode, tui=%v controller=%v", m.planMode, m.ctrl.PlanMode())
-	}
-	if got := m.ctrl.ToolApprovalMode(); got != control.ToolApprovalAsk {
-		t.Fatalf("cycle after plan = %q, want ask", got)
-	}
-
-	out, _ = m.Update(shiftTab)
-	m = out.(chatTUI)
-	if got := m.ctrl.ToolApprovalMode(); got != control.ToolApprovalAuto || m.planMode {
-		t.Fatalf("third Shift+Tab should enter auto, approval=%q plan=%v", got, m.planMode)
-	}
-}
-
-func TestDesktopShortcutLayoutShiftTabClearsGoalWhenEnteringPlan(t *testing.T) {
-	m := newTestChatTUI()
-	m.ctrl = newOwnedTestController(t, control.Options{})
-	m.ctrl.SetGoal("ship the shortcut redesign")
-	m.cfg = config.Default()
-	if err := m.cfg.SetUIShortcutLayout("desktop"); err != nil {
-		t.Fatal(err)
-	}
-
-	shiftTab := tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}
-	out, _ := m.Update(shiftTab)
-	m = out.(chatTUI)
-	out, _ = m.Update(shiftTab)
-	m = out.(chatTUI)
-	if !m.planMode || !m.ctrl.PlanMode() {
-		t.Fatalf("Shift+Tab should enter plan mode, tui=%v controller=%v", m.planMode, m.ctrl.PlanMode())
-	}
-	if got := m.ctrl.Goal(); got != "" {
-		t.Fatalf("Shift+Tab entering plan should clear goal, got %q", got)
-	}
-}
-
-func TestDesktopShortcutLayoutCtrlYDoesNotChangePermission(t *testing.T) {
+func TestDesktopShortcutLayoutCtrlYTogglesYoloFromReadOnly(t *testing.T) {
 	m := newTestChatTUI()
 	m.ctrl = newOwnedTestController(t, control.Options{})
 	m.cfg = config.Default()
@@ -4200,12 +4143,21 @@ func TestDesktopShortcutLayoutCtrlYDoesNotChangePermission(t *testing.T) {
 	ctrlY := tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl}
 	out, _ := m.Update(ctrlY)
 	m = out.(chatTUI)
-	if got := m.ctrl.ToolApprovalMode(); got != control.ToolApprovalAsk {
-		t.Fatalf("Ctrl+Y changed permission mode to %q", got)
+	if got := m.ctrl.ToolApprovalMode(); got != control.ToolApprovalDangerFullAccess {
+		t.Fatalf("Ctrl+Y permission mode = %q, want danger-full-access", got)
+	}
+	if got := m.modeTagText(); got != "YOLO" {
+		t.Fatalf("Ctrl+Y mode tag = %q, want YOLO", got)
+	}
+
+	out, _ = m.Update(ctrlY)
+	m = out.(chatTUI)
+	if got := m.ctrl.ToolApprovalMode(); got != control.ToolApprovalReadOnly {
+		t.Fatalf("second Ctrl+Y permission mode = %q, want read-only", got)
 	}
 }
 
-func TestDesktopShortcutLayoutCtrlYPreservesWorkspacePermission(t *testing.T) {
+func TestDesktopShortcutLayoutCtrlYRestoresWorkspacePermission(t *testing.T) {
 	m := newTestChatTUI()
 	m.ctrl = newOwnedTestController(t, control.Options{})
 	m.ctrl.SetToolApprovalMode(control.ToolApprovalAuto)
@@ -4217,12 +4169,17 @@ func TestDesktopShortcutLayoutCtrlYPreservesWorkspacePermission(t *testing.T) {
 	ctrlY := tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl}
 	out, _ := m.Update(ctrlY)
 	m = out.(chatTUI)
-	if got := m.ctrl.ToolApprovalMode(); got != control.ToolApprovalAuto {
-		t.Fatalf("Ctrl+Y changed workspace permission mode to %q", got)
+	if got := m.ctrl.ToolApprovalMode(); got != control.ToolApprovalDangerFullAccess {
+		t.Fatalf("Ctrl+Y permission mode = %q, want danger-full-access", got)
+	}
+	out, _ = m.Update(ctrlY)
+	m = out.(chatTUI)
+	if got := m.ctrl.ToolApprovalMode(); got != control.ToolApprovalWorkspaceWrite {
+		t.Fatalf("second Ctrl+Y permission mode = %q, want workspace-write", got)
 	}
 }
 
-func TestClassicShortcutLayoutCtrlYDoesNotChangePermission(t *testing.T) {
+func TestClassicShortcutLayoutCtrlYTogglesYolo(t *testing.T) {
 	m := newTestChatTUI()
 	m.ctrl = newOwnedTestController(t, control.Options{})
 	m.cfg = config.Default()
@@ -4233,8 +4190,8 @@ func TestClassicShortcutLayoutCtrlYDoesNotChangePermission(t *testing.T) {
 	ctrlY := tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl}
 	out, _ := m.Update(ctrlY)
 	m = out.(chatTUI)
-	if got := m.ctrl.ToolApprovalMode(); got != control.ToolApprovalAsk {
-		t.Fatalf("Ctrl+Y changed permission mode to %q", got)
+	if got := m.ctrl.ToolApprovalMode(); got != control.ToolApprovalDangerFullAccess {
+		t.Fatalf("Ctrl+Y permission mode = %q, want danger-full-access", got)
 	}
 }
 
@@ -4281,7 +4238,7 @@ func TestDesktopShortcutLayoutDoesNotStealCompletionTab(t *testing.T) {
 	}
 }
 
-func TestShiftTabCyclesSafeModesUnderClassicShortcutLayout(t *testing.T) {
+func TestShiftTabCyclesPermissionModesUnderClassicShortcutLayout(t *testing.T) {
 	m := newTestChatTUI()
 	m.ctrl = newOwnedTestController(t, control.Options{})
 	m.cfg = config.Default()
@@ -4296,8 +4253,13 @@ func TestShiftTabCyclesSafeModesUnderClassicShortcutLayout(t *testing.T) {
 	}
 	out, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
 	m = out.(chatTUI)
-	if !m.planMode || !m.ctrl.PlanMode() || m.ctrl.ToolApprovalMode() != control.ToolApprovalAsk {
-		t.Fatalf("second Shift+Tab should enter plan, plan=%v approval=%q", m.planMode, m.ctrl.ToolApprovalMode())
+	if m.planMode || m.ctrl.PlanMode() || m.ctrl.ToolApprovalMode() != control.ToolApprovalDangerFullAccess {
+		t.Fatalf("second Shift+Tab should enter YOLO, plan=%v approval=%q", m.planMode, m.ctrl.ToolApprovalMode())
+	}
+	out, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+	m = out.(chatTUI)
+	if !m.planMode || !m.ctrl.PlanMode() || m.ctrl.ToolApprovalMode() != control.ToolApprovalReadOnly {
+		t.Fatalf("third Shift+Tab should enter plan, plan=%v approval=%q", m.planMode, m.ctrl.ToolApprovalMode())
 	}
 }
 

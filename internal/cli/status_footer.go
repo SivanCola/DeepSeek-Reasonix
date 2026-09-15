@@ -211,7 +211,7 @@ func (m chatTUI) primaryStatusLine(modeTag string, shellMode, cancelRequested bo
 	case shellMode:
 		status += " · " + i18n.M.ShellModeHint
 	case m.ctrl != nil && m.ctrl.AutoApproveTools():
-		status += " · " + footerValue(i18n.M.ChatStatusYoloIdle) + " · " + footerHint(i18n.M.ChatStatusCycleHintCompact)
+		status += " · " + footerHint(i18n.M.ChatStatusCycleHintCompact)
 	default:
 		status += " · " + footerValue(i18n.M.ChatStatusIdle) + " · " + footerHint(i18n.M.ChatStatusCycleHintCompact)
 	}

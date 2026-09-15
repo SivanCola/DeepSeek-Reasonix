@@ -33,7 +33,7 @@ reasonix --dir /path/to/project
 | `--copy` | 复制要恢复的会话，并在可写副本中继续。 |
 | `--allowed-tools RULES` | 增加仅当前会话生效的权限 allow 规则；可重复传入，`--allowedTools` 是别名。 |
 | `--permission-mode MODE` | 以指定的权限姿态启动。 |
-| `--dangerously-skip-permissions` | 以“完全权限”启动；必须由用户明确选择。 |
+| `--dangerously-skip-permissions` | 已弃用的兼容参数；会保守迁移为 `workspace-write`。进入 YOLO 请用 `--permission-mode danger-full-access`。 |
 
 适用时，参数可以放在 prompt 前面或后面。
 
@@ -368,7 +368,8 @@ reasonix -p "同时更新两个项目" \
 | `Enter` | 选择当前高亮项。 |
 | `Esc` | 取消当前选择器或审批。 |
 | `y` / `a` / `p` / `n`、数字键 | 执行对应的审批动作。 |
-| `Shift+Tab` | 在当前终端支持的协作模式间循环。 |
+| `Shift+Tab` | 按“仅可查看 → 工作区内修改 → YOLO → Plan”循环。 |
+| `Ctrl+Y` | 切换 YOLO；实际设置的运行时权限为 `danger-full-access`。 |
 
 响应式底栏左侧显示当前交互状态；空间足够时，右侧显示模型和推理强度。第二行按
 可用性显示仓库与会话遥测，例如缓存命中率、上下文占用、压缩余量、后台任务和余额。

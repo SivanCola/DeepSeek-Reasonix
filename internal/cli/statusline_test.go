@@ -126,7 +126,7 @@ func TestIdleStatuslineIsCompact(t *testing.T) {
 	if !strings.Contains(plain, "Workspace") || !strings.Contains(plain, "ready") {
 		t.Fatalf("idle status line missing mode status:\n%s", plain)
 	}
-	if !strings.Contains(plain, "Shift+Tab read-only/workspace/plan") {
+	if !strings.Contains(plain, "Shift+Tab read-only/workspace/YOLO/plan") || !strings.Contains(plain, "Ctrl+Y YOLO") {
 		t.Fatalf("idle status line missing plan-toggle hint:\n%s", plain)
 	}
 	for _, old := range []string{"Shift-Tab", "Ctrl-O", "Ctrl-D", "Enter sends", "Esc clears/exits state", "PgUp/PgDn"} {
@@ -142,18 +142,21 @@ func TestIdleStatuslineIsCompact(t *testing.T) {
 	}
 }
 
-func TestFullAccessStatuslineUsesDangerPill(t *testing.T) {
+func TestYoloStatuslineUsesDangerPill(t *testing.T) {
 	defer restoreThemeForTest(activeColorProfile, activeCLITheme)
 	activeColorProfile = colorprofile.TrueColor
 	i18n.DetectLanguage("en")
 
 	content := renderStatuslineView(t, true)
 	plain := bottomStatusPlain(content)
-	if !strings.Contains(plain, "Full access") || !strings.Contains(plain, "full access") || !strings.Contains(plain, "Shift+Tab read-only/workspace/plan") {
-		t.Fatalf("full-access status line missing warning text:\n%s", plain)
+	if !strings.Contains(plain, "YOLO") || !strings.Contains(plain, "Shift+Tab read-only/workspace/YOLO/plan") || !strings.Contains(plain, "Ctrl+Y YOLO") {
+		t.Fatalf("YOLO status line missing mode or shortcut text:\n%s", plain)
 	}
-	if strings.Contains(plain, "[Full access]") {
-		t.Fatalf("full-access status line should use a pill label, not bracketed tag:\n%s", plain)
+	if strings.Contains(plain, "full access") {
+		t.Fatalf("YOLO status line should display only the YOLO mode label:\n%s", plain)
+	}
+	if strings.Contains(plain, "[YOLO]") {
+		t.Fatalf("YOLO status line should use a pill label, not bracketed tag:\n%s", plain)
 	}
 	if !strings.Contains(content, "\x1b[48;2;229;72;77m") {
 		t.Fatalf("full-access status line should use danger pill background, got:\n%q", content)
@@ -167,7 +170,7 @@ func TestPlanStatuslineUsesBluePill(t *testing.T) {
 
 	content := renderPlanStatuslineView(t)
 	plain := bottomStatusPlain(content)
-	if !strings.Contains(plain, "Plan") || !strings.Contains(plain, "ready") || !strings.Contains(plain, "Shift+Tab read-only/workspace/plan") {
+	if !strings.Contains(plain, "Plan") || !strings.Contains(plain, "ready") || !strings.Contains(plain, "Shift+Tab read-only/workspace/YOLO/plan") || !strings.Contains(plain, "Ctrl+Y YOLO") {
 		t.Fatalf("plan status line missing mode status:\n%s", plain)
 	}
 	if !strings.Contains(content, "\x1b[48;2;37;99;235m") {
@@ -181,10 +184,10 @@ func TestStatuslineCycleHintFollowsLanguage(t *testing.T) {
 
 	content := renderStatuslineView(t, false)
 	plain := bottomStatusPlain(content)
-	if !strings.Contains(plain, "Workspace") || !strings.Contains(plain, "就绪") || !strings.Contains(plain, "Shift+Tab 仅可查看/工作区内修改/计划") {
+	if !strings.Contains(plain, "Workspace") || !strings.Contains(plain, "就绪") || !strings.Contains(plain, "Shift+Tab 仅可查看/工作区内修改/YOLO/计划") || !strings.Contains(plain, "Ctrl+Y YOLO") {
 		t.Fatalf("localized plan-toggle hint missing:\n%s", plain)
 	}
-	if strings.Contains(plain, "ready") || strings.Contains(plain, "Shift+Tab read-only/workspace/plan") {
+	if strings.Contains(plain, "ready") || strings.Contains(plain, "Shift+Tab read-only/workspace/YOLO/plan") {
 		t.Fatalf("localized status line should not fall back to English:\n%s", plain)
 	}
 }
@@ -194,7 +197,7 @@ func TestDesktopShortcutStatuslineUsesPlanToggleHint(t *testing.T) {
 
 	content := renderStatuslineViewWithShortcutLayout(t, "desktop")
 	plain := bottomStatusPlain(content)
-	if !strings.Contains(plain, "Read only") || !strings.Contains(plain, "Shift+Tab read-only/workspace/plan") {
+	if !strings.Contains(plain, "Read only") || !strings.Contains(plain, "Shift+Tab read-only/workspace/YOLO/plan") || !strings.Contains(plain, "Ctrl+Y YOLO") {
 		t.Fatalf("desktop shortcut status line missing unified plan-toggle hint:\n%s", plain)
 	}
 }

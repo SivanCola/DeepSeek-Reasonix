@@ -128,6 +128,10 @@ type chatTUI struct {
 	// marker rides in outgoing user messages so the cache-stable prompt prefix is
 	// left untouched.
 	planMode bool
+	// yoloRestoreToolApprovalMode remembers the safe permission preset that
+	// Ctrl+Y should restore after toggling the canonical danger-full-access
+	// preset under the user-facing YOLO label.
+	yoloRestoreToolApprovalMode string
 	// legacyScrollClear keeps the per-offset ClearScreen workaround only for Warp.
 	legacyScrollClear bool
 	// sessionSwitch suppresses that workaround during a transcript rebuild (#5441).
@@ -1530,11 +1534,9 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, pasteClipboardText())
 			return m, finalize(m, cmds)
 		}
-		// Shift+Tab encodings are recognized via modeToggleKey so both
-		// "shift+tab" and CSI-Z "backtab" stay covered by one helper (#6660).
-		if modeToggleKey(msg.String()) {
-			// Shift+Tab cycles the safe read/workspace/plan postures.
-			m.cycleMode()
+		// Mode shortcuts share one dispatcher so terminal-specific Shift+Tab
+		// encodings and Ctrl+Y stay consistent without duplicating state logic.
+		if m.handleModeShortcut(msg.String()) {
 			return m, nil
 		}
 		switch m.endSlashArgSnapshotForKey(msg.String()) {
@@ -4022,41 +4024,6 @@ func (m *chatTUI) growInputToFit() {
 	}
 }
 
-// modeToggleKey reports whether s is a recognized Shift+Tab encoding for the
-// plan/approval mode cycle. Terminals may emit either "shift+tab" or CSI-Z
-// "backtab" (#6660); both must hit cycleMode.
-func modeToggleKey(s string) bool {
-	switch s {
-	case "shift+tab", "backtab":
-		return true
-	default:
-		return false
-	}
-}
-
-// cycleMode handles the Shift+Tab gesture using the three safe postures:
-// read-only → workspace-write → Plan → read-only. Full access is selected only
-// through the explicit permission-mode interface.
-func (m *chatTUI) cycleMode() {
-	if m.ctrl == nil || m.ctrl.ToolApprovalMode() == control.ToolApprovalDangerFullAccess {
-		return
-	}
-	switch {
-	case m.planMode:
-		m.planMode = false
-		m.ctrl.SetToolApprovalMode(control.ToolApprovalReadOnly)
-	case m.ctrl.ToolApprovalMode() == control.ToolApprovalDontAsk:
-		m.ctrl.SetToolApprovalMode(control.ToolApprovalReadOnly)
-	case m.ctrl.ToolApprovalMode() == control.ToolApprovalReadOnly:
-		m.ctrl.SetToolApprovalMode(control.ToolApprovalWorkspaceWrite)
-	case m.ctrl.ToolApprovalMode() == control.ToolApprovalWorkspaceWrite:
-		m.planMode = true
-		m.ctrl.SetToolApprovalMode(control.ToolApprovalReadOnly)
-		m.ctrl.ClearGoal()
-	}
-	m.ctrl.SetPlanMode(m.planMode)
-}
-
 func (m chatTUI) desktopShortcutLayout() bool {
 	return m.cfg != nil && m.cfg.UIShortcutLayout() == "desktop"
 }
@@ -4067,11 +4034,11 @@ func (m chatTUI) modeTagText() string {
 	if m.desktopShortcutLayout() {
 		switch {
 		case m.planMode && toolApprovalMode == control.ToolApprovalDangerFullAccess:
-			return "Plan+Full access"
+			return "Plan+YOLO"
 		case goalMode && toolApprovalMode == control.ToolApprovalDangerFullAccess:
-			return "Goal+Full access"
+			return "Goal+YOLO"
 		case toolApprovalMode == control.ToolApprovalDangerFullAccess:
-			return "Full access"
+			return "YOLO"
 		case m.planMode:
 			return "Plan"
 		case goalMode && toolApprovalMode == control.ToolApprovalWorkspaceWrite:
@@ -4088,15 +4055,15 @@ func (m chatTUI) modeTagText() string {
 	}
 	switch {
 	case m.planMode && toolApprovalMode == control.ToolApprovalDangerFullAccess:
-		return "Plan+Full access"
+		return "Plan+YOLO"
 	case m.planMode && toolApprovalMode == control.ToolApprovalWorkspaceWrite:
 		return "Plan+Workspace"
 	case goalMode && toolApprovalMode == control.ToolApprovalDangerFullAccess:
-		return "Goal+Full access"
+		return "Goal+YOLO"
 	case goalMode && toolApprovalMode == control.ToolApprovalWorkspaceWrite:
 		return "Goal+Workspace"
 	case toolApprovalMode == control.ToolApprovalDangerFullAccess:
-		return "Full access"
+		return "YOLO"
 	case toolApprovalMode == control.ToolApprovalWorkspaceWrite:
 		return "Workspace"
 	case toolApprovalMode == control.ToolApprovalDontAsk:

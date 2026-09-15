@@ -38,7 +38,7 @@ Running `reasonix` without a subcommand starts the interactive terminal UI. Use
 | `--copy` | Continue in a writable copy of the resumed session. |
 | `--allowed-tools RULES` | Add session-only permission allow rules. Repeatable; `--allowedTools` is an alias. |
 | `--permission-mode MODE` | Start with a specific permission posture. |
-| `--dangerously-skip-permissions` | Start with `danger-full-access`; this must be selected explicitly. |
+| `--dangerously-skip-permissions` | Deprecated compatibility flag; migrates conservatively to `workspace-write`. Use `--permission-mode danger-full-access` for YOLO. |
 
 Flags may appear before or after the prompt where applicable.
 
@@ -416,7 +416,8 @@ single-key shortcuts.
 | `Enter` | Select the highlighted row. |
 | `Esc` | Cancel the current picker or approval. |
 | `y` / `a` / `n`, number keys | Allow once, allow the displayed scope for this session, or deny. |
-| `Shift+Tab` | Toggle the Plan collaboration workflow. |
+| `Shift+Tab` | Cycle Read only → Workspace write → YOLO → Plan. |
+| `Ctrl+Y` | Toggle YOLO; the runtime permission preset is `danger-full-access`. |
 
 The responsive footer keeps interaction state on the left and, when space
 allows, places model and effort on the right. Its second row shows

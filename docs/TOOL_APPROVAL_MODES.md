@@ -51,8 +51,9 @@ reasonix --permission-mode danger-full-access
 reasonix run --permission-mode workspace-write "run the tests"
 ```
 
-In the interactive CLI, `Shift+Tab` cycles Read only → Workspace write → Plan.
-Full access must be selected explicitly. Legacy saved values are migrated
+In the interactive CLI, `Shift+Tab` cycles Read only → Workspace write →
+YOLO → Plan, and `Ctrl+Y` toggles YOLO directly. Both shortcuts
+apply the canonical `danger-full-access` preset when they enter YOLO. Legacy saved values are migrated
 conservatively: `ask` becomes read only, and `auto` or `yolo` becomes workspace
 write. Legacy values never enable full access.
 
