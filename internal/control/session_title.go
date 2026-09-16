@@ -40,10 +40,8 @@ func (c *Controller) GenerateSessionTitle(ctx context.Context, transcript string
 }
 
 // GenerateSessionTitleForModel uses this controller only as a provider host.
-// The transcript and model belong to the explicitly targeted durable session;
-// no controller session state is read or mutated. Desktop uses this for cold
-// sidebar sessions so opening a conversation is not a prerequisite for naming
-// it.
+// The transcript and model belong to this controller's explicitly targeted
+// durable session. Cold sessions use GenerateSessionTitleWithResolver instead.
 func (c *Controller) GenerateSessionTitleForModel(ctx context.Context, modelRef, transcript string) (string, error) {
 	if c == nil {
 		return "", fmt.Errorf("session title: controller unavailable")
@@ -90,6 +88,12 @@ func generateSessionTitle(ctx context.Context, resolver provider.Resolver, ref s
 		return "", fmt.Errorf("session title (%s): provider returned an empty title", ref)
 	}
 	return title, nil
+}
+
+// GenerateSessionTitleWithResolver supports durable-session operations without
+// constructing a conversation controller or attributing usage to another tab.
+func GenerateSessionTitleWithResolver(ctx context.Context, resolver provider.Resolver, modelRef, transcript string) (string, error) {
+	return generateSessionTitle(ctx, resolver, modelRef, nil, transcript)
 }
 
 func sessionTitleProvider(resolver provider.Resolver, ref string) (provider.Provider, string, error) {

@@ -6,6 +6,7 @@ import { useToast } from "../lib/toast";
 import { app } from "../lib/bridge";
 import { onProjectTreeChangedV2 } from "../lib/sessionCatalogBridge";
 import { sessionCatalogNotice } from "../lib/sessionCatalogPresentation";
+import { sessionTitleTarget, sessionTitleErrorKey } from "../lib/sessionTitleOperation";
 import { isRuntimeSessionNode, isTopicNode, loadWorkbenchOrganizeMode, loadWorkbenchSortMode, mergeIncompleteProjectTopicPage, mergeProjectTopicPage, projectTreeDedupedExactTime, projectTreeEventAffectsFolder, projectTreeFolderDisclosure, projectTreeReadActivityKey, projectTreeRevisionIsFresh, projectTreeShellChildren, projectTreeShellSignature, projectTreeShouldApplyShellSnapshot, projectTreeShouldRenderTopicActions, projectTreeShouldSuppressOpenForRename, projectTreeTopicArchiveBlocked, projectTreeTopicHasUnreadActivity, projectTreeTopicMenuOffersPin, projectTreeTopicMetaLine, projectTreeTopicOpenRequest, projectTreeTopicPageIsFresh, projectTreeTopicPageSignature, projectTreeWithoutTopic, projectTreeWithTopicTitle, topicActivityAt, topicActivityDateLabel, topicActivityLabel, topicIsActive, topicStatus, topicStatusLabel, topicUnknownTimeLabel, WORKBENCH_ORGANIZE_KEY, WORKBENCH_SORT_KEY, type ProjectTreePendingTopicOpen, type ProjectTreeReadActivity, type WorkbenchOrganizeMode, type WorkbenchSortMode } from "../lib/projectTreeTopic";
 export * from "../lib/projectTreeTopic";
 import { arrangeWorkbenchTree, splitPinnedProjectTree, type PinnedTreeSections } from "../lib/projectTreePresentation";
@@ -41,19 +42,7 @@ type CollapseSnapshot = {
 };
 
 function sessionOperationErrorText(error: unknown, t: Translator): string {
-  const fallback = error instanceof Error ? error.message : String(error);
-  const match = fallback.match(/session_operation:([a-z_]+):/);
-  switch (match?.[1]) {
-    case "target_not_found": return t("projectTree.sessionError.targetNotFound");
-    case "no_messages": return t("projectTree.sessionError.noMessages");
-    case "runtime_not_open": return t("projectTree.sessionError.runtimeNotOpen");
-    case "runtime_not_ready": return t("projectTree.sessionError.runtimeNotReady");
-    case "remote_disconnected": return t("projectTree.sessionError.remoteDisconnected");
-    case "title_conflict": return t("projectTree.sessionError.titleConflict");
-    case "archived": return t("projectTree.sessionError.archived");
-    case "operation_busy": return t("projectTree.sessionError.operationBusy");
-    default: return fallback;
-  }
+  return t(sessionTitleErrorKey(error));
 }
 
 const READ_ACTIVITY_KEY = "projectTree:readActivity";
@@ -1078,6 +1067,7 @@ export function ProjectTree({
       const showSideTime = sideTimeVisible && !showWaitingPill;
       const unread = projectTreeTopicHasUnreadActivity(node, readActivity, activeScope, activeWorkspaceRoot, activeTopicId, activeSessionPath, readBaselineAt);
       const topicId = node.topicId ?? "";
+      const aiRenameTarget = sessionTitleTarget(node);
       const topicTrashing = trashingTopics.has(topicId);
       const sessionPath = node.sessionPath?.trim() ?? "";
       const sessionTrashing = Boolean(sessionPath) && trashingSessions.has(sessionPath);
@@ -1125,9 +1115,9 @@ export function ProjectTree({
         {
           key: "aiRename",
           icon: <Sparkles size={13} />,
-          label: aiRenamingTopics.has(topicId) ? t("projectTree.aiRenamingTopic") : t("projectTree.aiRenameTopic"),
-          disabled: aiRenamingTopics.has(topicId) || Boolean(node.remoteSession),
-          onSelect: () => void aiRenameSession(topicId),
+          label: aiRenamingTopics.has(aiRenameTarget) ? t("projectTree.aiRenamingTopic") : t("projectTree.aiRenameTopic"),
+          disabled: aiRenamingTopics.has(aiRenameTarget) || !aiRenameTarget || Boolean(node.remoteSession) || Boolean(node.session?.hostId && node.session.hostId !== "local"),
+          onSelect: () => void aiRenameSession(aiRenameTarget),
         },
         {
           key: "trash",

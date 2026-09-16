@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"reasonix/internal/agent"
+	"reasonix/internal/boot"
+	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/provider"
 	"reasonix/internal/sessioncatalog"
@@ -19,14 +21,18 @@ const (
 )
 
 // AIRenameSession generates a title from the explicitly targeted durable
-// conversation. The target does not need to be open; an existing controller is
-// used only as a provider host and never as the source of target identity.
+// conversation. The argument also accepts a canonical session route or legacy
+// path, which takes precedence over the compatibility topic lookup.
 func (a *App) AIRenameSession(topicID string) (string, error) {
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
 		return "", newSessionOperationError(sessionOperationTargetNotFound, "The session no longer exists.")
 	}
-	target, err := a.resolveSessionTarget(sessionTargetSelector{TopicID: topicID})
+	selector := sessionTargetSelector{TopicID: topicID}
+	if _, ok := parseSessionRoute(topicID); ok || strings.ContainsAny(topicID, `/\`) {
+		selector = sessionTargetSelector{SessionPath: topicID}
+	}
+	target, err := a.resolveSessionTarget(selector)
 	if err != nil {
 		return "", err
 	}
@@ -50,26 +56,24 @@ func (a *App) AIRenameSession(topicID string) (string, error) {
 		a.aiSessionTitleMu.Unlock()
 	}()
 
-	generator := a.sessionTitleGenerator(target)
-	if generator == nil {
-		return "", newSessionOperationError(sessionOperationRuntimeNotReady, "AI rename is unavailable until the workspace finishes loading.")
-	}
 	if strings.TrimSpace(target.SessionRef.SessionID) != "" {
-		return a.aiRenameCanonicalSession(target, generator)
+		return a.aiRenameCanonicalSession(target)
 	}
-	return a.aiRenameLegacySession(target, generator)
+	return a.aiRenameLegacySession(target)
 }
 
-func (a *App) aiRenameLegacySession(target SessionTarget, generator *control.Controller) (string, error) {
+func (a *App) aiRenameLegacySession(target SessionTarget) (string, error) {
 	sessionDir, validated, err := a.sessionDirForPath(target.SessionPath)
 	if err != nil {
 		return "", newSessionOperationError(sessionOperationTargetNotFound, "The session no longer exists.")
 	}
 	expectedTitle := ""
+	modelRef := ""
 	if meta, ok, loadErr := agent.LoadBranchMeta(validated); loadErr != nil {
 		return "", fmt.Errorf("AI rename session: read current title: %w", loadErr)
 	} else if ok {
 		expectedTitle = meta.CustomTitle
+		modelRef = meta.Model
 	}
 	users, err := loadTopicTitleUserTurnsFromSession(validated)
 	if err != nil {
@@ -78,13 +82,15 @@ func (a *App) aiRenameLegacySession(target SessionTarget, generator *control.Con
 	if len(users) == 0 {
 		return "", newSessionOperationError(sessionOperationNoMessages, "This session has no user messages to analyze.")
 	}
-	title, err := generator.GenerateSessionTitleForModel(a.bootContext(), "", sessionTitleTranscript(users))
+	title, err := a.generateTargetSessionTitle(a.bootContext(), target, modelRef, sessionTitleTranscript(users))
 	if err != nil {
 		return "", err
 	}
 	if target.IsOpen && target.Controller != nil && !a.topicControllerOwnsSession(target.TopicID, target.Controller, validated) {
 		return "", fmt.Errorf("session changed while AI rename was running; try again")
 	}
+	a.sessionRemovalMu.Lock()
+	defer a.sessionRemovalMu.Unlock()
 	a.topicTitleMutationMu.Lock()
 	defer a.topicTitleMutationMu.Unlock()
 	if err := a.renameSessionInDirIfTitleUnchanged(sessionDir, validated, expectedTitle, title); err != nil {
@@ -96,12 +102,12 @@ func (a *App) aiRenameLegacySession(target SessionTarget, generator *control.Con
 	return title, nil
 }
 
-func (a *App) aiRenameCanonicalSession(target SessionTarget, generator *control.Controller) (string, error) {
+func (a *App) aiRenameCanonicalSession(target SessionTarget) (string, error) {
 	service := a.desktopSessionService("")
 	ref := target.SessionRef
 	var topicRoot string
 	var hasTopic bool
-	if target.TopicID != "" {
+	if target.TopicID != "" && !target.SharedTopic {
 		topicRoot = topicTitleRoot(target.Scope, target.WorkspaceRoot)
 		hasTopic = true
 	}
@@ -135,12 +141,14 @@ func (a *App) aiRenameCanonicalSession(target SessionTarget, generator *control.
 	if len(users) == 0 {
 		return "", newSessionOperationError(sessionOperationNoMessages, "This session has no user messages to analyze.")
 	}
-	title, err := generator.GenerateSessionTitleForModel(ctx, info.ModelRef, sessionTitleTranscript(users))
+	title, err := a.generateTargetSessionTitle(ctx, target, info.ModelRef, sessionTitleTranscript(users))
 	if err != nil {
 		return "", err
 	}
 	// The legacy sidebar still owns a topic label. Serialize its projection
 	// with manual/automatic topic renames, as well as guarding the session title.
+	a.sessionRemovalMu.Lock()
+	defer a.sessionRemovalMu.Unlock()
 	a.topicTitleMutationMu.Lock()
 	defer a.topicTitleMutationMu.Unlock()
 	if target.IsOpen && target.Controller != nil {
@@ -151,7 +159,9 @@ func (a *App) aiRenameCanonicalSession(target SessionTarget, generator *control.
 	if hasTopic && loadTopicTitle(topicRoot, target.TopicID) != expectedTopicTitle {
 		return "", newSessionOperationError(sessionOperationTitleConflict, "The session title changed while AI rename was running. Try again.")
 	}
-	if err := service.SetTitleIfUnchanged(ctx, ref, info.Title, title); err != nil {
+	if err := a.workspaceRegistry().WithSessionUnchanged(ctx, ref.SessionID, target.WorkspaceID, target.LifecycleGeneration, func() error {
+		return service.SetTitleIfUnchanged(ctx, ref, info.Title, title)
+	}); err != nil {
 		return "", sessionOperationConflict(err)
 	}
 	if hasTopic {
@@ -165,21 +175,22 @@ func (a *App) aiRenameCanonicalSession(target SessionTarget, generator *control.
 	return title, nil
 }
 
-func (a *App) sessionTitleGenerator(target SessionTarget) *control.Controller {
+func (a *App) generateTargetSessionTitle(ctx context.Context, target SessionTarget, modelRef, transcript string) (string, error) {
 	if target.Controller != nil {
-		return target.Controller
+		return target.Controller.GenerateSessionTitleForModel(ctx, modelRef, transcript)
 	}
-	if ctrl, ok := a.activeCtrl().(*control.Controller); ok && ctrl != nil {
-		return ctrl
+	root := target.WorkspaceRoot
+	if target.Scope == "global" || root == "" {
+		root = globalWorkspaceRoot()
 	}
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	for _, tab := range a.runtimeTabsLocked() {
-		if ctrl, ok := tab.Ctrl.(*control.Controller); ok && ctrl != nil {
-			return ctrl
-		}
+	cfg, err := config.LoadModelRuntimeSnapshot(root, modelRef)
+	if err != nil {
+		return "", newSessionOperationError("provider_unavailable", "Unable to load model settings. Check the session's provider configuration.")
 	}
-	return nil
+	if modelRef == "" {
+		modelRef = cfg.DefaultModel
+	}
+	return control.GenerateSessionTitleWithResolver(ctx, boot.NewLocalProviderResolver(cfg, cfg.NetworkProxySpec()), modelRef, transcript)
 }
 
 func (a *App) controllerForTopic(topicID string) *control.Controller {

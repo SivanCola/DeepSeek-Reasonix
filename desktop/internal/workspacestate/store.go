@@ -309,6 +309,32 @@ func (s *Store) Contains(ctx context.Context, sessionID string) (bool, error) {
 	return ok, nil
 }
 
+// WithSessionUnchanged serializes a durable metadata commit with lifecycle and
+// workspace changes, including writers in other processes. The callback must
+// not call the registry; it may only commit session content metadata.
+func (s *Store) WithSessionUnchanged(ctx context.Context, id, workspaceID string, generation uint64, commit func() error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	release, err := filelock.Acquire(ctx, s.path+".lock")
+	if err != nil {
+		return err
+	}
+	defer release()
+	state, err := load(s.path)
+	if err != nil {
+		return err
+	}
+	owner, ok := sessionOwner(state, id)
+	status := state.SessionStates[id]
+	if !ok || status.Lifecycle != Active {
+		return ErrSessionNotFound
+	}
+	if owner != workspaceID || status.Generation != generation {
+		return ErrMutationConflict
+	}
+	return commit()
+}
+
 func (s *Store) mutate(ctx context.Context, change func(*State) error) error {
 	if s == nil || strings.TrimSpace(s.path) == "" || s.path == "." {
 		return errors.New("workspace state path is required")

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"reasonix/desktop/internal/workspacestate"
+	"reasonix/internal/agent"
 	"reasonix/internal/control"
 	"reasonix/internal/session"
 )
@@ -47,15 +49,18 @@ func newSessionOperationError(code, message string) error {
 // Controller is optional and is never used to decide whether the session
 // exists.
 type SessionTarget struct {
-	TopicID       string
-	SessionRef    session.SessionRef
-	SessionPath   string
-	Scope         string
-	WorkspaceRoot string
-	IsOpen        bool
-	Ready         bool
-	TabID         string
-	Controller    *control.Controller
+	TopicID             string
+	SessionRef          session.SessionRef
+	SessionPath         string
+	Scope               string
+	WorkspaceRoot       string
+	IsOpen              bool
+	Ready               bool
+	TabID               string
+	Controller          *control.Controller
+	WorkspaceID         string
+	LifecycleGeneration uint64
+	SharedTopic         bool
 }
 
 type sessionTargetSelector struct {
@@ -98,7 +103,9 @@ func (a *App) resolveSessionTarget(selector sessionTargetSelector) (SessionTarge
 	if topicID == "" {
 		return SessionTarget{}, newSessionOperationError(sessionOperationTargetNotFound, "The session no longer exists.")
 	}
-	if ref, ok := a.canonicalSessionRefForTopic(topicID); ok {
+	if ref, ok, err := a.canonicalSessionRefForTopic(topicID); err != nil {
+		return SessionTarget{}, err
+	} else if ok {
 		return a.resolveCanonicalSessionTarget(ref, topicID)
 	}
 	if runtime := a.runtimeSessionTarget(topicID, session.SessionRef{}, ""); runtime.Controller != nil {
@@ -141,20 +148,24 @@ func (a *App) resolveSessionTarget(selector sessionTargetSelector) (SessionTarge
 	return target, err
 }
 
-func (a *App) canonicalSessionRefForTopic(topicID string) (session.SessionRef, bool) {
+func (a *App) canonicalSessionRefForTopic(topicID string) (session.SessionRef, bool, error) {
 	state, err := a.workspaceRegistry().Load(a.bootContext())
 	if err != nil {
-		return session.SessionRef{}, false
+		return session.SessionRef{}, false, err
 	}
+	var found session.SessionRef
 	for _, workspace := range state.Workspaces {
 		for _, id := range workspace.SessionIDs {
 			presentation := state.Presentation[id]
 			if presentation.TopicID == topicID || "canonical-"+id == topicID || id == topicID || sessionRoute(id) == topicID {
-				return session.SessionRef{HostID: localDesktopHostID, SessionID: id}, true
+				if found.SessionID != "" && found.SessionID != id {
+					return session.SessionRef{}, false, newSessionOperationError("ambiguous_target", "Select a specific session before renaming it.")
+				}
+				found = session.SessionRef{HostID: localDesktopHostID, SessionID: id}
 			}
 		}
 	}
-	return session.SessionRef{}, false
+	return found, found.SessionID != "", nil
 }
 
 func (a *App) resolveCanonicalSessionTarget(ref session.SessionRef, topicID string) (SessionTarget, error) {
@@ -171,6 +182,24 @@ func (a *App) resolveCanonicalSessionTarget(ref session.SessionRef, topicID stri
 		target.TopicID = topicID
 	}
 	state, loadErr := a.workspaceRegistry().Load(a.bootContext())
+	if loadErr != nil {
+		return SessionTarget{}, loadErr
+	}
+	status, registered := state.SessionStates[ref.SessionID]
+	if !registered || status.Lifecycle == workspacestate.Deleted {
+		return SessionTarget{}, newSessionOperationError(sessionOperationTargetNotFound, "The session no longer exists.")
+	}
+	if status.Lifecycle != workspacestate.Active {
+		return SessionTarget{}, newSessionOperationError("archived", "Restore this session before renaming it.")
+	}
+	target.LifecycleGeneration = status.Generation
+	// Presentation belongs to this exact session, never a caller's stale topic.
+	target.TopicID = state.Presentation[ref.SessionID].TopicID
+	for id, presentation := range state.Presentation {
+		if id != ref.SessionID && target.TopicID != "" && presentation.TopicID == target.TopicID && state.SessionStates[id].Lifecycle == workspacestate.Active {
+			target.SharedTopic = true
+		}
+	}
 	if loadErr == nil {
 		for _, workspace := range state.Workspaces {
 			for _, id := range workspace.SessionIDs {
@@ -178,6 +207,7 @@ func (a *App) resolveCanonicalSessionTarget(ref session.SessionRef, topicID stri
 					continue
 				}
 				target.WorkspaceRoot = workspace.Root
+				target.WorkspaceID = workspace.ID
 				target.Scope = "project"
 				if workspace.ID == "global" {
 					target.Scope, target.WorkspaceRoot = "global", ""
@@ -205,6 +235,9 @@ func (a *App) resolveLegacySessionTarget(path, topicID string) (SessionTarget, e
 	target := a.runtimeSessionTarget(topicID, session.SessionRef{}, validated)
 	target.SessionPath = validated
 	target.TopicID = topicID
+	if meta, ok, err := agent.LoadBranchMeta(validated); err == nil && ok {
+		target.TopicID, target.Scope, target.WorkspaceRoot = meta.TopicID, meta.Scope, meta.WorkspaceRoot
+	}
 	return target, nil
 }
 
@@ -216,14 +249,17 @@ func (a *App) runtimeSessionTarget(topicID string, ref session.SessionRef, path 
 			continue
 		}
 		ctrl, _ := tab.Ctrl.(*control.Controller)
-		matches := topicID != "" && (tab.TopicID == topicID || tab.SessionID == topicID || sessionRoute(tab.SessionID) == topicID)
-		if !matches && ref.SessionID != "" && ctrl != nil {
-			if bound, ok := ctrl.SessionRef(); ok {
-				matches = bound == ref
+		matches := false
+		switch {
+		case ref.SessionID != "":
+			if ctrl != nil {
+				bound, ok := ctrl.SessionRef()
+				matches = ok && bound == ref
 			}
-		}
-		if !matches && path != "" {
+		case path != "":
 			matches = sessionRuntimeKey(tab.currentSessionPath()) == sessionRuntimeKey(path)
+		default:
+			matches = topicID != "" && (tab.TopicID == topicID || tab.SessionID == topicID || sessionRoute(tab.SessionID) == topicID)
 		}
 		if !matches {
 			continue
@@ -265,6 +301,12 @@ func (a *App) sessionTargetStillOwnsRuntime(target SessionTarget) bool {
 }
 
 func sessionOperationConflict(err error) error {
+	if errors.Is(err, workspacestate.ErrSessionNotFound) {
+		return newSessionOperationError(sessionOperationTargetNotFound, "The session no longer exists or has been archived.")
+	}
+	if errors.Is(err, workspacestate.ErrMutationConflict) {
+		return newSessionOperationError(sessionOperationTitleConflict, "The session changed while AI rename was running. Try again.")
+	}
 	if errors.Is(err, session.ErrSessionTitleChanged) {
 		return newSessionOperationError(sessionOperationTitleConflict, "The session title changed while AI rename was running. Try again.")
 	}

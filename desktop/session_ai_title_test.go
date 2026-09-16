@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +13,7 @@ import (
 	"time"
 
 	"reasonix/internal/agent"
+	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/provider"
 	"reasonix/internal/session"
@@ -109,7 +113,7 @@ func TestAIRenameCanonicalSessionDoesNotRequireTargetTab(t *testing.T) {
 	app.tabs["test"].SessionID = "active-other-session"
 	app.mu.Unlock()
 
-	title, err := app.AIRenameSession("cold-topic")
+	title, err := app.AIRenameSession(sessionRoute(runtime.Ref().SessionID))
 	if err != nil || title != "制作扫雷游戏" {
 		t.Fatalf("AIRenameSession = %q, %v", title, err)
 	}
@@ -160,7 +164,7 @@ func newCanonicalTitleFixture(t *testing.T) (*App, *control.Controller, *session
 	app := NewApp()
 	t.Cleanup(app.closeSessionServices)
 	service := app.desktopSessionService(dir)
-	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "canonical-title"})
+	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "canonical-title", CWD: globalWorkspaceRoot()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,6 +177,49 @@ func newCanonicalTitleFixture(t *testing.T) (*App, *control.Controller, *session
 	chunks <- provider.Chunk{Type: provider.ChunkDone}
 	close(chunks)
 	prov := &desktopSessionTitleProvider{chunks: chunks}
+	// The cold path uses real config/resolver assembly and a disposable HTTP
+	// provider, not a controller borrowed from another conversation.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.NotFound(w, r)
+			return
+		}
+		if prov.started != nil {
+			close(prov.started)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case chunk, ok := <-prov.chunks:
+				if !ok || chunk.Type == provider.ChunkDone {
+					fmt.Fprint(w, "data: [DONE]\n\n")
+					return
+				}
+				body, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": map[string]string{"content": chunk.Text}}}})
+				fmt.Fprintf(w, "data: %s\n\n", body)
+				w.(http.Flusher).Flush()
+			}
+		}
+	}))
+	t.Cleanup(server.Close)
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	cfg.DefaultModel = "test/title-model"
+	cfg.Providers = []config.ProviderEntry{{Name: "test", Kind: "openai", Model: "title-model", BaseURL: server.URL, NoProxy: true}}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := app.ensureDesktopWorkspace(t.Context(), "global", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.workspaceRegistry().AttachSession(t.Context(), "", workspace, runtime.Ref().SessionID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.workspaceRegistry().EnsureSessionTopic(t.Context(), runtime.Ref().SessionID, "topic-canonical", ""); err != nil {
+		t.Fatal(err)
+	}
 	ctrl := control.New(control.Options{
 		SessionDir: dir, SessionPath: path, ModelRef: "test/title-model",
 		SessionService: service, SessionRuntime: runtime, ExclusiveSession: true,
@@ -224,7 +271,7 @@ func TestAIRenameCanonicalSessionPreservesManualRenameAndRejectsReboundControlle
 			if err != nil || info.Title == "stale AI title" || (change == "manual-title" && info.Title != "manual title") {
 				t.Fatalf("title = %+v, %v", info, err)
 			}
-			if change == "manual-topic" && loadTopicTitle("", "topic-canonical") != "manual topic title" {
+			if change == "manual-topic" && info.Title != "manual topic title" {
 				t.Fatal("manual sidebar title was overwritten")
 			}
 		})

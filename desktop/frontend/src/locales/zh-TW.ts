@@ -1310,6 +1310,7 @@ export const zhTW: Record<DictKey, string> = {
   "projectTree.sessionError.titleConflict": "會話標題剛剛被修改，請重試。",
   "projectTree.sessionError.archived": "會話已歸檔，請先還原。",
   "projectTree.sessionError.operationBusy": "該會話正在執行相同操作。",
+  "projectTree.sessionError.failed": "無法重新命名會話，請檢查該會話的模型設定後重試。",
   "projectTree.newGroup": "新建分組",
   "projectTree.renameGroup": "重新命名分組",
   "projectTree.deleteGroup": "刪除分組",

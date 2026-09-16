@@ -5462,7 +5462,17 @@ function makeMockApp(): AppBindings {
         tab.topicId === topicID ? { ...tab, topicTitle: nextTitle } : tab,
       );
     },
-    async AIRenameSession(topicID: string) { return mockAIRenameSession(findMockTopic(topicID)); },
+    async AIRenameSession(topicID: string) {
+      const findTarget = (nodes: ProjectNode[]): ProjectNode | null => {
+        for (const node of nodes) {
+          if (node.sessionPath === topicID || (node.session?.sessionId && `session-id:${node.session.sessionId}` === topicID)) return node;
+          const child = findTarget(node.children ?? []);
+          if (child) return child;
+        }
+        return null;
+      };
+      return mockAIRenameSession(findTarget(mockProjectTree) ?? findMockTopic(topicID));
+    },
     async DeleteTopic(topicID: string) {
       deleteMockTopic(topicID);
     },

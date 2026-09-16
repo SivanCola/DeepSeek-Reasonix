@@ -1529,6 +1529,7 @@ export const en = {
   "projectTree.sessionError.titleConflict": "The session title changed while AI rename was running. Try again.",
   "projectTree.sessionError.archived": "Restore this session before using this action.",
   "projectTree.sessionError.operationBusy": "This session is already performing that operation.",
+  "projectTree.sessionError.failed": "Unable to rename this session. Check its model settings and try again.",
   "projectTree.newGroup": "New group",
   "projectTree.renameGroup": "Rename group",
   "projectTree.deleteGroup": "Delete group",
