@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"reasonix/internal/sessioncatalog"
 )
@@ -223,4 +224,45 @@ func TestMetadataFallbackBindsGroupCursorToMembershipRevision(t *testing.T) {
 	}); err == nil {
 		t.Fatal("metadata cursor from prior group revision must be rejected")
 	}
+}
+
+func TestGetTopicSummaryHonorsCatalogFallbackCompleteness(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	root := t.TempDir()
+	if err := addProject(root, "Summary project"); err != nil {
+		t.Fatal(err)
+	}
+	if err := setTopicTitle(root, "metadata-only", "Metadata only"); err != nil {
+		t.Fatal(err)
+	}
+	dir := desktopSessionDir(root)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("unscanned catalog keeps metadata continuity", func(t *testing.T) {
+		app := NewApp()
+		catalog, err := sessioncatalog.Open(context.Background(), sessioncatalog.Options{InMemory: true, DisableRepair: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		app.sessionCatalog.Store(catalog)
+		t.Cleanup(func() { app.stopSessionCatalog(time.Second) })
+		summary, err := app.GetTopicSummary(ProjectTopicKey{Scope: "project", WorkspaceRoot: root, TopicID: "metadata-only"})
+		if err != nil || summary.TopicID != "metadata-only" {
+			t.Fatalf("incomplete summary = %#v, err=%v, want metadata continuity", summary, err)
+		}
+	})
+
+	t.Run("complete catalog does not resurrect absent metadata", func(t *testing.T) {
+		app := NewApp()
+		installSessionCatalogForTest(t, app, dir, "project", root)
+		summary, err := app.GetTopicSummary(ProjectTopicKey{Scope: "project", WorkspaceRoot: root, TopicID: "metadata-only"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if summary.TopicID != "" || summary.Children == nil {
+			t.Fatalf("complete summary = %#v, want an empty non-null result", summary)
+		}
+	})
 }

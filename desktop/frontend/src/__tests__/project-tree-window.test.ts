@@ -7,8 +7,10 @@ import {
   forgetProjectTreeWindowLimits,
   loadProjectTreePageWindow,
   projectTreeListKey,
+  projectTreeKnownGroupIDs,
   projectTreeRuntimeWindowLimits,
   projectTreeWindowRows,
+  reloadProjectTreeTopicLists,
   rememberProjectTreeWindowLimit,
 } from "../lib/projectTreeWindow";
 import type { ProjectNode } from "../lib/types";
@@ -54,6 +56,26 @@ assert.equal(activeInside.filter((node) => node.topicId === "topic-3").length, 1
 assert.notEqual(projectTreeListKey("project", "group-a"), projectTreeListKey("project", "group-b"));
 assert.notEqual(projectTreeListKey("project", "", "needle"), projectTreeListKey("project", ""));
 assert.equal(projectTreeListKey("project", "", "  Needle "), projectTreeListKey("project", "", "needle"));
+
+const knownGroupStates = {
+  [projectTreeListKey("project", "bugs")]: { loading: false, initialized: true },
+  [projectTreeListKey("project", "feature")]: { loading: false, initialized: true },
+  [projectTreeListKey("project", "", "needle")]: { loading: false, initialized: true },
+  [projectTreeListKey("other", "ignored")]: { loading: false, initialized: true },
+};
+assert.deepEqual(projectTreeKnownGroupIDs(knownGroupStates, "project"), ["bugs", "feature"]);
+
+const reloadCalls: string[] = [];
+const reloadProject = { key: "project", kind: "project", label: "Project", children: [] } satisfies ProjectNode;
+await reloadProjectTreeTopicLists(reloadProject, "", knownGroupStates, async (_project, groupID) => {
+  reloadCalls.push(groupID || "ungrouped");
+});
+assert.deepEqual(reloadCalls, ["ungrouped", "bugs", "feature"], "ordinary refresh replenishes every known group list");
+reloadCalls.length = 0;
+await reloadProjectTreeTopicLists(reloadProject, "needle", knownGroupStates, async (_project, groupID) => {
+  reloadCalls.push(groupID || "search");
+});
+assert.deepEqual(reloadCalls, ["search"], "search refresh reloads only the project search list");
 
 const limiter = createProjectTreeRequestLimiter(4);
 let running = 0;

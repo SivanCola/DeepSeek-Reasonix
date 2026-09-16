@@ -27,7 +27,13 @@ func (a *App) GetTopicSummary(key ProjectTopicKey) (ProjectNode, error) {
 	if topicID == "" {
 		return ProjectNode{Children: []ProjectNode{}}, nil
 	}
+	allowMetadataFallback := true
 	if catalog := a.sessionCatalog.Load(); catalog != nil {
+		availability := a.catalogWorkspaceAvailability(catalog, scope, workspaceRoot)
+		allowMetadataFallback = !availability.complete
+		if !availability.usable {
+			return a.metadataTopicSummary(scope, workspaceRoot, topicID), nil
+		}
 		ctx, cancel := a.catalogReadContext()
 		defer cancel()
 		topic, ok, err := catalog.GetTopic(ctx, sessioncatalog.TopicKey{
@@ -47,10 +53,17 @@ func (a *App) GetTopicSummary(key ProjectTopicKey) (ProjectNode, error) {
 			}
 		}
 	}
+	if !allowMetadataFallback {
+		return ProjectNode{Children: []ProjectNode{}}, nil
+	}
+	return a.metadataTopicSummary(scope, workspaceRoot, topicID), nil
+}
+
+func (a *App) metadataTopicSummary(scope, workspaceRoot, topicID string) ProjectNode {
 	for _, node := range a.metadataProjectTopics(scope, workspaceRoot) {
 		if node.TopicID == topicID {
-			return node, nil
+			return node
 		}
 	}
-	return ProjectNode{Children: []ProjectNode{}}, nil
+	return ProjectNode{Children: []ProjectNode{}}
 }

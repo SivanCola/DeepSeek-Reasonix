@@ -29,7 +29,7 @@ import { ProjectTreeSessionArchiveMenu } from "./ProjectTreeSessionArchiveMenu";
 import { ProjectTreeHeaderAddControl, ProjectTreeRemoteAction, projectTreeHeaderAddItems } from "./ProjectTreeAddControls";
 import { activeRemoteProjectAncestorKeys, buildRemoteProjectMenuItems, useRemoteRuntimeTree, openRemoteSessionNode, remoteProjectKey, remoteServeBadgeState, renameRemoteProjectTitle, RemoteProjectEmptyState, useRemoteProjectGroups, useRemoteSessionActions } from "./ProjectTreeRemoteGroups";
 import type { ProjectTreeProps } from "./ProjectTreeProps";
-import { PROJECT_TREE_SEARCH_PAGE, PROJECT_TREE_WINDOW_INITIAL, PROJECT_TREE_WINDOW_STEP, createProjectTreeRequestLimiter, forgetProjectTreeWindowLimits, loadProjectTreePageWindow, projectTreeListKey, projectTreeRuntimeWindowLimits, projectTreeWindowRows, rememberProjectTreeWindowLimit, type ProjectTreeListPageState } from "../lib/projectTreeWindow";
+import { PROJECT_TREE_SEARCH_PAGE, PROJECT_TREE_WINDOW_INITIAL, PROJECT_TREE_WINDOW_STEP, createProjectTreeRequestLimiter, forgetProjectTreeWindowLimits, loadProjectTreePageWindow, projectTreeListKey, projectTreeRuntimeWindowLimits, projectTreeWindowRows, reloadProjectTreeTopicLists, rememberProjectTreeWindowLimit, type ProjectTreeListPageState } from "../lib/projectTreeWindow";
 
 function projectNodeKey(node: ProjectNode, depth: number): string {
   return node.key || `${node.kind}-${node.root ?? ""}-${node.topicId ?? ""}-${node.sessionPath ?? ""}-${depth}`;
@@ -478,6 +478,10 @@ export function ProjectTree({
     setTopicPageState(next);
   }, []);
 
+  const reloadProjectTopicLists = useCallback((project: ProjectNode) => reloadProjectTreeTopicLists(project,
+    topicRequestContextRef.current.query, topicPageStateRef.current,
+    (target, groupID) => loadProjectTopicsRef.current(target, false, groupID)), []);
+
   const selectWorkbenchSortMode = useCallback((sortMode: WorkbenchSortMode) => {
     if (workbenchSortModeRef.current === sortMode) {
       closeMenu();
@@ -504,7 +508,7 @@ export function ProjectTree({
   // Preserve already loaded pages by project key while reconciling pins, so a
   // metadata refresh does not collapse or blank the sidebar.
   const refresh = useCallback(async (options?: ProjectTreeRefreshOptions) => {
-    const reloadRequestedProjects = (projects: ProjectNode[]) => reloadProjectTreeTopics(projects, options, loadProjectTopicsRef.current), catalogStatusGeneration = catalogStatusGenerationRef.current;
+    const reloadRequestedProjects = (projects: ProjectNode[]) => reloadProjectTreeTopics(projects, options, reloadProjectTopicLists), catalogStatusGeneration = catalogStatusGenerationRef.current;
     try {
       const snapshot = await app.GetProjectTreeSnapshot();
       const rev = snapshot.revision ?? 0, empty = treeRef.current.length === 0;
@@ -528,7 +532,7 @@ export function ProjectTree({
       // identity can still drive the requested canonical topic reload.
       await reloadRequestedProjects(treeRef.current);
     }
-  }, [applyRuntimeProjection]);
+  }, [applyRuntimeProjection, reloadProjectTopicLists]);
   refreshRef.current = refresh;
   const { openRemoteProject, openRemoteWindow, remoteSessions, setRemoteSessions, remoteServers, remoteGroupBusy, remoteGroupError, ensureRemoteGroupSessions, refreshRemoteSessions } = useRemoteProjectGroups(tree, showToast, expanded, query);
   const treeWithRemoteSessions = useRemoteRuntimeTree(tree, remoteSessions, t);
@@ -611,10 +615,10 @@ export function ProjectTree({
       if (!expanded.has(key)) continue;
       if (projectTreeEventAffectsFolder(project, affected)) {
         invalidateProjectTopicLists(project.key);
-        void loadProjectTopics(project);
+        void reloadProjectTopicLists(project);
       }
     }
-  }), [expanded, invalidateProjectTopicLists, loadProjectTopics, refresh]);
+  }), [expanded, invalidateProjectTopicLists, refresh, reloadProjectTopicLists]);
   // Debounce query reloads so typing does not stampede the catalog.
   // Dependency is the project-shell signature, not tree: topic page loads
   // rewrite children and would otherwise re-arm this effect in a loop.

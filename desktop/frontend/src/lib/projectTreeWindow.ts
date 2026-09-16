@@ -109,6 +109,27 @@ export function projectTreeListKey(projectKey: string, groupID = "", query = "")
   return `${projectKey}\u001f${groupID ? `group:${groupID}` : "ungrouped"}`;
 }
 
+export function projectTreeKnownGroupIDs(
+  pageStates: Readonly<Record<string, ProjectTreeListPageState>>,
+  projectKey: string,
+): string[] {
+  const prefix = `${projectKey}\u001fgroup:`;
+  return [...new Set(Object.keys(pageStates)
+    .filter((key) => key.startsWith(prefix))
+    .map((key) => key.slice(prefix.length))
+    .filter(Boolean))].sort();
+}
+
+export async function reloadProjectTreeTopicLists(
+  project: ProjectNode,
+  query: string,
+  pageStates: Readonly<Record<string, ProjectTreeListPageState>>,
+  load: (project: ProjectNode, groupID: string) => Promise<void>,
+): Promise<void> {
+  const groupIDs = query.trim() ? [""] : ["", ...projectTreeKnownGroupIDs(pageStates, project.key)];
+  await Promise.all(groupIDs.map((groupID) => load(project, groupID)));
+}
+
 export function projectTreeWindowRows(
   rows: ProjectNode[],
   limit: number,
