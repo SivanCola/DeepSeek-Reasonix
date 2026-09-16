@@ -2091,12 +2091,7 @@ func enrichTabMetas(metas []TabMeta) []TabMeta {
 func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 	runtimeView := a.sessionRuntimeViewLocked(tab)
 	sessionPath := tab.currentSessionPath()
-	var sessionRevision int64
-	var sessionDigest string
-	if meta, ok, err := agent.LoadBranchMeta(sessionPath); err == nil && ok {
-		sessionRevision = meta.Revision
-		sessionDigest = meta.ContentDigest
-	}
+	sessionRevision, sessionDigest := a.tabHistoryFingerprint(tab, sessionPath)
 	floor := derivedQualityFloor(tab)
 	m := TabMeta{
 		ID:                tab.ID,

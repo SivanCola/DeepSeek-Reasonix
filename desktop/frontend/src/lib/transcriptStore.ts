@@ -12,6 +12,7 @@ import { convertRecord, entryToRecord, itemIdForToolCall, type RecordConversion,
 import { readTranscriptContent } from "./transcriptContentRead";
 import { appendLivePageEntries, type TranscriptWindowPage } from "./transcriptLiveWindow";
 import { RESOURCE_BUDGETS } from "./resourceBudgets";
+import { bindTranscriptSession, boundSessionKey, detachTranscriptTab, type TranscriptTabBinding } from "./transcriptSessionBinding";
 import { fileDiffFromWire } from "./tools";
 import type {
   HistoryEntry,
@@ -27,10 +28,6 @@ const DEFAULT_HISTORY_BODY_BUDGET = RESOURCE_BUDGETS.historyBodyBytes;
 const DEFAULT_MARKDOWN_BUDGET = 16 << 20;
 const DEFAULT_WINDOW_MAX_PAGES = RESOURCE_BUDGETS.historyWindowPages;
 const DEFAULT_WINDOW_PAGE_ENTRIES = RESOURCE_BUDGETS.historyPageEntries;
-
-function sessionKeyFor(tabId: string, sessionPath: string): string {
-  return `${tabId}\n${sessionPath}`;
-}
 
 function sliceRevisionKnown(slice: Pick<HistorySlice, "revision" | "revisionKnown">): boolean {
   // Compatibility with the first HistorySlice contract: positive revisions
@@ -62,7 +59,7 @@ export class TranscriptStore {
 
   /** Install the page that belongs to a Follow cut, without another read. */
   installSlice(tabId: string, sessionPath: string, slice: HistorySlice): TranscriptProjection {
-    const key = sessionKeyFor(tabId, sessionPath);
+    const key = this.sessionKeyFor(tabId, sessionPath);
     const session = this.sessions.get(key) ?? this.newSession(key, tabId, sessionPath);
     session.generation++;
     session.canonicalV2 = true;
@@ -102,6 +99,8 @@ export class TranscriptStore {
   private readonly windowPageEntries: number;
   /** Insertion-ordered (oldest first); touch re-inserts at the end. */
   private readonly sessions = new Map<string, SessionTranscript>();
+  /** Ephemeral UI tab bindings; canonical resident ownership is session-based. */
+  private readonly tabBindings = new Map<string, TranscriptTabBinding>();
   private readonly tabPins = new Map<string, { live: boolean; active: boolean }>();
   private readonly listeners = new Map<string, Set<(change: TranscriptContentChange) => void>>();
   private readonly markdown: TranscriptMarkdownCache;
@@ -119,17 +118,18 @@ export class TranscriptStore {
 
   // ── session identity / LRU ────────────────────────────────────────────────
 
-  /** Fence same-path binding replacements before any cache lookup or read. */
+  private sessionKeyFor(tabId: string, sessionPath: string): string {
+    return boundSessionKey(this.tabBindings, tabId, sessionPath);
+  }
+
+  /** Atomically bind an ephemeral tab to a stable canonical session owner. */
   noteSessionBinding(tabId: string, sessionPath: string, bindingKey: string): boolean {
-    const key = sessionKeyFor(tabId, sessionPath);
-    let session = this.sessions.get(key);
-    if (session?.bindingKey === bindingKey) return false;
-    const replaced = Boolean(session);
-    if (session) this.evictSession(session);
-    session = this.newSession(key, tabId, sessionPath);
-    session.bindingKey = bindingKey;
-    this.sessions.set(key, session);
-    return replaced;
+    return bindTranscriptSession(
+      this.tabBindings, this.sessions, tabId, sessionPath, bindingKey,
+      key => this.newSession(key, tabId, sessionPath),
+      session => this.evictSession(session),
+      session => this.touch(session),
+    );
   }
 
   private newSession(key: string, tabId: string, sessionPath: string): SessionTranscript {
@@ -207,11 +207,9 @@ export class TranscriptStore {
     }
   }
 
-  /** Drop all sessions of a tab (pruned surface, closed tab). */
+  /** Detach a tab. Canonical sessions remain LRU-resident across tab IDs. */
   evictTab(tabId: string): void {
-    for (const [key, session] of Array.from(this.sessions.entries())) {
-      if (session.tabId === tabId) this.sessions.delete(key);
-    }
+    detachTranscriptTab(this.tabBindings, this.sessions, tabId, session => this.evictSession(session));
     this.tabPins.delete(tabId);
   }
 
@@ -282,7 +280,7 @@ export class TranscriptStore {
     sessionPath: string,
     expected?: { revision?: number; digest?: string },
   ): TranscriptProjection | undefined {
-    const session = this.sessions.get(sessionKeyFor(tabId, sessionPath));
+    const session = this.sessions.get(this.sessionKeyFor(tabId, sessionPath));
     if (!session || session.records.length === 0
       || (expected !== undefined && !this.matchesExpectedFingerprint(session, expected.revision, expected.digest))) return undefined;
     this.touch(session);
@@ -291,7 +289,7 @@ export class TranscriptStore {
 
   /** Test/diagnostic introspection. */
   isResident(tabId: string, sessionPath: string): boolean {
-    const session = this.sessions.get(sessionKeyFor(tabId, sessionPath));
+    const session = this.sessions.get(this.sessionKeyFor(tabId, sessionPath));
     return Boolean(session && session.records.length > 0);
   }
 
@@ -344,7 +342,7 @@ export class TranscriptStore {
   }
 
   generationOf(tabId: string, sessionPath: string): number | undefined {
-    return this.sessions.get(sessionKeyFor(tabId, sessionPath))?.generation;
+    return this.sessions.get(this.sessionKeyFor(tabId, sessionPath))?.generation;
   }
 
   // ── record merge ops ──────────────────────────────────────────────────────
@@ -448,7 +446,7 @@ export class TranscriptStore {
    * old records are reclaimed and their mounted item ids are returned.
    */
   appendEntries(tabId: string, sessionPath: string, entries: HistoryEntry[]): AppendEntriesResult | undefined {
-    const session = this.sessions.get(sessionKeyFor(tabId, sessionPath));
+    const session = this.sessions.get(this.sessionKeyFor(tabId, sessionPath));
     if (!session || session.records.length === 0) return undefined;
     const fresh = entries.filter((entry) => !session.byId.has(entry.entryId));
     this.appendRecords(session, fresh);
@@ -465,7 +463,7 @@ export class TranscriptStore {
   }
 
   upsertEntries(tabId: string, sessionPath: string, entries: HistoryEntry[], commitSeq?: number): AppendEntriesResult | undefined {
-    const session = this.sessions.get(sessionKeyFor(tabId, sessionPath));
+    const session = this.sessions.get(this.sessionKeyFor(tabId, sessionPath));
     if (!session) return undefined;
     session.latestSequence = Math.max(session.latestSequence ?? session.revision, commitSeq ?? 0);
     // The reader owns a contiguous window. A remote tail must not evict it or
@@ -486,7 +484,7 @@ export class TranscriptStore {
   }
 
   isReadingHistory(tabId: string, sessionPath: string): boolean {
-    return Boolean(this.sessions.get(sessionKeyFor(tabId, sessionPath))?.hasNewer);
+    return Boolean(this.sessions.get(this.sessionKeyFor(tabId, sessionPath))?.hasNewer);
   }
 
   /** Append newer entries (live tail / fresh suffix). */
@@ -653,7 +651,7 @@ export class TranscriptStore {
     sessionPath: string,
     options: HistoryReadOptions & { preferResident?: boolean; expectedRevision?: number; expectedDigest?: string } = {},
   ): Promise<TranscriptProjection | undefined> {
-    const key = sessionKeyFor(tabId, sessionPath);
+    const key = this.sessionKeyFor(tabId, sessionPath);
     const existing = this.sessions.get(key);
     if (options.preferResident && existing && existing.records.length > 0 &&
       this.matchesExpectedFingerprint(existing, options.expectedRevision, options.expectedDigest)) {
@@ -718,7 +716,7 @@ export class TranscriptStore {
     sessionPath: string,
     options: HistoryReadOptions = {},
   ): Promise<LoadOlderResult | undefined> {
-    const key = sessionKeyFor(tabId, sessionPath);
+    const key = this.sessionKeyFor(tabId, sessionPath);
     const session = this.sessions.get(key);
     if (!session || session.records.length === 0) {
       // Evicted or never loaded: re-prime from the newest page; callers must
@@ -791,7 +789,7 @@ export class TranscriptStore {
     sessionPath: string,
     options: HistoryReadOptions = {},
   ): Promise<LoadNewerResult | undefined> {
-    const key = sessionKeyFor(tabId, sessionPath);
+    const key = this.sessionKeyFor(tabId, sessionPath);
     const session = this.sessions.get(key);
     if (!session || session.records.length === 0) return undefined;
     if (!session.hasNewer || !session.newerCursor || session.newerInFlight) return undefined;
