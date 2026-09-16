@@ -122,36 +122,38 @@ func (a *App) migrateLegacyHeads(ctx context.Context, path string, source deskto
 			}
 		}
 		if len(perHead.headConversions) > 0 && head == record.LegacySelectedHead && source.pairedRoot != "" {
-			// The identity cutover can leave a current paired store without a
-			// Source field as well as provenance-linked historical conversions.
-			// Include it in the same decision before suppressing its normal scan.
-			id := agent.BranchID(path)
-			dir := filepath.Join(source.pairedRoot, id)
-			manifest, err := readDesktopMigrationManifest(dir)
-			if err != nil && !os.IsNotExist(err) {
-				joined = errors.Join(joined, err, updateDesktopMigrationLedger(headKey, "", "failed", "paired_read"))
+			if err := perHead.includePairedConversion(path, head, headKey); err != nil {
+				joined = errors.Join(joined, err)
 				continue
-			}
-			if err == nil {
-				if manifest.SessionID != id {
-					joined = errors.Join(joined, session.ErrDamagedStore, updateDesktopMigrationLedger(headKey, "", "failed", "paired_identity"))
-					continue
-				}
-				found := false
-				for _, candidate := range perHead.headConversions {
-					if sameDesktopPath(filepath.Join(candidate.Root, candidate.SessionID), dir) {
-						found = true
-						break
-					}
-				}
-				if !found {
-					perHead.headConversions = append([]desktopMigrationConversion{{Root: source.pairedRoot, SessionID: id, HeadID: head, Codec: manifest.Codec}}, perHead.headConversions...)
-				}
 			}
 		}
 		joined = errors.Join(joined, a.migrateLegacyHead(ctx, path, perHead, "", head, headKey, head == record.LegacySelectedHead))
 	}
 	return joined
+}
+
+// The identity cutover can leave a current paired store without a Source field
+// alongside provenance-linked conversions. Include it before suppressing its scan.
+func (source *desktopMigrationSource) includePairedConversion(path, head, key string) error {
+	id := agent.BranchID(path)
+	dir := filepath.Join(source.pairedRoot, id)
+	manifest, err := readDesktopMigrationManifest(dir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return errors.Join(err, updateDesktopMigrationLedger(key, "", "failed", "paired_read"))
+	}
+	if manifest.SessionID != id {
+		return errors.Join(session.ErrDamagedStore, updateDesktopMigrationLedger(key, "", "failed", "paired_identity"))
+	}
+	for _, candidate := range source.headConversions {
+		if sameDesktopPath(filepath.Join(candidate.Root, candidate.SessionID), dir) {
+			return nil
+		}
+	}
+	source.headConversions = append([]desktopMigrationConversion{{Root: source.pairedRoot, SessionID: id, HeadID: head, Codec: manifest.Codec}}, source.headConversions...)
+	return nil
 }
 
 func saveDesktopMigrationHeads(key string, heads []string, selected, revision string, conversions []desktopMigrationConversion) (desktopMigrationRecord, error) {

@@ -197,31 +197,7 @@ func (a *App) migrateDesktopSessionsV5(ctx context.Context) error {
 	joined = errors.Join(joined, conversionErr)
 	for _, source := range legacySources {
 		source.conversions, source.handledStores = conversions, handledStores
-		// A paired checkpoint and event store are one migration decision. Never
-		// publish the sidecar independently after a conflict or source failure.
-		addStores(source.scope, source.workspaceRoot, source.pairedRoot)
-		{
-			entries, err := os.ReadDir(source.root)
-			if err != nil && !os.IsNotExist(err) {
-				joined = errors.Join(joined, err)
-			}
-			for _, entry := range entries {
-				if !entry.IsDir() && store.IsSessionTranscriptName(entry.Name()) && !strings.HasPrefix(entry.Name(), ".") {
-					path := filepath.Join(source.root, entry.Name())
-					pairedRoot, err := desktopLegacyPairedRoot(path, source.pairedRoot)
-					if err != nil {
-						joined = errors.Join(joined, err)
-						continue
-					}
-					if paired := add(source.scope, source.workspaceRoot, pairedRoot); paired != nil {
-						if paired.pairedIDs == nil {
-							paired.pairedIDs = map[string]bool{}
-						}
-						paired.pairedIDs[agent.BranchID(path)] = true
-					}
-				}
-			}
-		}
+		joined = errors.Join(joined, markDesktopMigrationPairedStores(source, sources))
 		if err := a.migrateLegacyDirectory(ctx, source); err != nil {
 			joined = errors.Join(joined, err)
 		}
@@ -231,6 +207,37 @@ func (a *App) migrateDesktopSessionsV5(ctx context.Context) error {
 		source.handledStores = handledStores
 		if err := a.migrateCanonicalStore(ctx, *source); err != nil {
 			joined = errors.Join(joined, err)
+		}
+	}
+	return joined
+}
+
+// A paired checkpoint and event store are one migration decision. Never
+// publish the sidecar independently after a conflict or source failure.
+func markDesktopMigrationPairedStores(source desktopMigrationSource, sources map[string]*desktopMigrationSource) error {
+	entries, err := os.ReadDir(source.root)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var joined error
+	for _, entry := range entries {
+		if entry.IsDir() || !store.IsSessionTranscriptName(entry.Name()) || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		path := filepath.Join(source.root, entry.Name())
+		pairedRoot, err := desktopLegacyPairedRoot(path, source.pairedRoot)
+		if err != nil {
+			joined = errors.Join(joined, err)
+			continue
+		}
+		if paired := sources[canonicalRuntimeRoot(pairedRoot)]; paired != nil {
+			if paired.pairedIDs == nil {
+				paired.pairedIDs = map[string]bool{}
+			}
+			paired.pairedIDs[agent.BranchID(path)] = true
 		}
 	}
 	return joined

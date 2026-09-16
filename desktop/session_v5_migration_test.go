@@ -70,7 +70,7 @@ func TestDesktopV5StartupMigratesColdV4WithoutLegacyOrOpenTab(t *testing.T) {
 				}
 				original[name] = body
 			}
-			for attempt := 0; attempt < 2; attempt++ {
+			for attempt := range 2 {
 				app := NewApp()
 				t.Cleanup(app.closeSessionServices)
 				if err := app.migrateDesktopSessionsV5(t.Context()); err != nil {

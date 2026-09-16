@@ -263,19 +263,7 @@ func (a *App) migrateConversionLineage(ctx context.Context, path, headID string,
 			source.conversionAdoptions = append(source.conversionAdoptions, &desktopMigrationReceipt{TargetSessionID: node.checkpoint.record.TargetSessionID, ContentDigest: node.checkpoint.record.ContentDigest})
 		}
 	}
-	for i := range nodes {
-		for j := range nodes {
-			if i == j || !session.MigrationHistoryContains(nodes[j].messages, nodes[i].messages) {
-				continue
-			}
-			// Equal histories prefer the earlier (more recently converted) node.
-			if session.MigrationHistoryContains(nodes[i].messages, nodes[j].messages) && j > i {
-				continue
-			}
-			nodes[i].coveredBy = j
-			break
-		}
-	}
+	reduceDesktopMigrationLineage(nodes)
 	for i := range nodes {
 		if nodes[i].coveredBy >= 0 {
 			continue
@@ -308,6 +296,23 @@ func (a *App) migrateConversionLineage(ctx context.Context, path, headID string,
 		}
 	}
 	return nil
+}
+
+// Select maximal histories within an already-proven lineage. Equal histories
+// prefer the earlier (more recently converted) node; prefix edges cannot cycle.
+func reduceDesktopMigrationLineage(nodes []desktopMigrationStagedNode) {
+	for i := range nodes {
+		for j := range nodes {
+			if i == j || !session.MigrationHistoryContains(nodes[j].messages, nodes[i].messages) {
+				continue
+			}
+			if session.MigrationHistoryContains(nodes[i].messages, nodes[j].messages) && j > i {
+				continue
+			}
+			nodes[i].coveredBy = j
+			break
+		}
+	}
 }
 
 // Stored-only chains (for example native v3 -> v4 with both directories left
