@@ -6,14 +6,17 @@
 
 持久化会话操作按以下顺序解析 `SessionSelector`：
 
-1. canonical `SessionRef`；
+1. canonical `SessionRef`（`hostId + sessionId`）；
 2. 经过校验的 `sessionPath`；
-3. `topicId`。
+3. 作为 legacy/仅 topic 兼容查询的 `topicId`。
 
-高优先级字段无效时直接报错，不回退到低优先级字段。canonical 身份为
-`hostId + sessionId`；legacy 身份为规范化且经过目录校验的路径，并结合操作
-观察到的 BranchMeta/文件代次。运行时 binding 只是可选投影，不能用于判断
-持久化会话是否存在。
+高优先级字段无效时直接报错，不回退到低优先级字段。这里有意不提供裸
+`sessionId` selector：canonical 的 session ID 必须由 `hostId` 限定，而
+legacy 会话可能根本没有 canonical session ID。`topicId` 不是会话身份，只是
+最低优先级的兼容地址；若一个 topic 对应多个会话，调用方必须改传
+`SessionRef` 或 `sessionPath`。legacy 身份为规范化且经过目录校验的路径，并
+结合操作观察到的 BranchMeta/文件代次。运行时 binding 只是可选投影，不能
+用于判断持久化会话是否存在。
 
 标题、历史、搜索、归档、恢复、移动、删除、Fork 以及完整历史复制均可在
 不选择、不启动目标对话 controller 的情况下执行。legacy 移动会先通过既有

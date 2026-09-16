@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -585,17 +586,16 @@ func (a *App) planCanonicalFork(ref session.SessionRef, turnBoundary string) (ca
 	if sourceState.Lifecycle != workspacestate.Active {
 		return canonicalForkPlan{}, workspacestate.ErrMutationConflict
 	}
-	service := a.desktopSessionService("")
-	targets, err := service.ForkTargetSetFor(a.bootContext(), ref)
+	targets, err := a.desktopSessionService("").ForkTargetSetFor(a.bootContext(), ref)
 	if err != nil {
 		return canonicalForkPlan{}, err
 	}
 	turnBoundary = strings.TrimSpace(turnBoundary)
 	var selected session.ForkTarget
 	if turnBoundary == "" {
-		for i := len(targets.Targets) - 1; i >= 0; i-- {
-			if targets.Targets[i].Available {
-				selected = targets.Targets[i]
+		for _, target := range slices.Backward(targets.Targets) {
+			if target.Available {
+				selected = target
 				break
 			}
 		}
@@ -815,7 +815,7 @@ func (a *App) copyLegacySessionTarget(target SessionTarget, child session.Sessio
 	if err != nil {
 		return err
 	}
-	defer staging.CloseAll(context.Background())
+	defer func() { _ = staging.CloseAll(context.Background()) }()
 	source := session.SessionRef{HostID: localDesktopHostID, SessionID: migrated.TargetID}
 	copied, err := staging.CopySession(a.bootContext(), session.CopyRequest{
 		Source: source, ChildID: child.SessionID, OperationID: operationID, CWD: cwd,

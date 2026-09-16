@@ -14,8 +14,19 @@ import (
 // migration originals are retained as upgrade evidence, with mappings acting
 // as tombstones so background discovery cannot import them again.
 func (a *App) PurgeCanonicalSession(ref session.SessionRef) error {
-	_, err := a.purgeCanonicalSessionWithOperation(ref, "delete-"+strings.TrimPrefix(newTabID(), "tab_"))
-	return err
+	if err := validateLocalSessionRef(ref); err != nil {
+		return err
+	}
+	release := a.lockRuntimeMutation("purge archived session")
+	defer release()
+	if err := a.purgeCanonicalSession(a.bootContext(), ref); err != nil {
+		return err
+	}
+	a.emitProjectTreeChanged()
+	a.emitSessionTargetChange("session_deleted", SessionTargetChangeEvent{
+		TargetKey: (SessionTarget{SessionRef: ref}).key(),
+	})
+	return nil
 }
 
 func (a *App) purgeCanonicalSessionWithOperation(ref session.SessionRef, operationID string) (SessionTarget, error) {

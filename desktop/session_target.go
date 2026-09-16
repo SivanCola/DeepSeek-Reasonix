@@ -70,7 +70,9 @@ func (e *SessionOperationError) RPCErrorData() map[string]any {
 }
 
 // SessionSelector is the stable target address accepted by session-level
-// operations. Higher-priority fields never fall back when invalid.
+// operations. Ref contains the canonical host-qualified session ID; TopicID is
+// only the lowest-priority legacy/topic-only compatibility lookup.
+// Higher-priority fields never fall back when invalid.
 type SessionSelector struct {
 	Ref         *session.SessionRef `json:"ref,omitempty"`
 	SessionPath string              `json:"sessionPath,omitempty"`

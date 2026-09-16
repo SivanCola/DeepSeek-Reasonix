@@ -24,7 +24,7 @@ async function main() {
   assert.deepEqual(selectors, [{ sessionPath: "/history/background.jsonl" }]);
   assert.equal(refreshes, 1);
   assert.equal(topicNotifications, 1);
-  assert.deepEqual(errors, []);
+  assert.equal(errors.length, 0);
   assert.deepEqual(transcript, { identity: {}, draft: "keep draft", scrollTop: 417 });
 
   const structured = { data: { sessionCode: "operation_busy" } };

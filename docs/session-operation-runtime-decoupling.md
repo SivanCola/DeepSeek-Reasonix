@@ -8,15 +8,19 @@ operations introduced in September 2026.
 Persistent session operations resolve an explicit `SessionSelector` in this
 order:
 
-1. canonical `SessionRef`;
+1. canonical `SessionRef` (`hostId + sessionId`);
 2. validated `sessionPath`;
-3. `topicId`.
+3. `topicId` as a legacy/topic-only compatibility lookup.
 
 An invalid higher-priority selector is an error and never falls through to a
-lower-priority field. Canonical identity is `hostId + sessionId`. Legacy
-identity is the validated canonical path plus the BranchMeta/file generation
-observed by the operation. Runtime bindings are optional projections; they are
-not proof that a durable session exists.
+lower-priority field. There is intentionally no bare `sessionId` selector:
+canonical session IDs are qualified by `hostId`, while legacy sessions may not
+have a canonical session ID at all. A `topicId` is not a session identity and
+is accepted only as the lowest-priority compatibility address; if it resolves
+to multiple sessions, the caller must provide a `SessionRef` or `sessionPath`.
+Legacy identity is the validated canonical path plus the BranchMeta/file
+generation observed by the operation. Runtime bindings are optional
+projections; they are not proof that a durable session exists.
 
 Persistent title, history, search, archive, restore, move, delete, fork, and
 full-history copy operations can run without selecting or booting the target

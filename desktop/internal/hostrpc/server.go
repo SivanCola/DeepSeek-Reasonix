@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"maps"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -246,9 +247,7 @@ func (s *Server) invoke(ctx context.Context, raw json.RawMessage) (any, error) {
 	data := map[string]any{"method": p.Method}
 	var detailed interface{ RPCErrorData() map[string]any }
 	if errors.As(err, &detailed) {
-		for key, value := range detailed.RPCErrorData() {
-			data[key] = value
-		}
+		maps.Copy(data, detailed.RPCErrorData())
 	}
 	var unknown *UnknownMethodError
 	var invalid *InvalidArgsError

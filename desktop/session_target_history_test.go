@@ -16,7 +16,7 @@ func writeTargetHistoryFixture(t *testing.T, dir, name, marker string) string {
 	t.Helper()
 	path := filepath.Join(dir, name+".jsonl")
 	session := agent.NewSession("")
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		session.Add(provider.Message{Role: provider.RoleUser, Content: marker + " user"})
 		session.Add(provider.Message{Role: provider.RoleAssistant, Content: marker + " answer"})
 	}
