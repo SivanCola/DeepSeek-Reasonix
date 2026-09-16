@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"reasonix/internal/agent"
 	"reasonix/internal/event"
 	"reasonix/internal/transcript"
 )
@@ -353,6 +355,42 @@ func (s *Service) ContinuePrototype(ctx context.Context, sourceDir string) (*Run
 	result, err := ImportPrototype(ctx, sourceDir, filesystem.Root)
 	if err != nil {
 		return nil, result, err
+	}
+	runtime, err := s.openRuntime(ctx, SessionRef{HostID: s.hostID, SessionID: result.TargetID})
+	return runtime, result, err
+}
+
+// ContinueImportedFrom resolves legacy history against its original paired
+// store while publishing only into this service's separate staging root.
+func (s *Service) ContinueImportedFrom(ctx context.Context, sourcePath, sourceRoot, headID string) (*Runtime, ImportResult, error) {
+	return s.ContinueImportedSource(ctx, sourcePath, filepath.Join(sourceRoot, agent.BranchID(sourcePath)), headID)
+}
+
+// ContinueImportedSource accepts a provenance-linked directory whose identity
+// may have changed when a legacy head was previously converted.
+func (s *Service) ContinueImportedSource(ctx context.Context, sourcePath, sourceDir, headID string) (*Runtime, ImportResult, error) {
+	filesystem, ok := s.persistence.(*FilesystemPersistence)
+	if !ok {
+		return nil, ImportResult{}, errors.New("session: persistence does not support imported sessions")
+	}
+	result, err := importSourceForLegacyAt(ctx, sourcePath, sourceDir, filesystem.Root, headID, CreateOptions{})
+	if err != nil {
+		return nil, result, err
+	}
+	sourceRoot := filepath.Dir(sourceDir)
+	if result.Kind == "final" && filepath.Clean(sourceRoot) != filepath.Clean(filesystem.Root) {
+		tmp, err := os.MkdirTemp("", "reasonix-canonical-stage-")
+		if err != nil {
+			return nil, result, err
+		}
+		defer os.RemoveAll(tmp)
+		bundle := filepath.Join(tmp, "bundle")
+		if err := NewFilesystemPersistence(sourceRoot).exportCold(ctx, result.TargetID, bundle); err != nil {
+			return nil, result, err
+		}
+		if _, err := s.Import(ctx, bundle); err != nil {
+			return nil, result, err
+		}
 	}
 	runtime, err := s.openRuntime(ctx, SessionRef{HostID: s.hostID, SessionID: result.TargetID})
 	return runtime, result, err

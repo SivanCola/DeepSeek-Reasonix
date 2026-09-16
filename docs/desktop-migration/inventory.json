@@ -5570,8 +5570,22 @@
     },
     {
       "kind": "persistence",
+      "name": "events.jsonl",
+      "location": "desktop/session_v5_migration_checkpoint.go:106",
+      "class": "keep-business",
+      "owner": "format unchanged; read by both shells"
+    },
+    {
+      "kind": "persistence",
       "name": "fork-operations.json",
       "location": "desktop/fork_operations.go:37",
+      "class": "keep-business",
+      "owner": "format unchanged; read by both shells"
+    },
+    {
+      "kind": "persistence",
+      "name": "header.json",
+      "location": "desktop/session_v5_migration_checkpoint.go:106",
       "class": "keep-business",
       "owner": "format unchanged; read by both shells"
     },
@@ -5586,6 +5600,13 @@
       "kind": "persistence",
       "name": "heartbeat-tasks.runs.json",
       "location": "desktop/heartbeat_sidecar.go:34",
+      "class": "keep-business",
+      "owner": "format unchanged; read by both shells"
+    },
+    {
+      "kind": "persistence",
+      "name": "manifest.json",
+      "location": "desktop/session_v5_migration_checkpoint.go:105",
       "class": "keep-business",
       "owner": "format unchanged; read by both shells"
     },
@@ -5620,7 +5641,7 @@
     {
       "kind": "persistence",
       "name": "session-migration-v5.json",
-      "location": "desktop/session_v5_migration.go:39",
+      "location": "desktop/session_v5_migration.go:46",
       "class": "keep-business",
       "owner": "format unchanged; read by both shells"
     },

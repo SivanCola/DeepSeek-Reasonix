@@ -102,6 +102,29 @@ type frozenLegacyHead struct {
 	freezeDir     string
 }
 
+// LegacyMigrationHeads lists all heads from an immutable copy, without changing
+// source selection, caches, or logs. Retired heads are returned for the caller
+// to distinguish deliberate deletion from a missing branch.
+func LegacyMigrationHeads(ctx context.Context, sourcePath string) ([]agent.SessionHead, error) {
+	sourcePath = agent.CanonicalSessionPath(sourcePath)
+	lease, err := agent.TryAcquireSessionLease(sourcePath)
+	if err != nil {
+		return nil, err
+	}
+	artifacts, _, dir, err := freezeLegacyArtifacts(ctx, sourcePath)
+	lease.Release()
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+	for _, artifact := range artifacts {
+		if artifact.path == sourcePath {
+			return agent.ListSessionHeadsForMigration(ctx, artifact.frozenPath)
+		}
+	}
+	return nil, os.ErrNotExist
+}
+
 // freezeLegacyHead acquires the source lease, copies every durable artifact
 // byte-for-byte, then parses only the frozen copy. The lease is released before
 // parsing, which is safe precisely because the parse never reads the original.

@@ -1,15 +1,179 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
 	"reasonix/desktop/internal/workspacestate"
 	"reasonix/internal/agent"
+	"reasonix/internal/config"
 	"reasonix/internal/provider"
 	"reasonix/internal/session"
 )
+
+// These fixtures have no Desktop header or open tab, just like v4-only
+// conversations left behind after a downgrade. Their catalog cache is absent.
+func coldV4MigrationFixture(t *testing.T, root, id string) *session.Service {
+	t.Helper()
+	service, err := session.NewService("migration-source", session.NewFilesystemPersistence(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = service.Shutdown(t.Context()) })
+	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(map[string]any{"message": provider.Message{ID: "user", Role: provider.RoleUser, Content: "恢复完整对话"}})
+	if _, err := runtime.Session().AppendBatch(t.Context(), "message", []session.Event{{Kind: "message/complete", Payload: payload}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Close(t.Context(), runtime.Ref()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(root, ".query-cache")); err != nil {
+		t.Fatal(err)
+	}
+	info, err := session.NewFilesystemPersistence(root).Stat(t.Context(), id)
+	if err != nil || info.MetadataStatus != session.MetadataPending || info.Turns != 0 || info.Title != "" || info.Preview != "" {
+		t.Fatalf("fixture must reproduce cold, empty display metadata: %#v, %v", info, err)
+	}
+	return service
+}
+
+func TestDesktopV5StartupMigratesColdV4WithoutLegacyOrOpenTab(t *testing.T) {
+	for _, scope := range []string{"project", "global"} {
+		t.Run(scope, func(t *testing.T) {
+			isolateDesktopUserDirs(t)
+			workspace := filepath.Join(t.TempDir(), "中文项目")
+			if err := os.MkdirAll(workspace, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			sourceRoot := config.SessionStoreDir()
+			if scope == "project" {
+				sourceRoot = config.ProjectSessionStoreDir(workspace)
+				if err := saveProjectsFile(desktopProjectFile{Projects: []desktopProject{{Root: workspace}}}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			const id = "v4-native"
+			coldV4MigrationFixture(t, sourceRoot, id)
+			original := map[string][]byte{}
+			for _, name := range []string{"manifest.json", "events.frames"} {
+				body, err := os.ReadFile(filepath.Join(sourceRoot, id, name))
+				if err != nil {
+					t.Fatal(err)
+				}
+				original[name] = body
+			}
+			for attempt := 0; attempt < 2; attempt++ {
+				app := NewApp()
+				t.Cleanup(app.closeSessionServices)
+				if err := app.migrateDesktopSessionsV5(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				workspaceID := workspacestate.GlobalWorkspaceID
+				if scope == "project" {
+					workspaceID = desktopWorkspaceID(scope, workspace)
+				}
+				state, err := app.workspaceRegistry().Load(t.Context())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if ids := state.Workspaces[workspaceID].SessionIDs; len(ids) != 1 || ids[0] != id {
+					t.Fatalf("attempt %d: cold v4 membership = %v", attempt, ids)
+				}
+				page, err := app.ReadSessionHistory(session.SessionRef{HostID: localDesktopHostID, SessionID: id}, "", 10)
+				if err != nil || len(page.Messages) != 1 || page.Messages[0].Content != "恢复完整对话" {
+					t.Fatalf("restored history = %#v, %v", page, err)
+				}
+				diagnostics, err := app.GetSessionArchitectureDiagnostics()
+				if err != nil || diagnostics.MigrationCompleted != 1 || diagnostics.SessionHeadersTotal != 1 {
+					t.Fatalf("migration diagnostics = %#v, %v", diagnostics, err)
+				}
+				app.closeSessionServices()
+			}
+			for name, before := range original {
+				after, err := os.ReadFile(filepath.Join(sourceRoot, id, name))
+				if err != nil || !bytes.Equal(before, after) {
+					t.Fatalf("source %s changed: %v", name, err)
+				}
+			}
+			info, err := session.NewFilesystemPersistence(sourceRoot).Stat(t.Context(), id)
+			if err != nil || info.MetadataStatus != session.MetadataPending {
+				t.Fatalf("migration must not rebuild source display metadata: %#v, %v", info, err)
+			}
+		})
+	}
+}
+
+func TestCanonicalV4MigrationReportsSourceFailureAndRetriesAfterRepair(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	root := config.SessionStoreDir()
+	coldV4MigrationFixture(t, root, "healthy")
+	coldV4MigrationFixture(t, root, "damaged")
+	manifestPath := filepath.Join(root, "damaged", "manifest.json")
+	original, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifestPath, []byte("broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app := NewApp()
+	t.Cleanup(app.closeSessionServices)
+	if err := app.migrateDesktopSessionsV5(t.Context()); err == nil {
+		t.Fatal("damaged source must not silently disappear")
+	}
+	diagnostics, err := app.GetSessionArchitectureDiagnostics()
+	if err != nil || diagnostics.MigrationFailed != 1 || diagnostics.MigrationCompleted != 1 || diagnostics.WorkspaceMembersTotal != 1 {
+		t.Fatalf("failure must be reported while healthy source migrates: %#v, %v", diagnostics, err)
+	}
+	if err := os.WriteFile(manifestPath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app.closeSessionServices()
+	app = NewApp()
+	t.Cleanup(app.closeSessionServices)
+	if err := app.migrateDesktopSessionsV5(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	diagnostics, err = app.GetSessionArchitectureDiagnostics()
+	if err != nil || diagnostics.MigrationFailed != 0 || diagnostics.MigrationCompleted != 2 || diagnostics.WorkspaceMembersTotal != 2 {
+		t.Fatalf("repaired source must retry: %#v, %v", diagnostics, err)
+	}
+}
+
+func TestCanonicalV4MigrationResumesAfterPublicationBeforeWorkspaceAttach(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	root := config.SessionStoreDir()
+	old := coldV4MigrationFixture(t, root, "published")
+	app := NewApp()
+	t.Cleanup(app.closeSessionServices)
+	source := desktopMigrationSource{root: root, scope: "global"}
+	err := app.migrateCanonicalSession(t.Context(), old, source, "missing-workspace", "published")
+	if !errors.Is(err, workspacestate.ErrWorkspaceNotFound) {
+		t.Fatalf("expected interruption at registry publication: %v", err)
+	}
+	ref := session.SessionRef{HostID: localDesktopHostID, SessionID: "published"}
+	if _, err := app.desktopSessionService("").Query().Snapshot(t.Context(), ref); err != nil {
+		t.Fatalf("target must already be durable: %v", err)
+	}
+	app.closeSessionServices()
+	app = NewApp()
+	t.Cleanup(app.closeSessionServices)
+	if err := app.migrateDesktopSessionsV5(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	diagnostics, err := app.GetSessionArchitectureDiagnostics()
+	if err != nil || diagnostics.MigrationFailed != 0 || diagnostics.MigrationCompleted != 1 || diagnostics.SessionHeadersTotal != 1 || diagnostics.WorkspaceMembersTotal != 1 {
+		t.Fatalf("restart must attach existing target exactly once: %#v, %v", diagnostics, err)
+	}
+}
 
 func TestCanonicalV4MigrationPublishesHeaderThenWorkspaceMembershipIdempotently(t *testing.T) {
 	isolateDesktopUserDirs(t)

@@ -24,19 +24,42 @@ type ImportResult struct {
 	Kind     string
 }
 
+// MigrationHistoryContains compares durable transcript meaning using the same
+// normalization as paired imports. Callers must establish provenance first;
+// matching text alone is not proof that two sessions share an identity.
+func MigrationHistoryContains(history, prefix []provider.Message) bool {
+	history, prefix = comparableImportMessages(history), comparableImportMessages(prefix)
+	if len(prefix) > len(history) {
+		return false
+	}
+	for index := range prefix {
+		if !reflect.DeepEqual(history[index], prefix[index]) {
+			return false
+		}
+	}
+	return true
+}
+
 func importSourceForLegacy(ctx context.Context, sourcePath, targetRoot, headID string) (ImportResult, error) {
 	return importSourceForLegacyWithHeader(ctx, sourcePath, targetRoot, headID, CreateOptions{})
 }
 
 func importSourceForLegacyWithHeader(ctx context.Context, sourcePath, targetRoot, headID string, options CreateOptions) (ImportResult, error) {
+	return importSourceForLegacyFrom(ctx, sourcePath, targetRoot, targetRoot, headID, options)
+}
+
+func importSourceForLegacyFrom(ctx context.Context, sourcePath, sourceRoot, targetRoot, headID string, options CreateOptions) (ImportResult, error) {
+	return importSourceForLegacyAt(ctx, sourcePath, filepath.Join(sourceRoot, agent.BranchID(sourcePath)), targetRoot, headID, options)
+}
+
+func importSourceForLegacyAt(ctx context.Context, sourcePath, previewDir, targetRoot, headID string, options CreateOptions) (ImportResult, error) {
 	// The identity cutover deliberately reuses BranchID(sourcePath) for the
 	// canonical runtime. Once a final v4 store exists at that identity it is
 	// authoritative: treating it as a retired "paired preview" both rejects a
 	// valid codec and can remigrate an older checkpoint over newer v4 work.
-	previewDir := filepath.Join(targetRoot, agent.BranchID(sourcePath))
 	if final, finalErr := readManifest(filepath.Join(previewDir, "manifest.json")); finalErr == nil {
-		if final.SessionID != agent.BranchID(sourcePath) {
-			return ImportResult{}, fmt.Errorf("session: canonical store identity %q does not match legacy identity %q", final.SessionID, agent.BranchID(sourcePath))
+		if final.SessionID != filepath.Base(previewDir) {
+			return ImportResult{}, fmt.Errorf("session: canonical store identity %q does not match directory identity %q", final.SessionID, filepath.Base(previewDir))
 		}
 		source := Source{Path: sourcePath, Version: Codec}
 		if final.Source != nil {
@@ -135,7 +158,7 @@ func compareLegacySpool(path string, preview []provider.Message) (importMessageR
 		if len(comparable) == 0 {
 			continue
 		}
-		if firstDifference < 0 && (legacyCount >= len(preview) || !reflect.DeepEqual(comparable[0], preview[legacyCount])) {
+		if firstDifference < 0 && legacyCount < len(preview) && !reflect.DeepEqual(comparable[0], preview[legacyCount]) {
 			firstDifference = legacyCount
 		}
 		legacyCount++

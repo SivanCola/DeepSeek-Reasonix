@@ -12,11 +12,11 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 | frontend-native | 0 | 0 | 0 | 0 |
 | frontend-event | 10 | 0 | 0 | 10 |
 | css-marker | 10 | 0 | 0 | 10 |
-| persistence | 13 | 0 | 0 | 13 |
+| persistence | 16 | 0 | 0 | 16 |
 | shell-file | 1 | 39 | 4 | 44 |
 | artifact | 5 | 0 | 0 | 5 |
 | ci-job | 26 | 0 | 0 | 26 |
-| **all** | | | | **784** |
+| **all** | | | | **787** |
 
 ## Desktop commands (Go `App` methods bound to the UI)
 
@@ -753,14 +753,17 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 | `desktop-workspaces.json` |  | desktop/workspace.go:35 | keep-business (保留业务实现) | format unchanged; read by both shells |
 | `desktop-zoom.json` |  | desktop/zoom_factor.go:20 | keep-business (保留业务实现) | format unchanged; read by both shells |
 | `downloaded.json` |  | desktop/updater.go:541 | keep-business (保留业务实现) | format unchanged; read by both shells |
+| `events.jsonl` |  | desktop/session_v5_migration_checkpoint.go:106 | keep-business (保留业务实现) | format unchanged; read by both shells |
 | `fork-operations.json` |  | desktop/fork_operations.go:37 | keep-business (保留业务实现) | format unchanged; read by both shells |
+| `header.json` |  | desktop/session_v5_migration_checkpoint.go:106 | keep-business (保留业务实现) | format unchanged; read by both shells |
 | `heartbeat-tasks.json` |  | desktop/heartbeat.go:160 | keep-business (保留业务实现) | format unchanged; read by both shells |
 | `heartbeat-tasks.runs.json` |  | desktop/heartbeat_sidecar.go:34 | keep-business (保留业务实现) | format unchanged; read by both shells |
+| `manifest.json` |  | desktop/session_v5_migration_checkpoint.go:105 | keep-business (保留业务实现) | format unchanged; read by both shells |
 | `mcp-registry-v0.1.json` |  | desktop/app.go:7014 | keep-business (保留业务实现) | format unchanged; read by both shells |
 | `operations-v1.json` |  | desktop/browser_executor.go:141 | keep-business (保留业务实现) | format unchanged; read by both shells |
 | `primary.lock` |  | desktop/lifecycle_diagnostics.go:106 | keep-business (保留业务实现) | format unchanged; read by both shells |
 | `remote-provider-trust.json` |  | desktop/remote_legacy_cleanup.go:31 | keep-business (保留业务实现) | format unchanged; read by both shells |
-| `session-migration-v5.json` |  | desktop/session_v5_migration.go:39 | keep-business (保留业务实现) | format unchanged; read by both shells |
+| `session-migration-v5.json` |  | desktop/session_v5_migration.go:46 | keep-business (保留业务实现) | format unchanged; read by both shells |
 
 ## Shell-specific Go files
 
