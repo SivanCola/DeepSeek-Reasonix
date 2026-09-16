@@ -653,6 +653,71 @@ console.log("\ntranscript store");
   eq(compatible?.revisionKnown, true, "positive legacy slice revision implies a known canonical identity");
 }
 
+// ── canonical ownership survives ephemeral tab replacement ────────────────
+{
+  const backend = new FakeBackend([{ role: "user", content: "warm A" }, { role: "assistant", content: "answer A" }]);
+  const store = new TranscriptStore(backend);
+  const sessionA = "s\0local\0session-a\0" + "0";
+  store.noteSessionBinding("tab-a-1", "/same/path.jsonl", sessionA);
+  await store.loadLatest("tab-a-1", "/same/path.jsonl", {
+    expectedRevision: 1,
+    expectedDigest: "digest-1",
+  });
+  const callsAfterWarm = backend.sliceCalls.length;
+  store.evictTab("tab-a-1");
+
+  store.noteSessionBinding("tab-a-3", "/same/path.jsonl", sessionA);
+  const rebound = store.peek("tab-a-3", "/same/path.jsonl", {
+    revision: 1,
+    digest: "digest-1",
+  });
+  eq(rebound?.items.find(item => item.kind === "user")?.id, "he:s1:r0:m0:o0", "new tab id reuses the stable session resident projection");
+  eq(backend.sliceCalls.length, callsAfterWarm, "stable session rebind paints without a full history read");
+  eq(store.residentSessionCount(), 1, "stable rebind does not duplicate the resident session");
+  eq(store.peek("tab-a-1", "/same/path.jsonl"), undefined, "old tab binding cannot address the rebound resident session");
+
+  const staleFollowerAppend = store.appendEntries("tab-a-1", "/same/path.jsonl", [{
+    entryId: "old:follower", turn: 2, order: 2, message: { role: "user", content: "late" }, refs: [],
+  }]);
+  eq(staleFollowerAppend, undefined, "old follower events are fenced after the tab rebind");
+
+  backend.revision = 2;
+  backend.digest = "digest-2";
+  const refreshed = await store.loadLatest("tab-a-3", "/same/path.jsonl", {
+    preferResident: true,
+    expectedRevision: 2,
+    expectedDigest: "digest-2",
+  });
+  eq(backend.sliceCalls.length, callsAfterWarm + 1, "changed canonical fingerprint reloads after a stable rebind");
+  eq(refreshed?.digest, "digest-2", "rebound session installs the new canonical fingerprint");
+
+  store.evictTab("tab-a-3");
+  store.noteSessionBinding("tab-b", "/same/path.jsonl", "s\0local\0session-b\0" + "0");
+  eq(store.peek("tab-b", "/same/path.jsonl", { revision: 2, digest: "digest-2" }), undefined, "same path with a different SessionID never reuses the resident projection");
+  eq(store.peek("tab-b", "/same/path.jsonl", {}), undefined, "missing canonical fingerprint cannot manufacture a warm hit");
+}
+
+// A lazy body request belongs to the tab binding that started it, not merely
+// to the stable resident object retained for the next tab.
+{
+  const full = "canonical body ".repeat(16);
+  const refs = new Map<string, string>([["s1:r0:m0:o0:content", full]]);
+  const backend = new FakeBackend([{ role: "assistant", content: full }], refs);
+  const store = new TranscriptStore(backend);
+  const stable = "s\0local\0session-content\0" + "0";
+  store.noteSessionBinding("content-old", "/content.jsonl", stable);
+  await store.loadLatest("content-old", "/content.jsonl");
+  const contentGate = deferred<HistoryContentChunk>();
+  backend.contentGate = contentGate;
+  const pending = store.requestFullContent("content-old", "s1:r0:m0:o0", "content");
+  store.evictTab("content-old");
+  store.noteSessionBinding("content-new", "/content.jsonl", stable);
+  contentGate.resolve({
+    entryId: "s1:r0:m0:o0", field: "content", chunk: 0, chunks: 2, data: full, done: true, stale: false,
+  });
+  eq(await pending, undefined, "late lazy content from the old tab is discarded after canonical rebind");
+}
+
 // Legacy tool references are call-specific and never expand hidden siblings or
 // retain fetched full bodies in the controller's contribution map.
 {
