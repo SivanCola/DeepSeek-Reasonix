@@ -36,6 +36,30 @@ type SessionMessageMutationRecorder interface {
 	RecordSessionMessageUpsert(context.Context, string, provider.Message) error
 }
 
+// SessionModelContextCommit is an exact provider-visible projection produced by
+// one context-maintenance transaction. OperationID must be stable across
+// retries so the session log can deduplicate an accepted commit.
+type SessionModelContextCommit struct {
+	OperationID string
+	Reason      string
+	Messages    []provider.Message
+}
+
+// SessionModelContextCommitResult distinguishes a rejection before the event
+// log accepted the projection from a durability failure after acceptance. Once
+// accepted, the Agent must retain the matching in-memory projection even when
+// the durability wait returns an error.
+type SessionModelContextCommitResult struct {
+	Accepted bool
+	Durable  bool
+}
+
+// SessionModelContextRecorder durably records the exact context that the next
+// provider request would receive. It must not call back into the Agent.
+type SessionModelContextRecorder interface {
+	RecordSessionModelContext(context.Context, SessionModelContextCommit) (SessionModelContextCommitResult, error)
+}
+
 func (a *Agent) SetSessionCheckpointer(checkpointer SessionCheckpointer) {
 	if a != nil {
 		a.svc.sessionCheckpointer = checkpointer

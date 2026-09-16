@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -38,7 +39,13 @@ func (a *Agent) commitSummaryProjection(commit summaryProjectionCommit) (Compact
 	}
 	prev := a.sess.compactionState
 	a.sess.compactionState = state
-	if err := a.persistCompactionStateLocked(); err != nil {
+	accepted, err := a.persistInstalledProjectionLocked(context.Background(), state, current)
+	if err != nil {
+		if accepted {
+			a.sess.checkpointState = "pending"
+			a.sess.compactionMu.Unlock()
+			return CompactionState{}, fmt.Errorf("persist projection: %w", err)
+		}
 		a.sess.compactionState = prev
 		a.sess.compactionMu.Unlock()
 		if errors.Is(err, errCompressStaleContext) {
@@ -54,6 +61,27 @@ func (a *Agent) commitSummaryProjection(commit summaryProjectionCommit) (Compact
 	a.sess.compactionMu.Unlock()
 	a.emitContextMaintenance(receipt)
 	return state, nil
+}
+
+func (a *Agent) persistInstalledProjectionLocked(ctx context.Context, state CompactionState, canonical []provider.Message) (bool, error) {
+	if recorder, ok := a.svc.sessionCheckpointer.(SessionModelContextRecorder); ok {
+		visible := modelVisibleFromProjection(state.Projection, canonical)
+		result, err := recorder.RecordSessionModelContext(ctx, SessionModelContextCommit{
+			OperationID: state.LastReceipt.OperationID,
+			Reason:      state.LastReceipt.Action,
+			Messages:    visible,
+		})
+		if err != nil {
+			return result.Accepted, err
+		}
+		if result.Accepted && !result.Durable {
+			return true, errors.New("model context commit was accepted but is not durable")
+		}
+	}
+	if err := a.persistCompactionStateLocked(); err != nil {
+		return false, err
+	}
+	return false, nil
 }
 
 func (a *Agent) summaryProjectionState(commit summaryProjectionCommit) CompactionState {

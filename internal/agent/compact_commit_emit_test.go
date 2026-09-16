@@ -24,6 +24,21 @@ type reentrantSnapshotSink struct {
 	n     int
 }
 
+type modelContextRecorderStub struct {
+	result SessionModelContextCommitResult
+	err    error
+	commit SessionModelContextCommit
+}
+
+func (*modelContextRecorderStub) CheckpointSession(context.Context, SessionCheckpointBoundary) error {
+	return nil
+}
+
+func (r *modelContextRecorderStub) RecordSessionModelContext(_ context.Context, commit SessionModelContextCommit) (SessionModelContextCommitResult, error) {
+	r.commit = commit
+	return r.result, r.err
+}
+
 func (s *reentrantSnapshotSink) Emit(e event.Event) {
 	if e.Kind != event.ContextMaintenanceEvent {
 		return
@@ -65,6 +80,55 @@ func TestCommitSummaryEmitsOutsideCompactionLock(t *testing.T) {
 	}
 	if got := a.currentProjectionVersion(); got != 1 {
 		t.Fatalf("projection version = %d, want 1", got)
+	}
+}
+
+func TestCommitSummaryRetainsAcceptedProjectionOnDurabilityFailure(t *testing.T) {
+	recorder := &modelContextRecorderStub{
+		result: SessionModelContextCommitResult{Accepted: true},
+		err:    errors.New("injected flush failure"),
+	}
+	a := New(&fakeProvider{reply: "durability failure digest"}, tool.NewRegistry(), &Session{Messages: []provider.Message{
+		{Role: provider.RoleSystem, Content: "sys"},
+		{Role: provider.RoleUser, Content: "task"},
+		{Role: provider.RoleAssistant, Content: strings.Repeat("work line\n", 800)},
+		{Role: provider.RoleUser, Content: "continue"},
+		{Role: provider.RoleAssistant, Content: strings.Repeat("more work\n", 800)},
+		{Role: provider.RoleUser, Content: "tail"},
+		{Role: provider.RoleAssistant, Content: "ok"},
+	}}, Options{ContextWindow: 20_000, CompactRatio: 0.5, RecentKeep: 2, SessionCheckpointer: recorder}, event.Discard)
+
+	if err := a.CompactNow(context.Background(), ""); err == nil || !strings.Contains(err.Error(), "injected flush failure") {
+		t.Fatalf("CompactNow error = %v, want durability failure", err)
+	}
+	if got := a.currentProjectionVersion(); got != 1 {
+		t.Fatalf("accepted projection version = %d, want 1", got)
+	}
+	if len(recorder.commit.Messages) == 0 || recorder.commit.OperationID == "" {
+		t.Fatalf("recorder received incomplete commit: %+v", recorder.commit)
+	}
+	if a.sess.checkpointState != "pending" {
+		t.Fatalf("checkpoint state = %q, want pending", a.sess.checkpointState)
+	}
+}
+
+func TestCommitSummaryRollsBackRejectedProjection(t *testing.T) {
+	recorder := &modelContextRecorderStub{err: errors.New("injected prepare failure")}
+	a := New(&fakeProvider{reply: "rejected projection digest"}, tool.NewRegistry(), &Session{Messages: []provider.Message{
+		{Role: provider.RoleSystem, Content: "sys"},
+		{Role: provider.RoleUser, Content: "task"},
+		{Role: provider.RoleAssistant, Content: strings.Repeat("work line\n", 800)},
+		{Role: provider.RoleUser, Content: "continue"},
+		{Role: provider.RoleAssistant, Content: strings.Repeat("more work\n", 800)},
+		{Role: provider.RoleUser, Content: "tail"},
+		{Role: provider.RoleAssistant, Content: "ok"},
+	}}, Options{ContextWindow: 20_000, CompactRatio: 0.5, RecentKeep: 2, SessionCheckpointer: recorder}, event.Discard)
+
+	if err := a.CompactNow(context.Background(), ""); err == nil || !strings.Contains(err.Error(), "injected prepare failure") {
+		t.Fatalf("CompactNow error = %v, want prepare failure", err)
+	}
+	if got := a.currentProjectionVersion(); got != 0 {
+		t.Fatalf("rejected projection version = %d, want 0", got)
 	}
 }
 
