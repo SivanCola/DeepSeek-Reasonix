@@ -6,7 +6,7 @@ import { useToast } from "../lib/toast";
 import { app } from "../lib/bridge";
 import { onProjectTreeChangedV2 } from "../lib/sessionCatalogBridge";
 import { sessionCatalogNotice } from "../lib/sessionCatalogPresentation";
-import { sessionTitleTarget } from "../lib/sessionTitleOperation";
+import { sessionTitleErrorKey, sessionTitleTarget } from "../lib/sessionTitleOperation";
 import { useSessionTitleOperation } from "../lib/useSessionTitleOperation";
 import { isRuntimeSessionNode, isTopicNode, loadWorkbenchOrganizeMode, loadWorkbenchSortMode, mergeIncompleteProjectTopicPage, mergeProjectTopicPage, projectTreeDedupedExactTime, projectTreeEventAffectsFolder, projectTreeFolderDisclosure, projectTreeReadActivityKey, projectTreeRevisionIsFresh, projectTreeShellChildren, projectTreeShellSignature, projectTreeShouldApplyShellSnapshot, projectTreeShouldRenderTopicActions, projectTreeShouldSuppressOpenForRename, projectTreeTopicArchiveBlocked, projectTreeTopicHasUnreadActivity, projectTreeTopicMenuOffersPin, projectTreeTopicMetaLine, projectTreeTopicOpenRequest, projectTreeTopicPageIsFresh, projectTreeTopicPageSignature, projectTreeWithoutTopic, projectTreeWithTopicTitle, topicActivityAt, topicActivityDateLabel, topicActivityLabel, topicIsActive, topicStatus, topicStatusLabel, topicUnknownTimeLabel, WORKBENCH_ORGANIZE_KEY, WORKBENCH_SORT_KEY, type ProjectTreePendingTopicOpen, type ProjectTreeReadActivity, type WorkbenchOrganizeMode, type WorkbenchSortMode } from "../lib/projectTreeTopic";
 export * from "../lib/projectTreeTopic";
@@ -250,6 +250,7 @@ export function ProjectTree({
   const [creatingProject, setCreatingProject] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [editingTopic, setEditingTopic] = useState<string | null>(null);
+  const [editingSession, setEditingSession] = useState<{ key: string; path: string; topicId: string } | null>(null);
   const [topicDraft, setTopicDraft] = useState("");
   const [menuNodeKey, setMenuNodeKey] = useState<string | null>(null);
   const [menuProject, setMenuProject] = useState<{ key: string; root: string; path: string; scope: "global" | "project"; label: string } | null>(null);
@@ -749,6 +750,15 @@ export function ProjectTree({
     setTopicDraft(label);
   };
 
+  const startRenameSession = (key: string, path: string, topicId: string, label: string) => {
+    setMenuNodeKey(null);
+    setMenuProject(null);
+    setMenuPoint(null);
+    setConfirmArchiveTarget(null);
+    setEditingSession({ key, path, topicId });
+    setTopicDraft(label);
+  };
+
   const startRenameProject = (key: string, root: string, label: string) => {
     setMenuProject(null);
     setMenuNodeKey(null);
@@ -772,6 +782,20 @@ export function ProjectTree({
       if (!onRenameTopic) await onTopicsChanged?.();
     } catch (err) {
       showToast(err instanceof Error ? err.message : String(err), "error");
+    }
+  };
+
+  const commitRenameSession = async () => {
+    const editing = editingSession;
+    const title = topicDraft.trim();
+    setEditingSession(null);
+    if (!editing || !title) return;
+    try {
+      await app.RenameSessionTarget({ sessionPath: editing.path, topicId: editing.topicId }, title);
+      await refresh();
+      await onTopicsChanged?.();
+    } catch (err) {
+      showToast(t(sessionTitleErrorKey(err)), "error");
     }
   };
 
@@ -1105,7 +1129,7 @@ export function ProjectTree({
           },
         },
       ];
-      if (!isSessionNode && editingTopic === topicId) {
+      if ((!isSessionNode && editingTopic === topicId) || (isSessionNode && editingSession?.key === key)) {
         return (
           <div
             key={key}
@@ -1119,10 +1143,13 @@ export function ProjectTree({
               onChange={(event) => setTopicDraft(event.target.value)}
               onFocus={(event) => event.target.select()}
               onKeyDown={(event) => {
-                if (event.key === "Enter") void commitRenameTopic(topicId);
-                if (event.key === "Escape") setEditingTopic(null);
+                if (event.key === "Enter") void (isSessionNode ? commitRenameSession() : commitRenameTopic(topicId));
+                if (event.key === "Escape") {
+                  setEditingTopic(null);
+                  setEditingSession(null);
+                }
               }}
-              onBlur={() => void commitRenameTopic(topicId)}
+              onBlur={() => void (isSessionNode ? commitRenameSession() : commitRenameTopic(topicId))}
             />
           </div>
         );
@@ -1281,6 +1308,9 @@ export function ProjectTree({
           {isSessionNode ? (
             <ProjectTreeSessionArchiveMenu
               open={topicMenuOpen} point={menuPoint} sessionPath={sessionPath} blocked={archiveBlocked || topicTrashing} busy={sessionTrashing} confirmed={confirmArchiveTarget === archiveTargetKey}
+              aiBusy={aiRenamingTopics.has(aiRenameTarget)}
+              onRename={() => startRenameSession(key, sessionPath, topicId, label)}
+              onAIRename={() => void aiRenameSession(aiRenameTarget)}
               onConfirm={() => setConfirmArchiveTarget(archiveTargetKey)} onTrash={() => { setConfirmArchiveTarget(null); void trashSession(sessionPath); }} onClose={closeMenu} />
           ) : <ContextMenu open={topicMenuOpen} point={menuPoint} items={topicMenuItems} minWidth={178} ariaLabel={t("projectTree.topicActions")} onClose={closeMenu} />}
           {shortcutIndex > 0 && (

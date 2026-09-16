@@ -29,8 +29,12 @@ try {
     const { DESKTOP_COMMANDS } = await import("/src/generated/desktopContract.generated.ts");
     const fallback = Object.fromEntries(DESKTOP_COMMANDS.map(key => [key, app[key]]));
     window.__titleFixture = { requests: [], composer: document.querySelector("textarea.composer__input:not([aria-hidden=true])"), nodes: [...document.querySelectorAll("[data-chat-anchor-key]")] };
-    installDesktopHostStub({ ...fallback, AIRenameSession: target => new Promise((resolve, reject) => {
-      window.__titleFixture.requests.push({ target, resolve, reject });
+    installDesktopHostStub({ ...fallback, AIRenameSessionTarget: selector => new Promise((resolve, reject) => {
+      window.__titleFixture.requests.push({
+        target: selector.ref?.sessionId ? `session-id:${selector.ref.sessionId}` : selector.sessionPath || selector.topicId,
+        resolve: title => resolve({ targetKey: selector.sessionPath || selector.topicId || selector.ref?.sessionId || "", operationId: crypto.randomUUID(), committed: true, title, lifecycleGeneration: 1 }),
+        reject,
+      });
     }) });
   });
   const rows = page.locator(".project-tree__topic:not(.project-tree__topic--active)");

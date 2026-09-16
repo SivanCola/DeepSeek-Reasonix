@@ -7,9 +7,15 @@ import type {
   ChatFileReferenceRequest,
   ChatFileReferenceResult,
   DesktopCommandName,
+  HistoryWindowPage,
+  HistoryWindowRequest,
   MarkdownSVGView,
+  MessageHistoryPage,
+  SearchHistoryPage,
   SessionArchitectureDiagnostics,
+  SessionMutationResult,
   SessionRef,
+  SessionSelector,
   WorkspaceSessionPage,
   WorkspaceSnapshot,
 } from "../generated/desktopContract.generated";
@@ -32,7 +38,8 @@ import { modeHasAutoApproveTools, modeWithAutoApproveTools, modeWithPlan, normal
 import { makeMockProjectTreeOrganizationBindings, subscribeMockProjectTreeChanged, notifyMockProjectTreeChanged } from "./mockProjectTreeOrganization";
 import { decisionSurfaceMockFromInput, isLongDecisionOptionsMockInput } from "./decisionSurfaceMock";
 import { mockWorkspaceFile } from "./mockWorkspaceFile";
-import { mockAIRenameTarget, type SessionTitleBindings } from "./mockSessionTitle";
+import { mockAIRenameTarget, mockSessionTitleTarget, type SessionTitleBindings } from "./mockSessionTitle";
+import { sessionTitleTarget } from "./sessionTitleOperation";
 import { mockHistoryContentField, mockHistorySlice, mockTopicHistory as topicHistoryFixture } from "./bridgeHistoryFixtures";
 import { createMockModelScopePreset, type MockProviderPresetTemplate } from "./mockModelScopePreset";
 import { createMockRemoteProjects } from "./mockRemoteProjects";
@@ -94,6 +101,7 @@ import type {
   ExternalOpenersView,
   HistoryMessage,
   HistoryPage,
+  HistorySearchPage,
   HistoryContentChunk,
   HistoryContentRef,
   HistorySlice,
@@ -223,6 +231,12 @@ export interface AppBindings extends SessionLifecycleBindings, ForkTargetsBindin
   GetWorkspaceSnapshot(): Promise<WorkspaceSnapshot>;
   CreateSession(workspaceId: string): Promise<SessionRef>;
   ForkSession(ref: SessionRef, turnBoundary: string): Promise<SessionRef>;
+  ForkSessionTarget(selector: SessionSelector, turnBoundary: string): Promise<SessionRef>;
+  HistorySliceForTarget(selector: SessionSelector, request: HistorySliceRequest): Promise<HistorySlice>;
+  SearchHistoryContentForTarget(selector: SessionSelector, query: string, cursor: string, limit: number): Promise<HistorySearchPage>;
+  SessionHistoryPageForTarget(selector: SessionSelector, cursor: string, limit: number): Promise<MessageHistoryPage>;
+  SearchSessionHistoryForTarget(selector: SessionSelector, query: string, cursor: string, limit: number): Promise<SearchHistoryPage>;
+  SessionHistoryWindowForTarget(selector: SessionSelector, request: HistoryWindowRequest): Promise<HistoryWindowPage>;
   ListWorkspaceSessions(workspaceId: string, query: string, cursor: string, limit: number, includeArchived: boolean): Promise<WorkspaceSessionPage>;
   OpenSession(ref: SessionRef): Promise<HistoryPage>;
   ReadSessionHistory(ref: SessionRef, cursor: string, limit: number): Promise<HistoryPage>;
@@ -2285,6 +2299,25 @@ function makeMockApp(): AppBindings {
     ...makeMockSessionLifecycleBindings(mockWorkspaceSnapshot, mockArchivedSessionIDs, mockPurgedSessionIDs, notifyMockProjectTreeChanged),
     async CreateSession(_workspaceId: string) { return { hostId: "local", sessionId: `mock-${Date.now()}` }; },
     async ForkSession(_ref: SessionRef, _turnBoundary: string) { return { hostId: "local", sessionId: `mock-fork-${Date.now()}` }; },
+    async ForkSessionTarget(_selector: SessionSelector, _turnBoundary: string) { return { hostId: "local", sessionId: `mock-fork-${Date.now()}` }; },
+    async HistorySliceForTarget(_selector: SessionSelector, _request: HistorySliceRequest): Promise<HistorySlice> {
+      return { entries: [], nextCursor: "", hasOlder: false, totalTurns: 0, startTurn: 0, endTurn: 0, stale: false, revision: 0 };
+    },
+    async SearchHistoryContentForTarget(_selector: SessionSelector, _query: string, _cursor: string, _limit: number): Promise<HistorySearchPage> {
+      return {
+        items: [], nextCursor: "", revision: 0, partial: false, staleCursor: false,
+        status: { state: "ready", mode: "incremental", total: 0, indexed: 0, pending: 0, failed: 0, revision: 0 },
+      };
+    },
+    async SessionHistoryPageForTarget(_selector: SessionSelector, _cursor: string, _limit: number): Promise<MessageHistoryPage> {
+      return { messages: [], snapshotSequence: 0, coverageSequence: 0, status: "ready", totalTurns: 0, generation: "mock", hasMore: false };
+    },
+    async SearchSessionHistoryForTarget(_selector: SessionSelector, _query: string, _cursor: string, _limit: number): Promise<SearchHistoryPage> {
+      return { hits: [], snapshotSequence: 0, coverageSequence: 0, status: "ready", hasMore: false };
+    },
+    async SessionHistoryWindowForTarget(_selector: SessionSelector, _request: HistoryWindowRequest): Promise<HistoryWindowPage> {
+      return { messages: [], status: "ready", snapshotSequence: 0, coverageSequence: 0, totalTurns: 0, hasOlder: false, hasNewer: false };
+    },
     async ListWorkspaceSessions(workspaceId: string, query: string, _cursor: string, limit: number, includeArchived: boolean) {
       const parent = mockProjectTreeForDisplay().find((node) => mockWorkspaceID(node) === workspaceId);
       const needle = query.trim().toLowerCase();
@@ -5463,6 +5496,20 @@ function makeMockApp(): AppBindings {
       );
     },
     async AIRenameSession(topicID: string) { return mockAIRenameTarget(mockProjectTree, topicID); },
+    async AIRenameSessionTarget(selector: SessionSelector): Promise<SessionMutationResult> {
+      const node = mockSessionTitleTarget(mockProjectTree, selector);
+      const title = node ? mockAIRenameTarget(mockProjectTree, sessionTitleTarget(node)) : "";
+      return { targetKey: sessionTitleTarget(node ?? { key: "", kind: "topic", label: "" }), operationId: `mock-title-${Date.now()}`, committed: true, title, lifecycleGeneration: 1 };
+    },
+    async RenameSessionTarget(selector: SessionSelector, title: string): Promise<SessionMutationResult> {
+      const node = mockSessionTitleTarget(mockProjectTree, selector);
+      const nextTitle = title.trim();
+      if (node && nextTitle) {
+        const activePrefix = node.label?.startsWith("● ") ? "● " : "";
+        node.label = `${activePrefix}${nextTitle}`;
+      }
+      return { targetKey: node ? sessionTitleTarget(node) : "", operationId: `mock-title-${Date.now()}`, committed: Boolean(node), title: nextTitle, lifecycleGeneration: 1 };
+    },
     async DeleteTopic(topicID: string) {
       deleteMockTopic(topicID);
     },
