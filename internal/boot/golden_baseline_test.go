@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -49,7 +50,7 @@ func captureGoldenBaseline(t *testing.T) goldenBaseline {
 	dir := robustTempDir(t)
 	t.Chdir(dir)
 
-	writeFile(t, dir, "reasonix.toml", `
+	fixture := `
 default_model = "test-model"
 
 [agent]
@@ -75,7 +76,12 @@ kind = "openai"
 base_url = "https://example.invalid"
 model = "x"
 api_key_env = "REASONIX_TEST_KEY_UNSET"
-`)
+`
+	if runtime.GOOS == "windows" {
+		// Pin 5.1 independently of whether PowerShell 7 is installed.
+		fixture = strings.Replace(fixture, `prefer = "bash"`, `prefer = "powershell"`, 1)
+	}
+	writeFile(t, dir, "reasonix.toml", fixture)
 
 	ctrl, err := Build(context.Background(), Options{})
 	if err != nil {
@@ -196,6 +202,9 @@ func TestGoldenBaselineNoExtensions(t *testing.T) {
 	goldenDir, err := filepath.Abs(goldenBaselineDir)
 	if err != nil {
 		t.Fatalf("resolve golden dir: %v", err)
+	}
+	if runtime.GOOS == "windows" {
+		goldenDir = filepath.Join(goldenDir, "windows-powershell")
 	}
 
 	first := captureGoldenBaseline(t)

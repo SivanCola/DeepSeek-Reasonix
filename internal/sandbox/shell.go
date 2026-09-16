@@ -68,6 +68,28 @@ func ResolveShell(prefer, path string, warn io.Writer) Shell {
 	return resolveShell(prefer, path, warn, snap.goos, snap.lookPath, snap.exists, snap.bashCands, snap.psCands, snap.probe, snap.isWSL)
 }
 
+// ResolveExplicitBash preserves the dialect of user-authored POSIX hooks.
+// Agent interpreter policy must not reinterpret an explicit hook command.
+func ResolveExplicitBash(path string) (Shell, bool) {
+	snap := defaultShellInventory.snapshot(runtime.GOOS, "bash", path)
+	return resolveExplicitBash(snap, path)
+}
+
+func resolveExplicitBash(snap *shellSnapshot, path string) (Shell, bool) {
+	path = configuredShellPath(snap.goos, ShellBash, path, snap.exists, snap.isWSL)
+	candidates := []string{path}
+	if found, err := snap.lookPath("bash"); err == nil {
+		candidates = append(candidates, found)
+	}
+	candidates = append(candidates, snap.bashCands...)
+	for _, candidate := range candidates {
+		if candidate != "" && !snap.isWSL(candidate) && snap.exists(candidate) && snap.probe(candidate) {
+			return Shell{Kind: ShellBash, Path: candidate}, true
+		}
+	}
+	return Shell{}, false
+}
+
 // resolveShell is ResolveShell with its environment lookups injected — including
 // the Git-for-Windows bash candidates, which derive from %ProgramFiles% and so
 // are empty off Windows — so the decision table is deterministically testable on

@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 
 	"reasonix/internal/agent"
+	"reasonix/internal/event"
 	"reasonix/internal/session"
 )
 
@@ -161,6 +162,13 @@ func (c *Controller) flushSubmissionAdmission() error {
 	}
 	_, err := c.sessionEventStore().Flush(context.Background())
 	return err
+}
+
+func (c *Controller) flushSubmissionStart(kind event.Kind) error {
+	if kind != event.TurnStarted {
+		return nil
+	}
+	return c.flushSubmissionAdmission()
 }
 
 // TurnIDForSubmission exposes the synchronous admission receipt without

@@ -255,10 +255,8 @@ func (s *turnEventSink) persistAndPublish(e event.Event) error {
 	if !ok {
 		return nil
 	}
-	if e.Kind == event.TurnStarted {
-		if err := s.c.flushSubmissionAdmission(); err != nil {
-			return err
-		}
+	if err := s.c.flushSubmissionStart(e.Kind); err != nil {
+		return err
 	}
 	projectionSaved := true
 	if e.Kind == event.TurnDone {
