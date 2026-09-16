@@ -360,6 +360,7 @@ type SettingsView struct {
 	DefaultToolApprovalMode      string               `json:"defaultToolApprovalMode"`
 
 	CheckUpdates      bool   `json:"checkUpdates"`
+	UpdaterEnabled    bool   `json:"updaterEnabled"`
 	UpdateChannel     string `json:"updateChannel"`
 	Telemetry         bool   `json:"telemetry"`
 	Metrics           bool   `json:"metrics"`
@@ -399,6 +400,7 @@ type DesktopStartupSettingsView struct {
 	StatusBarStyle               string          `json:"statusBarStyle"`
 	StatusBarItems               []string        `json:"statusBarItems"`
 	CheckUpdates                 bool            `json:"checkUpdates"`
+	UpdaterEnabled               bool            `json:"updaterEnabled"`
 	UpdateChannel                string          `json:"updateChannel"`
 	ConversationWidth            string          `json:"conversationWidth,omitempty"`
 	// ConfigWarnings report in-memory recovery without rewriting user/project files.
@@ -1140,6 +1142,7 @@ func (a *App) Settings() SettingsView {
 		StatusBarItems:               cfg.DesktopStatusBarItems(),
 		DefaultToolApprovalMode:      cfg.DesktopDefaultToolApprovalMode(),
 		CheckUpdates:                 cfg.DesktopCheckUpdates(),
+		UpdaterEnabled:               desktopUpdaterEnabled(),
 		UpdateChannel:                cfg.DesktopUpdateChannel(),
 		Telemetry:                    cfg.DesktopTelemetry(),
 		Metrics:                      cfg.DesktopMetrics(),

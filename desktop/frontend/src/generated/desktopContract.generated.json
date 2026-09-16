@@ -25382,6 +25382,12 @@
           }
         },
         {
+          "name": "updaterEnabled",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
           "name": "updateChannel",
           "type": {
             "kind": "string"
@@ -34494,6 +34500,12 @@
         },
         {
           "name": "checkUpdates",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "updaterEnabled",
           "type": {
             "kind": "boolean"
           }

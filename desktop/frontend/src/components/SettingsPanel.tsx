@@ -504,10 +504,11 @@ export function SettingsPanel({
                 {tab === "browser" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><Suspense fallback={lazySettingsPageFallback}><BrowserControlSettingsPage /></Suspense></SettingsPageShell>}
                 {tab === "updates" && s && (
                   <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}>
-                    <UpdatesSection
+                    <AboutSection
                       configPath={s.configPath}
                       shadowedByPath={s.shadowedByPath}
                       checkUpdates={s.checkUpdates}
+                      updaterEnabled={s.updaterEnabled === true}
                       telemetry={s.telemetry !== false}
                       metrics={s.metrics !== false}
                       settingsBusy={busy}
@@ -1524,6 +1525,7 @@ function normalizeSettingsView(view: SettingsView | null | undefined): SettingsV
     statusBarItems: normalizeStatusBarItems(view.statusBarItems),
     conversationWidth: normalizeConversationWidth(view.conversationWidth),
     checkUpdates: view.checkUpdates !== false,
+    updaterEnabled: view.updaterEnabled === true,
     updateChannel: "stable",
   };
 }
@@ -6978,14 +6980,13 @@ function SandboxSection({ s, busy, apply, windows }: SectionProps & { windows: b
 const MB = 1024 * 1024;
 const mb = (n: number) => (n / MB).toFixed(1);
 
-// UpdatesSection is the manual side of the auto-updater: it shows the startup
-// check preference, running version, and a Check button, then the same state
-// machine the top banner uses (useUpdater) — a single "update and restart"
-// action with inline progress and errors.
-function UpdatesSection({
+// AboutSection always exposes build, privacy, configuration, changelog, and
+// feedback information. Updater controls are an exact stable-build capability.
+function AboutSection({
   configPath,
   shadowedByPath,
   checkUpdates,
+  updaterEnabled,
   telemetry,
   metrics,
   settingsBusy,
@@ -6994,6 +6995,7 @@ function UpdatesSection({
   configPath: string;
   shadowedByPath?: string;
   checkUpdates: boolean;
+  updaterEnabled: boolean;
   telemetry: boolean;
   metrics: boolean;
   settingsBusy: boolean;
@@ -7063,19 +7065,21 @@ function UpdatesSection({
             <div className="updates-control__version">
               {t("updater.currentVersion", { v: version || "…" })}
             </div>
-            <div className={`updates-control__status updates-control__status--${updateStatusTone}`} role="status" aria-live="polite">
-              {updateStatus && (
-                <>
-                  {updateStatusTone === "success" && <CheckCircle2 size={14} aria-hidden="true" />}
-                  {updateStatusTone === "busy" && <Loader2 className="updates-control__spinner" size={14} aria-hidden="true" />}
-                  <span>{updateStatus}</span>
-                </>
-              )}
-            </div>
+            {updaterEnabled && (
+              <div className={`updates-control__status updates-control__status--${updateStatusTone}`} role="status" aria-live="polite">
+                {updateStatus && (
+                  <>
+                    {updateStatusTone === "success" && <CheckCircle2 size={14} aria-hidden="true" />}
+                    {updateStatusTone === "busy" && <Loader2 className="updates-control__spinner" size={14} aria-hidden="true" />}
+                    <span>{updateStatus}</span>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         }
       >
-        <div className="updates-control__controls">
+        {updaterEnabled && <div className="updates-control__controls">
           <Tooltip label={t("updater.checkButton")}>
             <button
               className="chip chip--icon"
@@ -7087,9 +7091,16 @@ function UpdatesSection({
               <RefreshCw className={status.kind === "checking" ? "updates-control__spinner" : undefined} size={14} aria-hidden="true" />
             </button>
           </Tooltip>
-        </div>
+        </div>}
       </SettingsField>
-      <div
+      <SettingsField
+        className="settings-field--wide-copy"
+        label={t("updater.buildIdentity")}
+        hint={t("updater.buildIdentityHint")}
+      >
+        <span className="mem-hint">{typeof __BUILD_CHANNEL__ === "string" ? __BUILD_CHANNEL__ : "development"}</span>
+      </SettingsField>
+      {updaterEnabled && <div
         className="updates-control__hint"
         style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "4px 8px" }}
       >
@@ -7112,8 +7123,8 @@ function UpdatesSection({
           {t("updater.officialDownload")}
           <ExternalLink size={13} aria-hidden="true" />
         </button>
-      </div>
-      {status.kind === "available" && (
+      </div>}
+      {updaterEnabled && status.kind === "available" && (
         <div className="updates-control__action">
           <div className="updates-control__action-copy">
             {!status.info.canSelfUpdate && <div>{status.info.manualReason || t("updater.macHint")}</div>}
@@ -7127,7 +7138,7 @@ function UpdatesSection({
           </button>
         </div>
       )}
-      {status.kind === "error" && (
+      {updaterEnabled && status.kind === "error" && (
         <div
           className="banner banner--update banner--error"
           role="alert"
@@ -7201,7 +7212,7 @@ function UpdatesSection({
           </button>
         </div>
       </SettingsField>
-      <details
+      {updaterEnabled && <details
         className="provider-editor-advanced"
         style={{
           marginTop: 0,
@@ -7215,7 +7226,7 @@ function UpdatesSection({
         <summary style={{ padding: "0 2px" }}>
           <span className="provider-editor-advanced__title">
             <ChevronDown className="provider-editor-advanced__icon" size={16} aria-hidden="true" />
-            {t("updater.privacyAndUpdatePreferences")}
+            {t("updater.updatePreferences")}
           </span>
         </summary>
         <div className="provider-editor-advanced__body">
@@ -7230,27 +7241,31 @@ function UpdatesSection({
               onChange={(enabled) => void applySettings(() => app.SetDesktopCheckUpdates(enabled))}
             />
           </SettingsField>
-          <SettingsField
-            className="settings-field--wide-copy"
-            label={t("settings.telemetryLabel")}
-            hint={t("settings.telemetryHint")}
-          >
-            <ToggleSegment
-              value={telemetry}
-              disabled={settingsBusy}
-              onChange={(enabled) => void applySettings(() => app.SetDesktopTelemetry(enabled))}
-            />
+        </div>
+      </details>}
+      <details
+        className="provider-editor-advanced"
+        style={{
+          marginTop: 0,
+          borderRight: 0,
+          borderBottom: 0,
+          borderLeft: 0,
+          borderRadius: 0,
+          background: "transparent",
+        }}
+      >
+        <summary style={{ padding: "0 2px" }}>
+          <span className="provider-editor-advanced__title">
+            <ChevronDown className="provider-editor-advanced__icon" size={16} aria-hidden="true" />
+            {t("updater.privacyAndConfig")}
+          </span>
+        </summary>
+        <div className="provider-editor-advanced__body">
+          <SettingsField className="settings-field--wide-copy" label={t("settings.telemetryLabel")} hint={t("settings.telemetryHint")}>
+            <ToggleSegment value={telemetry} disabled={settingsBusy} onChange={(enabled) => void applySettings(() => app.SetDesktopTelemetry(enabled))} />
           </SettingsField>
-          <SettingsField
-            className="settings-field--wide-copy"
-            label={t("settings.metricsLabel")}
-            hint={t("settings.metricsHint")}
-          >
-            <ToggleSegment
-              value={metrics}
-              disabled={settingsBusy}
-              onChange={(enabled) => void applySettings(() => app.SetDesktopMetrics(enabled))}
-            />
+          <SettingsField className="settings-field--wide-copy" label={t("settings.metricsLabel")} hint={t("settings.metricsHint")}>
+            <ToggleSegment value={metrics} disabled={settingsBusy} onChange={(enabled) => void applySettings(() => app.SetDesktopMetrics(enabled))} />
           </SettingsField>
           {configPath && (
             <Tooltip label={configPath} fill block className="mem-hint settings-config-path">
