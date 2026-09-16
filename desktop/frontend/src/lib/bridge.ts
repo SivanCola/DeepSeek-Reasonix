@@ -1800,6 +1800,7 @@ function makeMockApp(): AppBindings {
     statusBarItems: [...DEFAULT_STATUS_BAR_ITEMS],
     defaultToolApprovalMode: "workspace-write",
     checkUpdates: true,
+    updaterEnabled: true,
     updateChannel: "stable",
     telemetry: true,
     metrics: true,
@@ -4466,7 +4467,7 @@ function makeMockApp(): AppBindings {
       return this.SaveDoc(path, body);
     },
     async DesktopStartupSettings() {
-      const { bot, desktopLanguage, desktopTheme, desktopThemeStyle, desktopTerminalTheme, displayMode, sessionExperience, reasoningDisplayMode, reasoningDisplayModeExplicit, statusBarStyle, statusBarItems, checkUpdates, conversationWidth } = settings;
+      const { bot, desktopLanguage, desktopTheme, desktopThemeStyle, desktopTerminalTheme, displayMode, sessionExperience, reasoningDisplayMode, reasoningDisplayModeExplicit, statusBarStyle, statusBarItems, checkUpdates, updaterEnabled, conversationWidth } = settings;
       return JSON.parse(JSON.stringify({
         bot,
         desktopLanguage,
@@ -4477,6 +4478,7 @@ function makeMockApp(): AppBindings {
         statusBarStyle,
         statusBarItems,
         checkUpdates,
+        updaterEnabled,
         conversationWidth,
       })) as DesktopStartupSettingsView;
     },

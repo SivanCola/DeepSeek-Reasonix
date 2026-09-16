@@ -2266,6 +2266,7 @@ export interface DesktopStartupSettingsView {
   statusBarStyle: string; // "icon" | "text"
   statusBarItems: string[]; // ordered visible status bar item ids
   checkUpdates: boolean; // check for new versions on startup
+  updaterEnabled?: boolean; // build capability; absent/unknown is disabled
   updateChannel: string; // compatibility field; always "stable"
   conversationWidth?: string; // "standard" | "full"; absent from older desktop payloads
   configWarnings?: string[]; configWarningsRevision?: number; // load recovery notices and async delivery barrier

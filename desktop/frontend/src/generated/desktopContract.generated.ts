@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 10;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:2dfb800a874b097ebd3b1a30b1b69cdd02398b3e6e10f522f5a54d98d0a9e626";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:d67a830e205fff65c1cc4f28ee13a6553d51b6086ce2dac7c41b2f2d88227499";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -2031,6 +2031,7 @@ export interface DesktopStartupSettingsView {
   statusBarStyle: string;
   statusBarItems: string[];
   checkUpdates: boolean;
+  updaterEnabled: boolean;
   updateChannel: string;
   conversationWidth?: string;
   configWarnings?: string[];
@@ -3776,6 +3777,7 @@ export interface SettingsView {
   statusBarItems: string[];
   defaultToolApprovalMode: string;
   checkUpdates: boolean;
+  updaterEnabled: boolean;
   updateChannel: string;
   telemetry: boolean;
   metrics: boolean;

@@ -360,6 +360,7 @@ type SettingsView struct {
 	DefaultToolApprovalMode      string               `json:"defaultToolApprovalMode"`
 
 	CheckUpdates      bool   `json:"checkUpdates"`
+	UpdaterEnabled    bool   `json:"updaterEnabled"`
 	UpdateChannel     string `json:"updateChannel"`
 	Telemetry         bool   `json:"telemetry"`
 	Metrics           bool   `json:"metrics"`
@@ -380,31 +381,6 @@ type SettingsView struct {
 	AutoApproveTools bool `json:"autoApproveTools"`
 	// Bypass is the legacy JSON key for the same live state.
 	Bypass bool `json:"bypass"`
-}
-
-// DesktopStartupSettingsView is the lightweight Settings subset needed during
-// frontend startup. It deliberately excludes providers and credential state so
-// slow keychain/env resolution stays off the first-render path.
-type DesktopStartupSettingsView struct {
-	Bot                          BotSettingsView `json:"bot"`
-	DesktopLanguage              string          `json:"desktopLanguage"`
-	DesktopLayoutStyle           string          `json:"desktopLayoutStyle"`
-	DesktopTheme                 string          `json:"desktopTheme"`
-	DesktopThemeStyle            string          `json:"desktopThemeStyle"`
-	DesktopTerminalTheme         string          `json:"desktopTerminalTheme,omitempty"`
-	DisplayMode                  string          `json:"displayMode"`
-	SessionExperience            string          `json:"sessionExperience"`
-	ReasoningDisplayMode         string          `json:"reasoningDisplayMode"`
-	ReasoningDisplayModeExplicit bool            `json:"reasoningDisplayModeExplicit"`
-	StatusBarStyle               string          `json:"statusBarStyle"`
-	StatusBarItems               []string        `json:"statusBarItems"`
-	CheckUpdates                 bool            `json:"checkUpdates"`
-	UpdateChannel                string          `json:"updateChannel"`
-	ConversationWidth            string          `json:"conversationWidth,omitempty"`
-	// ConfigWarnings report in-memory recovery without rewriting user/project files.
-	ConfigWarnings         []string `json:"configWarnings,omitempty"`
-	ConfigWarningsRevision uint64   `json:"configWarningsRevision"`
-	ConfigPath             string   `json:"configPath,omitempty"`
 }
 
 // shadowingConfigPath returns the config file that outranks writePath for the
@@ -1140,6 +1116,7 @@ func (a *App) Settings() SettingsView {
 		StatusBarItems:               cfg.DesktopStatusBarItems(),
 		DefaultToolApprovalMode:      cfg.DesktopDefaultToolApprovalMode(),
 		CheckUpdates:                 cfg.DesktopCheckUpdates(),
+		UpdaterEnabled:               desktopUpdaterEnabled(),
 		UpdateChannel:                cfg.DesktopUpdateChannel(),
 		Telemetry:                    cfg.DesktopTelemetry(),
 		Metrics:                      cfg.DesktopMetrics(),
