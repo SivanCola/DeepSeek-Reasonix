@@ -73,6 +73,7 @@ export interface TranscriptContentChange {
 }
 
 export interface SessionTranscript {
+  bindingKey?: string;
   canonicalV2?: boolean;
   latestSequence?: number;
   key: string;

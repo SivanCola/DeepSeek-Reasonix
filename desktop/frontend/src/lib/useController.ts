@@ -2621,7 +2621,11 @@ export function useController() {
   // Ref-resolved content updates flow from the transcript store into the tab's
   // state as id-keyed patches. Subscribed once per tab; released when the tab
   // state is dropped (close / single-surface prune).
-  const ensureTranscriptSubscription = useCallback((tabId: string) => {
+  const ensureTranscriptSubscription = useCallback((tabId: string, binding?: { path: string; key: string }) => {
+    if (binding?.key && getTranscriptStore().noteSessionBinding(tabId, binding.path, binding.key)) {
+      followers.current.get(tabId)?.stop();
+      followers.current.delete(tabId);
+    }
     if (transcriptSubscriptions.current.has(tabId)) return;
     const unsubscribe = getTranscriptStore().subscribe(tabId, (change) => {
       if (!statesRef.current.has(tabId)) return;
@@ -2637,7 +2641,7 @@ export function useController() {
     transcriptSubscriptions.current.set(tabId, unsubscribe);
   }, [dispatchTo]);
   const startTranscriptFollow = useCallback(async (tabId: string, path: string) => {
-    ensureTranscriptSubscription(tabId);
+    ensureTranscriptSubscription(tabId, { path, key: sessionIdentityStableKey(statesRef.current.get(tabId)?.meta) });
     followers.current.get(tabId)?.stop();
     const follower = new TranscriptSessionFollower(tabId, path, false, action => {
       if (followers.current.get(tabId) === follower) dispatchTo(tabId, action);
@@ -2870,7 +2874,7 @@ export function useController() {
       && sessionLoadCurrent(tabId, seq)
       && hydrateIdentityCurrent(identity, statesRef.current.get(tabId)?.meta);
     if (!stillCurrent()) return "miss";
-    ensureTranscriptSubscription(tabId);
+    ensureTranscriptSubscription(tabId, { path: sessionPath, key: sessionIdentityStableKey(target) });
     const store = getTranscriptStore();
     const startedAt = Date.now();
     const resident = store.peek(tabId, sessionPath, {

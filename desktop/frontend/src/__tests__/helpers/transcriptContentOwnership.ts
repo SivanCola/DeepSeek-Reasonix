@@ -32,9 +32,22 @@ export async function verifyTranscriptContentOwnership() {
         return gate.promise;
       },
     });
+    store.noteSessionBinding("tab", "/session", "session-generation-1");
     store.installSlice("tab", "/session", slice(1));
     const read = () => store.requestFullContent("tab", "m:answer", "content");
     return { store, requests, page, read, started };
+  }
+  {
+    const { store, requests, read } = fixture();
+    const pending = read();
+    assert.equal(store.noteSessionBinding("tab", "/session", "session-generation-1"), false);
+    assert.ok(store.peek("tab", "/session"), "the same binding retains its resident window");
+    assert.equal(store.noteSessionBinding("tab", "/session", "session-generation-2"), true);
+    assert.equal(store.peek("tab", "/session"), undefined, "same-path rebind invalidates the old cache before reading");
+    store.installSlice("tab", "/session", slice(2));
+    requests[0].gate.resolve(chunk("obsolete"));
+    assert.equal(await pending, undefined, "a binding replacement cannot hand old body reads to the new session");
+    assert.equal(requests.length, 1);
   }
   {
     const { store, requests, read, started } = fixture();

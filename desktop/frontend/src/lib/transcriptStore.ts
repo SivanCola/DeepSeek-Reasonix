@@ -119,6 +119,19 @@ export class TranscriptStore {
 
   // ── session identity / LRU ────────────────────────────────────────────────
 
+  /** Fence same-path binding replacements before any cache lookup or read. */
+  noteSessionBinding(tabId: string, sessionPath: string, bindingKey: string): boolean {
+    const key = sessionKeyFor(tabId, sessionPath);
+    let session = this.sessions.get(key);
+    if (session?.bindingKey === bindingKey) return false;
+    const replaced = Boolean(session);
+    if (session) this.evictSession(session);
+    session = this.newSession(key, tabId, sessionPath);
+    session.bindingKey = bindingKey;
+    this.sessions.set(key, session);
+    return replaced;
+  }
+
   private newSession(key: string, tabId: string, sessionPath: string): SessionTranscript {
     return {
       key,
