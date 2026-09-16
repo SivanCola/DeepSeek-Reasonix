@@ -325,93 +325,9 @@ func (f *frozenLegacyHead) publish(ctx context.Context, targetRoot string, optio
 	if err != nil {
 		return MigrationResult{}, err
 	}
-	const messageBatchSize = 128
-	var appendErr error
-	spool, err := os.Open(f.messageSpool)
-	if err != nil {
-		_ = target.Close(context.Background())
-		return MigrationResult{}, err
-	}
-	decoder := json.NewDecoder(&contextReader{ctx: ctx, reader: spool})
-	events := make([]Event, 0, messageBatchSize)
-	batchNumber := 0
-	flushMessages := func() error {
-		if len(events) == 0 {
-			return nil
-		}
-		_, err := target.Append(ctx, Batch{OperationID: fmt.Sprintf("legacy-import:%s:messages:%d", f.source.SHA256, batchNumber), Events: events})
-		batchNumber++
-		events = make([]Event, 0, messageBatchSize)
-		return err
-	}
-	for appendErr == nil {
-		var message provider.Message
-		decodeErr := decoder.Decode(&message)
-		if errors.Is(decodeErr, io.EOF) {
-			appendErr = flushMessages()
-			break
-		}
-		if decodeErr != nil {
-			appendErr = decodeErr
-			break
-		}
-		{
-			raw, marshalErr := json.Marshal(struct {
-				Message provider.Message `json:"message"`
-			}{Message: message})
-			if marshalErr != nil {
-				appendErr = marshalErr
-				break
-			}
-			events = append(events, Event{Kind: "message/complete", Payload: raw})
-		}
-		if len(events) == messageBatchSize {
-			appendErr = flushMessages()
-		}
-	}
-	if closeErr := spool.Close(); appendErr == nil {
-		appendErr = closeErr
-	}
-	if appendErr == nil && len(f.modelMessages) > 0 {
-		event, marshalErr := legacyModelContextEvent(f.modelMessages)
-		if marshalErr != nil {
-			appendErr = marshalErr
-		} else {
-			_, appendErr = target.Append(ctx, Batch{
-				OperationID: "legacy-import:" + f.source.SHA256 + ":model-context",
-				Events:      []Event{event},
-			})
-		}
-	}
-	if appendErr == nil && f.projectionDiagnostic != "" {
-		raw, marshalErr := json.Marshal(map[string]string{
-			"code":   "legacy_context_projection_ignored",
-			"detail": f.projectionDiagnostic,
-		})
-		if marshalErr != nil {
-			appendErr = marshalErr
-		} else {
-			_, appendErr = target.Append(ctx, Batch{
-				OperationID: "legacy-import:" + f.source.SHA256 + ":projection-diagnostic",
-				Events:      []Event{{Kind: "diagnostic", Optional: true, Payload: raw}},
-			})
-		}
-	}
-	if appendErr == nil && f.modelRef != "" {
-		raw, marshalErr := json.Marshal(map[string]string{"modelRef": f.modelRef, "modelIdentity": f.modelIdentity})
-		if marshalErr != nil {
-			appendErr = marshalErr
-		} else {
-			_, appendErr = target.Append(ctx, Batch{OperationID: "legacy-import:" + f.source.SHA256 + ":model", Events: []Event{{Kind: "session/config", Payload: raw}}})
-		}
-	}
-	if appendErr == nil && f.goal != nil {
-		raw, marshalErr := json.Marshal(f.goal)
-		if marshalErr != nil {
-			appendErr = marshalErr
-		} else {
-			_, appendErr = target.Append(ctx, Batch{OperationID: "legacy-import:" + f.source.SHA256 + ":goal", Events: []Event{{Kind: "goal/state", Payload: raw}}})
-		}
+	appendErr := f.appendMessages(ctx, target)
+	if appendErr == nil {
+		appendErr = f.appendMetadata(ctx, target)
 	}
 	if appendErr == nil {
 		_, appendErr = target.Flush(ctx)
@@ -433,6 +349,96 @@ func (f *frozenLegacyHead) publish(ctx context.Context, targetRoot string, optio
 		return result, fmt.Errorf("publish migration mapping: %w", err)
 	}
 	return result, nil
+}
+
+func (f *frozenLegacyHead) appendMessages(ctx context.Context, target *Session) (err error) {
+	const messageBatchSize = 128
+	spool, err := os.Open(f.messageSpool)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, spool.Close()) }()
+
+	decoder := json.NewDecoder(&contextReader{ctx: ctx, reader: spool})
+	events := make([]Event, 0, messageBatchSize)
+	batchNumber := 0
+	flush := func() error {
+		if len(events) == 0 {
+			return nil
+		}
+		_, err := target.Append(ctx, Batch{
+			OperationID: fmt.Sprintf("legacy-import:%s:messages:%d", f.source.SHA256, batchNumber),
+			Events:      events,
+		})
+		batchNumber++
+		events = make([]Event, 0, messageBatchSize)
+		return err
+	}
+	for {
+		var message provider.Message
+		decodeErr := decoder.Decode(&message)
+		if errors.Is(decodeErr, io.EOF) {
+			return flush()
+		}
+		if decodeErr != nil {
+			return decodeErr
+		}
+		raw, marshalErr := json.Marshal(struct {
+			Message provider.Message `json:"message"`
+		}{Message: message})
+		if marshalErr != nil {
+			return marshalErr
+		}
+		events = append(events, Event{Kind: "message/complete", Payload: raw})
+		if len(events) == messageBatchSize {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (f *frozenLegacyHead) appendMetadata(ctx context.Context, target *Session) error {
+	prefix := "legacy-import:" + f.source.SHA256 + ":"
+	if len(f.modelMessages) > 0 {
+		event, err := legacyModelContextEvent(f.modelMessages)
+		if err != nil {
+			return err
+		}
+		if _, err := target.Append(ctx, Batch{OperationID: prefix + "model-context", Events: []Event{event}}); err != nil {
+			return err
+		}
+	}
+	if f.projectionDiagnostic != "" {
+		raw, err := json.Marshal(map[string]string{
+			"code":   "legacy_context_projection_ignored",
+			"detail": f.projectionDiagnostic,
+		})
+		if err != nil {
+			return err
+		}
+		if _, err := target.Append(ctx, Batch{OperationID: prefix + "projection-diagnostic", Events: []Event{{Kind: "diagnostic", Optional: true, Payload: raw}}}); err != nil {
+			return err
+		}
+	}
+	if f.modelRef != "" {
+		raw, err := json.Marshal(map[string]string{"modelRef": f.modelRef, "modelIdentity": f.modelIdentity})
+		if err != nil {
+			return err
+		}
+		if _, err := target.Append(ctx, Batch{OperationID: prefix + "model", Events: []Event{{Kind: "session/config", Payload: raw}}}); err != nil {
+			return err
+		}
+	}
+	if f.goal == nil {
+		return nil
+	}
+	raw, err := json.Marshal(f.goal)
+	if err != nil {
+		return err
+	}
+	_, err = target.Append(ctx, Batch{OperationID: prefix + "goal", Events: []Event{{Kind: "goal/state", Payload: raw}}})
+	return err
 }
 
 func (f *frozenLegacyHead) reusePublished(ctx context.Context, targetRoot, targetDir string, options CreateOptions) (bool, error) {
