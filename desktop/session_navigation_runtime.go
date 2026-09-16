@@ -3,6 +3,8 @@ package main
 import (
 	"slices"
 	"strings"
+
+	"reasonix/internal/control"
 )
 
 func (t *WorkspaceTab) sessionRuntimeLookupKeys() []string {
@@ -26,6 +28,13 @@ func (t *WorkspaceTab) sessionRuntimeLookupKeys() []string {
 	add(t.currentSessionPath())
 	if id := strings.TrimSpace(t.SessionID); id != "" {
 		add(sessionRoute(id))
+		// A lease protects a resource, not an arbitrary future session. Only
+		// retain the import alias while this exact imported identity is bound.
+		if _, runtime, exclusive := exclusiveSessionBinding(t.Ctrl); exclusive && runtime != nil && runtime.Ref().SessionID == id {
+			if source := runtime.Session().Manifest().Source; source != nil {
+				add(source.Path)
+			}
+		}
 	}
 	return keys
 }
@@ -50,13 +59,19 @@ func (a *App) liveRuntimeTabMatchingLocked(exclude *WorkspaceTab, identity strin
 		if want == "" {
 			return false
 		}
+		if id, canonical := parseSessionRoute(identity); canonical {
+			if lifecycle, ok := tab.Ctrl.(control.IdentityLifecycle); ok && lifecycle.UsesExclusiveSession() {
+				ref, bound := lifecycle.SessionRef()
+				return bound && ref.SessionID == id
+			}
+		}
 		return slices.Contains(tab.sessionRuntimeLookupKeys(), want)
 	}
 	if want != "" {
-		if rt := a.runtimeBySessionKey[want]; rt != nil && rt.Owner != exclude && a.runtimeOwnerLiveLocked(rt) && rt.Phase == sessionRuntimeReady && rt.Owner != nil && rt.Owner.Ctrl != nil {
+		if rt := a.runtimeBySessionKey[want]; rt != nil && rt.Owner != exclude && a.runtimeOwnerLiveLocked(rt) && rt.Phase == sessionRuntimeReady && match(rt.Owner) {
 			return rt.Owner
 		}
-		if tab := a.detachedSessions[want]; tab != nil && tab != exclude && tab.Ctrl != nil {
+		if tab := a.detachedSessions[want]; match(tab) {
 			return tab
 		}
 	}

@@ -19,6 +19,8 @@ type taskKillController struct {
 	killed []string
 }
 
+func (c *taskKillController) TaskRuntimeOwnerID() string { return "test-recorder-owner" }
+
 func (c *taskKillController) CancelJob(id string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -165,7 +167,7 @@ func TestStopTaskRoutesMonitorIdentityToRuntimeJob(t *testing.T) {
 	now := time.Now()
 	if err := app.taskStore().SaveTask(app.ctx, root, taskmonitor.TaskSnapshot{
 		SchemaVersion: 1, TaskID: monitorID, JobID: "task-1", SessionID: sessionID,
-		State: taskmonitor.TaskStateRunning, RuntimeState: taskmonitor.RuntimeStateAlive,
+		State: taskmonitor.TaskStateRunning, RuntimeState: taskmonitor.RuntimeStateAlive, RuntimeOwnerID: ctrl.TaskRuntimeOwnerID(),
 		Version: 1, CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatal(err)
@@ -208,7 +210,7 @@ func TestStopTaskForTabKeepsSourceWorkspaceAfterActiveTabSwitch(t *testing.T) {
 	for _, root := range []string{projectA, projectB} {
 		if err := app.taskStore().SaveTask(app.ctx, root, taskmonitor.TaskSnapshot{
 			SchemaVersion: 1, TaskID: monitorID, JobID: "task-1", SessionID: sessionID,
-			State: taskmonitor.TaskStateRunning, RuntimeState: taskmonitor.RuntimeStateAlive,
+			State: taskmonitor.TaskStateRunning, RuntimeState: taskmonitor.RuntimeStateAlive, RuntimeOwnerID: ctrlA.TaskRuntimeOwnerID(),
 			Version: 1, CreatedAt: now, UpdatedAt: now,
 		}); err != nil {
 			t.Fatal(err)

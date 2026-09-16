@@ -289,8 +289,13 @@ func (a *App) bindSessionRuntimeKeyLocked(tab *WorkspaceTab, path string) bool {
 		a.newSessionRuntimeLocked(tab, key)
 		return true
 	}
-	if rt.Key != "" && rt.Key != key && a.runtimeBySessionKey[rt.Key] == rt {
-		delete(a.runtimeBySessionKey, rt.Key)
+	if rt.Key != key {
+		for alias, candidate := range a.runtimeBySessionKey {
+			if candidate == rt {
+				delete(a.runtimeBySessionKey, alias)
+			}
+		}
+		a.unregisterDetachedRuntimeLocked(tab)
 	}
 	rt.Key = key
 	a.runtimeBySessionKey[key] = rt

@@ -56,9 +56,22 @@ func (a *App) ClearSessionForTab(tabID string) (SessionClearResult, error) {
 	if controllerHasActiveRuntimeWork(ctrl) {
 		return a.clearActiveSessionRuntime(tab, ctrl)
 	}
+	unlockRuntime := a.lockRuntimeMutation("clear session")
+	defer unlockRuntime()
+	tab.turnStartMu.Lock()
+	defer tab.turnStartMu.Unlock()
+	ctrl = a.controllerForTab(tab)
+	if ctrl == nil {
+		return SessionClearResult{}, a.workspaceNotReadyErr(tab)
+	}
+	if controllerHasActiveRuntimeWork(ctrl) {
+		return SessionClearResult{}, errTopicHasActiveWork
+	}
 	if err := ctrl.ClearSession(); err != nil {
+		a.syncTabSessionIdentity(tab, ctrl)
 		return SessionClearResult{}, err
 	}
+	a.syncTabSessionIdentity(tab, ctrl)
 	if path := ctrl.SessionPath(); path != "" {
 		if err := savePinnedContextState(path, []string{}); err != nil {
 			return SessionClearResult{}, fmt.Errorf("initialize empty pinned context for cleared session: %w", err)

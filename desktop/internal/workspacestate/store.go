@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	SchemaVersion     = 1
+	SchemaVersion     = 2
 	GlobalWorkspaceID = "global"
 )
 
@@ -41,10 +41,12 @@ type Workspace struct {
 }
 
 type PendingCreate struct {
-	OperationID string    `json:"operationId"`
-	WorkspaceID string    `json:"workspaceId"`
-	SessionID   string    `json:"sessionId"`
-	CreatedAt   time.Time `json:"createdAt"`
+	OperationID   string    `json:"operationId"`
+	WorkspaceID   string    `json:"workspaceId"`
+	SessionID     string    `json:"sessionId"`
+	CreatedAt     time.Time `json:"createdAt"`
+	ArchiveSource string    `json:"archiveSource,omitempty"`
+	extra         map[string]json.RawMessage
 }
 
 type State struct {
@@ -55,15 +57,27 @@ type State struct {
 	Workspaces         map[string]Workspace     `json:"workspaces"`
 	ArchivedSessionIDs []string                 `json:"archivedSessionIds"`
 	PendingCreates     map[string]PendingCreate `json:"pendingCreates"`
+	SessionStates      map[string]SessionState  `json:"sessionStates"`
+	SourceMappings     map[string]SourceMapping `json:"sourceMappings"`
+	PendingOperations  map[string]Operation     `json:"pendingOperations"`
+	RecoveryEntries    map[string]RecoveryEntry `json:"recoveryEntries"`
+	Presentation       map[string]Presentation  `json:"presentation"`
 	extra              map[string]json.RawMessage
 }
 
 type Store struct {
-	path string
-	mu   sync.Mutex
+	path          string
+	mu            sync.Mutex
+	beforeUpgrade func(context.Context) error
 }
 
-func NewStore(path string) *Store { return &Store{path: filepath.Clean(path)} }
+func NewStore(path string, beforeUpgrade ...func(context.Context) error) *Store {
+	store := &Store{path: filepath.Clean(path)}
+	if len(beforeUpgrade) > 0 {
+		store.beforeUpgrade = beforeUpgrade[0]
+	}
+	return store
+}
 
 func (s *Store) Path() string {
 	if s == nil {
@@ -97,13 +111,9 @@ func (s *Store) EnsureWorkspace(ctx context.Context, workspace Workspace) error 
 		now := time.Now().UTC()
 		current, exists := state.Workspaces[workspace.ID]
 		if exists {
-			current.Root = workspace.Root
-			if strings.TrimSpace(workspace.Title) != "" {
-				current.Title = workspace.Title
+			if current.Root != workspace.Root {
+				return ErrMutationConflict
 			}
-			current.Visible = workspace.Visible
-			current.UpdatedAt = now
-			state.Workspaces[workspace.ID] = current
 			return nil
 		}
 		workspace.SessionIDs = []string{}
@@ -168,6 +178,9 @@ func (s *Store) BeginCreate(ctx context.Context, pending PendingCreate) error {
 		if _, ok := state.Workspaces[pending.WorkspaceID]; !ok {
 			return ErrWorkspaceNotFound
 		}
+		if state.SessionStates[pending.SessionID].Lifecycle == Deleted {
+			return ErrMutationConflict
+		}
 		if current, ok := state.PendingCreates[pending.SessionID]; ok {
 			if current.OperationID == pending.OperationID && current.WorkspaceID == pending.WorkspaceID {
 				return nil
@@ -191,6 +204,9 @@ func (s *Store) AttachSession(ctx context.Context, operationID, workspaceID, ses
 		return errors.New("attach requires workspace and session ids")
 	}
 	return s.mutate(ctx, func(state *State) error {
+		if state.SessionStates[sessionID].Lifecycle == Deleted {
+			return ErrMutationConflict
+		}
 		workspace, ok := state.Workspaces[workspaceID]
 		if !ok {
 			return ErrWorkspaceNotFound
@@ -247,9 +263,7 @@ func (s *Store) CommitRotation(ctx context.Context, operationID, workspaceID, se
 			if _, exists := sessionOwner(*state, archiveSessionID); !exists {
 				return ErrSessionNotFound
 			}
-			if !contains(state.ArchivedSessionIDs, archiveSessionID) {
-				state.ArchivedSessionIDs = append(state.ArchivedSessionIDs, archiveSessionID)
-			}
+			setLifecycle(state, archiveSessionID, Archived)
 		}
 		return nil
 	})
@@ -279,27 +293,11 @@ func (s *Store) MoveSession(ctx context.Context, workspaceID, sessionID, beforeS
 }
 
 func (s *Store) ArchiveSession(ctx context.Context, sessionID string) error {
-	return s.mutate(ctx, func(state *State) error {
-		sessionID = strings.TrimSpace(sessionID)
-		if _, ok := sessionOwner(*state, sessionID); !ok {
-			return ErrSessionNotFound
-		}
-		if !contains(state.ArchivedSessionIDs, sessionID) {
-			state.ArchivedSessionIDs = append(state.ArchivedSessionIDs, sessionID)
-		}
-		return nil
-	})
+	return s.SetLifecycle(ctx, []string{sessionID}, Archived)
 }
 
 func (s *Store) RestoreSession(ctx context.Context, sessionID string) error {
-	return s.mutate(ctx, func(state *State) error {
-		sessionID = strings.TrimSpace(sessionID)
-		if _, ok := sessionOwner(*state, sessionID); !ok {
-			return ErrSessionNotFound
-		}
-		state.ArchivedSessionIDs = remove(state.ArchivedSessionIDs, sessionID)
-		return nil
-	})
+	return s.SetLifecycle(ctx, []string{sessionID}, Active)
 }
 
 func (s *Store) Contains(ctx context.Context, sessionID string) (bool, error) {
@@ -325,16 +323,54 @@ func (s *Store) mutate(ctx context.Context, change func(*State) error) error {
 		return err
 	}
 	defer release()
+	upgrading := false
+	if body, err := os.ReadFile(s.path); err == nil {
+		var header struct {
+			Version int `json:"version"`
+		}
+		upgrading = json.Unmarshal(body, &header) == nil && header.Version == 1
+	}
+	if s.beforeUpgrade != nil {
+		body, readErr := os.ReadFile(s.path)
+		if readErr != nil && !os.IsNotExist(readErr) {
+			return readErr
+		}
+		var header struct {
+			Version int `json:"version"`
+		}
+		if len(body) > 0 && json.Unmarshal(body, &header) == nil && header.Version == 1 {
+			if err := s.beforeUpgrade(ctx); err != nil {
+				return err
+			}
+		}
+	}
+	if err := backupV1(s.path); err != nil {
+		return err
+	}
 	state, err := load(s.path)
+	if err != nil {
+		return err
+	}
+	before, err := json.Marshal(state)
 	if err != nil {
 		return err
 	}
 	if err := change(&state); err != nil {
 		return err
 	}
+	after, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	if bytes.Equal(before, after) && !upgrading {
+		return nil
+	}
 	state.Generation++
 	state.Initialized = true
 	normalize(&state)
+	if err := validate(state); err != nil {
+		return err
+	}
 	body, err := json.Marshal(state)
 	if err != nil {
 		return err
@@ -354,8 +390,26 @@ func load(path string) (State, error) {
 	if err := json.Unmarshal(body, &state); err != nil {
 		return State{}, fmt.Errorf("decode workspace state: %w", err)
 	}
-	if state.Version != SchemaVersion {
+	if state.Version != 1 && state.Version != SchemaVersion {
 		return State{}, fmt.Errorf("%w: %d", ErrUnsupportedVersion, state.Version)
+	}
+	if state.Version == 1 {
+		state.SessionStates = map[string]SessionState{}
+		for _, id := range state.ArchivedSessionIDs {
+			state.SessionStates[id] = SessionState{Lifecycle: Archived, Generation: state.Generation}
+		}
+		state.Version = SchemaVersion
+	} else {
+		if state.WorkspaceIDs == nil || state.Workspaces == nil || state.SessionStates == nil {
+			return State{}, fmt.Errorf("%w: missing required registry fields", ErrUnsupportedVersion)
+		}
+		for _, workspace := range state.Workspaces {
+			for _, id := range workspace.SessionIDs {
+				if _, ok := state.SessionStates[id]; !ok {
+					return State{}, fmt.Errorf("%w: missing session lifecycle", ErrUnsupportedVersion)
+				}
+			}
+		}
 	}
 	normalize(&state)
 	if err := validate(state); err != nil {
@@ -371,6 +425,21 @@ func newState() State {
 }
 
 func normalize(state *State) {
+	if state.SessionStates == nil {
+		state.SessionStates = map[string]SessionState{}
+	}
+	if state.SourceMappings == nil {
+		state.SourceMappings = map[string]SourceMapping{}
+	}
+	if state.PendingOperations == nil {
+		state.PendingOperations = map[string]Operation{}
+	}
+	if state.RecoveryEntries == nil {
+		state.RecoveryEntries = map[string]RecoveryEntry{}
+	}
+	if state.Presentation == nil {
+		state.Presentation = map[string]Presentation{}
+	}
 	if state.WorkspaceIDs == nil {
 		state.WorkspaceIDs = []string{}
 	}
@@ -388,10 +457,25 @@ func normalize(state *State) {
 			workspace.SessionIDs = []string{}
 		}
 		state.Workspaces[id] = workspace
+		for _, sessionID := range workspace.SessionIDs {
+			if _, ok := state.SessionStates[sessionID]; !ok {
+				state.SessionStates[sessionID] = SessionState{Lifecycle: Active, Generation: state.Generation}
+			}
+		}
 	}
+	state.ArchivedSessionIDs = []string{}
+	for id, status := range state.SessionStates {
+		if status.Lifecycle == Archived {
+			state.ArchivedSessionIDs = append(state.ArchivedSessionIDs, id)
+		}
+	}
+	slices.Sort(state.ArchivedSessionIDs)
 }
 
 func validate(state State) error {
+	if err := validateLifecycleState(state); err != nil {
+		return err
+	}
 	seen := map[string]struct{}{}
 	for _, id := range state.WorkspaceIDs {
 		if _, duplicate := seen[id]; duplicate {
@@ -473,7 +557,7 @@ func (s *State) UnmarshalJSON(body []byte) error {
 	if err := json.Unmarshal(body, &fields); err != nil {
 		return err
 	}
-	for _, key := range []string{"version", "generation", "initialized", "workspaceIds", "workspaces", "archivedSessionIds", "pendingCreates"} {
+	for _, key := range []string{"version", "generation", "initialized", "workspaceIds", "workspaces", "archivedSessionIds", "pendingCreates", "sessionStates", "sourceMappings", "pendingOperations", "recoveryEntries", "presentation"} {
 		delete(fields, key)
 	}
 	*s = State(decoded)

@@ -5246,6 +5246,13 @@ func (c *Controller) KillJob(id string) bool {
 }
 
 // CancelJob stops one background job owned by this controller's session.
+func (c *Controller) TaskRuntimeOwnerID() string {
+	if c.jobs == nil {
+		return ""
+	}
+	return c.jobs.TaskRuntimeOwnerID()
+}
+
 func (c *Controller) CancelJob(id string) bool {
 	if c.jobs == nil {
 		return false

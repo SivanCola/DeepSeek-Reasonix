@@ -26,6 +26,9 @@ func (a *App) canonicalSessionWorkspace(ctx context.Context, ref session.Session
 	if err != nil {
 		return workspacestate.Workspace{}, err
 	}
+	if state.SessionStates[ref.SessionID].Lifecycle == workspacestate.Deleted {
+		return workspacestate.Workspace{}, session.ErrSessionNotFound
+	}
 	var owner workspacestate.Workspace
 	for _, workspace := range state.Workspaces {
 		for _, id := range workspace.SessionIDs {

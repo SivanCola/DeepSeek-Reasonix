@@ -59,6 +59,10 @@ func (c *Controller) BindFreshSession(ctx context.Context, sessionID string) (se
 // BindFreshSessionWithOptions creates a fresh identity with immutable host
 // ownership metadata before publishing the runtime.
 func (c *Controller) BindFreshSessionWithOptions(ctx context.Context, options session.CreateOptions) (session.SessionRef, error) {
+	return c.bindFreshSessionWithCommit(ctx, options, nil)
+}
+
+func (c *Controller) bindFreshSessionWithCommit(ctx context.Context, options session.CreateOptions, commit func(context.Context, session.SessionRef) error) (session.SessionRef, error) {
 	service, _, _ := c.v3Binding()
 	if c == nil || service == nil || c.executor == nil {
 		return session.SessionRef{}, errors.New("v3 session service is unavailable")
@@ -82,7 +86,7 @@ func (c *Controller) BindFreshSessionWithOptions(ctx context.Context, options se
 		_ = service.Discard(context.Background(), prepared)
 		return session.SessionRef{}, err
 	}
-	if _, err = c.publishSessionRuntime(candidate, fresh, true); err != nil {
+	if _, err = c.publishSessionRuntimeWithCommit(ctx, candidate, fresh, true, commit); err != nil {
 		// This attempt published the identity, so an owner-scoped close is the
 		// correct cleanup. It still refuses while any client is bound.
 		_ = owner.Close(context.Background())
@@ -313,6 +317,10 @@ func sessionConfigEvent(modelRef, modelIdentity string) (session.Event, error) {
 }
 
 func (c *Controller) publishSessionRuntime(candidate *session.Runtime, prepared *agent.Session, rotateSessionTemp bool) (*session.Runtime, error) {
+	return c.publishSessionRuntimeWithCommit(context.Background(), candidate, prepared, rotateSessionTemp, nil)
+}
+
+func (c *Controller) publishSessionRuntimeWithCommit(ctx context.Context, candidate *session.Runtime, prepared *agent.Session, rotateSessionTemp bool, commit func(context.Context, session.SessionRef) error) (*session.Runtime, error) {
 	if candidate == nil || prepared == nil {
 		return nil, errors.New("v3 runtime publication candidate is unavailable")
 	}
@@ -337,6 +345,13 @@ func (c *Controller) publishSessionRuntime(candidate *session.Runtime, prepared 
 			_ = binding.Release(context.Background())
 		}
 	}()
+	// Durable desktop membership must commit before the controller changes
+	// identity. A failed registry write leaves the old binding usable.
+	if commit != nil {
+		if err := commit(ctx, candidate.Ref()); err != nil {
+			return nil, err
+		}
+	}
 	c.snapshotMu.Lock()
 	defer c.snapshotMu.Unlock()
 	// Domain parsing was validated above. Restore it before swapping the
@@ -522,15 +537,11 @@ func (c *Controller) rotateExclusiveSession(clear bool) error {
 		}
 		createOptions, commitRotation = plan.CreateOptions, plan.Commit
 	}
-	ref, err := c.BindFreshSessionWithOptions(context.Background(), createOptions)
+	ref, err := c.bindFreshSessionWithCommit(context.Background(), createOptions, commitRotation)
 	if err != nil {
 		return err
 	}
-	if commitRotation != nil {
-		if err := commitRotation(context.Background(), ref); err != nil {
-			return fmt.Errorf("new session %s is active; publish workspace membership: %w", ref.SessionID, err)
-		}
-	} else if clear {
+	if commitRotation == nil && clear {
 		if err := service.Delete(context.Background(), oldRef); err != nil {
 			return fmt.Errorf("new session %s is active; delete cleared session: %w", ref.SessionID, err)
 		}

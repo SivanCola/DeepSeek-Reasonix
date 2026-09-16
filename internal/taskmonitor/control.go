@@ -256,7 +256,17 @@ func (cs *ControlService) controlOp(ctx context.Context, projectDir, taskID stri
 			Error: &CtrlError{Code: ErrTaskRuntimeUnavailable, Message: "task runtime owner is unavailable"},
 		}, nil
 	}
-	if runtimeControl && !killer.Kill(snap.SessionID, runtimeJobID(snap)) {
+	accepted := true
+	if runtimeControl {
+		if owned, ok := killer.(interface {
+			KillOwned(string, string, string) bool
+		}); ok {
+			accepted = owned.KillOwned(snap.SessionID, runtimeJobID(snap), snap.RuntimeOwnerID)
+		} else {
+			accepted = killer.Kill(snap.SessionID, runtimeJobID(snap))
+		}
+	}
+	if !accepted {
 		releaseClaim()
 		return ControlResult{
 			SchemaVersion: 1, Command: cmd, TaskID: taskID, SessionID: snap.SessionID,

@@ -411,11 +411,7 @@ func (s *Service) ContinueStoredPreview(ctx context.Context, sessionID string) (
 	if err != nil {
 		return nil, PrototypeImportResult{}, err
 	}
-	frozen, err := freezePairedPreview(ctx, sourceDir)
-	if err != nil {
-		return nil, PrototypeImportResult{}, err
-	}
-	result, err := importFrozenPreview(ctx, frozen, filesystem.Root, CreateOptions{})
+	result, err := ImportStoredPreview(ctx, sourceDir, filesystem.Root)
 	if err != nil {
 		return nil, result, err
 	}

@@ -148,7 +148,7 @@ func TestCanonicalV4MigrationReportsSourceFailureAndRetriesAfterRepair(t *testin
 	}
 }
 
-func TestCanonicalV4MigrationResumesAfterPublicationBeforeWorkspaceAttach(t *testing.T) {
+func TestCanonicalV4MigrationRejectsMissingWorkspaceBeforePublication(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	root := config.SessionStoreDir()
 	old := coldV4MigrationFixture(t, root, "published")
@@ -160,8 +160,8 @@ func TestCanonicalV4MigrationResumesAfterPublicationBeforeWorkspaceAttach(t *tes
 		t.Fatalf("expected interruption at registry publication: %v", err)
 	}
 	ref := session.SessionRef{HostID: localDesktopHostID, SessionID: "published"}
-	if _, err := app.desktopSessionService("").Query().Snapshot(t.Context(), ref); err != nil {
-		t.Fatalf("target must already be durable: %v", err)
+	if _, err := app.desktopSessionService("").Query().Snapshot(t.Context(), ref); !errors.Is(err, session.ErrSessionNotFound) {
+		t.Fatalf("invalid workspace must not publish content: %v", err)
 	}
 	app.closeSessionServices()
 	app = NewApp()
@@ -307,6 +307,36 @@ func TestPendingCreateRecoveryAttachesDurableSessionAndDropsMissingReservation(t
 	}
 	if len(state.PendingCreates) != 0 {
 		t.Fatalf("pending creates = %#v", state.PendingCreates)
+	}
+}
+
+func TestStartupRecoveryDoesNotAbortNewInFlightCreate(t *testing.T) {
+	app := NewApp()
+	t.Cleanup(app.closeSessionServices)
+	root := t.TempDir()
+	app.desktopSessions.root = filepath.Join(root, "sessions")
+	store := workspacestate.NewStore(filepath.Join(root, "state.json"))
+	app.desktopSessions.workspaceState = store
+	workspaceID, err := app.ensureDesktopWorkspace(t.Context(), "project", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	startup, err := store.Load(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BeginCreate(t.Context(), workspacestate.PendingCreate{OperationID: "live", WorkspaceID: workspaceID, SessionID: "live"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.recoverDesktopPendingCreateSnapshot(t.Context(), startup.PendingCreates); err != nil {
+		t.Fatal(err)
+	}
+	after, err := store.Load(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.PendingCreates["live"].OperationID != "live" {
+		t.Fatal("startup replay removed the current create reservation")
 	}
 }
 

@@ -215,7 +215,12 @@ func TestDesktopV5LineageResumesAfterTargetPublication(t *testing.T) {
 	}
 	app := NewApp()
 	t.Cleanup(app.closeSessionServices)
-	if err := app.migrateConversionLineage(t.Context(), path, head, source, &cp, "missing-workspace"); err == nil {
+	workspace, err := app.ensureDesktopWorkspace(t.Context(), "global", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.desktopSessions.beforeMigrationRegistryCommit = func() error { return fmt.Errorf("injected registry failure") }
+	if err := app.migrateConversionLineage(t.Context(), path, head, source, &cp, workspace); err == nil {
 		t.Fatal("expected interrupted workspace publication")
 	}
 	infos, err := listAllCanonicalSessionInfo(t.Context(), app.desktopSessionService("").Query())

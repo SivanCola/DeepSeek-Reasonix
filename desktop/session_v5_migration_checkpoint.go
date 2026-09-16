@@ -40,6 +40,7 @@ type desktopMigrationCheckpoint struct {
 }
 
 type desktopMigrationReceipt struct {
+	extra           map[string]json.RawMessage
 	TargetSessionID string `json:"targetSessionId"`
 	ContentDigest   string `json:"contentDigest,omitempty"`
 	SourceRevision  string `json:"sourceRevision,omitempty"`

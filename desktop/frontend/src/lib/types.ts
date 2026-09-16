@@ -639,6 +639,8 @@ export interface TerminalWorkspaceView {
 }
 
 export interface ProjectNode extends RemoteProjectNodeFields {
+  session?: import("./sessionRef").SessionRef;
+  canArchive?: boolean;
   key: string;
   kind: "project" | "topic" | "session" | "global_folder" | "global_topic" | "global_session";
   label: string;

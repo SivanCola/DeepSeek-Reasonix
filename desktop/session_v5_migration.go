@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"reasonix/desktop/internal/workspacestate"
 	"reasonix/internal/agent"
 	"reasonix/internal/config"
 	"reasonix/internal/fileutil"
@@ -50,13 +52,30 @@ func (a *App) startDesktopSessionMigration(ctx context.Context) {
 	if a == nil {
 		return
 	}
+	// Capture reservations before startup admits renderer requests. Background
+	// replay must not abort a new create whose body has not been published yet.
+	startupState, err := a.workspaceRegistry().Load(ctx)
+	if err != nil {
+		slogWarnDesktopMigration(err)
+		return
+	}
 	go func() {
-		if err := a.recoverDesktopPendingCreates(ctx); err != nil {
+		if err := a.backupDesktopUpgradeMetadata(ctx); err != nil {
+			slogWarnDesktopMigration(err)
+			return
+		}
+		if err := a.recoverDesktopPendingCreateSnapshot(ctx, startupState.PendingCreates); err != nil {
 			slogWarnDesktopMigration(err)
 		}
 		if err := a.migrateDesktopSessionsV5(ctx); err != nil {
 			slogWarnDesktopMigration(err)
 		}
+		for _, run := range []func(context.Context) error{a.recoverDesktopSessionOperations, a.discoverHistoricalTrash, a.reconcileUnregisteredSessions} {
+			if err := run(ctx); err != nil {
+				slogWarnDesktopMigration(err)
+			}
+		}
+		a.emitProjectTreeChanged()
 	}()
 }
 
@@ -69,12 +88,22 @@ func (a *App) recoverDesktopPendingCreates(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	return a.recoverDesktopPendingCreateSnapshot(ctx, state.PendingCreates)
+}
+
+func (a *App) recoverDesktopPendingCreateSnapshot(ctx context.Context, pendingCreates map[string]workspacestate.PendingCreate) error {
 	service := a.desktopSessionService("")
 	var joined error
-	for sessionID, pending := range state.PendingCreates {
+	for sessionID, pending := range pendingCreates {
 		ref := session.SessionRef{HostID: localDesktopHostID, SessionID: sessionID}
 		if _, err := service.Query().Snapshot(ctx, ref); err == nil {
-			if attachErr := a.workspaceRegistry().AttachSession(ctx, pending.OperationID, pending.WorkspaceID, sessionID, ""); attachErr != nil {
+			var attachErr error
+			if strings.HasPrefix(pending.OperationID, "rotate-") {
+				attachErr = a.workspaceRegistry().CommitRotation(ctx, pending.OperationID, pending.WorkspaceID, sessionID, "", pending.ArchiveSource)
+			} else {
+				attachErr = a.workspaceRegistry().AttachSession(ctx, pending.OperationID, pending.WorkspaceID, sessionID, "")
+			}
+			if attachErr != nil {
 				joined = errors.Join(joined, attachErr)
 			} else {
 				a.desktopSessions.pendingCreateRecovered.Add(1)
@@ -99,6 +128,10 @@ func slogWarnDesktopMigration(err error) {
 }
 
 type desktopMigrationSource struct {
+	operationID         string
+	headID              string
+	deferArchive        bool
+	versionFingerprint  string
 	root                string
 	scope               string
 	workspaceRoot       string
@@ -115,6 +148,7 @@ type desktopMigrationSource struct {
 }
 
 func (a *App) migrateDesktopSessionsV5(ctx context.Context) error {
+	replayErr := a.recoverDesktopSessionOperations(ctx)
 	tabs := loadTabsFile()
 	projects := loadProjectsFile()
 	sources := map[string]*desktopMigrationSource{}
@@ -157,7 +191,7 @@ func (a *App) migrateDesktopSessionsV5(ctx context.Context) error {
 		}
 		addStores(tab.Scope, tab.WorkspaceRoot, root)
 	}
-	var joined error
+	joined := replayErr
 	legacySources := map[string]desktopMigrationSource{}
 	addLegacy := func(scope, workspaceRoot, dir string) {
 		dir = filepath.Clean(strings.TrimSpace(dir))
@@ -209,7 +243,7 @@ func (a *App) migrateDesktopSessionsV5(ctx context.Context) error {
 			joined = errors.Join(joined, err)
 		}
 	}
-	return joined
+	return errors.Join(joined, a.discoverHistoricalTrash(ctx), a.reconcileUnregisteredSessions(ctx))
 }
 
 // A paired checkpoint and event store are one migration decision. Never
@@ -296,21 +330,37 @@ func (a *App) migrateCanonicalStore(ctx context.Context, source desktopMigration
 }
 
 func (a *App) migrateCanonicalSession(ctx context.Context, old *session.Service, source desktopMigrationSource, workspaceID, sessionID string) error {
+	preview, err := isDesktopStoredPreview(filepath.Join(source.root, sessionID))
+	if err != nil {
+		return errors.Join(err, updateDesktopMigrationLedger(desktopCanonicalMigrationKey(source.root, sessionID), sessionID, "failed", "source_read"))
+	}
+	if preview {
+		return a.migratePreviewSession(ctx, source, sessionID)
+	}
 	key := desktopCanonicalMigrationKey(source.root, sessionID)
+	if source.versionFingerprint != "" {
+		key += ":review:" + source.versionFingerprint
+	}
 	checkpoint, err := newDesktopMigrationCheckpoint(source, key, canonicalMigrationSourceFiles(source.root, sessionID))
 	if err != nil {
 		return err
 	}
+	if handled, err := a.checkAdoptedMigrationSource(ctx, source, checkpoint); handled || err != nil {
+		return err
+	}
 	if checkpoint.unchanged() {
-		return checkpoint.skip()
+		return a.completeRegisteredMigration(ctx, source, checkpoint, checkpoint.record.TargetSessionID, checkpoint.record.ContentDigest)
 	}
 	oldRef := session.SessionRef{HostID: "migration-source", SessionID: sessionID}
 	contentDigest, err := canonicalMigrationDigest(ctx, old.Query(), oldRef)
 	if err != nil {
 		return errors.Join(err, updateDesktopMigrationLedger(key, sessionID, "failed", "source_read"))
 	}
+	if handled, err := a.quarantineChangedMigration(ctx, source, checkpoint, contentDigest); handled || err != nil {
+		return err
+	}
 	if checkpoint.matchesCompletedContent(contentDigest) {
-		return checkpoint.complete(checkpoint.record.TargetSessionID, contentDigest)
+		return a.completeRegisteredMigration(ctx, source, checkpoint, checkpoint.record.TargetSessionID, contentDigest)
 	}
 	if workspaceID == "" {
 		workspaceID, err = a.ensureDesktopMigrationWorkspace(ctx, source)
@@ -319,12 +369,15 @@ func (a *App) migrateCanonicalSession(ctx context.Context, old *session.Service,
 		}
 	}
 	target := a.desktopSessionService("")
-	targetID, needsImport, err := resolveMigrationTarget(ctx, target.Query(), sessionID, key, contentDigest)
+	targetID, needsImport, err := a.resolveRegisteredMigrationTarget(ctx, source, checkpoint, sessionID, contentDigest)
 	if err != nil {
 		_ = updateDesktopMigrationLedger(key, sessionID, "failed", "target_conflict", contentDigest)
 		return err
 	}
 	if err := updateDesktopMigrationLedger(key, targetID, "pending", "", contentDigest); err != nil {
+		return err
+	}
+	if err := a.prepareRegisteredMigration(ctx, source, checkpoint, targetID, workspaceID); err != nil {
 		return err
 	}
 	if needsImport {
@@ -345,11 +398,8 @@ func (a *App) migrateCanonicalSession(ctx context.Context, old *session.Service,
 			return err
 		}
 	}
-	if err := a.workspaceRegistry().AttachSession(ctx, "", workspaceID, targetID, ""); err != nil {
-		_ = updateDesktopMigrationLedger(key, targetID, "failed", "registry", contentDigest)
-		return err
-	}
-	return checkpoint.complete(targetID, contentDigest)
+
+	return a.completeRegisteredMigration(ctx, source, checkpoint, targetID, contentDigest)
 }
 
 func (a *App) migrateLegacyDirectory(ctx context.Context, source desktopMigrationSource) error {
@@ -391,16 +441,36 @@ func (a *App) migrateLegacyDirectory(ctx context.Context, source desktopMigratio
 }
 
 func (a *App) migrateLegacySession(ctx context.Context, path string, source desktopMigrationSource, workspaceID string) (retErr error) {
-	return a.migrateLegacyHead(ctx, path, source, workspaceID, "", desktopLegacyMigrationKey(path), true)
+	key := desktopLegacyMigrationKey(path)
+	if source.headID != "" {
+		key = desktopLegacyHeadKey(path, source.headID)
+	}
+	return a.migrateLegacyHead(ctx, path, source, workspaceID, source.headID, key, true)
 }
 
 func (a *App) migrateLegacyHead(ctx context.Context, path string, source desktopMigrationSource, workspaceID, headID, key string, paired bool) (retErr error) {
+	source.headID = headID
+	if source.operationID == "" {
+		meta, exists, err := agent.LoadBranchMeta(path)
+		if err != nil {
+			return errors.Join(err, a.sourceRecovery(ctx, path, "legacy", "metadata_unreadable", source.scope, source.workspaceRoot, headID))
+		}
+		if exists && meta.WorkspaceRoot != "" && !sameDesktopPath(meta.WorkspaceRoot, desktopWorkspaceRoot(source.scope, source.workspaceRoot)) {
+			return errors.Join(errSessionWorkspaceConflict, a.sourceRecovery(ctx, path, "legacy", "workspace_conflict", source.scope, source.workspaceRoot, headID))
+		}
+	}
+	if source.versionFingerprint != "" {
+		key += ":review:" + source.versionFingerprint
+	}
 	checkpoint, err := newDesktopMigrationCheckpoint(source, key, desktopLegacyMigrationFiles(path, source))
 	if err != nil {
 		return err
 	}
+	if handled, err := a.checkAdoptedMigrationSource(ctx, source, checkpoint); handled || err != nil {
+		return err
+	}
 	if checkpoint.unchanged() {
-		return checkpoint.skip()
+		return a.completeRegisteredMigration(ctx, source, checkpoint, checkpoint.record.TargetSessionID, checkpoint.record.ContentDigest)
 	}
 	if len(source.headConversions) > 0 {
 		if err := a.migrateConversionLineage(ctx, path, headID, source, &checkpoint, workspaceID); err != nil {
@@ -452,21 +522,24 @@ func (a *App) publishStagedMigration(ctx context.Context, source desktopMigratio
 	if err != nil {
 		return err
 	}
+	if handled, err := a.quarantineChangedMigration(ctx, source, checkpoint, contentDigest); handled || err != nil {
+		return err
+	}
 	if checkpoint.matchesCompletedContent(contentDigest) {
-		return checkpoint.complete(checkpoint.record.TargetSessionID, contentDigest)
+		return a.completeRegisteredMigration(ctx, source, checkpoint, checkpoint.record.TargetSessionID, contentDigest)
 	}
 	// An older migrator adopted only the selected DAG head under the path key.
 	// Recognize that receipt when adding explicit head identities, even if the
 	// selected head has since changed and the v5 target has been continued.
 	if source.legacyAdoption != nil && source.legacyAdoption.ContentDigest == contentDigest {
-		return checkpoint.complete(source.legacyAdoption.TargetSessionID, contentDigest)
+		return a.completeRegisteredMigration(ctx, source, checkpoint, source.legacyAdoption.TargetSessionID, contentDigest)
 	}
 	if source.pairedAdoption != nil && source.pairedAdoption.ContentDigest == contentDigest {
-		return checkpoint.complete(source.pairedAdoption.TargetSessionID, contentDigest)
+		return a.completeRegisteredMigration(ctx, source, checkpoint, source.pairedAdoption.TargetSessionID, contentDigest)
 	}
 	for _, receipt := range source.conversionAdoptions {
 		if receipt.ContentDigest == contentDigest {
-			return checkpoint.complete(receipt.TargetSessionID, contentDigest)
+			return a.completeRegisteredMigration(ctx, source, checkpoint, receipt.TargetSessionID, contentDigest)
 		}
 	}
 	if workspaceID == "" {
@@ -475,12 +548,15 @@ func (a *App) publishStagedMigration(ctx context.Context, source desktopMigratio
 			return err
 		}
 	}
-	targetID, needsImport, err := resolveMigrationTarget(ctx, target.Query(), ref.SessionID, key, contentDigest)
+	targetID, needsImport, err := a.resolveRegisteredMigrationTarget(ctx, source, checkpoint, ref.SessionID, contentDigest)
 	if err != nil {
 		_ = updateDesktopMigrationLedger(key, ref.SessionID, "failed", "target_conflict", contentDigest)
 		return err
 	}
 	if err := updateDesktopMigrationLedger(key, targetID, "pending", "", contentDigest); err != nil {
+		return err
+	}
+	if err := a.prepareRegisteredMigration(ctx, source, checkpoint, targetID, workspaceID); err != nil {
 		return err
 	}
 	if needsImport {
@@ -500,11 +576,8 @@ func (a *App) publishStagedMigration(ctx context.Context, source desktopMigratio
 			return err
 		}
 	}
-	if err := a.workspaceRegistry().AttachSession(ctx, "", workspaceID, targetID, ""); err != nil {
-		_ = updateDesktopMigrationLedger(key, targetID, "failed", "registry", contentDigest)
-		return err
-	}
-	return checkpoint.complete(targetID, contentDigest)
+
+	return a.completeRegisteredMigration(ctx, source, checkpoint, targetID, contentDigest)
 }
 
 func canonicalMigrationDigest(ctx context.Context, query *session.Query, ref session.SessionRef) (string, error) {
@@ -515,7 +588,7 @@ func canonicalMigrationDigest(ctx context.Context, query *session.Query, ref ses
 	return agent.ContentDigestForMessages(messages)
 }
 
-func resolveMigrationTarget(ctx context.Context, query *session.Query, preferredID, sourceKey, contentDigest string) (string, bool, error) {
+func resolveMigrationTarget(ctx context.Context, query *session.Query, preferredID, sourceKey, contentDigest string, sourcePaths ...string) (string, bool, error) {
 	check := func(sessionID string) (bool, error) {
 		digest, err := canonicalMigrationDigest(ctx, query, session.SessionRef{HostID: localDesktopHostID, SessionID: sessionID})
 		if errors.Is(err, session.ErrSessionNotFound) {
@@ -524,7 +597,30 @@ func resolveMigrationTarget(ctx context.Context, query *session.Query, preferred
 		if err != nil {
 			return false, err
 		}
-		return digest == contentDigest, nil
+		if digest != contentDigest {
+			return false, nil
+		}
+		if len(sourcePaths) > 0 {
+			info, err := query.Stat(ctx, session.SessionRef{HostID: localDesktopHostID, SessionID: sessionID})
+			if err != nil {
+				return false, err
+			}
+			body, err := os.ReadFile(filepath.Join(info.Path, "manifest.json"))
+			if err != nil {
+				return false, err
+			}
+			var manifest session.Manifest
+			if err := json.Unmarshal(body, &manifest); err != nil {
+				return false, err
+			}
+			if manifest.Source == nil || sessionRuntimeKey(manifest.Source.Path) != sessionRuntimeKey(sourcePaths[0]) {
+				return false, nil
+			}
+			if len(sourcePaths) > 1 && sourcePaths[1] != "" && manifest.Source.LegacyHeadID != sourcePaths[1] {
+				return false, nil
+			}
+		}
+		return true, nil
 	}
 	if identical, err := check(preferredID); err != nil {
 		return "", false, err
@@ -554,6 +650,11 @@ func updateDesktopMigrationLedger(sourceKey, targetID, status, errorCode string,
 	desktopMigrationMu.Lock()
 	defer desktopMigrationMu.Unlock()
 	path := desktopMigrationLedgerPath()
+	release, lockErr := lockDesktopMigrationLedger()
+	if lockErr != nil {
+		return lockErr
+	}
+	defer release()
 	ledger, original, err := readDesktopMigrationLedgerFile()
 	if err != nil {
 		return err

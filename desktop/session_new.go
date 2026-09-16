@@ -59,6 +59,7 @@ func (a *App) NewSessionForTab(tabID string) error {
 	}
 
 	if err := ctrl.NewSession(); err != nil {
+		a.syncTabSessionIdentity(tab, ctrl)
 		return err
 	}
 	a.syncTabSessionIdentity(tab, ctrl)
@@ -76,7 +77,9 @@ func (a *App) NewSessionForTab(tabID string) error {
 	// persisted copy must follow — otherwise the next rebuild/restart would
 	// re-seed the old goal into the fresh session via SetGoal(tab.goal).
 	a.clearTabGoal(tab)
-	a.assignFreshSessionTopic(tab)
+	if err := a.assignFreshSessionTopic(tab); err != nil {
+		return fmt.Errorf("session created; persist topic presentation: %w", err)
+	}
 	a.persistTabSessionPath(tab, ctrl.SessionPath())
 	a.invalidatePromptHistoryCache()
 	a.emitProjectTreeChangedForSessionDirs(ctrl.SessionDir())
@@ -98,6 +101,12 @@ func (a *App) syncTabSessionIdentity(tab *WorkspaceTab, ctrl control.SessionAPI)
 	}
 	a.mu.Lock()
 	if current := a.tabs[tab.ID]; current == tab {
+		if tab.SessionID != ref.SessionID {
+			tab.SessionGeneration++
+			if tab.sink != nil {
+				tab.sink.setSessionGeneration(tab.SessionGeneration)
+			}
+		}
 		tab.SessionID = ref.SessionID
 		tab.SessionPath = ""
 		a.bindSessionRuntimeKeyLocked(tab, tab.currentSessionIdentity())

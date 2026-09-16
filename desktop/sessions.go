@@ -112,6 +112,7 @@ func saveSessionTitles(dir string, m map[string]string) error {
 type trashedSessionMeta struct {
 	Key       string `json:"key"`
 	DeletedAt int64  `json:"deletedAt"`
+	Kind      string `json:"kind,omitempty"`
 }
 
 type sessionTrashArtifact struct {
@@ -397,7 +398,7 @@ func trashSessionArtifactsBeforeMove(dir, sessionPath, key string, beforeMove fu
 	if err := guard.RemoveSidecarsAndRelease(); err != nil {
 		return err
 	}
-	meta := trashedSessionMeta{Key: key, DeletedAt: time.Now().UnixMilli()}
+	meta := trashedSessionMeta{Key: key, DeletedAt: time.Now().UnixMilli(), Kind: "deleted"}
 	b, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
 		return err

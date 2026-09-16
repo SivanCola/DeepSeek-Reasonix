@@ -240,6 +240,14 @@ func WithTaskRecorder(r TaskRecorder) Option {
 // recorder's dependencies (workspace root, session id) are known use this.
 func (m *Manager) SetTaskRecorder(r TaskRecorder) { m.taskRecorder = r }
 
+// Recorder ownership is immutable once the manager starts admitting jobs.
+func (m *Manager) TaskRuntimeOwnerID() string {
+	if owner, ok := m.taskRecorder.(interface{ RuntimeOwnerID() string }); ok {
+		return owner.RuntimeOwnerID()
+	}
+	return ""
+}
+
 // TeardownGrace reports the manager's configured close/destroy wait window.
 func (m *Manager) TeardownGrace() time.Duration { return m.teardownGrace }
 

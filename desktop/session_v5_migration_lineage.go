@@ -18,6 +18,7 @@ import (
 // A conversion is linked by persisted provenance, never by title or a coincident
 // ID. LegacyDir identifies the immutable original snapshot of an unnamed head.
 type desktopMigrationConversion struct {
+	extra     map[string]json.RawMessage
 	Root      string `json:"root"`
 	SessionID string `json:"sessionId"`
 	HeadID    string `json:"headId,omitempty"`
@@ -291,7 +292,7 @@ func (a *App) migrateConversionLineage(ctx context.Context, path, headID string,
 		if nodes[i].checkpoint.matchesCompletedContent(nodes[i].digest) {
 			targetID = nodes[i].checkpoint.record.TargetSessionID
 		}
-		if err := nodes[i].checkpoint.complete(targetID, nodes[i].digest); err != nil {
+		if err := a.completeRegisteredMigration(ctx, source, nodes[i].checkpoint, targetID, nodes[i].digest); err != nil {
 			return err
 		}
 	}

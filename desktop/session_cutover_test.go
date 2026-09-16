@@ -287,8 +287,15 @@ func TestDesktopV3CatalogResumeRenameAndDeleteUseSessionIdentity(t *testing.T) {
 	if err := app.DeleteSession(sessionRoute(second.Ref().SessionID)); err != nil {
 		t.Fatal(err)
 	}
-	if tab.SessionID == second.Ref().SessionID || tab.SessionPath != "" {
-		t.Fatalf("delete did not rotate to a fresh identity: %+v", tab)
+	if !tab.removed {
+		t.Fatal("archived runtime remains attached")
+	}
+	state, err := app.workspaceRegistry().Load(t.Context())
+	if err != nil || state.SessionStates[second.Ref().SessionID].Lifecycle != "archived" {
+		t.Fatalf("archive state=%+v err=%v", state, err)
+	}
+	if _, err := service.Query().Snapshot(t.Context(), second.Ref()); err != nil {
+		t.Fatalf("archive lost canonical content: %v", err)
 	}
 }
 

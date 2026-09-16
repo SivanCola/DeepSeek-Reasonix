@@ -126,12 +126,15 @@ numver="${VERSION#v}"; numver="${numver%%-*}"
 # embeds desktopContract.json, so a stale frontend/src/generated would ship a
 # shell/service protocol mismatch. CI's desktop-prepare job runs the same check.
 echo "==> desktop host contract drift check"
+contract_snapshot=$(mktemp -d)
+cp -R frontend/src/generated "$contract_snapshot/generated"
 go run . -emit-contract frontend/src/generated
-if ! git -C "$ROOT" diff --exit-code -- desktop/frontend/src/generated >/dev/null; then
-	echo "desktop contract is stale - run 'cd desktop && go run . -emit-contract frontend/src/generated' and commit" >&2
-	git -C "$ROOT" diff --stat -- desktop/frontend/src/generated >&2
+if ! diff -qr "$contract_snapshot/generated" frontend/src/generated; then
+	rm -rf "$contract_snapshot"
+	echo "desktop contract is stale - review the regenerated frontend/src/generated files" >&2
 	exit 1
 fi
+rm -rf "$contract_snapshot"
 
 # The packaging script drives the frontend (build:electron) and shell builds
 # through pnpm; make sure the workspace dependencies (Electron, the packager)
