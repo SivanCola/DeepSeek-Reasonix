@@ -38,11 +38,13 @@ export function buildSidebarRegionProps(input: {
   topics: ProjectTopicCommands;
   commands: {
     onNewSession: () => void;
+    onOpenPalette: () => void;
     onOpenTrash: () => void;
     onOpenAutomation: () => void;
     onOpenSettings: SidebarRegionProps["onOpenSettings"];
     onOpenTopic: SidebarRegionProps["projectTree"]["onOpenTopic"];
   };
+  paletteShortcut: string;
 }): SidebarRegionProps {
   const { geometry, topics, commands } = input;
   const shell = input.shell;
@@ -51,6 +53,8 @@ export function buildSidebarRegionProps(input: {
     collapsed: shell.sidebarCollapsed,
     t: input.t,
     onNewSession: commands.onNewSession,
+    onOpenPalette: commands.onOpenPalette,
+    paletteShortcut: input.paletteShortcut,
     onOpenTrash: commands.onOpenTrash,
     onOpenAutomation: commands.onOpenAutomation,
     onOpenSettings: commands.onOpenSettings,

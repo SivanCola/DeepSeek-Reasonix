@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
@@ -10,10 +11,13 @@ const noop = () => {};
 register(new URL("../../scripts/svg-loader.mjs", import.meta.url));
 const { SidebarRegion } = await import("../app-shell/SidebarRegion");
 const t = ((key: string) => key) as Translator;
+const topicbarActionsSource = readFileSync(new URL("../app-shell/TopicbarActionsStack.tsx", import.meta.url), "utf8");
+assert.doesNotMatch(topicbarActionsSource, /onOpenPalette|\bSearch\b/, "the topic bar no longer owns the command-palette entry");
 for (const automation of [false, true]) {
   const markup = renderToStaticMarkup(<>
     <SidebarRegion className="sidebar" collapsed={false} t={t}
-      onNewSession={noop} onOpenTrash={noop} onOpenAutomation={noop} onOpenSettings={noop}
+      onNewSession={noop} onOpenPalette={noop} paletteShortcut="Cmd+K"
+      onOpenTrash={noop} onOpenAutomation={noop} onOpenSettings={noop}
       resize={{ min: 180, max: 400, value: 240, onPointerDown: noop, onKeyDown: noop, onReset: noop }}
       projectTree={{ onOpenTopic: noop, onCreateTopic: noop, onTopicsChanged: noop }} />
     <AppBottomRegions terminal={{ surfaceVisible: !automation, open: !automation,
@@ -32,6 +36,10 @@ for (const automation of [false, true]) {
   assert.equal(automationButtons.length, 1, "the workbench sidebar keeps exactly one Automation entry");
   const trashButtons = [...doc.querySelectorAll("button")].filter(button => button.querySelector(".lucide-trash-2"));
   assert.equal(trashButtons.length, 1, "the workbench sidebar keeps the Trash entry");
+  const searchButtons = [...doc.querySelectorAll("button")].filter(button => button.querySelector(".lucide-search"));
+  assert.equal(searchButtons.length, 1, "the command-palette search entry moves from the topic bar to the sidebar footer");
+  assert.ok(searchButtons[0]?.classList.contains("sidebar__utility-button"), "the search entry occupies a sidebar utility slot");
+  assert.equal(doc.querySelectorAll(".sidebar__utility-button").length, 4, "the sidebar footer allocates one slot to search");
   dom.window.close();
 }
 console.log("automation regions: shared layout page projection passed");

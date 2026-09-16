@@ -1,5 +1,5 @@
 import { lazy, Suspense, type ComponentProps, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
-import { AlarmClock, MessageSquare, Settings, Trash2 } from "lucide-react";
+import { AlarmClock, MessageSquare, Search, Settings, Trash2 } from "lucide-react";
 import { Tooltip } from "../components/Tooltip";
 import type { Translator } from "../lib/i18n";
 import type { SettingsTab } from "../lib/types";
@@ -21,6 +21,8 @@ export type SidebarRegionProps = {
   projectTree: ComponentProps<typeof ProjectTree>;
   t: Translator;
   onNewSession: () => void;
+  onOpenPalette: () => void;
+  paletteShortcut: string;
   onOpenTrash: () => void;
   onOpenAutomation: () => void;
   onOpenSettings: (tab: SettingsTab) => void;
@@ -47,6 +49,12 @@ export function SidebarRegion(props: SidebarRegionProps) {
         </section>
         <nav className="sidebar__nav sidebar__nav--footer">
           <div className="sidebar__utility-row" aria-label={t("sidebar.utilityActions")}>
+            <UtilityButton
+              label={t("shortcuts.action.commandPalette")}
+              tooltip={`${t("shortcuts.action.commandPalette")} ${props.paletteShortcut}`}
+              icon={<Search size={16} />}
+              onClick={props.onOpenPalette}
+            />
             <UtilityButton label={t("sidebar.trash")} icon={<Trash2 size={16} />} onClick={props.onOpenTrash} />
             <UtilityButton label={t("heartbeat.scheduler")} icon={<AlarmClock size={16} />} onClick={props.onOpenAutomation} />
             <UtilityButton label={t("topbar.settings")} icon={<Settings size={16} />} onClick={() => props.onOpenSettings("general")} />
@@ -60,6 +68,6 @@ export function SidebarRegion(props: SidebarRegionProps) {
   );
 }
 
-function UtilityButton({ icon, label, onClick }: { icon: ReactNode; label: string; onClick: () => void }) {
-  return <Tooltip label={label} fill side="top"><button className="sidebar__utility-button" type="button" onClick={onClick}>{icon}<span className="sr-only">{label}</span></button></Tooltip>;
+function UtilityButton({ icon, label, tooltip = label, onClick }: { icon: ReactNode; label: string; tooltip?: string; onClick: () => void }) {
+  return <Tooltip label={tooltip} fill side="top"><button className="sidebar__utility-button" type="button" aria-label={label} onClick={onClick}>{icon}<span className="sr-only">{label}</span></button></Tooltip>;
 }

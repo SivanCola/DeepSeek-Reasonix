@@ -241,8 +241,10 @@ export function AppRuntimeView(props: AppRuntimeViewProps) {
             onVisibleTopicsChange: navigation.topicShortcuts.handleVisibleTopicsChange,
           },
           topics: navigation.projectTopicCommands,
+          paletteShortcut: navigation.commandPaletteShortcut,
           commands: {
             onNewSession: () => void navigationCommands.handleNewTab(),
+            onOpenPalette: () => void navigation.paletteCommands.openPalette(),
             onOpenTrash: () => void navigation.historyCommands.openTrash(),
             onOpenAutomation: () => shell.openPage({ kind: "automation" }),
             onOpenSettings: chromeCommands.openSidebarSettings,
@@ -263,8 +265,6 @@ export function AppRuntimeView(props: AppRuntimeViewProps) {
           }}>
             <TopicbarActionsStack
               t={t}
-              paletteShortcut={navigation.commandPaletteShortcut}
-              onOpenPalette={() => void navigation.paletteCommands.openPalette()}
               activeTab={activeTab}
               activeTabId={activeTabId}
               imDetailActive={Boolean(sidebarImDetailConnection)}
