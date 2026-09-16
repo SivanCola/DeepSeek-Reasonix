@@ -10,6 +10,7 @@ import { historySliceFromMessages } from "./mockHistorySlice";
 import type { BalanceInfo, CheckpointMeta, ContextInfo, EffortInfo, HistoryMessage, HistorySlice, HistorySliceRequest, JobView, Meta, TabMeta, TopicActivationEvent, TopicActivationRequest, WireEvent } from "../lib/types";
 import { installDesktopHostStub } from "./desktopHostStub";
 import { verifyExplicitTranscriptRetry } from "./helpers/explicitTranscriptRetry";
+import { flushPromises, verifyEarlyReadableHistory, verifyDetachedPinRelease } from "./helpers/earlyReadableHistory";
 
 let passed = 0;
 let failed = 0;
@@ -26,10 +27,6 @@ function ok(value: boolean, label: string) {
 
 function eq(actual: unknown, expected: unknown, label: string) {
   ok(actual === expected, actual === expected ? label : `${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
-}
-
-function flushPromises(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 function deferred<T>() {
@@ -437,17 +434,7 @@ ok(historyCalls.includes("tab-b"), "HistoryForTab starts before SetActiveTab com
 eq(controller?.state.approval?.id, undefined, "tab activation clears a stale approval already stored on the target tab");
 eq(controller?.state.running, false, "tab activation clears the stale prompt lifecycle before backend status arrives");
 
-await act(async () => {
-  historyB.resolve([userMessage("early B")]);
-  await historyB.promise;
-  await flushPromises();
-});
-await waitFor("tab-b early readable history", () =>
-  controller?.state.items.some((item) => item.kind === "user" && item.text === "early B") ?? false
-);
-eq(controller?.state.hydrating, false, "early canonical history makes the target readable before runtime activation");
-eq(controller?.state.backendActivationPending, true, "readable history does not remove the runtime write fence");
-
+await verifyEarlyReadableHistory(() => controller, () => historyB.resolve([userMessage("early B")]), flushPromises, waitFor);
 await act(async () => {
   desktopStub.emit("agent:event", { kind: "approval_request", approval: { id: "old-backend-approval", tool: "bash", subject: "old backend approval" } });
   await flushPromises();
@@ -784,7 +771,7 @@ await act(async () => {
 });
 await waitFor("single-surface activation replaces visible tab", () => controller?.activeTabId === "tab-g"
   && (controller.state.items.some((item) => item.kind === "user" && item.text === "history G") ?? false));
-await act(async () => { controller?.commitSingleSurfaceNavigation("tab-g"); await flushPromises(); });
+await verifyDetachedPinRelease(() => controller, flushPromises);
 await act(async () => {
   metaH.resolve({ ...metaFor(tabH), label: "stale-model-tab-h" });
   await metaH.promise;

@@ -128,7 +128,7 @@ try {
   assert(afterSwitch.subscriptions === 6, `the six AppRuntimeEffects subscriptions remain singular (${afterSwitch.subscriptions})`);
   assert(afterSwitch.operations === 0, "instrumented operation owners report zero active operations (not yet all App operations)");
 
-  // Cached local session switches are the user-facing latency contract. Use
+  // Browser-mock local switches exercise the renderer latency contract. Use
   // the navigation surface's paint receipt (the same click-to-first-paint
   // milestone reported in diagnostics), not completion of deferred Markdown
   // or lazy-content expansion after the first screen is already visible.
@@ -139,7 +139,7 @@ try {
     // The latency gate stops at the first readable inline body. The full
     // ASYNC marker intentionally lives beyond the lazy-content preview and
     // is validated above; including its simulated 1.5s body fetch here would
-    // benchmark deferred expansion rather than cached session switching.
+    // benchmark deferred expansion rather than first readable paint.
     const marker = geometry ? "Geometry contract fixture complete." : "Asynchronously hydrated verification appendix";
     const previousIntent = await page.evaluate(() => window.__reasonixPerf?.stats().navigation?.intent ?? -1);
     await selectSession(page, label);
@@ -153,7 +153,7 @@ try {
   switchSamples.sort((a, b) => a - b);
   const localSwitchP95 = switchSamples[Math.ceil(switchSamples.length * 0.95) - 1];
   assert(localSwitchP95 <= 300,
-    `cached local session click-to-first-paint P95 <= 300ms (${localSwitchP95.toFixed(1)}ms; samples=${switchSamples.map(value => value.toFixed(1)).join(",")})`);
+    `browser-mock local click-to-first-paint P95 <= 300ms (${localSwitchP95.toFixed(1)}ms; samples=${switchSamples.map(value => value.toFixed(1)).join(",")})`);
 
   await page.locator('.project-tree__folder-main:has(svg.lucide-cloud)').click();
   await page.locator('.project-tree__topic-main:has-text("Remote demo session")').click();

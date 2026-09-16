@@ -6,6 +6,7 @@
 // refs, and the markdown cache budget.
 
 import { TranscriptStore } from "../lib/transcriptStore";
+import { verifyTranscriptContentOwnership } from "./helpers/transcriptContentOwnership";
 import { historyPageRequestBudget } from "../lib/historyPaging";
 import { historyMessagesToItems, type Item } from "../lib/useController";
 import type {
@@ -724,5 +725,6 @@ console.log("\ntranscript store");
   ok(store.stats().residentWindowEntries <= 2 * 2, "the window stayed at its page budget");
 }
 
-console.log(`\n${passed} passed, ${failed} failed`);
+await verifyTranscriptContentOwnership();
+console.log(`\n${passed} passed, ${failed} failed; content ownership interleavings passed`);
 if (failed > 0) process.exit(1);

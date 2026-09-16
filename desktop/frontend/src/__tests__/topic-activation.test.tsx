@@ -11,6 +11,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import type { AppBindings } from "../lib/bridge";
 import { useController } from "../lib/useController";
+import { getTranscriptStore } from "../lib/transcriptStore";
 import { historySliceFromMessages } from "./mockHistorySlice";
 import type {
   BalanceInfo,
@@ -145,6 +146,8 @@ const requestIdByTab = new Map<string, string>();
 // ticket (exercises the terminal-event stash path).
 let eagerActivationEvents = false;
 let failedHistoryTabId = "";
+let historyRequests = 0;
+let historyGate: { tabId: string; promise: Promise<void> } | undefined;
 const transientHistoryFailures = new Map<string, { remaining: number; beforeThrow?: () => Promise<void> }>();
 let failSetActiveTabId = "";
 let restoredTabSeq = 0;
@@ -177,6 +180,8 @@ const desktopStub = installDesktopHostStub(({
       ForkTargetsForTab: async () => ({ targets: [], verifiable: false }),
       HistoryForTab: async (tabID: string) => historyFor(tabID),
       HistorySliceForTab: async (tabID: string, req: HistorySliceRequest) => {
+        historyRequests++;
+        if (historyGate?.tabId === tabID) await historyGate.promise;
         if (tabID === failedHistoryTabId) throw new Error(`/private/${tabID}/history.jsonl could not be read`);
         const transientFailure = transientHistoryFailures.get(tabID);
         if (transientFailure && transientFailure.remaining > 0) {
@@ -277,7 +282,7 @@ await act(async () => {
 await waitFor("C hydrates on its ready", () => hasHistory("tab-c") && controller?.state.hydrating === false);
 ok(!hasHistory("tab-b"), "only the last click's history is visible");
 
-// ── terminal failure restores the committed source surface ─────────────────
+// ── runtime failure preserves independently readable history ───────────────
 await act(async () => {
   await controller?.activateTopic("project", tabA.workspaceRoot, tabA.topicId ?? "");
   await flushPromises();
@@ -294,6 +299,21 @@ eq(controller?.state.meta?.ready, false, "failed runtime activation keeps write 
 ok(Boolean(controller?.state.meta?.startupErr), "failed runtime activation exposes a safe retry state");
 const failureNotice = controller?.state.items.findLast((item) => item.kind === "notice");
 ok(Boolean(failureNotice && failureNotice.kind === "notice" && !failureNotice.text.includes("session failed to start")), "failure notice is sanitized before it reaches the readable target");
+
+let releaseHistory!: () => void;
+getTranscriptStore().evictTab(tabB.id);
+historyGate = { tabId: tabB.id, promise: new Promise<void>(resolve => { releaseHistory = resolve; }) };
+await act(async () => {
+  await controller?.activateTopic("project", tabB.workspaceRoot, tabB.topicId ?? "");
+  emitActivation({ requestId: requestIdByTab.get(tabB.id) ?? "", tabId: tabB.id, phase: "failed" });
+  await flushPromises();
+});
+ok(Boolean(controller?.state.hydrateError), "runtime failure before history does not falsely report a readable cut");
+await act(async () => { releaseHistory(); await flushPromises(); });
+await waitFor("history succeeds after runtime failure", () => hasHistory(tabB.id));
+eq(controller?.state.hydrateError, undefined, "a late valid baseline clears the history error");
+eq(controller?.state.meta?.ready, false, "late history cannot clear the failed runtime write fence");
+historyGate = undefined;
 
 await act(async () => {
   await controller?.activateTopic("project", tabC.workspaceRoot, tabC.topicId ?? "");
@@ -364,6 +384,20 @@ await waitFor("running session hydrates on first open", () =>
 );
 eq(controller?.state.running, true, "reattached thinking session stays marked running");
 eq(controller?.state.hydrating, false, "running-session hydrate settles instead of leaving Welcome");
+
+const liveState = getTranscriptStore().states.get(tabR.id)!;
+await act(async () => {
+  getTranscriptStore().setState(tabR.id, { ...liveState, running: true, pendingUser: "unsaved live prompt" });
+  await flushPromises();
+});
+const beforeReselect = historyRequests;
+await act(async () => {
+  await controller?.activateTopic("project", tabR.workspaceRoot, tabR.topicId ?? "");
+  await flushPromises();
+});
+eq(historyRequests, beforeReselect, "reselecting a live surface never overlays it with an older durable baseline");
+eq(controller?.state.pendingUser, "unsaved live prompt", "reselecting preserves the optimistic prompt");
+await act(async () => { getTranscriptStore().setState(tabR.id, liveState); await flushPromises(); });
 
 await act(async () => {
   await controller?.activateTopic("project", tabB.workspaceRoot, tabB.topicId ?? "");
