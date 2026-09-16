@@ -246,7 +246,8 @@ func (q *Query) enrichInfo(info *SessionInfo) {
 }
 
 func applyCatalogMetadata(info *SessionInfo, metadata catalogMetadata) {
-	info.Title, info.ModelRef, info.ModelIdentity = metadata.Title, metadata.ModelRef, metadata.ModelIdentity
+	info.Title, info.TitleSequence = metadata.Title, metadata.TitleSequence
+	info.ModelRef, info.ModelIdentity = metadata.ModelRef, metadata.ModelIdentity
 	info.Turns, info.Preview, info.MetadataStatus = metadata.Turns, metadata.Preview, MetadataReady
 }
 

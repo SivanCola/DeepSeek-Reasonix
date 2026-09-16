@@ -68,6 +68,7 @@ type SessionInfo struct {
 	Ref             SessionRef
 	Codec           string
 	Title           string
+	TitleSequence   uint64
 	ModelRef        string
 	ModelIdentity   string
 	Turns           int
@@ -241,7 +242,8 @@ func (p *FilesystemPersistence) Stat(ctx context.Context, sessionID string) (Ses
 	}
 	cacheDir := filepath.Join(p.Root, ".query-cache", filepath.Base(id))
 	if metadata, metadataErr := readCatalogMetadata(cacheDir, manifest, revision); metadataErr == nil {
-		info.Title, info.ModelRef, info.ModelIdentity = metadata.Title, metadata.ModelRef, metadata.ModelIdentity
+		info.Title, info.TitleSequence = metadata.Title, metadata.TitleSequence
+		info.ModelRef, info.ModelIdentity = metadata.ModelRef, metadata.ModelIdentity
 		info.Turns, info.Preview, info.MetadataStatus = metadata.Turns, metadata.Preview, MetadataReady
 		info.EventSequence = metadata.Sequence
 	}
