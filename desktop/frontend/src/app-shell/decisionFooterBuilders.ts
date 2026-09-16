@@ -273,6 +273,7 @@ export type ComposerSurfaceInput = {
   transientDismissSignal: ComposerProps["transientDismissSignal"];
   sessionKey: ComposerProps["sessionKey"];
   workspaceScopeKey: ComposerProps["workspaceScopeKey"];
+  workspaceContext: ComposerProps["workspaceContext"];
   fileRefRefreshKey: ComposerProps["fileRefRefreshKey"];
   guidance: { key: string; itemId?: string; text: string } | null;
   guidanceQueuePreviewItems: ComposerProps["guidanceQueuePreviewItems"];
@@ -323,6 +324,11 @@ export function buildComposerSurface(input: ComposerSurfaceInput): DecisionFoote
       inboxHostId: input.tab?.remote?.hostId,
       inboxWorkspace: input.tab?.remote?.workspace,
       workspaceScopeKey: input.workspaceScopeKey,
+      // Match the workspace launcher's ownership boundary: project/branch
+      // selection configures a new empty session. Once the transcript has
+      // content, the session keeps its established workspace and the composer
+      // returns to the compact follow-up layout.
+      workspaceContext: view.hero ? input.workspaceContext : undefined,
       fileRefRefreshKey: input.fileRefRefreshKey,
       guidanceConsumedKey: input.guidance?.key,
       guidanceConsumedItemId: input.guidance?.itemId,

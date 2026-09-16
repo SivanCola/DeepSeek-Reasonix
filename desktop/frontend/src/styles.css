@@ -6383,6 +6383,12 @@ body > .mermaid-diagram--fullscreen {
   max-width: var(--maxw);
   margin: 0 auto;
 }
+.composer-workspace-bar-fallback {
+  min-height: 42px;
+}
+.composer-workspace-frame--plain {
+  display: contents;
+}
 .composer-card {
   container-type: inline-size;
   position: relative;

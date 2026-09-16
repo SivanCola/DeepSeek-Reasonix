@@ -376,6 +376,10 @@ export function ProjectTreeGroupRows({
   const groups = organization.groupsFor(folder);
   const groupedIDs = new Set(groups.flatMap((group) => group.topicIds ?? []));
   const groupIDs = groups.map((group) => group.id).join("\u001f");
+  const expandedGroupIDs = groups
+    .filter((group) => !organization.groupCollapsed(key, group.id))
+    .map((group) => group.id)
+    .join("\u001f");
   const previousActiveTopicRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     const previous = previousActiveTopicRef.current;
@@ -387,8 +391,10 @@ export function ProjectTreeGroupRows({
   useEffect(() => {
     if (!visible || queryActive || remote) return;
     onEnsureList("");
-    for (const group of groups) onEnsureList(group.id);
-  }, [groupIDs, groups, onEnsureList, queryActive, remote, visible]);
+    for (const groupID of expandedGroupIDs.split("\u001f")) {
+      if (groupID) onEnsureList(groupID);
+    }
+  }, [expandedGroupIDs, onEnsureList, queryActive, remote, visible]);
 
   const renderWindowControls = (groupID: string, label: string, loadedCount: number) => {
     if (queryActive) return null;

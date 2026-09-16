@@ -126,4 +126,41 @@ await act(async () => secondRoot.render(<ProjectTreeGroupRows
 />));
 assert.equal(openedActiveGroup, "feature", "initial active navigation opens its collapsed group once");
 await act(async () => secondRoot.unmount());
+
+const ensuredGroups: string[] = [];
+function LazyGroupHarness() {
+  const [featureCollapsed, setFeatureCollapsed] = useState(true);
+  const lazyOrganization: ProjectTreeOrganizationController = {
+    ...organization,
+    groupCollapsed: (_key, groupID) => featureCollapsed && groupID === "feature",
+    toggleGroup: (_key, groupID) => { if (groupID === "feature") setFeatureCollapsed((value) => !value); },
+  };
+  return <ProjectTreeGroupRows
+    folder={folder}
+    children={children}
+    depth={1}
+    section="projects"
+    visible
+    organization={lazyOrganization}
+    renderNode={(node) => <div data-topic={node.topicId} key={node.key} />}
+    t={t}
+    queryActive={false}
+    remote={false}
+    activeTopicId={undefined}
+    isActive={() => false}
+    listState={() => ({ loading: false, initialized: false })}
+    listLimit={() => 5}
+    onEnsureList={(groupID) => { ensuredGroups.push(groupID); }}
+    onExpandList={() => {}}
+    onCollapseList={() => {}}
+    onRetryList={() => {}}
+    onForgetList={() => {}}
+  />;
+}
+const thirdRoot = createRoot(container);
+await act(async () => thirdRoot.render(<LazyGroupHarness />));
+assert.deepEqual(ensuredGroups, ["", "bugs"], "collapsed groups defer their first page until they are opened");
+await act(async () => (container.querySelector(".project-tree__group-main") as HTMLElement).click());
+assert.ok(ensuredGroups.includes("feature"), "opening a collapsed group requests its first page");
+await act(async () => thirdRoot.unmount());
 console.log("  PASS  project tree group windows are independent");

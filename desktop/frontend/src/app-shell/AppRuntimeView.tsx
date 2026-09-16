@@ -120,6 +120,12 @@ export function AppRuntimeView(props: AppRuntimeViewProps) {
   const runtimeTransitioning = core.surface.transitioning;
   const presentationTransitioning = runtimeTransitioning && core.remoteSurfaceActive;
   const browserPreviewChrome = navigation.browserPreviewChrome;
+  const workspaceContextProject = Boolean(
+    activeTab?.remote || (activeTab?.scope === "project" && activeTab.workspaceRoot),
+  );
+  const workspaceContextRoot = workspaceContextProject
+    ? activeTab?.workspaceRoot ?? state.meta?.workspaceRoot ?? state.meta?.cwd ?? ""
+    : "";
 
   const workbenchChromeHidden = true;
   const sidebarClassName = [
@@ -404,6 +410,18 @@ export function AppRuntimeView(props: AppRuntimeViewProps) {
               transientDismissSignal: shell.transientOverlayDismissSignal,
               sessionKey: session.composerSessionKey,
               workspaceScopeKey: session.workspaceScopeKey,
+              workspaceContext: {
+                scope: workspaceContextProject ? "project" : "global",
+                workspaceRoot: workspaceContextRoot,
+                workspaceName: workspaceContextProject ? activeTab?.workspaceName ?? state.meta?.workspaceName : undefined,
+                gitBranch: workspaceContextProject && !activeTab?.remote ? state.meta?.gitBranch : undefined,
+                tabId: activeTabId,
+                scopeKey: session.workspaceScopeKey,
+                remote: Boolean(activeTab?.remote),
+                onSwitchWorkspace: navigation.projectTopicCommands.onAddProject,
+                onWorkWithoutProject: () => navigationCommands.openBlankSession("global", ""),
+                onRefreshProjects: navigation.projectTopicCommands.refreshProjectsAndTabs,
+              },
               fileRefRefreshKey: local.composerFileRefRefreshKey,
               guidance: session.transcript.latestGuidanceConsumed,
               guidanceQueuePreviewItems: navigation.guidanceQueueMockItems,

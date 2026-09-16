@@ -292,10 +292,16 @@ export function ProjectTree({
       : append
         ? PROJECT_TREE_WINDOW_STEP
         : topicWindowLimitsRef.current[windowKey] ?? PROJECT_TREE_WINDOW_INITIAL;
+    const excludePinned = !creationTopics && !project.pinned;
     // Completeness belongs to the logical list, not to the size of the page
     // used to paint it. This lets an incomplete refresh retain a previously
     // complete 5/15/25-row screen while the catalog repairs itself.
-    const requestSignature = [normalizedQuery, groupID, sortMode].join("\u001f");
+    const requestSignature = [
+      normalizedQuery,
+      groupID,
+      sortMode,
+      excludePinned ? "exclude-pinned" : "include-pinned",
+    ].join("\u001f");
     // Last-query-wins: stale completions cannot overwrite a newer first page.
     const seq = (topicLoadSeqRef.current[listKey] ?? 0) + 1;
     topicLoadSeqRef.current[listKey] = seq;
@@ -317,7 +323,7 @@ export function ProjectTree({
           // Individually pinned topics live in the standalone pinned section
           // for ordinary projects. A pinned project is itself that section's
           // folder, so its children must remain available inside it.
-          excludePinned: !creationTopics && !project.pinned,
+          excludePinned,
         }));
       });
       if (!page) return;
