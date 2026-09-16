@@ -87,7 +87,7 @@ eq(
   "session operation error codes are localized before they reach the toast",
 );
 eq(
-  projectTreeSource.includes("disabled: aiRenamingTopics.has(topicId) || Boolean(node.remoteSession)"),
+  projectTreeSource.includes("disabled: aiRenamingTopics.has(aiRenameTarget)"),
   true,
   "an AI rename only disables the targeted local session",
 );
