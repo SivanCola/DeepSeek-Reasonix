@@ -18,10 +18,23 @@ identity is the validated canonical path plus the BranchMeta/file generation
 observed by the operation. Runtime bindings are optional projections; they are
 not proof that a durable session exists.
 
-Persistent title, history, search, archive, restore, move, delete, and canonical
-fork operations can run without selecting or booting the target conversation.
-Runtime commands such as send, stop, and live model control still require an
-open, ready binding.
+Persistent title, history, search, archive, restore, move, delete, fork, and
+full-history copy operations can run without selecting or booting the target
+conversation. Legacy move first adopts the source through the existing
+migration journal; the retained legacy artifacts remain unchanged. Runtime
+commands such as send, stop, and live model control still require an open,
+ready binding.
+
+Target history APIs cover bounded pages and windows, search, message location,
+large-content capabilities, and bounded message-field reads. Every cursor or
+content capability remains bound to the resolved durable identity and snapshot;
+switching tabs cannot redirect the read.
+
+Fork and full copy intentionally have different semantics. Fork accepts only a
+verified completed-turn boundary. Full copy freezes the complete durable source,
+publishes a new identity, and uses a caller operation ID plus a durable copy
+receipt so a retry cannot create a second child. Neither operation navigates to
+the child automatically.
 
 ## Title concurrency
 
@@ -85,4 +98,3 @@ Committed changes emit target-bound hints:
 The existing project-tree notifications remain during compatibility. Durable
 storage is authoritative if an incremental event is missed or cannot be
 ordered.
-

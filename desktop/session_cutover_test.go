@@ -118,6 +118,13 @@ func TestDesktopCanonicalHistoryRemainsReadableBeforeControllerReady(t *testing.
 	appendSessionTestMessage(t, runtime, "cold-history-assistant", provider.Message{
 		ID: "cold-history-assistant", Role: provider.RoleAssistant, Content: large,
 	})
+	workspaceID, err := app.ensureDesktopWorkspace(t.Context(), "project", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.workspaceRegistry().AttachSession(t.Context(), "", workspaceID, runtime.Ref().SessionID, ""); err != nil {
+		t.Fatal(err)
+	}
 
 	tab := &WorkspaceTab{
 		ID:            "canonical-cold-history-tab",
@@ -183,6 +190,38 @@ func TestDesktopCanonicalHistoryRemainsReadableBeforeControllerReady(t *testing.
 	decoded, decodeErr := base64.StdEncoding.DecodeString(chunk.Data)
 	if err != nil || decodeErr != nil || !chunk.Done || !strings.Contains(string(decoded), large) {
 		t.Fatalf("cold canonical content = done:%v bytes:%d, errors:%v/%v", chunk.Done, len(decoded), err, decodeErr)
+	}
+
+	// Explicit target readers remain bound to the durable session even after
+	// the tab disappears.
+	app.tabs = map[string]*WorkspaceTab{}
+	app.tabOrder = nil
+	app.activeTabID = ""
+	selector := SessionSelector{Ref: &session.SessionRef{HostID: localDesktopHostID, SessionID: runtime.Ref().SessionID}}
+	compatTarget, err := app.HistorySliceForTarget(selector, HistorySliceRequest{Turns: 12})
+	if err != nil || len(compatTarget.Entries) != 2 || len(compatTarget.Entries[1].Refs) != 1 {
+		t.Fatalf("target compatibility history = %+v, %v", compatTarget, err)
+	}
+	compatChunk, err := app.HistoryContentForTarget(selector, compatTarget.Entries[1].Refs[0], 0)
+	if err != nil || compatChunk.Stale || !compatChunk.Done || compatChunk.Data != large {
+		t.Fatalf("target compatibility content = %+v, %v", compatChunk, err)
+	}
+	targetPage, err := app.SessionHistoryPageForTarget(selector, "", 12)
+	if err != nil || len(targetPage.Messages) != 2 {
+		t.Fatalf("target history page = %+v, %v", targetPage, err)
+	}
+	targetLocation, err := app.LocateSessionMessageForTarget(selector, "cold-history-assistant", targetPage.SnapshotSequence)
+	if err != nil || targetLocation.Status != "ready" || targetLocation.MessageID != "cold-history-assistant" {
+		t.Fatalf("target location = %+v, %v", targetLocation, err)
+	}
+	targetRef := targetPage.Messages[1].ContentRef
+	if targetRef == nil {
+		t.Fatal("target large message has no content ref")
+	}
+	targetChunk, err := app.SessionHistoryContentForTarget(selector, *targetRef, 0)
+	targetDecoded, decodeErr := base64.StdEncoding.DecodeString(targetChunk.Data)
+	if err != nil || decodeErr != nil || !targetChunk.Done || !strings.Contains(string(targetDecoded), large) {
+		t.Fatalf("target content = done:%v bytes:%d, errors:%v/%v", targetChunk.Done, len(targetDecoded), err, decodeErr)
 	}
 }
 

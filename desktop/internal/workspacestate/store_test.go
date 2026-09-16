@@ -143,6 +143,46 @@ func TestCommitRotationAttachesReplacementAndArchivesSourceAtomically(t *testing
 	}
 }
 
+func TestAttachSessionFromSourceIfUnchangedRejectsArchivedSource(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "workspace-state-v1.json"))
+	ctx := t.Context()
+	if err := store.EnsureWorkspace(ctx, Workspace{ID: "project-a", Visible: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AttachSession(ctx, "", "project-a", "source", ""); err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.Load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generation := state.SessionStates["source"].Generation
+	if err := store.BeginCreate(ctx, PendingCreate{
+		OperationID: "copy", WorkspaceID: "project-a", SessionID: "child",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ArchiveSession(ctx, "source"); err != nil {
+		t.Fatal(err)
+	}
+	err = store.AttachSessionFromSourceIfUnchanged(
+		ctx, "copy", "project-a", "child", "", "source", generation,
+	)
+	if !errors.Is(err, ErrMutationConflict) {
+		t.Fatalf("guarded attach error = %v, want mutation conflict", err)
+	}
+	state, err = store.Load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contains(state.Workspaces["project-a"].SessionIDs, "child") {
+		t.Fatal("child attached after source lifecycle changed")
+	}
+	if _, pending := state.PendingCreates["child"]; !pending {
+		t.Fatal("failed guarded attach discarded recovery journal")
+	}
+}
+
 func TestStorePreservesUnknownTopLevelAndWorkspaceFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "workspace-state-v1.json")
 	original := `{"version":1,"generation":2,"initialized":true,"workspaceIds":["global"],"workspaces":{"global":{"id":"global","root":"","title":"Global","sessionIds":[],"visible":true,"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z","futureWorkspace":{"enabled":true}}},"archivedSessionIds":[],"pendingCreates":{},"futureTop":{"value":7}}`

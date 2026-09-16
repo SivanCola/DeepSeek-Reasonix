@@ -137,7 +137,7 @@ func (a *App) aiRenameLegacySession(ctx context.Context, target SessionTarget) (
 	if err != nil {
 		return "", err
 	}
-	if target.IsOpen && target.Controller != nil && !a.topicControllerOwnsSession(target.TopicID, target.Controller, validated) {
+	if a.sessionTargetRuntimeRebound(target) {
 		return "", newSessionOperationError("target_changed", "The session moved or changed state. Try again.")
 	}
 	a.sessionRemovalMu.Lock()
@@ -196,17 +196,15 @@ func (a *App) aiRenameCanonicalSession(operationCtx context.Context, target Sess
 	if err != nil {
 		return "", err
 	}
+	if a.sessionTargetRuntimeRebound(target) {
+		return "", newSessionOperationError("target_changed", "The session moved or changed state. Try again.")
+	}
 	// The legacy sidebar still owns a topic label. Serialize its projection
 	// with manual/automatic topic renames, as well as guarding the session title.
 	a.sessionRemovalMu.Lock()
 	defer a.sessionRemovalMu.Unlock()
 	a.topicTitleMutationMu.Lock()
 	defer a.topicTitleMutationMu.Unlock()
-	if target.IsOpen && target.Controller != nil {
-		if !a.sessionTargetStillOwnsRuntime(target) {
-			return "", newSessionOperationError("target_changed", "The session moved or changed state. Try again.")
-		}
-	}
 	if hasTopic && loadTopicTitle(topicRoot, target.TopicID) != expectedTopicTitle {
 		return "", newSessionOperationError(sessionOperationTitleConflict, "The session title changed while AI rename was running. Try again.")
 	}
@@ -242,6 +240,28 @@ func (a *App) cancelAISessionTitle(targetKey string) {
 	}
 }
 
+func (a *App) invalidateAuxiliaryProviderOperations() {
+	if a == nil {
+		return
+	}
+	a.auxiliaryProviderGeneration.Add(1)
+	a.aiSessionTitleMu.Lock()
+	operations := make([]aiSessionTitleOperation, 0, len(a.aiSessionTitleInFlight))
+	for key, operation := range a.aiSessionTitleInFlight {
+		operations = append(operations, operation)
+		delete(a.aiSessionTitleInFlight, key)
+	}
+	a.aiSessionTitleMu.Unlock()
+	for _, operation := range operations {
+		if operation.Cancel != nil {
+			operation.Cancel(newSessionOperationError(
+				"provider_unavailable",
+				"The session's model provider changed while AI rename was running. Try again.",
+			))
+		}
+	}
+}
+
 func (a *App) finishAISessionTitle(targetKey, operationID string) {
 	a.aiSessionTitleMu.Lock()
 	defer a.aiSessionTitleMu.Unlock()
@@ -254,35 +274,57 @@ func (a *App) finishAISessionTitle(targetKey, operationID string) {
 }
 
 func (a *App) generateTargetSessionTitle(ctx context.Context, target SessionTarget, modelRef, transcript string) (string, error) {
+	providerGeneration := a.auxiliaryProviderGeneration.Load()
+	if cause := context.Cause(ctx); cause != nil {
+		return "", cause
+	}
+	var (
+		title string
+		err   error
+	)
 	if target.Controller != nil {
-		return target.Controller.GenerateSessionTitleForModel(ctx, modelRef, transcript)
+		title, err = target.Controller.GenerateSessionTitleForModel(ctx, modelRef, transcript)
+	} else {
+		root := target.WorkspaceRoot
+		if target.Scope == "global" || root == "" {
+			root = globalWorkspaceRoot()
+		}
+		cfg, loadErr := config.LoadModelRuntimeSnapshot(root, modelRef)
+		if loadErr != nil {
+			return "", newSessionOperationError("provider_unavailable", "Unable to load model settings. Check the session's provider configuration.")
+		}
+		if modelRef == "" {
+			modelRef = cfg.DefaultModel
+		}
+		sessionID := strings.TrimSpace(target.SessionRef.SessionID)
+		if sessionID == "" {
+			sessionID = strings.TrimSpace(target.TopicID)
+		}
+		if sessionID == "" {
+			sessionID = sessionRuntimeKey(target.SessionPath)
+		}
+		handle, acquireErr := boot.AcquireAuxiliaryProvider(ctx, boot.AuxiliaryProviderRequest{
+			Config: cfg, SessionID: sessionID, WorkspaceRoot: root, ModelRef: modelRef,
+		})
+		if acquireErr != nil {
+			return "", newSessionOperationError("provider_unavailable", "The session's model provider is unavailable. Check its model or extension configuration.")
+		}
+		defer func() { _ = handle.Close() }()
+		title, err = control.GenerateSessionTitleWithResolver(ctx, handle.Resolver, modelRef, transcript)
 	}
-	root := target.WorkspaceRoot
-	if target.Scope == "global" || root == "" {
-		root = globalWorkspaceRoot()
-	}
-	cfg, err := config.LoadModelRuntimeSnapshot(root, modelRef)
 	if err != nil {
-		return "", newSessionOperationError("provider_unavailable", "Unable to load model settings. Check the session's provider configuration.")
+		return "", err
 	}
-	if modelRef == "" {
-		modelRef = cfg.DefaultModel
+	if cause := context.Cause(ctx); cause != nil {
+		return "", cause
 	}
-	sessionID := strings.TrimSpace(target.SessionRef.SessionID)
-	if sessionID == "" {
-		sessionID = strings.TrimSpace(target.TopicID)
+	if a.auxiliaryProviderGeneration.Load() != providerGeneration {
+		return "", newSessionOperationError(
+			"provider_unavailable",
+			"The session's model provider changed while AI rename was running. Try again.",
+		)
 	}
-	if sessionID == "" {
-		sessionID = sessionRuntimeKey(target.SessionPath)
-	}
-	handle, err := boot.AcquireAuxiliaryProvider(ctx, boot.AuxiliaryProviderRequest{
-		Config: cfg, SessionID: sessionID, WorkspaceRoot: root, ModelRef: modelRef,
-	})
-	if err != nil {
-		return "", newSessionOperationError("provider_unavailable", "The session's model provider is unavailable. Check its model or extension configuration.")
-	}
-	defer func() { _ = handle.Close() }()
-	return control.GenerateSessionTitleWithResolver(ctx, handle.Resolver, modelRef, transcript)
+	return title, nil
 }
 
 func (a *App) controllerForTopic(topicID string) *control.Controller {
@@ -304,18 +346,6 @@ func (a *App) controllerForTopic(topicID string) *control.Controller {
 		}
 	}
 	return found
-}
-
-func (a *App) topicControllerOwnsSession(topicID string, ctrl *control.Controller, sessionPath string) bool {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	for _, tab := range a.runtimeTabsLocked() {
-		if tab == nil || tab.TopicID != topicID || tab.Ctrl != ctrl {
-			continue
-		}
-		return sessionRuntimeKey(tab.currentSessionPath()) == sessionRuntimeKey(sessionPath)
-	}
-	return false
 }
 
 func topicTitleUserText(message provider.Message) string {

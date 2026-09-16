@@ -293,6 +293,7 @@ export function ProjectTree({
     treeRef, topicLoadSeqRef, topicPageStateRef, updateTopicPageState, refreshRef,
     optimisticallyRemoveTopic: (topicId) => setTree((current) => projectTreeWithoutTopic(current, topicId)),
     closeMenu, onTopicsChanged, showToast,
+    sessionErrorMessage: (error) => t(sessionTitleErrorKey(error)),
   });
   const applyRuntimeProjection = useProjectTreeRuntimeProjection(setTree, currentArchiveTombstones);
   const clickTimerRef = useRef<ProjectTreePendingTopicOpen | null>(null);

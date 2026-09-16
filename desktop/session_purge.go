@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"reasonix/desktop/internal/workspacestate"
 	"reasonix/internal/session"
@@ -13,19 +14,37 @@ import (
 // migration originals are retained as upgrade evidence, with mappings acting
 // as tombstones so background discovery cannot import them again.
 func (a *App) PurgeCanonicalSession(ref session.SessionRef) error {
+	_, err := a.purgeCanonicalSessionWithOperation(ref, "delete-"+strings.TrimPrefix(newTabID(), "tab_"))
+	return err
+}
+
+func (a *App) purgeCanonicalSessionWithOperation(ref session.SessionRef, operationID string) (SessionTarget, error) {
 	if err := validateLocalSessionRef(ref); err != nil {
-		return err
+		return SessionTarget{}, err
 	}
+	target, err := a.resolveCanonicalSessionTargetState(ref, "", true)
+	if err != nil {
+		return SessionTarget{}, err
+	}
+	if target.Lifecycle != workspacestate.Archived {
+		return SessionTarget{}, newSessionOperationError("archived", "Archive this session before deleting it.")
+	}
+	operationID = strings.TrimSpace(operationID)
+	if operationID == "" {
+		operationID = "delete-" + strings.TrimPrefix(newTabID(), "tab_")
+	}
+	a.cancelAISessionTitle(target.key())
 	release := a.lockRuntimeMutation("purge archived session")
 	defer release()
 	if err := a.purgeCanonicalSession(a.bootContext(), ref); err != nil {
-		return err
+		return SessionTarget{}, err
 	}
 	a.emitProjectTreeChanged()
 	a.emitSessionTargetChange("session_deleted", SessionTargetChangeEvent{
-		TargetKey: (SessionTarget{SessionRef: ref}).key(),
+		TargetKey: target.key(), OperationID: operationID,
+		LifecycleGeneration: target.LifecycleGeneration, WorkspaceID: target.WorkspaceID,
 	})
-	return nil
+	return target, nil
 }
 
 func (a *App) purgeCanonicalSession(ctx context.Context, ref session.SessionRef, expected ...uint64) error {

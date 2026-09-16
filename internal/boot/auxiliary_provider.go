@@ -78,7 +78,7 @@ func AcquireAuxiliaryProvider(ctx context.Context, request AuxiliaryProviderRequ
 	}
 	pluginName := auxiliaryProviderPluginName(modelRef)
 	if pluginName == "" {
-		return &AuxiliaryProviderHandle{Resolver: base, Generation: generation}, nil
+		return nil, fmt.Errorf("auxiliary provider model %q is unavailable", modelRef)
 	}
 	manager, warnings, err := sidecar.StartPackagesByName(ctx, config.ReasonixHomeDir(), protocol.SessionContext{
 		SessionID: sessionID, WorkspaceRoot: root, Generation: generation,
@@ -106,6 +106,10 @@ func AcquireAuxiliaryProvider(ctx context.Context, request AuxiliaryProviderRequ
 		return nil, err
 	}
 	installSidecarStreamRouters(manager, merged)
+	if _, err := merged.Resolve(provider.Selection{Ref: modelRef}); err != nil {
+		_ = handle.Close()
+		return nil, fmt.Errorf("auxiliary provider model %q is unavailable: %w", modelRef, err)
+	}
 	handle.Resolver = merged
 	return handle, nil
 }

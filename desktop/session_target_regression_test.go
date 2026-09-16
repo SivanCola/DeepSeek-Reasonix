@@ -1,9 +1,13 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
+	"reasonix/internal/agent"
+	"reasonix/internal/config"
 	"reasonix/internal/provider"
 	"reasonix/internal/session"
+	"strings"
 	"testing"
 	"time"
 )
@@ -65,6 +69,49 @@ func TestSessionTargetExplicitRefMustNotMatchSiblingTopicController(t *testing.T
 	info, err := app.desktopSessionService("").Query().Stat(t.Context(), original.Ref())
 	if err != nil || info.Title != "" {
 		t.Fatalf("renaming explicit sibling changed the original: %+v, %v", info, err)
+	}
+}
+
+func TestSessionTargetInvalidHighPriorityRefDoesNotFallBack(t *testing.T) {
+	app, _, _, _, path := newCanonicalTitleFixture(t)
+	target, err := app.resolveSessionTarget(SessionSelector{
+		Ref:         &session.SessionRef{HostID: localDesktopHostID},
+		SessionPath: path,
+	})
+	if err == nil || !strings.Contains(err.Error(), "session_operation:target_not_found:") {
+		t.Fatalf("invalid explicit ref resolved target %+v with err %v", target, err)
+	}
+}
+
+func TestSessionTargetRemoteRefDoesNotEnterLocalResolver(t *testing.T) {
+	app := NewApp()
+	ref := session.SessionRef{HostID: "remote-host", SessionID: "remote-session"}
+	_, err := app.resolveSessionTarget(SessionSelector{Ref: &ref, SessionPath: "/must/not/fallback.jsonl", TopicID: "fallback"})
+	if err == nil || !strings.Contains(err.Error(), "session_operation:unsupported:") {
+		t.Fatalf("remote target error = %v, want structured unsupported", err)
+	}
+}
+
+func TestSessionTargetTopicRejectsMultipleLegacySessions(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"one", "two"} {
+		path := writeTargetHistoryFixture(t, dir, name, name)
+		if err := agent.UpdateBranchMeta(path, false, func(meta *agent.BranchMeta) error {
+			meta.TopicID = "shared-legacy-topic"
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app := NewApp()
+	installSessionCatalogForTest(t, app, dir, "global", "")
+	target, err := app.resolveSessionTarget(SessionSelector{TopicID: "shared-legacy-topic"})
+	if err == nil || !strings.Contains(err.Error(), "session_operation:ambiguous_target:") {
+		t.Fatalf("ambiguous legacy topic resolved target %+v with err %v", target, err)
 	}
 }
 

@@ -1,6 +1,7 @@
 package boot
 
 import (
+	"strings"
 	"testing"
 
 	"reasonix/internal/config"
@@ -48,5 +49,25 @@ func TestAcquireAuxiliaryProviderConfigModelNeedsNoExtensionRuntime(t *testing.T
 	}
 	if err := handle.Close(); err != nil {
 		t.Fatalf("second Close must be idempotent: %v", err)
+	}
+}
+
+func TestAcquireAuxiliaryProviderRejectsUnavailableRecordedModel(t *testing.T) {
+	cfg := &config.Config{
+		DefaultModel: "test/title-model",
+		Providers: []config.ProviderEntry{{
+			Name: "test", Kind: "openai", Model: "title-model",
+			BaseURL: "https://example.invalid",
+		}},
+	}
+	handle, err := AcquireAuxiliaryProvider(t.Context(), AuxiliaryProviderRequest{
+		Config: cfg, SessionID: "cold-session", WorkspaceRoot: t.TempDir(), ModelRef: "missing/model",
+	})
+	if handle != nil {
+		_ = handle.Close()
+		t.Fatal("unavailable recorded model returned a provider handle")
+	}
+	if err == nil || !strings.Contains(err.Error(), "unavailable") {
+		t.Fatalf("AcquireAuxiliaryProvider unavailable model error = %v", err)
 	}
 }

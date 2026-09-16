@@ -122,6 +122,10 @@ type App struct {
 	// session identity. It never serializes different sessions.
 	aiSessionTitleMu       sync.Mutex
 	aiSessionTitleInFlight map[string]aiSessionTitleOperation
+	// auxiliaryProviderGeneration invalidates bounded provider-only work when
+	// model credentials/configuration or extension packages change. Cancellation
+	// is an optimization; title CAS remains the final acceptance authority.
+	auxiliaryProviderGeneration atomic.Uint64
 
 	// sessionCatalog is a disposable, asynchronously opened projection of
 	// authoritative session sidecars. Project-shell APIs must tolerate nil here:

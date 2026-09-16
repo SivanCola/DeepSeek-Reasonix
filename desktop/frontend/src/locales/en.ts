@@ -1534,7 +1534,7 @@ export const en = {
   "projectTree.sessionError.providerUnavailable": "This session's model is unavailable. Check its model or extension settings.",
   "projectTree.sessionError.staleCursor": "The session content changed. Reload it and try again.",
   "projectTree.sessionError.unsupported": "This session does not support that action yet.",
-  "projectTree.sessionError.failed": "Unable to rename this session. Check its model settings and try again.",
+  "projectTree.sessionError.failed": "Unable to complete this session operation. Try again.",
   "projectTree.newGroup": "New group",
   "projectTree.renameGroup": "Rename group",
   "projectTree.deleteGroup": "Delete group",

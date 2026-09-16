@@ -1315,7 +1315,7 @@ export const zhTW: Record<DictKey, string> = {
   "projectTree.sessionError.providerUnavailable": "目前模型不可用，請檢查模型或擴充套件設定。",
   "projectTree.sessionError.staleCursor": "會話內容已變更，請重新載入。",
   "projectTree.sessionError.unsupported": "目前會話暫不支援此操作。",
-  "projectTree.sessionError.failed": "無法重新命名會話，請檢查該會話的模型設定後重試。",
+  "projectTree.sessionError.failed": "無法完成此會話操作，請重試。",
   "projectTree.newGroup": "新建分組",
   "projectTree.renameGroup": "重新命名分組",
   "projectTree.deleteGroup": "刪除分組",

@@ -56,7 +56,7 @@ try {
   await page.evaluate(() => window.__titleFixture.requests[1].resolve("Second completed"));
   await page.getByText(/Second completed/, { exact: false }).last().waitFor();
   await page.evaluate(() => window.__titleFixture.requests[0].reject(new Error("controller lease /private/fixture test-secret")));
-  await page.getByText(/Unable to rename this session|无法重命名会话|無法重新命名會話/).waitFor();
+  await page.getByText(/Unable to complete this session operation|无法完成该会话操作|無法完成此會話操作/).waitFor();
   assert(!await page.locator("body").textContent().then(text => text.includes("test-secret")), "raw host errors never reach the toast");
   assert.equal(await composer.inputValue(), "keep my draft");
   const unchanged = await page.evaluate(() => {

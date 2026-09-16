@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -177,6 +178,27 @@ func TestAISessionTitleOldFinallyCannotClearNewOperation(t *testing.T) {
 	}
 }
 
+func TestInvalidateAuxiliaryProviderOperationsCancelsAndFencesRequests(t *testing.T) {
+	app := NewApp()
+	ctx, cancel := context.WithCancelCause(context.Background())
+	t.Cleanup(func() { cancel(context.Canceled) })
+	app.aiSessionTitleInFlight["path:/cold"] = aiSessionTitleOperation{ID: "old", Cancel: cancel}
+	before := app.auxiliaryProviderGeneration.Load()
+
+	app.invalidateAuxiliaryProviderOperations()
+
+	if app.auxiliaryProviderGeneration.Load() != before+1 {
+		t.Fatalf("auxiliary provider generation did not advance")
+	}
+	if len(app.aiSessionTitleInFlight) != 0 {
+		t.Fatalf("invalidated operations remain in flight: %+v", app.aiSessionTitleInFlight)
+	}
+	var operationErr *SessionOperationError
+	if !errors.As(context.Cause(ctx), &operationErr) || operationErr.Code != "provider_unavailable" {
+		t.Fatalf("cancellation cause = %v, want provider_unavailable", context.Cause(ctx))
+	}
+}
+
 func newCanonicalTitleFixture(t *testing.T) (*App, *control.Controller, *session.Runtime, *desktopSessionTitleProvider, string) {
 	t.Helper()
 	isolateDesktopUserDirs(t)
@@ -251,7 +273,7 @@ func newCanonicalTitleFixture(t *testing.T) (*App, *control.Controller, *session
 	return app, ctrl, runtime, prov, path
 }
 
-func TestAIRenameCanonicalSessionPreservesManualRenameAndRejectsReboundController(t *testing.T) {
+func TestAIRenameCanonicalSessionPreservesManualRenameAndSurvivesTabClose(t *testing.T) {
 	for _, change := range []string{"manual-title", "manual-topic", "binding"} {
 		t.Run(change, func(t *testing.T) {
 			app, ctrl, runtime, prov, _ := newCanonicalTitleFixture(t)
@@ -284,11 +306,19 @@ func TestAIRenameCanonicalSessionPreservesManualRenameAndRejectsReboundControlle
 			prov.chunks <- provider.Chunk{Type: provider.ChunkText, Text: "stale AI title"}
 			prov.chunks <- provider.Chunk{Type: provider.ChunkDone}
 			close(prov.chunks)
-			if err := <-result; err == nil || (change == "binding" && !strings.Contains(err.Error(), "session_operation:target_changed:")) {
-				t.Fatalf("stale completion = %v", err)
+			resultErr := <-result
+			if change == "binding" {
+				if resultErr != nil {
+					t.Fatalf("tab close cancelled persistent rename: %v", resultErr)
+				}
+			} else if resultErr == nil {
+				t.Fatal("manual title change did not reject stale AI completion")
 			}
 			info, err := ctrl.SessionService().Query().Stat(t.Context(), runtime.Ref())
-			if err != nil || info.Title == "stale AI title" || (change == "manual-title" && info.Title != "manual title") {
+			if err != nil ||
+				(change != "binding" && info.Title == "stale AI title") ||
+				(change == "binding" && info.Title != "stale AI title") ||
+				(change == "manual-title" && info.Title != "manual title") {
 				t.Fatalf("title = %+v, %v", info, err)
 			}
 			if change == "manual-topic" && info.Title != "manual topic title" {
