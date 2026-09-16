@@ -15,23 +15,6 @@ import (
 	"reasonix/internal/session"
 )
 
-func (a *App) archiveSessionRefs(refs []session.SessionRef) error {
-	release, ok := a.tryLockRuntimeMutation("archive sessions")
-	if !ok {
-		return errTopicArchiveBusy
-	}
-	fallback, err := a.archiveSessionRefsLocked(refs)
-	release()
-	if err != nil {
-		return err
-	}
-	if fallback.needs {
-		_ = a.openFallbackRuntime(fallback)
-	}
-	a.emitProjectTreeChanged()
-	return nil
-}
-
 func (a *App) archiveSessionRefsLocked(refs []session.SessionRef, dependencies ...string) (fallbackRuntimeTarget, error) {
 	return a.archiveSessionRefsWithOperation(refs, "archive-"+newTabID(), dependencies...)
 }
@@ -46,6 +29,7 @@ func (a *App) archiveSessionRefsWithOperation(refs []session.SessionRef, operati
 		if err := validateLocalSessionRef(ref); err != nil {
 			return fallbackRuntimeTarget{}, err
 		}
+		a.cancelAISessionTitle((SessionTarget{SessionRef: ref}).key())
 		unique[ref.SessionID] = ref
 	}
 	if len(unique) == 0 {

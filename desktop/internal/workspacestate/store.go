@@ -199,11 +199,39 @@ func (s *Store) BeginCreate(ctx context.Context, pending PendingCreate) error {
 }
 
 func (s *Store) AttachSession(ctx context.Context, operationID, workspaceID, sessionID, beforeSessionID string) error {
+	return s.attachSession(ctx, operationID, workspaceID, sessionID, beforeSessionID, "", nil)
+}
+
+// AttachSessionFromSourceIfUnchanged publishes a derived child only while its
+// resolved source is still active, in the same workspace, and at the same
+// lifecycle generation.
+func (s *Store) AttachSessionFromSourceIfUnchanged(
+	ctx context.Context,
+	operationID, workspaceID, sessionID, beforeSessionID, sourceSessionID string,
+	sourceGeneration uint64,
+) error {
+	return s.attachSession(ctx, operationID, workspaceID, sessionID, beforeSessionID, sourceSessionID, &sourceGeneration)
+}
+
+func (s *Store) attachSession(
+	ctx context.Context,
+	operationID, workspaceID, sessionID, beforeSessionID, sourceSessionID string,
+	sourceGeneration *uint64,
+) error {
 	operationID, workspaceID, sessionID = strings.TrimSpace(operationID), strings.TrimSpace(workspaceID), strings.TrimSpace(sessionID)
 	if workspaceID == "" || sessionID == "" {
 		return errors.New("attach requires workspace and session ids")
 	}
 	return s.mutate(ctx, func(state *State) error {
+		if sourceGeneration != nil {
+			sourceSessionID = strings.TrimSpace(sourceSessionID)
+			sourceState := state.SessionStates[sourceSessionID]
+			sourceOwner, owned := sessionOwner(*state, sourceSessionID)
+			if sourceSessionID == "" || !owned || sourceOwner != workspaceID ||
+				sourceState.Lifecycle != Active || sourceState.Generation != *sourceGeneration {
+				return ErrMutationConflict
+			}
+		}
 		if state.SessionStates[sessionID].Lifecycle == Deleted {
 			return ErrMutationConflict
 		}
@@ -277,6 +305,16 @@ func (s *Store) AbortCreate(ctx context.Context, sessionID string) error {
 }
 
 func (s *Store) MoveSession(ctx context.Context, workspaceID, sessionID, beforeSessionID string) error {
+	return s.moveSession(ctx, workspaceID, sessionID, beforeSessionID, nil)
+}
+
+// MoveSessionIfUnchanged reorders one active session only while the caller's
+// resolved lifecycle generation and workspace owner remain current.
+func (s *Store) MoveSessionIfUnchanged(ctx context.Context, workspaceID, sessionID, beforeSessionID string, generation uint64) error {
+	return s.moveSession(ctx, workspaceID, sessionID, beforeSessionID, &generation)
+}
+
+func (s *Store) moveSession(ctx context.Context, workspaceID, sessionID, beforeSessionID string, generation *uint64) error {
 	return s.mutate(ctx, func(state *State) error {
 		workspace, ok := state.Workspaces[strings.TrimSpace(workspaceID)]
 		if !ok {
@@ -285,9 +323,18 @@ func (s *Store) MoveSession(ctx context.Context, workspaceID, sessionID, beforeS
 		if !contains(workspace.SessionIDs, sessionID) {
 			return ErrSessionNotFound
 		}
+		status := state.SessionStates[sessionID]
+		if status.Lifecycle != Active {
+			return ErrSessionNotFound
+		}
+		if generation != nil && status.Generation != *generation {
+			return ErrMutationConflict
+		}
 		workspace.SessionIDs = insertBefore(remove(workspace.SessionIDs, sessionID), sessionID, beforeSessionID)
 		workspace.UpdatedAt = time.Now().UTC()
 		state.Workspaces[workspace.ID] = workspace
+		status.Generation++
+		state.SessionStates[sessionID] = status
 		return nil
 	})
 }
@@ -307,6 +354,32 @@ func (s *Store) Contains(ctx context.Context, sessionID string) (bool, error) {
 	}
 	_, ok := sessionOwner(state, strings.TrimSpace(sessionID))
 	return ok, nil
+}
+
+// WithSessionUnchanged serializes a durable metadata commit with lifecycle and
+// workspace changes, including writers in other processes. The callback must
+// not call the registry; it may only commit session content metadata.
+func (s *Store) WithSessionUnchanged(ctx context.Context, id, workspaceID string, generation uint64, commit func() error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	release, err := filelock.Acquire(ctx, s.path+".lock")
+	if err != nil {
+		return err
+	}
+	defer release()
+	state, err := load(s.path)
+	if err != nil {
+		return err
+	}
+	owner, ok := sessionOwner(state, id)
+	status := state.SessionStates[id]
+	if !ok || status.Lifecycle != Active {
+		return ErrSessionNotFound
+	}
+	if owner != workspaceID || status.Generation != generation {
+		return ErrMutationConflict
+	}
+	return commit()
 }
 
 func (s *Store) mutate(ctx context.Context, change func(*State) error) error {

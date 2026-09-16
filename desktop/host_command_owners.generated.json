@@ -13,6 +13,20 @@
       ]
     }
   },
+  "AIRenameSessionTarget": {
+    "domain": "desktop/session_ai_title.go",
+    "owner": "App.AIRenameSessionTarget",
+    "sources": [
+      "desktop/session_ai_title.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.AIRenameSessionTarget",
+      "inputs": [
+        "selector"
+      ]
+    }
+  },
   "AbandonPendingUpdate": {
     "domain": "desktop/updater_app.go",
     "owner": "App.AbandonPendingUpdate",
@@ -577,6 +591,20 @@
       "resolver": "App.ArchiveCanonicalSession",
       "inputs": [
         "ref"
+      ]
+    }
+  },
+  "ArchiveSessionTarget": {
+    "domain": "desktop/session_operations.go",
+    "owner": "App.ArchiveSessionTarget",
+    "sources": [
+      "desktop/session_operations.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.ArchiveSessionTarget",
+      "inputs": [
+        "selector"
       ]
     }
   },
@@ -1419,6 +1447,21 @@
       ]
     }
   },
+  "CopySessionTarget": {
+    "domain": "desktop/session_workspace_api.go",
+    "owner": "App.CopySessionTarget",
+    "sources": [
+      "desktop/session_workspace_api.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.CopySessionTarget",
+      "inputs": [
+        "selector",
+        "operationID"
+      ]
+    }
+  },
   "CopyThemePack": {
     "domain": "desktop/theme_app.go",
     "owner": "App.CopyThemePack",
@@ -1697,6 +1740,20 @@
       "resolver": "App.DeleteSession",
       "inputs": [
         "path"
+      ]
+    }
+  },
+  "DeleteSessionTarget": {
+    "domain": "desktop/session_operations.go",
+    "owner": "App.DeleteSessionTarget",
+    "sources": [
+      "desktop/session_operations.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.DeleteSessionTarget",
+      "inputs": [
+        "selector"
       ]
     }
   },
@@ -2266,6 +2323,21 @@
       "resolver": "App.ForkSession",
       "inputs": [
         "ref",
+        "turnBoundary"
+      ]
+    }
+  },
+  "ForkSessionTarget": {
+    "domain": "desktop/session_workspace_api.go",
+    "owner": "App.ForkSessionTarget",
+    "sources": [
+      "desktop/session_workspace_api.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.ForkSessionTarget",
+      "inputs": [
+        "selector",
         "turnBoundary"
       ]
     }
@@ -2841,6 +2913,22 @@
       ]
     }
   },
+  "HistoryContentForTarget": {
+    "domain": "desktop/history_slice.go",
+    "owner": "App.HistoryContentForTarget",
+    "sources": [
+      "desktop/history_slice.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.HistoryContentForTarget",
+      "inputs": [
+        "selector",
+        "ref",
+        "chunkIndex"
+      ]
+    }
+  },
   "HistoryForTab": {
     "domain": "desktop/app.go",
     "owner": "App.HistoryForTab",
@@ -2897,6 +2985,21 @@
       "resolver": "App.HistorySliceForTab",
       "inputs": [
         "tabID",
+        "req"
+      ]
+    }
+  },
+  "HistorySliceForTarget": {
+    "domain": "desktop/session_target_history_legacy.go",
+    "owner": "App.HistorySliceForTarget",
+    "sources": [
+      "desktop/session_target_history_legacy.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.HistorySliceForTarget",
+      "inputs": [
+        "selector",
         "req"
       ]
     }
@@ -3449,6 +3552,22 @@
       ]
     }
   },
+  "LocateSessionMessageForTarget": {
+    "domain": "desktop/session_history_service.go",
+    "owner": "App.LocateSessionMessageForTarget",
+    "sources": [
+      "desktop/session_history_service.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.LocateSessionMessageForTarget",
+      "inputs": [
+        "selector",
+        "messageID",
+        "snapshot"
+      ]
+    }
+  },
   "LookupInboxFollowupForTarget": {
     "domain": "desktop/inbox_target.go",
     "owner": "App.LookupInboxFollowupForTarget",
@@ -3815,6 +3934,22 @@
         "tabID",
         "id",
         "toIndex"
+      ]
+    }
+  },
+  "MoveSessionTarget": {
+    "domain": "desktop/session_operations.go",
+    "owner": "App.MoveSessionTarget",
+    "sources": [
+      "desktop/session_operations.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.MoveSessionTarget",
+      "inputs": [
+        "selector",
+        "workspaceID",
+        "beforeSessionID"
       ]
     }
   },
@@ -5539,6 +5674,21 @@
       ]
     }
   },
+  "RenameSessionTarget": {
+    "domain": "desktop/session_operations.go",
+    "owner": "App.RenameSessionTarget",
+    "sources": [
+      "desktop/session_operations.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.RenameSessionTarget",
+      "inputs": [
+        "selector",
+        "title"
+      ]
+    }
+  },
   "RenameTerminalForTab": {
     "domain": "desktop/terminal.go",
     "owner": "App.RenameTerminalForTab",
@@ -6171,6 +6321,20 @@
       "resolver": "App.RestoreSession",
       "inputs": [
         "path"
+      ]
+    }
+  },
+  "RestoreSessionTarget": {
+    "domain": "desktop/session_operations.go",
+    "owner": "App.RestoreSessionTarget",
+    "sources": [
+      "desktop/session_operations.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.RestoreSessionTarget",
+      "inputs": [
+        "selector"
       ]
     }
   },
@@ -6983,6 +7147,23 @@
       ]
     }
   },
+  "SearchHistoryContentForTarget": {
+    "domain": "desktop/session_target_history_legacy.go",
+    "owner": "App.SearchHistoryContentForTarget",
+    "sources": [
+      "desktop/session_target_history_legacy.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.SearchHistoryContentForTarget",
+      "inputs": [
+        "selector",
+        "query",
+        "cursor",
+        "limit"
+      ]
+    }
+  },
   "SearchSessionHistoryForTab": {
     "domain": "desktop/session_history_service.go",
     "owner": "App.SearchSessionHistoryForTab",
@@ -6994,6 +7175,23 @@
       "resolver": "App.SearchSessionHistoryForTab",
       "inputs": [
         "tabID",
+        "textQuery",
+        "cursor",
+        "limit"
+      ]
+    }
+  },
+  "SearchSessionHistoryForTarget": {
+    "domain": "desktop/session_history_service.go",
+    "owner": "App.SearchSessionHistoryForTarget",
+    "sources": [
+      "desktop/session_history_service.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.SearchSessionHistoryForTarget",
+      "inputs": [
+        "selector",
         "textQuery",
         "cursor",
         "limit"
@@ -7016,6 +7214,22 @@
       ]
     }
   },
+  "SessionHistoryContentForTarget": {
+    "domain": "desktop/session_history_service.go",
+    "owner": "App.SessionHistoryContentForTarget",
+    "sources": [
+      "desktop/session_history_service.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.SessionHistoryContentForTarget",
+      "inputs": [
+        "selector",
+        "ref",
+        "offset"
+      ]
+    }
+  },
   "SessionHistoryPageForTab": {
     "domain": "desktop/session_history_service.go",
     "owner": "App.SessionHistoryPageForTab",
@@ -7027,6 +7241,22 @@
       "resolver": "App.SessionHistoryPageForTab",
       "inputs": [
         "tabID",
+        "cursor",
+        "limit"
+      ]
+    }
+  },
+  "SessionHistoryPageForTarget": {
+    "domain": "desktop/session_history_service.go",
+    "owner": "App.SessionHistoryPageForTarget",
+    "sources": [
+      "desktop/session_history_service.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.SessionHistoryPageForTarget",
+      "inputs": [
+        "selector",
         "cursor",
         "limit"
       ]
@@ -7047,6 +7277,21 @@
       ]
     }
   },
+  "SessionHistoryWindowForTarget": {
+    "domain": "desktop/session_history_service.go",
+    "owner": "App.SessionHistoryWindowForTarget",
+    "sources": [
+      "desktop/session_history_service.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.SessionHistoryWindowForTarget",
+      "inputs": [
+        "selector",
+        "req"
+      ]
+    }
+  },
   "SessionMessageFieldForTab": {
     "domain": "desktop/session_history_service.go",
     "owner": "App.SessionMessageFieldForTab",
@@ -7058,6 +7303,25 @@
       "resolver": "App.SessionMessageFieldForTab",
       "inputs": [
         "tabID",
+        "messageID",
+        "version",
+        "field",
+        "offset",
+        "length"
+      ]
+    }
+  },
+  "SessionMessageFieldForTarget": {
+    "domain": "desktop/session_history_service.go",
+    "owner": "App.SessionMessageFieldForTarget",
+    "sources": [
+      "desktop/session_history_service.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.SessionMessageFieldForTarget",
+      "inputs": [
+        "selector",
         "messageID",
         "version",
         "field",

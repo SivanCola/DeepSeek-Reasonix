@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -153,6 +154,145 @@ func lifecycleRequest(t *testing.T, a *App, ref session.SessionRef, id, action s
 	return SessionLifecycleRequest{OperationID: id, Action: action, Targets: []SessionLifecycleTarget{{Ref: &ref}}, ExpectedGeneration: state.Generation}
 }
 
+func TestExplicitTargetCanonicalLifecycleDoesNotNavigate(t *testing.T) {
+	a, ref := lifecycleFixture(t)
+	a.tabs = map[string]*WorkspaceTab{
+		"active": {ID: "active", TopicID: "unrelated", SessionID: "unrelated", Ready: true},
+	}
+	a.tabOrder = []string{"active"}
+	a.activeTabID = "active"
+	selector := SessionSelector{Ref: &ref}
+
+	archived, err := a.ArchiveSessionTarget(selector)
+	if err != nil || !archived.Committed || archived.TargetKey == "" || archived.OperationID == "" {
+		t.Fatalf("ArchiveSessionTarget = %+v, %v", archived, err)
+	}
+	if a.activeTabID != "active" || a.tabs["active"].TopicID != "unrelated" {
+		t.Fatal("archiving a cold target changed the active tab")
+	}
+	restored, err := a.RestoreSessionTarget(selector)
+	if err != nil || !restored.Committed || restored.LifecycleGeneration <= archived.LifecycleGeneration {
+		t.Fatalf("RestoreSessionTarget = %+v, %v", restored, err)
+	}
+	if a.activeTabID != "active" || a.tabs["active"].TopicID != "unrelated" {
+		t.Fatal("restoring a cold target changed the active tab")
+	}
+	if _, err := a.MoveSessionTarget(selector, workspacestate.GlobalWorkspaceID, ""); err != nil {
+		t.Fatalf("MoveSessionTarget: %v", err)
+	}
+	if _, err := a.ArchiveSessionTarget(selector); err != nil {
+		t.Fatalf("archive before delete: %v", err)
+	}
+	deleted, err := a.DeleteSessionTarget(selector)
+	if err != nil || !deleted.Committed {
+		t.Fatalf("DeleteSessionTarget = %+v, %v", deleted, err)
+	}
+	state, loadErr := a.workspaceRegistry().Load(t.Context())
+	if loadErr != nil || state.SessionStates[ref.SessionID].Lifecycle != workspacestate.Deleted {
+		t.Fatalf("deleted lifecycle = %+v, %v", state.SessionStates[ref.SessionID], loadErr)
+	}
+}
+
+func TestManualCanonicalRenameRejectsStaleLifecycleSnapshot(t *testing.T) {
+	a, ref := lifecycleFixture(t)
+	target, err := a.resolveSessionTarget(SessionSelector{Ref: &ref})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.ArchiveSessionTarget(SessionSelector{Ref: &ref}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.RestoreSessionTarget(SessionSelector{Ref: &ref}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.renameCanonicalSessionTarget(target, "stale title"); !errors.Is(err, workspacestate.ErrMutationConflict) {
+		t.Fatalf("stale lifecycle rename error = %v, want mutation conflict", err)
+	}
+	info, err := a.desktopSessionService("").Query().Stat(t.Context(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Title == "stale title" {
+		t.Fatal("stale lifecycle rename committed")
+	}
+}
+
+func TestExplicitTargetLegacyArchiveAndRestoreUseCanonicalLifecycle(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	a := NewApp()
+	a.ctx = t.Context()
+	pinDesktopSessionRoot(t, a)
+	installNoopRuntimeEvents(a)
+	t.Cleanup(a.closeSessionServices)
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := writeLegacySession(t, dir, "target-lifecycle.jsonl", "preserve legacy source", time.Now())
+	before, err := desktopSourceFingerprint(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selector := SessionSelector{SessionPath: path}
+	archived, err := a.ArchiveSessionTarget(selector)
+	if err != nil || !archived.Committed {
+		t.Fatalf("ArchiveSessionTarget legacy = %+v, %v", archived, err)
+	}
+	after, err := desktopSourceFingerprint(path)
+	if err != nil || before != after {
+		t.Fatalf("archive changed legacy source: %v", err)
+	}
+	restored, err := a.RestoreSessionTarget(selector)
+	if err != nil || !restored.Committed {
+		t.Fatalf("RestoreSessionTarget legacy = %+v, %v", restored, err)
+	}
+	target, err := a.resolveSessionTarget(selector)
+	if err != nil || target.SessionRef.SessionID == "" || target.Lifecycle != workspacestate.Active {
+		t.Fatalf("restored legacy target = %+v, %v", target, err)
+	}
+}
+
+func TestExplicitTargetLegacyMoveAdoptsWithoutNavigating(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	a := NewApp()
+	a.ctx = t.Context()
+	pinDesktopSessionRoot(t, a)
+	installNoopRuntimeEvents(a)
+	t.Cleanup(a.closeSessionServices)
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := writeLegacySession(t, dir, "target-move.jsonl", "move legacy source", time.Now())
+	before, err := desktopSourceFingerprint(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.tabs = map[string]*WorkspaceTab{"active": {ID: "active", SessionID: "unrelated"}}
+	a.tabOrder = []string{"active"}
+	a.activeTabID = "active"
+
+	result, err := a.MoveSessionTarget(
+		SessionSelector{SessionPath: path},
+		workspacestate.GlobalWorkspaceID,
+		"",
+	)
+	if err != nil || !result.Committed {
+		t.Fatalf("MoveSessionTarget legacy = %+v, %v", result, err)
+	}
+	target, err := a.resolveSessionTarget(SessionSelector{SessionPath: path})
+	if err != nil || target.SessionRef.SessionID == "" || target.Lifecycle != workspacestate.Active {
+		t.Fatalf("moved legacy target = %+v, %v", target, err)
+	}
+	after, err := desktopSourceFingerprint(path)
+	if err != nil || before != after {
+		t.Fatalf("move changed legacy source: %v", err)
+	}
+	if a.activeTabID != "active" || len(a.tabs) != 1 {
+		t.Fatalf("legacy move changed navigation: active=%q tabs=%d", a.activeTabID, len(a.tabs))
+	}
+}
+
 func TestLifecycleCommandReceiptDoesNotReplayAfterRestore(t *testing.T) {
 	a, ref := lifecycleFixture(t)
 	req := lifecycleRequest(t, a, ref, "archive", "archive")
@@ -210,8 +350,9 @@ func TestPurgeInterruptedTombstoneRemainsActionableAndResumes(t *testing.T) {
 	if err := a.recoverDesktopSessionOperations(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.PurgeCanonicalSession(ref); err != nil {
-		t.Fatal(err)
+	deleted, err := a.DeleteSessionTarget(SessionSelector{Ref: &ref})
+	if err != nil || !deleted.Committed {
+		t.Fatalf("resume explicit delete: %+v %v", deleted, err)
 	}
 	page, err = a.ListTrashEntries("", "", 50)
 	if err != nil || len(page.Items) != 0 {
@@ -220,6 +361,9 @@ func TestPurgeInterruptedTombstoneRemainsActionableAndResumes(t *testing.T) {
 	state, _ := store.Load(ctx)
 	if state.SessionStates[ref.SessionID].Lifecycle != workspacestate.Deleted {
 		t.Fatal("tombstone lost")
+	}
+	if deleted.LifecycleGeneration != state.SessionStates[ref.SessionID].Generation {
+		t.Fatalf("deleted generation = %d, want %d", deleted.LifecycleGeneration, state.SessionStates[ref.SessionID].Generation)
 	}
 	if _, err := os.Stat(filepath.Join(a.desktopSessions.root, ref.SessionID)); !os.IsNotExist(err) {
 		t.Fatalf("body remains: %v", err)

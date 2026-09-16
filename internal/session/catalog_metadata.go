@@ -14,7 +14,7 @@ import (
 )
 
 // Rebuild both authored previews and retracted input/turn metadata.
-const catalogMetadataVersion = 3
+const catalogMetadataVersion = 4
 
 // metadataForDurable publishes catalog metadata only for a durable prefix.
 func (s *Session) metadataForDurable(durable uint64) (catalogMetadata, bool) {
@@ -42,6 +42,7 @@ type catalogMetadata struct {
 	CreatedAt     string `json:"createdAt"`
 	Sequence      uint64 `json:"sequence"`
 	Title         string `json:"title,omitempty"`
+	TitleSequence uint64 `json:"titleSequence,omitempty"`
 	ModelRef      string `json:"modelRef,omitempty"`
 	ModelIdentity string `json:"modelIdentity,omitempty"`
 	Turns         int    `json:"turns"`
@@ -62,7 +63,8 @@ func metadataFromProjection(manifest Manifest, sequence uint64, projection Proje
 	metadata := catalogMetadata{
 		Version: catalogMetadataVersion, Codec: Codec, SessionID: manifest.SessionID,
 		CreatedAt: manifest.CreatedAt.UTC().Format(time.RFC3339Nano), Sequence: sequence,
-		Title: projection.Title, ModelRef: projection.ModelRef, ModelIdentity: projection.ModelIdentity,
+		Title: projection.Title, TitleSequence: projection.TitleSequence,
+		ModelRef: projection.ModelRef, ModelIdentity: projection.ModelIdentity,
 	}
 	metadata.Turns = visibleBoundaryCount(projection, true)
 	for _, input := range projection.TranscriptInputs {

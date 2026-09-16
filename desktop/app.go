@@ -118,6 +118,14 @@ type App struct {
 	// session-sidecar publication in the same order for manual and automatic
 	// renames. It is never held by generic topic-state reads or other metadata.
 	topicTitleMutationMu sync.Mutex
+	// aiSessionTitleMu deduplicates explicit AI rename requests by durable
+	// session identity. It never serializes different sessions.
+	aiSessionTitleMu       sync.Mutex
+	aiSessionTitleInFlight map[string]aiSessionTitleOperation
+	// auxiliaryProviderGeneration invalidates bounded provider-only work when
+	// model credentials/configuration or extension packages change. Cancellation
+	// is an optimization; title CAS remains the final acceptance authority.
+	auxiliaryProviderGeneration atomic.Uint64
 
 	// sessionCatalog is a disposable, asynchronously opened projection of
 	// authoritative session sidecars. Project-shell APIs must tolerate nil here:
@@ -456,19 +464,20 @@ func (a *App) jsProfilingMiddleware() func(http.Handler) http.Handler {
 // last session's desktop-tabs.json.
 func NewApp() *App {
 	a := &App{
-		tabs:                 map[string]*WorkspaceTab{},
-		runtimeByID:          map[string]*desktopSessionRuntime{},
-		runtimeBySessionKey:  map[string]*desktopSessionRuntime{},
-		sessionServices:      map[string]*session.Service{},
-		desktopSessions:      newDesktopSessionState(),
-		catalogReconcileJobs: map[string]*desktopCatalogReconcileJob{},
-		detachedSessions:     map[string]*WorkspaceTab{},
-		mediaTokens:          newMediaTokenStore(),
-		presentPreview:       newWorkspacePreviewOrigin(),
-		botInstalls:          map[string]*botInstallSession{},
-		botRuntime:           newDesktopBotRuntime(),
-		remoteWindows:        newRemoteWindowRegistry(),
-		topicState:           desktopTopicState,
+		tabs:                   map[string]*WorkspaceTab{},
+		runtimeByID:            map[string]*desktopSessionRuntime{},
+		runtimeBySessionKey:    map[string]*desktopSessionRuntime{},
+		sessionServices:        map[string]*session.Service{},
+		aiSessionTitleInFlight: map[string]aiSessionTitleOperation{},
+		desktopSessions:        newDesktopSessionState(),
+		catalogReconcileJobs:   map[string]*desktopCatalogReconcileJob{},
+		detachedSessions:       map[string]*WorkspaceTab{},
+		mediaTokens:            newMediaTokenStore(),
+		presentPreview:         newWorkspacePreviewOrigin(),
+		botInstalls:            map[string]*botInstallSession{},
+		botRuntime:             newDesktopBotRuntime(),
+		remoteWindows:          newRemoteWindowRegistry(),
+		topicState:             desktopTopicState,
 		worktreeReservations: worktreeRuntimeReservations{
 			cleanup: map[string]struct{}{},
 			merge:   map[string]struct{}{},
@@ -3426,26 +3435,27 @@ func (a *App) purgeTrashedSession(path string, requireRedundantRecovery bool) er
 // the branch meta sidecar, with the legacy .titles.json map kept as a
 // compatibility write-through for older desktop data paths.
 func (a *App) RenameSession(path, title string) error {
-	if _, ok := parseSessionRoute(path); ok {
-		service := a.desktopSessionService(a.activeSessionDir())
-		ref, valid := sessionRefForRoute(service, path)
-		if !valid {
+	if target, err := a.resolveSessionTarget(sessionTargetSelector{SessionPath: strings.TrimSpace(path)}); err == nil {
+		a.cancelAISessionTitle(target.key())
+	}
+	a.topicTitleMutationMu.Lock()
+	defer a.topicTitleMutationMu.Unlock()
+	if id, ok := parseSessionRoute(path); ok {
+		service := a.desktopSessionService("")
+		ref := session.SessionRef{HostID: localDesktopHostID, SessionID: id}
+		if err := validateLocalSessionRef(ref); err != nil {
 			return errors.New("session version is unavailable")
 		}
 		if err := service.SetTitle(a.bootContext(), ref, title); err != nil {
 			return friendlySessionFileError(err)
 		}
 		a.invalidatePromptHistoryCache()
-		a.emitProjectTreeChangedForSessionDirs(a.activeSessionDir())
+		a.emitProjectTreeChanged()
 		return nil
 	}
-	dir := a.activeSessionDir()
-	if _, _, err := validateSessionPath(dir, path); err != nil {
-		resolvedDir, _, resolveErr := a.sessionDirForPath(path)
-		if resolveErr != nil {
-			return errors.New("session version is unavailable")
-		}
-		dir = resolvedDir
+	dir, _, err := a.sessionDirForPath(path)
+	if err != nil {
+		return errors.New("session version is unavailable")
 	}
 	return friendlySessionFileError(a.renameSessionInDir(dir, path, title))
 }
@@ -3466,7 +3476,7 @@ func (a *App) renameSessionInDirIfTitleUnchanged(dir, path, expectedTitle, title
 	if err != nil {
 		return err
 	}
-	if err := agent.RenameSessionIfTitleUnchanged(sessionPath, expectedTitle, title); err != nil {
+	if err := agent.RenameSessionIfTitleRevision(sessionPath, expectedTitle, title); err != nil {
 		return err
 	}
 	return a.onSessionTitleChanged(dir, sessionPath, title)

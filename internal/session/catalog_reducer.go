@@ -57,7 +57,8 @@ func (r *catalogReducer) apply(commit Commit) error {
 		s := r.state
 		r.state = Projection{CommittedSequence: s.CommittedSequence, TurnID: s.TurnID,
 			CurrentTurnStart: s.CurrentTurnStart, TurnStatus: s.TurnStatus,
-			Title: s.Title, ModelRef: s.ModelRef, ModelIdentity: s.ModelIdentity,
+			Title: s.Title, TitleSequence: s.TitleSequence,
+			ModelRef: s.ModelRef, ModelIdentity: s.ModelIdentity,
 			TranscriptInputs: s.TranscriptInputs, HiddenTurns: s.HiddenTurns, RetractedInputs: s.RetractedInputs}
 	}
 	return nil

@@ -2091,17 +2091,7 @@ func enrichTabMetas(metas []TabMeta) []TabMeta {
 func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 	runtimeView := a.sessionRuntimeViewLocked(tab)
 	sessionPath := tab.currentSessionPath()
-	var sessionRevision int64
-	var sessionDigest string
-	if revision, digest, ok := a.canonicalTabHistoryFingerprint(tab); ok {
-		sessionRevision = revision
-		sessionDigest = digest
-	} else if strings.TrimSpace(tab.SessionID) == "" {
-		if meta, ok, err := agent.LoadBranchMeta(sessionPath); err == nil && ok {
-			sessionRevision = meta.Revision
-			sessionDigest = meta.ContentDigest
-		}
-	}
+	sessionRevision, sessionDigest := a.tabHistoryFingerprint(tab, sessionPath)
 	floor := derivedQualityFloor(tab)
 	m := TabMeta{
 		ID:                tab.ID,
@@ -6406,11 +6396,11 @@ func (a *App) ReorderProjects(workspaceRoots []string) error {
 
 // RenameTopic updates a topic's display title.
 func (a *App) RenameTopic(topicID, title string) error {
+	a.topicTitleMutationMu.Lock()
+	defer a.topicTitleMutationMu.Unlock()
 	if handled, err := a.updateCanonicalTopicPresentation(topicID, &title, nil); handled || err != nil {
 		return err
 	}
-	a.topicTitleMutationMu.Lock()
-	defer a.topicTitleMutationMu.Unlock()
 	trimmed := strings.TrimSpace(title)
 	if trimmed == "" {
 		trimmed = defaultTopicTitle

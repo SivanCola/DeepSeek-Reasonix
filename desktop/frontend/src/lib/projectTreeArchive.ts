@@ -89,6 +89,31 @@ export function projectTreeTrashingTopics(previous: Set<string>, topicId: string
   return next;
 }
 
+export async function archiveProjectTreeSession({
+  sessionPath,
+  archiveTarget,
+  refresh,
+  topicsChanged,
+  showError,
+}: {
+  sessionPath: string;
+  archiveTarget: (selector: { sessionPath: string }) => Promise<unknown>;
+  refresh: () => Promise<void>;
+  topicsChanged?: () => Promise<void> | void;
+  showError: (error: unknown) => void;
+}): Promise<boolean> {
+  try {
+    await archiveTarget({ sessionPath });
+    await refresh();
+    await Promise.resolve(topicsChanged?.()).catch(() => undefined);
+    return true;
+  } catch (error) {
+    showError(error);
+    await refresh().catch(() => undefined);
+    return false;
+  }
+}
+
 export function useProjectTreeArchiveState() {
   const topicsRef = useRef<Set<string>>(new Set());
   const tombstonesRef = useRef<Set<string>>(new Set());
@@ -132,6 +157,7 @@ export function useProjectTreeArchiveController({
   closeMenu,
   onTopicsChanged,
   showToast,
+  sessionErrorMessage,
 }: {
   treeRef: { current: ProjectNode[] };
   topicLoadSeqRef: { current: Record<string, number> };
@@ -142,6 +168,7 @@ export function useProjectTreeArchiveController({
   closeMenu: () => void;
   onTopicsChanged?: () => Promise<void> | void;
   showToast: ToastContextValue["showToast"];
+  sessionErrorMessage?: (error: unknown) => string;
 }) {
   const {
     trashingTopics,
@@ -210,12 +237,13 @@ export function useProjectTreeArchiveController({
 
     const queued = enqueueProjectTreeArchive(archiveQueueRef.current, async () => {
       try {
-        await app.DeleteSession(sessionPath);
-        await refreshRef.current(reloadOptions);
-        await Promise.resolve(onTopicsChanged?.()).catch(() => undefined);
-      } catch (err) {
-        showToast(err instanceof Error ? err.message : String(err), "error");
-        await refreshRef.current(reloadOptions).catch(() => undefined);
+        await archiveProjectTreeSession({
+          sessionPath,
+          archiveTarget: (selector) => app.ArchiveSessionTarget(selector),
+          refresh: () => refreshRef.current(reloadOptions),
+          topicsChanged: onTopicsChanged,
+          showError: (err) => showToast(sessionErrorMessage?.(err) ?? (err instanceof Error ? err.message : String(err)), "error"),
+        });
       } finally {
         sessionTrashingRef.current = projectTreeTrashingTopics(sessionTrashingRef.current, sessionPath, false);
         setTrashingSessions(sessionTrashingRef.current);
@@ -223,7 +251,7 @@ export function useProjectTreeArchiveController({
     });
     archiveQueueRef.current = queued;
     await queued;
-  }, [closeMenu, onTopicsChanged, refreshRef, showToast, treeRef]);
+  }, [closeMenu, onTopicsChanged, refreshRef, sessionErrorMessage, showToast, treeRef]);
 
   return { trashingTopics, trashingSessions, currentArchiveTombstones, trashTopic, trashSession };
 }

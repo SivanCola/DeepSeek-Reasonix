@@ -7,9 +7,20 @@ import type {
   ChatFileReferenceRequest,
   ChatFileReferenceResult,
   DesktopCommandName,
+  HistoryWindowPage,
+  HistoryWindowRequest,
   MarkdownSVGView,
+  MessageFieldPage,
+  MessageHistoryPage,
+  MessageLocation,
+  Ref as SessionContentRef,
+  SearchHistoryPage,
   SessionArchitectureDiagnostics,
+  SessionCreationResult,
+  SessionHistoryContentChunk,
+  SessionMutationResult,
   SessionRef,
+  SessionSelector,
   WorkspaceSessionPage,
   WorkspaceSnapshot,
 } from "../generated/desktopContract.generated";
@@ -32,7 +43,8 @@ import { modeHasAutoApproveTools, modeWithAutoApproveTools, modeWithPlan, normal
 import { makeMockProjectTreeOrganizationBindings, subscribeMockProjectTreeChanged, notifyMockProjectTreeChanged } from "./mockProjectTreeOrganization";
 import { decisionSurfaceMockFromInput, isLongDecisionOptionsMockInput } from "./decisionSurfaceMock";
 import { mockWorkspaceFile } from "./mockWorkspaceFile";
-import { mockAIRenameSession, type SessionTitleBindings } from "./mockSessionTitle";
+import { mockAIRenameTarget, mockSessionTitleTarget, type SessionTitleBindings } from "./mockSessionTitle";
+import { sessionTitleTarget } from "./sessionTitleOperation";
 import { mockHistoryContentField, mockHistorySlice, mockTopicHistory as topicHistoryFixture } from "./bridgeHistoryFixtures";
 import { createMockModelScopePreset, type MockProviderPresetTemplate } from "./mockModelScopePreset";
 import { createMockRemoteProjects } from "./mockRemoteProjects";
@@ -94,6 +106,7 @@ import type {
   ExternalOpenersView,
   HistoryMessage,
   HistoryPage,
+  HistorySearchPage,
   HistoryContentChunk,
   HistoryContentRef,
   HistorySlice,
@@ -223,13 +236,28 @@ export interface AppBindings extends SessionLifecycleBindings, ForkTargetsBindin
   GetWorkspaceSnapshot(): Promise<WorkspaceSnapshot>;
   CreateSession(workspaceId: string): Promise<SessionRef>;
   ForkSession(ref: SessionRef, turnBoundary: string): Promise<SessionRef>;
+  ForkSessionTarget(selector: SessionSelector, turnBoundary: string): Promise<SessionRef>;
+  CopySessionTarget(selector: SessionSelector, operationId: string): Promise<SessionCreationResult>;
+  HistorySliceForTarget(selector: SessionSelector, request: HistorySliceRequest): Promise<HistorySlice>;
+  HistoryContentForTarget(selector: SessionSelector, ref: HistoryContentRef, chunkIndex: number): Promise<HistoryContentChunk>;
+  SearchHistoryContentForTarget(selector: SessionSelector, query: string, cursor: string, limit: number): Promise<HistorySearchPage>;
+  SessionHistoryPageForTarget(selector: SessionSelector, cursor: string, limit: number): Promise<MessageHistoryPage>;
+  SessionHistoryContentForTarget(selector: SessionSelector, ref: SessionContentRef, offset: number): Promise<SessionHistoryContentChunk>;
+  LocateSessionMessageForTarget(selector: SessionSelector, messageId: string, snapshot: number): Promise<MessageLocation>;
+  SessionMessageFieldForTarget(selector: SessionSelector, messageId: string, version: number, field: string, offset: number, length: number): Promise<MessageFieldPage>;
+  SearchSessionHistoryForTarget(selector: SessionSelector, query: string, cursor: string, limit: number): Promise<SearchHistoryPage>;
+  SessionHistoryWindowForTarget(selector: SessionSelector, request: HistoryWindowRequest): Promise<HistoryWindowPage>;
   ListWorkspaceSessions(workspaceId: string, query: string, cursor: string, limit: number, includeArchived: boolean): Promise<WorkspaceSessionPage>;
   OpenSession(ref: SessionRef): Promise<HistoryPage>;
   ReadSessionHistory(ref: SessionRef, cursor: string, limit: number): Promise<HistoryPage>;
   RenameCanonicalSession(ref: SessionRef, title: string): Promise<void>;
   ArchiveCanonicalSession(ref: SessionRef): Promise<void>;
+  ArchiveSessionTarget(selector: SessionSelector): Promise<SessionMutationResult>;
   RestoreCanonicalSession(ref: SessionRef): Promise<void>;
+  RestoreSessionTarget(selector: SessionSelector): Promise<SessionMutationResult>;
+  DeleteSessionTarget(selector: SessionSelector): Promise<SessionMutationResult>;
   MoveWorkspaceSession(workspaceId: string, sessionId: string, beforeSessionId: string): Promise<void>;
+  MoveSessionTarget(selector: SessionSelector, workspaceId: string, beforeSessionId: string): Promise<SessionMutationResult>;
   RenameWorkspace(workspaceId: string, title: string): Promise<void>;
   SetWorkspaceVisible(workspaceId: string, visible: boolean): Promise<void>;
   MoveWorkspace(workspaceId: string, beforeWorkspaceId: string): Promise<void>;
@@ -2286,6 +2314,54 @@ function makeMockApp(): AppBindings {
     ...makeMockSessionLifecycleBindings(mockWorkspaceSnapshot, mockArchivedSessionIDs, mockPurgedSessionIDs, notifyMockProjectTreeChanged),
     async CreateSession(_workspaceId: string) { return { hostId: "local", sessionId: `mock-${Date.now()}` }; },
     async ForkSession(_ref: SessionRef, _turnBoundary: string) { return { hostId: "local", sessionId: `mock-fork-${Date.now()}` }; },
+    async ForkSessionTarget(_selector: SessionSelector, _turnBoundary: string) { return { hostId: "local", sessionId: `mock-fork-${Date.now()}` }; },
+    async CopySessionTarget(_selector: SessionSelector, operationId: string): Promise<SessionCreationResult> {
+      return {
+        ref: { hostId: "local", sessionId: `mock-copy-${operationId || Date.now()}` },
+        operationId: operationId || `mock-copy-operation-${Date.now()}`,
+        committed: true,
+      };
+    },
+    async HistorySliceForTarget(_selector: SessionSelector, _request: HistorySliceRequest): Promise<HistorySlice> {
+      return { entries: [], nextCursor: "", hasOlder: false, totalTurns: 0, startTurn: 0, endTurn: 0, stale: false, revision: 0 };
+    },
+    async HistoryContentForTarget(_selector: SessionSelector, ref: HistoryContentRef, chunkIndex: number): Promise<HistoryContentChunk> {
+      return {
+        entryId: ref.entryId, field: ref.field, chunk: Math.max(0, chunkIndex),
+        chunks: 1, data: "", done: true, stale: false,
+      };
+    },
+    async SearchHistoryContentForTarget(_selector: SessionSelector, _query: string, _cursor: string, _limit: number): Promise<HistorySearchPage> {
+      return {
+        items: [], nextCursor: "", revision: 0, partial: false, staleCursor: false,
+        status: { state: "ready", mode: "incremental", total: 0, indexed: 0, pending: 0, failed: 0, revision: 0 },
+      };
+    },
+    async SessionHistoryPageForTarget(_selector: SessionSelector, _cursor: string, _limit: number): Promise<MessageHistoryPage> {
+      return { messages: [], snapshotSequence: 0, coverageSequence: 0, status: "ready", totalTurns: 0, generation: "mock", hasMore: false };
+    },
+    async SessionHistoryContentForTarget(_selector: SessionSelector, ref: SessionContentRef, offset: number): Promise<SessionHistoryContentChunk> {
+      return { data: "", nextOffset: Math.min(Math.max(0, offset), ref.bytes), done: offset >= ref.bytes };
+    },
+    async LocateSessionMessageForTarget(_selector: SessionSelector, messageId: string, snapshot: number): Promise<MessageLocation> {
+      return { messageId, snapshotSequence: snapshot, coverageSequence: snapshot, status: "ready", position: 0, visibleTurn: 0 };
+    },
+    async SessionMessageFieldForTarget(
+      _selector: SessionSelector,
+      messageId: string,
+      version: number,
+      field: string,
+      offset: number,
+      _length: number,
+    ): Promise<MessageFieldPage> {
+      return { status: "ready", messageId, version, field, totalBytes: 0, offset, data: "", nextOffset: offset, encoding: "utf8" };
+    },
+    async SearchSessionHistoryForTarget(_selector: SessionSelector, _query: string, _cursor: string, _limit: number): Promise<SearchHistoryPage> {
+      return { hits: [], snapshotSequence: 0, coverageSequence: 0, status: "ready", hasMore: false };
+    },
+    async SessionHistoryWindowForTarget(_selector: SessionSelector, _request: HistoryWindowRequest): Promise<HistoryWindowPage> {
+      return { messages: [], status: "ready", snapshotSequence: 0, coverageSequence: 0, totalTurns: 0, hasOlder: false, hasNewer: false };
+    },
     async ListWorkspaceSessions(workspaceId: string, query: string, _cursor: string, limit: number, includeArchived: boolean) {
       const parent = mockProjectTreeForDisplay().find((node) => mockWorkspaceID(node) === workspaceId);
       const needle = query.trim().toLowerCase();
@@ -2313,8 +2389,34 @@ function makeMockApp(): AppBindings {
     async ReadSessionHistory(_ref: SessionRef, _cursor: string, _limit: number) { return { messages: [], startTurn: 0, endTurn: 0, totalTurns: 0, hasOlder: false }; },
     async RenameCanonicalSession(_ref: SessionRef, _title: string) {},
     async ArchiveCanonicalSession(ref: SessionRef) { mockArchivedSessionIDs.add(ref.sessionId); notifyMockProjectTreeChanged(); },
+    async ArchiveSessionTarget(selector: SessionSelector): Promise<SessionMutationResult> {
+      const node = mockSessionTitleTarget(mockProjectTree, selector);
+      const targetKey = node ? sessionTitleTarget(node) : selector.sessionPath?.trim() || selector.topicId?.trim() || selector.ref?.sessionId || "";
+      if (selector.ref?.sessionId) mockArchivedSessionIDs.add(selector.ref.sessionId);
+      if (selector.sessionPath) await this.DeleteSession(selector.sessionPath);
+      notifyMockProjectTreeChanged();
+      return { targetKey, operationId: `mock-archive-${Date.now()}`, committed: true, lifecycleGeneration: 2 };
+    },
     async RestoreCanonicalSession(ref: SessionRef) { mockArchivedSessionIDs.delete(ref.sessionId); notifyMockProjectTreeChanged(); },
+    async RestoreSessionTarget(selector: SessionSelector): Promise<SessionMutationResult> {
+      const node = mockSessionTitleTarget(mockProjectTree, selector);
+      const targetKey = node ? sessionTitleTarget(node) : selector.sessionPath?.trim() || selector.topicId?.trim() || selector.ref?.sessionId || "";
+      if (selector.ref?.sessionId) mockArchivedSessionIDs.delete(selector.ref.sessionId);
+      notifyMockProjectTreeChanged();
+      return { targetKey, operationId: `mock-restore-${Date.now()}`, committed: true, lifecycleGeneration: 3 };
+    },
+    async DeleteSessionTarget(selector: SessionSelector): Promise<SessionMutationResult> {
+      const node = mockSessionTitleTarget(mockProjectTree, selector);
+      const sessionId = selector.ref?.sessionId || (node ? mockSessionIDForNode(node) : "");
+      if (sessionId) mockPurgedSessionIDs.add(sessionId);
+      notifyMockProjectTreeChanged();
+      return { targetKey: node ? sessionTitleTarget(node) : sessionId, operationId: `mock-delete-${Date.now()}`, committed: true, lifecycleGeneration: 4 };
+    },
     async MoveWorkspaceSession(_workspaceId: string, _sessionId: string, _beforeSessionId: string) {},
+    async MoveSessionTarget(selector: SessionSelector, _workspaceId: string, _beforeSessionId: string): Promise<SessionMutationResult> {
+      const node = mockSessionTitleTarget(mockProjectTree, selector);
+      return { targetKey: node ? sessionTitleTarget(node) : "", operationId: `mock-move-${Date.now()}`, committed: true, lifecycleGeneration: 1 };
+    },
     async RenameWorkspace(_workspaceId: string, _title: string) {},
     async SetWorkspaceVisible(_workspaceId: string, _visible: boolean) {},
     async MoveWorkspace(_workspaceId: string, _beforeWorkspaceId: string) {},
@@ -5461,7 +5563,21 @@ function makeMockApp(): AppBindings {
         tab.topicId === topicID ? { ...tab, topicTitle: nextTitle } : tab,
       );
     },
-    async AIRenameSession(topicID: string) { return mockAIRenameSession(findMockTopic(topicID)); },
+    async AIRenameSession(topicID: string) { return mockAIRenameTarget(mockProjectTree, topicID); },
+    async AIRenameSessionTarget(selector: SessionSelector): Promise<SessionMutationResult> {
+      const node = mockSessionTitleTarget(mockProjectTree, selector);
+      const title = node ? mockAIRenameTarget(mockProjectTree, sessionTitleTarget(node)) : "";
+      return { targetKey: sessionTitleTarget(node ?? { key: "", kind: "topic", label: "" }), operationId: `mock-title-${Date.now()}`, committed: true, title, lifecycleGeneration: 1 };
+    },
+    async RenameSessionTarget(selector: SessionSelector, title: string): Promise<SessionMutationResult> {
+      const node = mockSessionTitleTarget(mockProjectTree, selector);
+      const nextTitle = title.trim();
+      if (node && nextTitle) {
+        const activePrefix = node.label?.startsWith("● ") ? "● " : "";
+        node.label = `${activePrefix}${nextTitle}`;
+      }
+      return { targetKey: node ? sessionTitleTarget(node) : "", operationId: `mock-title-${Date.now()}`, committed: Boolean(node), title: nextTitle, lifecycleGeneration: 1 };
+    },
     async DeleteTopic(topicID: string) {
       deleteMockTopic(topicID);
     },

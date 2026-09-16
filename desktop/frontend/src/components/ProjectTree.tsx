@@ -6,6 +6,8 @@ import { useToast } from "../lib/toast";
 import { app } from "../lib/bridge";
 import { onProjectTreeChangedV2 } from "../lib/sessionCatalogBridge";
 import { sessionCatalogNotice } from "../lib/sessionCatalogPresentation";
+import { sessionTitleErrorKey, sessionTitleTarget } from "../lib/sessionTitleOperation";
+import { useSessionTitleOperation } from "../lib/useSessionTitleOperation";
 import { isRuntimeSessionNode, isTopicNode, loadWorkbenchOrganizeMode, loadWorkbenchSortMode, mergeIncompleteProjectTopicPage, mergeProjectTopicPage, projectTreeDedupedExactTime, projectTreeEventAffectsFolder, projectTreeFolderDisclosure, projectTreeReadActivityKey, projectTreeRevisionIsFresh, projectTreeShellChildren, projectTreeShellSignature, projectTreeShouldApplyShellSnapshot, projectTreeShouldRenderTopicActions, projectTreeShouldSuppressOpenForRename, projectTreeTopicArchiveBlocked, projectTreeTopicHasUnreadActivity, projectTreeTopicMenuOffersPin, projectTreeTopicMetaLine, projectTreeTopicOpenRequest, projectTreeTopicPageIsFresh, projectTreeTopicPageSignature, projectTreeWithoutTopic, projectTreeWithTopicTitle, topicActivityAt, topicActivityDateLabel, topicActivityLabel, topicIsActive, topicStatus, topicStatusLabel, topicUnknownTimeLabel, WORKBENCH_ORGANIZE_KEY, WORKBENCH_SORT_KEY, type ProjectTreePendingTopicOpen, type ProjectTreeReadActivity, type WorkbenchOrganizeMode, type WorkbenchSortMode } from "../lib/projectTreeTopic";
 export * from "../lib/projectTreeTopic";
 import { arrangeWorkbenchTree, splitPinnedProjectTree, type PinnedTreeSections } from "../lib/projectTreePresentation";
@@ -248,6 +250,7 @@ export function ProjectTree({
   const [creatingProject, setCreatingProject] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [editingTopic, setEditingTopic] = useState<string | null>(null);
+  const [editingSession, setEditingSession] = useState<{ key: string; path: string; topicId: string } | null>(null);
   const [topicDraft, setTopicDraft] = useState("");
   const [menuNodeKey, setMenuNodeKey] = useState<string | null>(null);
   const [menuProject, setMenuProject] = useState<{ key: string; root: string; path: string; scope: "global" | "project"; label: string } | null>(null);
@@ -274,7 +277,6 @@ export function ProjectTree({
   const topicIndexRef = useRef(0);
   const visibleTopicsCollectorRef = useRef<TopicShortcutEntry[]>([]);
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
-  const [aiRenamingTopic, setAiRenamingTopic] = useState<string | null>(null);
   const creatingRef = useRef(false);
   const closeMenu = useCallback(() => {
     setMenuNodeKey(null);
@@ -291,6 +293,7 @@ export function ProjectTree({
     treeRef, topicLoadSeqRef, topicPageStateRef, updateTopicPageState, refreshRef,
     optimisticallyRemoveTopic: (topicId) => setTree((current) => projectTreeWithoutTopic(current, topicId)),
     closeMenu, onTopicsChanged, showToast,
+    sessionErrorMessage: (error) => t(sessionTitleErrorKey(error)),
   });
   const applyRuntimeProjection = useProjectTreeRuntimeProjection(setTree, currentArchiveTombstones);
   const clickTimerRef = useRef<ProjectTreePendingTopicOpen | null>(null);
@@ -748,6 +751,15 @@ export function ProjectTree({
     setTopicDraft(label);
   };
 
+  const startRenameSession = (key: string, path: string, topicId: string, label: string) => {
+    setMenuNodeKey(null);
+    setMenuProject(null);
+    setMenuPoint(null);
+    setConfirmArchiveTarget(null);
+    setEditingSession({ key, path, topicId });
+    setTopicDraft(label);
+  };
+
   const startRenameProject = (key: string, root: string, label: string) => {
     setMenuProject(null);
     setMenuNodeKey(null);
@@ -774,19 +786,21 @@ export function ProjectTree({
     }
   };
 
-  const aiRenameSession = async (topicId: string) => {
-    setAiRenamingTopic(topicId);
+  const commitRenameSession = async () => {
+    const editing = editingSession;
+    const title = topicDraft.trim();
+    setEditingSession(null);
+    if (!editing || !title) return;
     try {
-      const title = await app.AIRenameSession(topicId);
+      await app.RenameSessionTarget({ sessionPath: editing.path, topicId: editing.topicId }, title);
       await refresh();
       await onTopicsChanged?.();
-      if (title) showToast(t("projectTree.aiRenameDone", { title }));
     } catch (err) {
-      showToast(err instanceof Error ? err.message : String(err), "error");
-    } finally {
-      setAiRenamingTopic(null);
+      showToast(t(sessionTitleErrorKey(err)), "error");
     }
   };
+
+  const { renaming: aiRenamingTopics, rename: aiRenameSession } = useSessionTitleOperation(refresh, onTopicsChanged);
 
   const commitRenameProject = async (root: string) => {
     const title = projectDraft.trim();
@@ -1052,6 +1066,7 @@ export function ProjectTree({
       const showSideTime = sideTimeVisible && !showWaitingPill;
       const unread = projectTreeTopicHasUnreadActivity(node, readActivity, activeScope, activeWorkspaceRoot, activeTopicId, activeSessionPath, readBaselineAt);
       const topicId = node.topicId ?? "";
+      const aiRenameTarget = sessionTitleTarget(node);
       const topicTrashing = trashingTopics.has(topicId);
       const sessionPath = node.sessionPath?.trim() ?? "";
       const sessionTrashing = Boolean(sessionPath) && trashingSessions.has(sessionPath);
@@ -1099,9 +1114,9 @@ export function ProjectTree({
         {
           key: "aiRename",
           icon: <Sparkles size={13} />,
-          label: aiRenamingTopic === topicId ? t("projectTree.aiRenamingTopic") : t("projectTree.aiRenameTopic"),
-          disabled: aiRenamingTopic !== null || Boolean(node.remoteSession),
-          onSelect: () => void aiRenameSession(topicId),
+          label: aiRenamingTopics.has(aiRenameTarget) ? t("projectTree.aiRenamingTopic") : t("projectTree.aiRenameTopic"),
+          disabled: aiRenamingTopics.has(aiRenameTarget) || !aiRenameTarget || Boolean(node.remoteSession) || Boolean(node.session?.hostId && node.session.hostId !== "local"),
+          onSelect: () => void aiRenameSession(aiRenameTarget),
         },
         {
           key: "trash",
@@ -1115,7 +1130,7 @@ export function ProjectTree({
           },
         },
       ];
-      if (!isSessionNode && editingTopic === topicId) {
+      if ((!isSessionNode && editingTopic === topicId) || (isSessionNode && editingSession?.key === key)) {
         return (
           <div
             key={key}
@@ -1129,10 +1144,13 @@ export function ProjectTree({
               onChange={(event) => setTopicDraft(event.target.value)}
               onFocus={(event) => event.target.select()}
               onKeyDown={(event) => {
-                if (event.key === "Enter") void commitRenameTopic(topicId);
-                if (event.key === "Escape") setEditingTopic(null);
+                if (event.key === "Enter") void (isSessionNode ? commitRenameSession() : commitRenameTopic(topicId));
+                if (event.key === "Escape") {
+                  setEditingTopic(null);
+                  setEditingSession(null);
+                }
               }}
-              onBlur={() => void commitRenameTopic(topicId)}
+              onBlur={() => void (isSessionNode ? commitRenameSession() : commitRenameTopic(topicId))}
             />
           </div>
         );
@@ -1291,6 +1309,9 @@ export function ProjectTree({
           {isSessionNode ? (
             <ProjectTreeSessionArchiveMenu
               open={topicMenuOpen} point={menuPoint} sessionPath={sessionPath} blocked={archiveBlocked || topicTrashing} busy={sessionTrashing} confirmed={confirmArchiveTarget === archiveTargetKey}
+              aiBusy={aiRenamingTopics.has(aiRenameTarget)}
+              onRename={() => startRenameSession(key, sessionPath, topicId, label)}
+              onAIRename={() => void aiRenameSession(aiRenameTarget)}
               onConfirm={() => setConfirmArchiveTarget(archiveTargetKey)} onTrash={() => { setConfirmArchiveTarget(null); void trashSession(sessionPath); }} onClose={closeMenu} />
           ) : <ContextMenu open={topicMenuOpen} point={menuPoint} items={topicMenuItems} minWidth={178} ariaLabel={t("projectTree.topicActions")} onClose={closeMenu} />}
           {shortcutIndex > 0 && (

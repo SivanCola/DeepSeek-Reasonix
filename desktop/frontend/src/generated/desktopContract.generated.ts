@@ -3,10 +3,11 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 10;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:e9732d6a9e8a3234b58fa5fad727626bde3fa7fdda584490a5db9dd6da39e95d";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:5958b6442a67d62ae38a894126126b70e01c91e19d0d3165ec1252b70621b0ff";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
+  "AIRenameSessionTarget",
   "AbandonPendingUpdate",
   "AcceptDelivery",
   "AcceptDeliveryToTab",
@@ -44,6 +45,7 @@ export const DESKTOP_COMMANDS = [
   "ApproveTab",
   "ApproveTabForTurn",
   "ArchiveCanonicalSession",
+  "ArchiveSessionTarget",
   "AttachDropped",
   "AttachmentDataURL",
   "AuthenticateMCPServer",
@@ -104,6 +106,7 @@ export const DESKTOP_COMMANDS = [
   "ConnectRemoteHost",
   "ContextPanel",
   "ContextUsageForTab",
+  "CopySessionTarget",
   "CopyThemePack",
   "CreateBlankProject",
   "CreateDeliveryWorktree",
@@ -123,6 +126,7 @@ export const DESKTOP_COMMANDS = [
   "DeleteRemotePath",
   "DeleteRemoteProjectSession",
   "DeleteSession",
+  "DeleteSessionTarget",
   "DeleteSubagentProfile",
   "DeleteThemePack",
   "DeleteTopic",
@@ -162,6 +166,7 @@ export const DESKTOP_COMMANDS = [
   "ForkForTab",
   "ForkRemoteTab",
   "ForkSession",
+  "ForkSessionTarget",
   "ForkTargetsForTab",
   "ForkTargetsRemoteTab",
   "ForkWorktreeForTab",
@@ -205,10 +210,12 @@ export const DESKTOP_COMMANDS = [
   "History",
   "HistoryCheckpointTurnsForTab",
   "HistoryContentForTab",
+  "HistoryContentForTarget",
   "HistoryForTab",
   "HistoryPage",
   "HistoryPageForTab",
   "HistorySliceForTab",
+  "HistorySliceForTarget",
   "HooksSettings",
   "ImportThemePack",
   "InboxHasItems",
@@ -248,6 +255,7 @@ export const DESKTOP_COMMANDS = [
   "ListWorkspaceSessions",
   "ListWorkspaces",
   "LocateSessionMessageForTab",
+  "LocateSessionMessageForTarget",
   "LookupInboxFollowupForTarget",
   "MCPAppCallToolForTab",
   "MCPAppResourceDigest",
@@ -274,6 +282,7 @@ export const DESKTOP_COMMANDS = [
   "Models",
   "ModelsForTab",
   "MoveInboxItem",
+  "MoveSessionTarget",
   "MoveWorkspace",
   "MoveWorkspaceSession",
   "NeedsOnboarding",
@@ -394,6 +403,7 @@ export const DESKTOP_COMMANDS = [
   "RenameRemoteProjectSession",
   "RenameSession",
   "RenameSessionHead",
+  "RenameSessionTarget",
   "RenameTerminalForTab",
   "RenameTopic",
   "RenameWorkspace",
@@ -436,6 +446,7 @@ export const DESKTOP_COMMANDS = [
   "RestoreMemoryRevisionForTab",
   "RestoreRecoveryEntry",
   "RestoreSession",
+  "RestoreSessionTarget",
   "ResumeGoalForTab",
   "ResumeRemoteTabGoal",
   "ResumeSession",
@@ -491,11 +502,17 @@ export const DESKTOP_COMMANDS = [
   "SearchFileRefs",
   "SearchFileRefsForTab",
   "SearchHistoryContent",
+  "SearchHistoryContentForTarget",
   "SearchSessionHistoryForTab",
+  "SearchSessionHistoryForTarget",
   "SessionHistoryContentForTab",
+  "SessionHistoryContentForTarget",
   "SessionHistoryPageForTab",
+  "SessionHistoryPageForTarget",
   "SessionHistoryWindowForTab",
+  "SessionHistoryWindowForTarget",
   "SessionMessageFieldForTab",
+  "SessionMessageFieldForTarget",
   "SessionOpenForTab",
   "SetActiveSessionVersion",
   "SetActiveTab",
@@ -3591,6 +3608,13 @@ export interface SessionClearResult {
   sessionGeneration: number;
 }
 
+export interface SessionCreationResult {
+  ref: SessionRef;
+  operationId: string;
+  committed: boolean;
+  projectionPending?: boolean;
+}
+
 export interface SessionHistoryContentChunk {
   data: string;
   nextOffset: number;
@@ -3661,6 +3685,16 @@ export interface SessionMeta {
   recoveryCanonical?: boolean;
 }
 
+export interface SessionMutationResult {
+  targetKey: string;
+  operationId: string;
+  committed: boolean;
+  title?: string;
+  titleVersion?: string;
+  lifecycleGeneration: number;
+  projectionPending?: boolean;
+}
+
 export interface SessionRestoreResult {
   session: SessionRef;
   workspaceId: string;
@@ -3680,6 +3714,12 @@ export interface SessionRuntimeView {
   phase: string;
   epoch: string;
   issue?: SessionRuntimeIssue | null;
+}
+
+export interface SessionSelector {
+  ref?: SessionRef | null;
+  sessionPath?: string;
+  topicId?: string;
 }
 
 export interface SessionTakeoverView {
@@ -5059,6 +5099,7 @@ export interface MergeResult {
 
 export interface GeneratedDesktopCommands {
   AIRenameSession(arg0: string): Promise<string>;
+  AIRenameSessionTarget(arg0: SessionSelector): Promise<SessionMutationResult>;
   AbandonPendingUpdate(): Promise<void>;
   AcceptDelivery(): Promise<void>;
   AcceptDeliveryToTab(arg0: string): Promise<void>;
@@ -5096,6 +5137,7 @@ export interface GeneratedDesktopCommands {
   ApproveTab(arg0: string, arg1: string, arg2: boolean, arg3: boolean, arg4: boolean): Promise<void>;
   ApproveTabForTurn(arg0: string, arg1: string, arg2: string, arg3: string, arg4: boolean, arg5: boolean, arg6: boolean): Promise<void>;
   ArchiveCanonicalSession(arg0: SessionRef): Promise<void>;
+  ArchiveSessionTarget(arg0: SessionSelector): Promise<SessionMutationResult>;
   AttachDropped(arg0: string): Promise<DroppedItem>;
   AttachmentDataURL(arg0: string): Promise<string>;
   AuthenticateMCPServer(arg0: string): Promise<void>;
@@ -5156,6 +5198,7 @@ export interface GeneratedDesktopCommands {
   ConnectRemoteHost(arg0: string): Promise<void>;
   ContextPanel(arg0: string): Promise<ContextPanelInfo>;
   ContextUsageForTab(arg0: string): Promise<ContextInfo>;
+  CopySessionTarget(arg0: SessionSelector, arg1: string): Promise<SessionCreationResult>;
   CopyThemePack(arg0: string, arg1: string, arg2: string): Promise<ThemePackView>;
   CreateBlankProject(arg0: string, arg1: string): Promise<string>;
   CreateDeliveryWorktree(arg0: string): Promise<IsolatedWorktreeOpenResult>;
@@ -5175,6 +5218,7 @@ export interface GeneratedDesktopCommands {
   DeleteRemotePath(arg0: string, arg1: string, arg2: boolean): Promise<void>;
   DeleteRemoteProjectSession(arg0: string, arg1: string, arg2: string): Promise<void>;
   DeleteSession(arg0: string): Promise<void>;
+  DeleteSessionTarget(arg0: SessionSelector): Promise<SessionMutationResult>;
   DeleteSubagentProfile(arg0: string, arg1: string): Promise<void>;
   DeleteThemePack(arg0: string): Promise<void>;
   DeleteTopic(arg0: string): Promise<void>;
@@ -5214,6 +5258,7 @@ export interface GeneratedDesktopCommands {
   ForkForTab(arg0: string, arg1: number): Promise<TabMeta>;
   ForkRemoteTab(arg0: string, arg1: number, arg2: string): Promise<void>;
   ForkSession(arg0: SessionRef, arg1: string): Promise<SessionRef>;
+  ForkSessionTarget(arg0: SessionSelector, arg1: string): Promise<SessionRef>;
   ForkTargetsForTab(arg0: string): Promise<ForkTargetSetView>;
   ForkTargetsRemoteTab(arg0: string): Promise<ForkTargetSetView>;
   ForkWorktreeForTab(arg0: string, arg1: number): Promise<ForkWorktreeResultView>;
@@ -5257,10 +5302,12 @@ export interface GeneratedDesktopCommands {
   History(): Promise<Message[]>;
   HistoryCheckpointTurnsForTab(arg0: string): Promise<number[]>;
   HistoryContentForTab(arg0: string, arg1: HistoryContentRef, arg2: number): Promise<HistoryContentChunk>;
+  HistoryContentForTarget(arg0: SessionSelector, arg1: HistoryContentRef, arg2: number): Promise<HistoryContentChunk>;
   HistoryForTab(arg0: string): Promise<Message[]>;
   HistoryPage(arg0: number, arg1: number): Promise<HistoryPage>;
   HistoryPageForTab(arg0: string, arg1: number, arg2: number): Promise<HistoryPage>;
   HistorySliceForTab(arg0: string, arg1: HistorySliceRequest): Promise<HistorySlice>;
+  HistorySliceForTarget(arg0: SessionSelector, arg1: HistorySliceRequest): Promise<HistorySlice>;
   HooksSettings(arg0: string): Promise<HooksSettingsView>;
   ImportThemePack(arg0: string, arg1: boolean): Promise<ThemeImportResult>;
   InboxHasItems(arg0: string): Promise<boolean>;
@@ -5300,6 +5347,7 @@ export interface GeneratedDesktopCommands {
   ListWorkspaceSessions(arg0: string, arg1: string, arg2: string, arg3: number, arg4: boolean): Promise<WorkspaceSessionPage>;
   ListWorkspaces(): Promise<WorkspaceMeta[]>;
   LocateSessionMessageForTab(arg0: string, arg1: string, arg2: number): Promise<MessageLocation>;
+  LocateSessionMessageForTarget(arg0: SessionSelector, arg1: string, arg2: number): Promise<MessageLocation>;
   LookupInboxFollowupForTarget(arg0: InboxTargetView, arg1: string): Promise<InboxReceiptView>;
   MCPAppCallToolForTab(arg0: string, arg1: string, arg2: string, arg3: unknown): Promise<string>;
   MCPAppResourceDigest(arg0: string): Promise<string>;
@@ -5326,6 +5374,7 @@ export interface GeneratedDesktopCommands {
   Models(): Promise<ModelInfo[]>;
   ModelsForTab(arg0: string): Promise<ModelInfo[]>;
   MoveInboxItem(arg0: string, arg1: string, arg2: number): Promise<void>;
+  MoveSessionTarget(arg0: SessionSelector, arg1: string, arg2: string): Promise<SessionMutationResult>;
   MoveWorkspace(arg0: string, arg1: string): Promise<void>;
   MoveWorkspaceSession(arg0: string, arg1: string, arg2: string): Promise<void>;
   NeedsOnboarding(): Promise<boolean>;
@@ -5446,6 +5495,7 @@ export interface GeneratedDesktopCommands {
   RenameRemoteProjectSession(arg0: string, arg1: string, arg2: string, arg3: string): Promise<void>;
   RenameSession(arg0: string, arg1: string): Promise<void>;
   RenameSessionHead(arg0: string, arg1: string, arg2: string): Promise<void>;
+  RenameSessionTarget(arg0: SessionSelector, arg1: string): Promise<SessionMutationResult>;
   RenameTerminalForTab(arg0: string, arg1: string, arg2: string): Promise<void>;
   RenameTopic(arg0: string, arg1: string): Promise<void>;
   RenameWorkspace(arg0: string, arg1: string): Promise<void>;
@@ -5488,6 +5538,7 @@ export interface GeneratedDesktopCommands {
   RestoreMemoryRevisionForTab(arg0: string, arg1: string, arg2: number): Promise<MemoryFact>;
   RestoreRecoveryEntry(arg0: string, arg1: string): Promise<SessionRestoreResult>;
   RestoreSession(arg0: string): Promise<void>;
+  RestoreSessionTarget(arg0: SessionSelector): Promise<SessionMutationResult>;
   ResumeGoalForTab(arg0: string): Promise<boolean>;
   ResumeRemoteTabGoal(arg0: string): Promise<void>;
   ResumeSession(arg0: string): Promise<Message[]>;
@@ -5543,11 +5594,17 @@ export interface GeneratedDesktopCommands {
   SearchFileRefs(arg0: string): Promise<DirEntry[]>;
   SearchFileRefsForTab(arg0: string, arg1: string): Promise<DirEntry[]>;
   SearchHistoryContent(arg0: HistorySearchRequest): Promise<HistorySearchPage>;
+  SearchHistoryContentForTarget(arg0: SessionSelector, arg1: string, arg2: string, arg3: number): Promise<HistorySearchPage>;
   SearchSessionHistoryForTab(arg0: string, arg1: string, arg2: string, arg3: number): Promise<SearchHistoryPage>;
+  SearchSessionHistoryForTarget(arg0: SessionSelector, arg1: string, arg2: string, arg3: number): Promise<SearchHistoryPage>;
   SessionHistoryContentForTab(arg0: string, arg1: Ref, arg2: number): Promise<SessionHistoryContentChunk>;
+  SessionHistoryContentForTarget(arg0: SessionSelector, arg1: Ref, arg2: number): Promise<SessionHistoryContentChunk>;
   SessionHistoryPageForTab(arg0: string, arg1: string, arg2: number): Promise<MessageHistoryPage>;
+  SessionHistoryPageForTarget(arg0: SessionSelector, arg1: string, arg2: number): Promise<MessageHistoryPage>;
   SessionHistoryWindowForTab(arg0: string, arg1: HistoryWindowRequest): Promise<HistoryWindowPage>;
+  SessionHistoryWindowForTarget(arg0: SessionSelector, arg1: HistoryWindowRequest): Promise<HistoryWindowPage>;
   SessionMessageFieldForTab(arg0: string, arg1: string, arg2: number, arg3: string, arg4: number, arg5: number): Promise<MessageFieldPage>;
+  SessionMessageFieldForTarget(arg0: SessionSelector, arg1: string, arg2: number, arg3: string, arg4: number, arg5: number): Promise<MessageFieldPage>;
   SessionOpenForTab(arg0: string): Promise<SessionOpenView>;
   SetActiveSessionVersion(arg0: RecoveryPreferenceRequest): Promise<void>;
   SetActiveTab(arg0: string): Promise<void>;

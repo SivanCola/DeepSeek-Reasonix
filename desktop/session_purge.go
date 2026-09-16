@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"reasonix/desktop/internal/workspacestate"
 	"reasonix/internal/session"
@@ -22,7 +23,77 @@ func (a *App) PurgeCanonicalSession(ref session.SessionRef) error {
 		return err
 	}
 	a.emitProjectTreeChanged()
+	a.emitSessionTargetChange("session_deleted", SessionTargetChangeEvent{
+		TargetKey: (SessionTarget{SessionRef: ref}).key(),
+	})
 	return nil
+}
+
+func (a *App) purgeCanonicalSessionWithOperation(ref session.SessionRef, operationID string) (SessionTarget, error) {
+	if err := validateLocalSessionRef(ref); err != nil {
+		return SessionTarget{}, err
+	}
+	target, err := a.resolveCanonicalPurgeTarget(ref)
+	if err != nil {
+		return SessionTarget{}, err
+	}
+	if target.Lifecycle != workspacestate.Archived && target.Lifecycle != workspacestate.Deleted {
+		return SessionTarget{}, newSessionOperationError("archived", "Archive this session before deleting it.")
+	}
+	operationID = strings.TrimSpace(operationID)
+	if operationID == "" {
+		operationID = "delete-" + strings.TrimPrefix(newTabID(), "tab_")
+	}
+	a.cancelAISessionTitle(target.key())
+	release := a.lockRuntimeMutation("purge archived session")
+	defer release()
+	if err := a.purgeCanonicalSession(a.bootContext(), ref); err != nil {
+		return SessionTarget{}, err
+	}
+	if state, loadErr := a.workspaceRegistry().Load(a.bootContext()); loadErr == nil {
+		target.Lifecycle = state.SessionStates[ref.SessionID].Lifecycle
+		target.LifecycleGeneration = state.SessionStates[ref.SessionID].Generation
+	}
+	a.emitProjectTreeChanged()
+	a.emitSessionTargetChange("session_deleted", SessionTargetChangeEvent{
+		TargetKey: target.key(), OperationID: operationID,
+		LifecycleGeneration: target.LifecycleGeneration, WorkspaceID: target.WorkspaceID,
+	})
+	return target, nil
+}
+
+func (a *App) resolveCanonicalPurgeTarget(ref session.SessionRef) (SessionTarget, error) {
+	target, resolveErr := a.resolveCanonicalSessionTargetState(ref, "", true)
+	if resolveErr == nil {
+		return target, nil
+	}
+	state, err := a.workspaceRegistry().Load(a.bootContext())
+	if err != nil {
+		return SessionTarget{}, err
+	}
+	op, pending := state.PendingOperations["purge-"+ref.SessionID]
+	status, known := state.SessionStates[ref.SessionID]
+	if !pending || op.Kind != "purge" || !known || status.Lifecycle != workspacestate.Deleted {
+		return SessionTarget{}, resolveErr
+	}
+	target = a.runtimeSessionTarget("", ref, sessionRoute(ref.SessionID))
+	target.SessionRef = ref
+	target.SessionPath = sessionRoute(ref.SessionID)
+	target.TopicID = state.Presentation[ref.SessionID].TopicID
+	target.Lifecycle = status.Lifecycle
+	target.LifecycleGeneration = status.Generation
+	for id, workspace := range state.Workspaces {
+		if containsDesktopString(workspace.SessionIDs, ref.SessionID) {
+			target.WorkspaceID = id
+			target.WorkspaceRoot = workspace.Root
+			target.Scope = "project"
+			if id == workspacestate.GlobalWorkspaceID {
+				target.Scope, target.WorkspaceRoot = "global", ""
+			}
+			break
+		}
+	}
+	return target, nil
 }
 
 func (a *App) purgeCanonicalSession(ctx context.Context, ref session.SessionRef, expected ...uint64) error {
