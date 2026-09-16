@@ -256,6 +256,10 @@ test("Certum signing preserves native builds and gates publication and attestati
   assert.ok(signer.indexOf("-ExpectedThumbprint") < signer.indexOf("Sign artifacts (minisign)"));
   assert.ok(!release.includes("secrets.SIGNPATH_API_TOKEN"));
   const attestation = job(release, "attest-signing-contract");
+  assert.ok(!attestation.includes("gh api --method"), "GITHUB_TOKEN cannot mutate repository variables");
+  assert.match(attestation, /uses: actions\/upload-artifact@v7/);
+  assert.match(attestation, /verified-contract\.json/);
+  assert.match(attestation, /gh variable set/);
   const context = { github: { repository: "esengine/DeepSeek-Reasonix" }, inputs: { signing_preflight: true, orchestrated: false },
     needs: { "signing-contract": { result: "success" }, build: { result: "success" }, "windows-sign": { result: "success" } } };
   assert.equal(condition(attestation, context), true);
