@@ -510,7 +510,8 @@ jobs:
       - name: Archive Windows signing inputs
         if: runner.os == 'Windows' && env.HAS_CERTUM == 'true'
         run: |
-          tar -cf "$RUNNER_TEMP/windows-signing-inputs.tar" desktop/build/windows/signing-payload desktop/build/windows/installer/reasonix_project.nsh
+          signing_archive="$(cygpath -u "$RUNNER_TEMP")/windows-signing-inputs.tar"
+          tar -cf "$signing_archive" desktop/build/windows/signing-payload desktop/build/windows/installer/reasonix_project.nsh
 
       - name: Upload Windows signing inputs
         if: runner.os == 'Windows' && env.HAS_CERTUM == 'true'
@@ -633,7 +634,8 @@ jobs:
           path: ${{ runner.temp }}/signing-inputs
       - name: Restore native-tested Windows payload
         run: |
-          tar -xf "$RUNNER_TEMP/signing-inputs/windows-signing-inputs.tar"
+          signing_archive="$(cygpath -u "$RUNNER_TEMP")/signing-inputs/windows-signing-inputs.tar"
+          tar -xf "$signing_archive"
           mkdir -p desktop/build/bin
           cp -R desktop/build/windows/signing-payload signed-payload
           node desktop/packaging/signing-files.mjs signed-payload --check
