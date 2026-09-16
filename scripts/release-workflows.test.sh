@@ -38,7 +38,7 @@ assert 'manual-desktop-exception.sh" validate "$desktop_tag"' in verifier
 assert '1.38.8' not in verifier and 'v1.38.7' not in verifier
 assert 'inputs.allow_recovery' in stable.split('name: Restrict manual Desktop distribution', 1)[1].split('- name:', 1)[0]
 assert stable.count('desktop_manual_only: ${{ inputs.desktop_manual_only || false }}') == 2
-assert "HAS_SIGNPATH: ${{ secrets.SIGNPATH_API_TOKEN != '' && !inputs.desktop_manual_only }}" in desktop
+assert "HAS_CERTUM: ${{ secrets.CERTUM_USERNAME != '' && secrets.CERTUM_OTP_URI != '' && secrets.CERTUM_KEY_ID != '' && !inputs.desktop_manual_only }}" in desktop
 assert desktop.index('name: Validate signing mode') < desktop.index('name: Build and package')
 assert "inputs.orchestrated }}\" != \"true\"" in desktop
 assert 'manual-download only' in desktop
@@ -148,7 +148,7 @@ grep -Eq '^  resolve:$' "$repo_root/.github/workflows/release-desktop.yml"
 grep -Eq 'sha:.*steps\.candidate\.outputs\.sha' "$repo_root/.github/workflows/release-desktop.yml"
 grep -Fq 'bash scripts/resolve-desktop-candidate.sh' "$repo_root/.github/workflows/release-desktop.yml"
 grep -Fq 'name: Smoke-test packaged Electron startup' "$repo_root/.github/workflows/release-desktop.yml"
-sed -n '/name: Smoke-test packaged Electron startup/,/name: Upload unsigned Windows payload/p' \
+sed -n '/name: Smoke-test packaged Electron startup/,/name: Upload Windows signing inputs/p' \
 	"$repo_root/.github/workflows/release-desktop.yml" | grep -Fq "if: runner.os == 'Windows'"
 grep -Fq 'desktop/build/electron/${{ matrix.name }}/app' "$repo_root/.github/workflows/release-desktop.yml"
 grep -Fq 'node desktop/packaging/smoke.mjs' "$repo_root/.github/workflows/release-desktop.yml"
@@ -192,13 +192,13 @@ done
 ! grep -Fq 'independent cross-boundary review' "$repo_root/.github/pull_request_template.md"
 desktop_build_line="$(grep -n -m1 'name: Build and package' "$repo_root/.github/workflows/release-desktop.yml" | cut -d: -f1)"
 electron_smoke_line="$(grep -n -m1 'name: Smoke-test packaged Electron startup' "$repo_root/.github/workflows/release-desktop.yml" | cut -d: -f1)"
-signpath_upload_line="$(grep -n -m1 'name: Upload unsigned Windows payload for SignPath' "$repo_root/.github/workflows/release-desktop.yml" | cut -d: -f1)"
+signing_upload_line="$(grep -n -m1 'name: Upload Windows signing inputs' "$repo_root/.github/workflows/release-desktop.yml" | cut -d: -f1)"
 [ "$desktop_build_line" -lt "$electron_smoke_line" ]
-[ "$electron_smoke_line" -lt "$signpath_upload_line" ]
+[ "$electron_smoke_line" -lt "$signing_upload_line" ]
 [ "$(grep -Fc 'IN_ORCHESTRATOR: ${{ inputs.orchestrator }}' "$repo_root/.github/workflows/release-desktop.yml")" = "3" ]
 [ "$(grep -Fc 'name: Revalidate immutable Desktop candidate' "$repo_root/.github/workflows/release-desktop.yml")" = "2" ]
 [ "$(grep -Fc 'ref: ${{ needs.resolve.outputs.sha }}' "$repo_root/.github/workflows/release-desktop.yml")" -ge 4 ]
-[ "$(grep -Ec '^          path: release-control$' "$repo_root/.github/workflows/release-desktop.yml")" = "3" ]
+[ "$(grep -Ec '^          path: release-control$' "$repo_root/.github/workflows/release-desktop.yml")" = "4" ]
 grep -Fq 'name: Checkout protected release verifier' "$repo_root/.github/workflows/release-desktop.yml"
 grep -Fq 'scripts/desktop-release-artifacts.mjs' "$repo_root/.github/workflows/release-desktop.yml"
 if grep -Fq 'test-webview2-native-smoke.ps1' "$repo_root/.github/workflows/release-desktop.yml"; then
@@ -271,11 +271,7 @@ if printf '%s\n' "$npm_control_step" | grep -q 'if:'; then
 	exit 1
 fi
 grep -Fq 'publishPackages' "$repo_root/npm/build.mjs"
-grep -Eq 'signing-policy-slug: release-signing' "$repo_root/.github/workflows/release-desktop.yml"
-if grep -Eq 'signing-policy-slug:.*test-signing' "$repo_root/.github/workflows/release-desktop.yml"; then
-	echo "public desktop workflow must not use the SignPath test certificate" >&2
-	exit 1
-fi
+grep -Fq 'thumbprint: ${{ secrets.CERTUM_KEY_ID }}' "$repo_root/.github/workflows/release-desktop.yml"
 grep -Eq 'SIGNPATH_RELEASE_SIGNING_ATTESTATION does not match' "$repo_root/.github/workflows/release-desktop.yml"
 grep -Eq '^      signing_preflight:$' "$repo_root/.github/workflows/release-desktop.yml"
 grep -Eq '^      signing_preflight_verified:$' "$repo_root/.github/workflows/release-desktop.yml"
@@ -284,17 +280,11 @@ grep -Eq '^  attest-signing-contract:$' "$repo_root/.github/workflows/release-de
 grep -Eq '^      production_signing_smoke:$' "$repo_root/.github/workflows/release-desktop.yml"
 grep -Eq "needs\.build\.result == 'success'.*!inputs\.production_signing_smoke.*!inputs\.signing_preflight" \
 	"$repo_root/.github/workflows/release-desktop.yml"
-[ "$(grep -Ec 'wait-for-completion: false' "$repo_root/.github/workflows/release-desktop.yml")" = "2" ]
-[ "$(grep -Ec 'complete-signpath-request\.ps1' "$repo_root/.github/workflows/release-desktop.yml")" = "2" ]
-[ "$(grep -Ec -- '-WaitForExternalApproval:\$waitForExternalApproval' "$repo_root/.github/workflows/release-desktop.yml")" = "2" ]
-[ "$(grep -Ec 'signpath-api-url' "$repo_root/.github/workflows/release-desktop.yml")" = "0" ]
-grep -Eq 'steps\.submit-windows-payload\.outputs\.signing-request-id' \
-	"$repo_root/.github/workflows/release-desktop.yml"
-grep -Eq 'steps\.submit-windows-installer\.outputs\.signing-request-id' \
-	"$repo_root/.github/workflows/release-desktop.yml"
-grep -Eq 'artifact-configuration-slug: windows-payload' "$repo_root/.github/workflows/release-desktop.yml"
-grep -Eq 'artifact-configuration-slug: windows-installer-v2' "$repo_root/.github/workflows/release-desktop.yml"
-grep -Fq -- '-RequireTrusted:$true' "$repo_root/.github/workflows/release-desktop.yml"
+! grep -Eq 'signpath/github-action-submit-signing-request|secrets.SIGNPATH_API_TOKEN|complete-signpath-request\.ps1' "$repo_root/.github/workflows/release-desktop.yml"
+grep -Fq 'uses: ./release-control/.github/actions/setup-certum' "$repo_root/.github/workflows/release-desktop.yml"
+grep -Fq 'scripts/sign-certum.ps1 -PayloadDirectory signed-payload' "$repo_root/.github/workflows/release-desktop.yml"
+grep -Fq 'scripts/sign-certum.ps1 -FilePath' "$repo_root/.github/workflows/release-desktop.yml"
+grep -Fq -- '-ExpectedThumbprint $env:CERTUM_KEY_ID -RequireTrusted' "$repo_root/.github/workflows/release-desktop.yml"
 grep -Eq '^  signpath-preflight:$' "$repo_root/.github/workflows/release-stable.yml"
 grep -Eq 'signing_preflight: true' "$repo_root/.github/workflows/release-stable.yml"
 grep -Eq 'signing_preflight_verified: true' "$repo_root/.github/workflows/release-stable.yml"
