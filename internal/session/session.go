@@ -257,6 +257,10 @@ func (s *Session) contentStore() *sessioncontent.Store {
 // write-behind queue, so this never performs file I/O and never blocks on a
 // subscriber.
 func (s *Session) CommitPrepared(prepared PreparedBatch) (Commit, error) {
+	return s.commitPrepared(prepared, nil)
+}
+
+func (s *Session) commitPrepared(prepared PreparedBatch, expectedTitle *string) (Commit, error) {
 	defer prepared.Release()
 	if s == nil {
 		return Commit{}, fmt.Errorf("session: nil session")
@@ -265,6 +269,10 @@ func (s *Session) CommitPrepared(prepared PreparedBatch) (Commit, error) {
 		return Commit{}, fmt.Errorf("session: operation id and events are required")
 	}
 	s.mu.Lock()
+	if expectedTitle != nil && s.projection.Title != *expectedTitle {
+		s.mu.Unlock()
+		return Commit{}, ErrSessionTitleChanged
+	}
 	if prepared.sessionID != s.id || prepared.writerGeneration != s.manifest.WriterGeneration {
 		s.mu.Unlock()
 		return Commit{}, ErrStaleGeneration

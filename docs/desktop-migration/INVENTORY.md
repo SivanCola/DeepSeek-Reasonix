@@ -22,7 +22,7 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 
 | Name | Detail | Location | Class | New owner |
 | --- | --- | --- | --- | --- |
-| `AIRenameSession` | `(topicID string) (string, error)` | desktop/session_ai_title.go:22 | keep-business (保留业务实现) | hostrpc desktop/invoke |
+| `AIRenameSession` | `(topicID string) (string, error)` | desktop/session_ai_title.go:26 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `AbandonPendingUpdate` | `() error` | desktop/updater_app.go:323 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `AcceptDelivery` | `() error` | desktop/delivery_accept.go:8 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `AcceptDeliveryToTab` | `(tabID string) error` | desktop/delivery_accept.go:15 | keep-business (保留业务实现) | hostrpc desktop/invoke |

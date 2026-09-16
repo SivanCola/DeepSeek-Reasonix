@@ -4614,12 +4614,17 @@ func topicTitleFromSession(path string) string {
 }
 
 func topicTitleUserTurnsFromSession(path string) []string {
+	users, _ := loadTopicTitleUserTurnsFromSession(path)
+	return users
+}
+
+func loadTopicTitleUserTurnsFromSession(path string) ([]string, error) {
 	// Event-log aware: decoding the .jsonl checkpoint directly would stop
 	// seeing user turns after the first save, silently disabling the ≥3-turn
 	// title upgrade.
 	msgs, err := agent.LoadSessionUserMessages(path)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var users []string
 	for _, msg := range msgs {
@@ -4627,20 +4632,15 @@ func topicTitleUserTurnsFromSession(path string) []string {
 		// mid-turn steers are persisted as role "user" but are not user-authored:
 		// counting them inflated userTurns past the stage-3 threshold and let
 		// "Host final-answer readiness check failed…" become a topic title.
-		if !agent.IsUserAuthoredTurnMessage(msg.Message) {
-			continue
-		}
 		// UserPreviewText is the canonical user-authored view: it unwraps
 		// memory-compiler execution contracts and strips transient blocks
 		// (and runs HandoffTask), so internal wrappers can never become a
 		// title basis (#5666).
-		content := control.StripComposePrefixes(agent.UserPreviewText(agent.UserMessageText(msg.Message)))
-		content = control.StripReferencedContextPrefix(content)
-		if strings.TrimSpace(content) != "" {
+		if content := topicTitleUserText(msg.Message); content != "" {
 			users = append(users, content)
 		}
 	}
-	return users
+	return users, nil
 }
 
 func topicTitleFromUserTurns(users []string) string {

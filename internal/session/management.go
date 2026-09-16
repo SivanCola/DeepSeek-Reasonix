@@ -19,6 +19,21 @@ import (
 // A cold write acquires the ordinary writer lease, flushes the event, and then
 // releases the exact Runtime; no title sidecar becomes a second source of truth.
 func (s *Service) SetTitle(ctx context.Context, ref SessionRef, title string) error {
+	return s.setTitle(ctx, ref, nil, title)
+}
+
+var ErrSessionTitleChanged = errors.New("session title changed")
+
+// SetTitleIfUnchanged checks and commits at the same acceptance boundary as
+// manual title writes, so a delayed generated title cannot overwrite one.
+func (s *Service) SetTitleIfUnchanged(ctx context.Context, ref SessionRef, expectedTitle, title string) error {
+	return s.setTitle(ctx, ref, &expectedTitle, title)
+}
+
+func (s *Service) setTitle(ctx context.Context, ref SessionRef, expectedTitle *string, title string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := ref.validate(s.hostID); err != nil {
 		return err
 	}
@@ -38,7 +53,11 @@ func (s *Service) SetTitle(ctx context.Context, ref SessionRef, title string) er
 	if err != nil {
 		return err
 	}
-	if _, err = session.AppendBatch(ctx, "session-title:"+randomID(), []Event{{Kind: "session/title", Payload: payload}}); err != nil {
+	prepared, err := session.PrepareBatchContext(ctx, "session-title:"+randomID(), Batch{Events: []Event{{Kind: "session/title", Payload: payload}}})
+	if err != nil {
+		return err
+	}
+	if _, err = session.commitPrepared(prepared, expectedTitle); err != nil {
 		return err
 	}
 	_, err = session.Flush(ctx)

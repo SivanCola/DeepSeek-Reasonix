@@ -5,7 +5,7 @@
       "kind": "command",
       "name": "AIRenameSession",
       "detail": "(topicID string) (string, error)",
-      "location": "desktop/session_ai_title.go:22",
+      "location": "desktop/session_ai_title.go:26",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
