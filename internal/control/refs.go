@@ -562,11 +562,7 @@ func (c *Controller) resolveInputImageCandidates(line string) []string {
 	var urls []string
 	seen := map[string]bool{}
 	for _, r := range append(c.detectRefs(line), bareVisionRefs(line)...) {
-		baseDir := c.workspaceRoot
-		if r.baseDir != "" {
-			baseDir = r.baseDir
-		}
-		url, err := c.visionRefImageValue(r, baseDir)
+		url, err := c.resolveReferenceImage(r)
 		if err != nil || url == "" || seen[url] {
 			continue
 		}
@@ -574,6 +570,14 @@ func (c *Controller) resolveInputImageCandidates(line string) []string {
 		urls = append(urls, url)
 	}
 	return urls
+}
+
+func (c *Controller) resolveReferenceImage(r ref) (string, error) {
+	baseDir := c.workspaceRoot
+	if r.baseDir != "" {
+		baseDir = r.baseDir
+	}
+	return c.visionRefImageValue(r, baseDir)
 }
 
 func visionFileImageDataURL(path, baseDir string) (string, error) {
@@ -829,19 +833,53 @@ func workspaceRel(path, baseDir string) (rel, absPath, absBase string, ok bool) 
 // strings for any that failed. An empty block means no references resolved.
 // Safe to call off a frontend's event loop; honours ctx for the resource reads.
 func (c *Controller) ResolveRefs(ctx context.Context, line string) (block string, errs []string) {
-	return c.resolveRefs(ctx, line, false)
+	resolved := c.resolveRefsForTurn(ctx, line, false)
+	return resolved.block, resolved.errs
 }
 
 // ResolveScopedRefs is the HTTP/frontend variant: file references are honored
 // only when they can be resolved under the controller workspace root.
 func (c *Controller) ResolveScopedRefs(ctx context.Context, line string) (block string, errs []string) {
-	return c.resolveRefs(ctx, line, true)
+	resolved := c.resolveRefsForTurn(ctx, line, true)
+	return resolved.block, resolved.errs
 }
 
-func (c *Controller) resolveRefs(ctx context.Context, line string, scopedOnly bool) (block string, errs []string) {
+type resolvedReferences struct {
+	block  string
+	errs   []string
+	images []string
+}
+
+func (c *Controller) resolveUnscopedRefsForTurn(ctx context.Context, line string) resolvedReferences {
+	return c.resolveRefsForTurn(ctx, line, false)
+}
+
+func (c *Controller) resolveScopedRefsForTurn(ctx context.Context, line string) resolvedReferences {
+	return c.resolveRefsForTurn(ctx, line, true)
+}
+
+func (c *Controller) resolveRefsForTurn(ctx context.Context, line string, scopedOnly bool) resolvedReferences {
 	refs := c.detectRefsMode(line, scopedOnly)
 	refs = resolveBareNames(refs, c.workspaceRoot)
 	var b strings.Builder
+	var errs, images []string
+	seenImages := map[string]bool{}
+	addImage := func(r ref) (string, bool) {
+		value, err := c.resolveReferenceImage(r)
+		if err != nil {
+			errs = append(errs, "@"+r.raw+" — "+err.Error())
+			return "", false
+		}
+		if value == "" {
+			errs = append(errs, "@"+r.raw+" — image reference resolved to an empty input")
+			return "", false
+		}
+		if !seenImages[value] {
+			seenImages[value] = true
+			images = append(images, value)
+		}
+		return value, true
+	}
 	includedInstructionPaths := map[string]bool{}
 	includedInstructionBodies := map[string]bool{}
 	if current := c.memory.current(); current != nil {
@@ -864,7 +902,11 @@ func (c *Controller) resolveRefs(ctx context.Context, line string, scopedOnly bo
 			if r.baseDir != "" {
 				baseDir = r.baseDir
 			}
-			text, isDir, err := readFileRefWithVision(r.path, baseDir, c.imageInputEnabled())
+			attached := false
+			if isImageAttachmentRef(r.path) {
+				_, attached = addImage(r)
+			}
+			text, isDir, err := readFileRefWithVision(r.path, baseDir, attached && c.imageInputEnabled())
 			if err != nil {
 				errs = append(errs, "@"+r.raw+" — "+err.Error())
 				continue
@@ -886,10 +928,15 @@ func (c *Controller) resolveRefs(ctx context.Context, line string, scopedOnly bo
 			}
 			appendRefBlock(&b, tag, `path="`+displayPath+`"`, text)
 		case refImage, refRemoteImage, refFileID:
-			appendRefBlock(&b, "image", `path="`+r.path+`"`, imageAttachmentNote(r.path, c.imageInputEnabled()))
+			if _, attached := addImage(r); attached {
+				appendRefBlock(&b, "image", `path="`+r.path+`"`, imageAttachmentNote(r.path, c.imageInputEnabled()))
+			}
 		}
 	}
-	return b.String(), errs
+	for _, r := range bareVisionRefs(line) {
+		addImage(r)
+	}
+	return resolvedReferences{block: b.String(), errs: errs, images: images}
 }
 
 func (c *Controller) resolveReferencedInstructions(r ref, baseDir string, includedPaths, includedBodies map[string]bool) (string, []instruction.Diagnostic) {

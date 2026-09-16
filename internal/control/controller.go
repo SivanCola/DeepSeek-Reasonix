@@ -1906,37 +1906,37 @@ func (c *Controller) runRefTurn(input, display string) {
 // plain-goal path; review #7234 binds format to the accepted turn).
 func (c *Controller) runRefTurnWithFormat(input, display, format string) {
 	c.runGuarded(func(ctx context.Context) error {
-		return c.runRefTurnWithResolverSync(c.withTurnFormat(ctx, format), input, input, display, "", c.ResolveRefs)
+		return c.runRefTurnWithResolverSync(c.withTurnFormat(ctx, format), input, input, display, "", c.resolveUnscopedRefsForTurn)
 	})
 }
 
 func (c *Controller) runScopedRefTurnWithFormat(input, display, format string) {
 	c.runGuarded(func(ctx context.Context) error {
-		return c.runRefTurnWithResolverSync(c.withTurnFormat(ctx, format), input, input, display, "", c.ResolveScopedRefs)
+		return c.runRefTurnWithResolverSync(c.withTurnFormat(ctx, format), input, input, display, "", c.resolveScopedRefsForTurn)
 	})
 }
 
 func (c *Controller) runRefTurnWithRefsFormat(input, refLine, display, format string) {
 	c.runGuarded(func(ctx context.Context) error {
-		return c.runRefTurnWithResolverSync(c.withTurnFormat(ctx, format), input, refLine, display, "", c.ResolveRefs)
+		return c.runRefTurnWithResolverSync(c.withTurnFormat(ctx, format), input, refLine, display, "", c.resolveUnscopedRefsForTurn)
 	})
 }
 
 func (c *Controller) runScopedRefTurnWithRefsFormat(input, refLine, display, format string) {
 	c.runGuarded(func(ctx context.Context) error {
-		return c.runRefTurnWithResolverSync(c.withTurnFormat(ctx, format), input, refLine, display, "", c.ResolveScopedRefs)
+		return c.runRefTurnWithResolverSync(c.withTurnFormat(ctx, format), input, refLine, display, "", c.resolveScopedRefsForTurn)
 	})
 }
 
 func (c *Controller) runEditedRefTurnWithFormat(input, display, original, format string) {
 	c.runGuarded(func(ctx context.Context) error {
-		return c.runRefTurnWithResolverSync(c.withTurnFormat(ctx, format), input, input, display, original, c.ResolveRefs)
+		return c.runRefTurnWithResolverSync(c.withTurnFormat(ctx, format), input, input, display, original, c.resolveUnscopedRefsForTurn)
 	})
 }
 
 func (c *Controller) runEditedRefTurnWithRefsFormat(input, refLine, display, original, format string) {
 	c.runGuarded(func(ctx context.Context) error {
-		return c.runRefTurnWithResolverSync(c.withTurnFormat(ctx, format), input, refLine, display, original, c.ResolveRefs)
+		return c.runRefTurnWithResolverSync(c.withTurnFormat(ctx, format), input, refLine, display, original, c.resolveUnscopedRefsForTurn)
 	})
 }
 
@@ -1944,28 +1944,28 @@ func (c *Controller) runEditedRefTurnWithRefsFormat(input, refLine, display, ori
 // the user's actual prompt text. This lets compiler diagnostics such as
 // "/path/File.kt:12: error" attach @/path/File.kt without rewriting the error.
 func (c *Controller) runRefTurnWithRefs(input, refLine, display string) {
-	c.runRefTurnWithResolver(input, refLine, display, c.ResolveRefs)
+	c.runRefTurnWithResolver(input, refLine, display, c.resolveUnscopedRefsForTurn)
 }
 
-func (c *Controller) runRefTurnWithResolver(input, refLine, display string, resolve func(context.Context, string) (string, []string)) {
+func (c *Controller) runRefTurnWithResolver(input, refLine, display string, resolve func(context.Context, string) resolvedReferences) {
 	c.runGuarded(func(ctx context.Context) error {
 		return c.runRefTurnWithResolverSync(ctx, input, refLine, display, "", resolve)
 	})
 }
 
-func (c *Controller) runRefTurnWithResolverSync(ctx context.Context, input, refLine, display, original string, resolve func(context.Context, string) (string, []string)) error {
-	block, errs := resolve(ctx, refLine)
-	for _, e := range errs {
+func (c *Controller) runRefTurnWithResolverSync(ctx context.Context, input, refLine, display, original string, resolve func(context.Context, string) resolvedReferences) error {
+	resolved := resolve(ctx, refLine)
+	for _, e := range resolved.errs {
 		c.notice(e)
 	}
 	sent := input
-	if block != "" {
-		sent = "Referenced context:\n\n" + block + "\n\n" + input
+	if resolved.block != "" {
+		sent = "Referenced context:\n\n" + resolved.block + "\n\n" + input
 	}
 	if strings.TrimSpace(original) != "" {
-		return c.runEditedGoalLoopWithImageRefsRawDisplay(ctx, sent, input, refLine, display, original)
+		return c.runEditedGoalLoopWithFrozenImagesRawDisplay(ctx, sent, input, display, original, resolved.images)
 	}
-	return c.runGoalLoopWithImageRefsRawDisplay(ctx, sent, input, refLine, display)
+	return c.runGoalLoopWithFrozenImagesRawDisplay(ctx, sent, input, display, resolved.images)
 }
 
 // notice emits an informational Notice event.
