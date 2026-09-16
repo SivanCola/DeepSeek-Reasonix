@@ -11,12 +11,12 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 | event | 16 | 0 | 0 | 16 |
 | frontend-native | 0 | 0 | 0 | 0 |
 | frontend-event | 10 | 0 | 0 | 10 |
-| css-marker | 10 | 0 | 0 | 10 |
+| css-marker | 11 | 0 | 0 | 11 |
 | persistence | 17 | 0 | 0 | 17 |
 | shell-file | 1 | 39 | 4 | 44 |
 | artifact | 5 | 0 | 0 | 5 |
 | ci-job | 27 | 0 | 0 | 27 |
-| **all** | | | | **813** |
+| **all** | | | | **814** |
 
 ## Desktop commands (Go `App` methods bound to the UI)
 
@@ -759,6 +759,7 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 | --- | --- | --- | --- | --- |
 | `--reasonix-draggable` |  | desktop/frontend/src/app-runtime/useAppChromeCommands.ts | keep-business (保留业务实现) | rewritten to -webkit-app-region by scripts/shell-css.mjs for the Electron bundle |
 | `--reasonix-draggable` |  | desktop/frontend/src/components/ChatTranscript.css | keep-business (保留业务实现) | rewritten to -webkit-app-region by scripts/shell-css.mjs for the Electron bundle |
+| `--reasonix-draggable` |  | desktop/frontend/src/components/ComposerWorkspaceContextBar.css | keep-business (保留业务实现) | rewritten to -webkit-app-region by scripts/shell-css.mjs for the Electron bundle |
 | `--reasonix-draggable` |  | desktop/frontend/src/components/ManagementPageShell.css | keep-business (保留业务实现) | rewritten to -webkit-app-region by scripts/shell-css.mjs for the Electron bundle |
 | `--reasonix-draggable` |  | desktop/frontend/src/components/ScrollDiagnosticPanel.css | keep-business (保留业务实现) | rewritten to -webkit-app-region by scripts/shell-css.mjs for the Electron bundle |
 | `--reasonix-draggable` |  | desktop/frontend/src/components/SettingsPanel.css | keep-business (保留业务实现) | rewritten to -webkit-app-region by scripts/shell-css.mjs for the Electron bundle |

@@ -5672,6 +5672,13 @@
     {
       "kind": "css-marker",
       "name": "--reasonix-draggable",
+      "location": "desktop/frontend/src/components/ComposerWorkspaceContextBar.css",
+      "class": "keep-business",
+      "owner": "rewritten to -webkit-app-region by scripts/shell-css.mjs for the Electron bundle"
+    },
+    {
+      "kind": "css-marker",
+      "name": "--reasonix-draggable",
       "location": "desktop/frontend/src/components/ManagementPageShell.css",
       "class": "keep-business",
       "owner": "rewritten to -webkit-app-region by scripts/shell-css.mjs for the Electron bundle"
