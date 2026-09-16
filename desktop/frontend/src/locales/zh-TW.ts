@@ -1366,7 +1366,6 @@ export const zhTW: Record<DictKey, string> = {
   "projectTree.moreActions": "更多操作",
   "projectTree.collapseAllWorkbench": "全部收起",
   "projectTree.restoreCollapsedWorkbench": "恢復之前展開的分組",
-  "projectTree.archiveAllConversations": "歸檔所有聊天",
   "projectTree.sortCriteria": "排序條件",
   "projectTree.sortByCreatedAt": "建立時間",
   "projectTree.sortByUpdatedAt": "更新時間",

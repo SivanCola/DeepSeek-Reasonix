@@ -1602,7 +1602,6 @@ export const zh: Record<DictKey, string> = {
   "projectTree.moreActions": "更多操作",
   "projectTree.collapseAllWorkbench": "全部收起",
   "projectTree.restoreCollapsedWorkbench": "恢复之前展开的分组",
-  "projectTree.archiveAllConversations": "归档所有聊天",
   "projectTree.sortCriteria": "排序条件",
   "projectTree.sortByCreatedAt": "创建时间",
   "projectTree.sortByUpdatedAt": "更新时间",

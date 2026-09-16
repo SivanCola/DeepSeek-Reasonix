@@ -1601,7 +1601,6 @@ export const en = {
   "projectTree.moreActions": "More actions",
   "projectTree.collapseAllWorkbench": "Collapse all",
   "projectTree.restoreCollapsedWorkbench": "Restore previous groups",
-  "projectTree.archiveAllConversations": "Archive all chats",
   "projectTree.sortCriteria": "Sort criteria",
   "projectTree.sortByCreatedAt": "Created time",
   "projectTree.sortByUpdatedAt": "Updated time",

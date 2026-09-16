@@ -75,6 +75,7 @@ type SessionInfo struct {
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 	EventSequence   uint64
+	ResultSequence  uint64
 	Preview         string
 	MetadataStatus  string
 	CWD             string
@@ -245,7 +246,7 @@ func (p *FilesystemPersistence) Stat(ctx context.Context, sessionID string) (Ses
 		info.Title, info.TitleSequence = metadata.Title, metadata.TitleSequence
 		info.ModelRef, info.ModelIdentity = metadata.ModelRef, metadata.ModelIdentity
 		info.Turns, info.Preview, info.MetadataStatus = metadata.Turns, metadata.Preview, MetadataReady
-		info.EventSequence = metadata.Sequence
+		info.EventSequence, info.ResultSequence = metadata.Sequence, metadata.ResultSequence
 	}
 	return info, nil
 }

@@ -353,7 +353,7 @@ func (a *App) canonicalTopicNodes(req ProjectTopicPageRequest, state workspacest
 			Key: "canonical_" + id, Kind: kind, Label: label, Root: workspace.Root,
 			TopicID: topicID, Session: &ref, SessionPath: sessionRoute(id), CanArchive: row.Health != "missing",
 			Preview: row.Preview, Turns: row.Turns, TurnsState: row.MetadataStatus, Health: row.Health,
-			CreatedAt: createdAt, LastActivityAt: row.UpdatedAt, Open: row.Running,
+			CreatedAt: createdAt, LastActivityAt: row.UpdatedAt, ResultSequence: row.ResultSequence, Open: row.Running,
 			Pinned: presentation.Pinned, SortOrder: sortOrder, Children: []ProjectNode{},
 		})
 	}

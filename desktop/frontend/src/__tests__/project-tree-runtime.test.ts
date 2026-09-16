@@ -14,6 +14,7 @@ import {
   projectTreeTopicOpenRequest,
   projectTreeShouldSuppressOpenForRename,
   projectTreeReadActivityKey,
+  projectTreeSeedReadActivity,
   projectTreeTopicHasUnreadActivity,
   topicIsActive,
   topicStatusLabel,
@@ -200,29 +201,47 @@ const completedTopic: ProjectNode = {
   root: "/repo",
   topicId: "topic-complete",
   lastActivityAt: 2000,
+  session: { hostId: "local", sessionId: "session-complete" },
+  resultSequence: 20,
 };
 const completedTopicKey = projectTreeReadActivityKey(completedTopic) ?? "";
 
+const zeroResultTopic = { ...completedTopic, resultSequence: 0 };
+const zeroResultKey = projectTreeReadActivityKey(zeroResultTopic) ?? "";
+const seededBeforeCompletion = projectTreeSeedReadActivity([zeroResultTopic], {});
+eq(seededBeforeCompletion[zeroResultKey], 0, "canonical sessions seed a zero result baseline before their first run completes");
 eq(
-  projectTreeTopicHasUnreadActivity(completedTopic, { [completedTopicKey]: 1000 }, "project", "/repo", "other-topic"),
+  projectTreeTopicHasUnreadActivity(completedTopic, seededBeforeCompletion, "project", "/repo", "other-topic"),
+  true,
+  "the first background result after a zero baseline shows unread attention",
+);
+const seededHistorical = projectTreeSeedReadActivity([completedTopic], {});
+eq(
+  projectTreeTopicHasUnreadActivity(completedTopic, seededHistorical, "project", "/repo", "other-topic"),
+  false,
+  "historical results present on first observation seed as already read",
+);
+
+eq(
+  projectTreeTopicHasUnreadActivity(completedTopic, { [completedTopicKey]: 10 }, "project", "/repo", "other-topic"),
   true,
   "completed inactive topic with newer activity shows unread attention",
 );
 
 eq(
-  projectTreeTopicHasUnreadActivity(completedTopic, { [completedTopicKey]: 2000 }, "project", "/repo", "other-topic"),
+  projectTreeTopicHasUnreadActivity(completedTopic, { [completedTopicKey]: 20 }, "project", "/repo", "other-topic"),
   false,
   "completed topic stops showing unread attention once opened at its latest activity",
 );
 
 eq(
-  projectTreeTopicHasUnreadActivity(completedTopic, { [completedTopicKey]: 1000 }, "project", "/repo", "topic-complete"),
+  projectTreeTopicHasUnreadActivity(completedTopic, { [completedTopicKey]: 10 }, "project", "/repo", "topic-complete"),
   false,
   "active topic does not show unread attention",
 );
 
 eq(
-  projectTreeTopicHasUnreadActivity({ ...completedTopic, status: "streaming", running: true }, { [completedTopicKey]: 1000 }, "project", "/repo", "other-topic"),
+  projectTreeTopicHasUnreadActivity({ ...completedTopic, status: "streaming", running: true }, { [completedTopicKey]: 10 }, "project", "/repo", "other-topic"),
   false,
   "running topic keeps runtime status instead of completed-unread attention",
 );
@@ -235,19 +254,19 @@ eq(
   "unread key stays on the logical topic when the representative path changes",
 );
 eq(
-  projectTreeTopicHasUnreadActivity(relocatedTopic, { [relocatedKey]: 2000 }, "project", "/repo", "other-topic"),
+  projectTreeTopicHasUnreadActivity(relocatedTopic, { [relocatedKey]: 20 }, "project", "/repo", "other-topic"),
   false,
   "marking a topic read survives a later representative-path refresh",
 );
 eq(
   projectTreeTopicHasUnreadActivity(completedTopic, {}, "project", "/repo", "other-topic", undefined, 2000),
   false,
-  "activity at or before the first-seen baseline is not unread",
+  "a canonical session is initially seeded instead of treating history as unread",
 );
 eq(
-  projectTreeTopicHasUnreadActivity(completedTopic, {}, "project", "/repo", "other-topic", undefined, 1999),
-  true,
-  "activity newer than the first-seen baseline is unread",
+  projectTreeTopicHasUnreadActivity({ ...completedTopic, lastActivityAt: 999999 }, { [completedTopicKey]: 20 }, "project", "/repo", "other-topic"),
+  false,
+  "metadata activity does not re-arm a read canonical result",
 );
 eq(
   topicIsActive({ ...completedTopic, sessionPath: "/s/a.jsonl" }, "project", "/repo", "topic-complete", "/s/other.jsonl"),

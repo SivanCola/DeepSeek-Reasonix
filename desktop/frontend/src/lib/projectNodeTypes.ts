@@ -16,6 +16,7 @@ export interface ProjectNode extends RemoteProjectNodeFields, CanonicalProjectNo
   health?: "ok" | "missing" | "corrupt" | "degraded" | string;
   createdAt?: number;
   lastActivityAt?: number;
+  resultSequence?: number;
   open?: boolean;
   running?: boolean;
   status?: ProjectTopicStatus;

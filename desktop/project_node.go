@@ -20,6 +20,7 @@ type ProjectNode struct {
 	Health                       string              `json:"health,omitempty"`
 	CreatedAt                    int64               `json:"createdAt,omitempty"`
 	LastActivityAt               int64               `json:"lastActivityAt,omitempty"`
+	ResultSequence               uint64              `json:"resultSequence,omitempty"`
 	Open                         bool                `json:"open,omitempty"`
 	Running                      bool                `json:"running,omitempty"`
 	Status                       string              `json:"status,omitempty"`

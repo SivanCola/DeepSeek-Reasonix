@@ -18,6 +18,20 @@ try {
   await page.locator(".project-tree__topic-main").first().waitFor();
   assert.equal(await page.locator(".app--workbench").count(), 1);
   assert.equal(await page.locator(".workspace-browser,.app--creation").count(), 0);
+  const actionColumns = await page.evaluate(() => {
+    const left = element => element.getBoundingClientRect().left;
+    const headerButtons = [...document.querySelectorAll('.sidebar--workbench .project-tree__header-icon-btn')];
+    const firstProject = document.querySelector('.sidebar--workbench .project-tree__folder--project');
+    const folderButtons = firstProject ? [...firstProject.querySelectorAll('.project-tree__folder-action')] : [];
+    return {
+      header: headerButtons.map(left),
+      folder: folderButtons.map(left),
+    };
+  });
+  assert.equal(actionColumns.header.length, 3, 'project header renders three action columns');
+  assert.equal(actionColumns.folder.length, 2, 'expanded project renders menu and create action columns');
+  assert.ok(Math.abs(actionColumns.header[1] - actionColumns.folder[0]) < 0.5, `header menu aligns with project menu column: ${JSON.stringify(actionColumns)}`);
+  assert.ok(Math.abs(actionColumns.header[2] - actionColumns.folder[1]) < 0.5, `header add action aligns with project create column: ${JSON.stringify(actionColumns)}`);
   assert.equal(await page.locator('.project-tree__topic-main').count(), 5, 'project starts with five rendered sessions');
   await page.getByRole('button', { name: 'Show more in reasonix', exact: true }).click();
   await page.waitForFunction(() => document.querySelectorAll('.project-tree__topic-main').length === 9);

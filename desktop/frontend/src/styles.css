@@ -28108,7 +28108,7 @@ body > .mermaid-diagram--fullscreen {
 
 .sidebar--workbench .project-tree__header-actions {
   display: grid;
-  grid-template-columns: auto repeat(3, var(--project-tree-action-column));
+  grid-template-columns: repeat(3, var(--project-tree-action-column));
   gap: var(--project-tree-action-gap);
   justify-content: end;
   align-items: center;

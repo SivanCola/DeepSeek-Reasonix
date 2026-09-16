@@ -309,7 +309,7 @@
       "kind": "command",
       "name": "ArchiveCanonicalSession",
       "detail": "(ref session.SessionRef) error",
-      "location": "desktop/session_workspace_api.go:370",
+      "location": "desktop/session_workspace_api.go:354",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -805,7 +805,7 @@
       "kind": "command",
       "name": "CopySessionTarget",
       "detail": "(selector SessionSelector, operationID string) (SessionCreationResult, error)",
-      "location": "desktop/session_workspace_api.go:710",
+      "location": "desktop/session_workspace_api.go:694",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -869,7 +869,7 @@
       "kind": "command",
       "name": "CreateSession",
       "detail": "(workspaceID string) (session.SessionRef, error)",
-      "location": "desktop/session_workspace_api.go:513",
+      "location": "desktop/session_workspace_api.go:497",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1277,7 +1277,7 @@
       "kind": "command",
       "name": "ForkSession",
       "detail": "(ref session.SessionRef, turnBoundary string) (session.SessionRef, error)",
-      "location": "desktop/session_workspace_api.go:540",
+      "location": "desktop/session_workspace_api.go:524",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1285,7 +1285,7 @@
       "kind": "command",
       "name": "ForkSessionTarget",
       "detail": "(selector SessionSelector, turnBoundary string) (session.SessionRef, error)",
-      "location": "desktop/session_workspace_api.go:667",
+      "location": "desktop/session_workspace_api.go:651",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1421,7 +1421,7 @@
       "kind": "command",
       "name": "GetSessionArchitectureDiagnostics",
       "detail": "() (SessionArchitectureDiagnostics, error)",
-      "location": "desktop/session_workspace_api.go:126",
+      "location": "desktop/session_workspace_api.go:109",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1493,7 +1493,7 @@
       "kind": "command",
       "name": "GetWorkspaceSnapshot",
       "detail": "() (WorkspaceSnapshot, error)",
-      "location": "desktop/session_workspace_api.go:95",
+      "location": "desktop/session_workspace_api.go:78",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1973,7 +1973,7 @@
       "kind": "command",
       "name": "ListWorkspaceSessions",
       "detail": "(workspaceID string, queryText string, cursor string, limit int, includeArchived bool) (WorkspaceSessionPage, error)",
-      "location": "desktop/session_workspace_api.go:199",
+      "location": "desktop/session_workspace_api.go:182",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2221,7 +2221,7 @@
       "kind": "command",
       "name": "MoveWorkspace",
       "detail": "(workspaceID string, beforeWorkspaceID string) error",
-      "location": "desktop/session_workspace_api.go:502",
+      "location": "desktop/session_workspace_api.go:486",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2229,7 +2229,7 @@
       "kind": "command",
       "name": "MoveWorkspaceSession",
       "detail": "(workspaceID string, sessionID string, beforeSessionID string) error",
-      "location": "desktop/session_workspace_api.go:380",
+      "location": "desktop/session_workspace_api.go:364",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2357,7 +2357,7 @@
       "kind": "command",
       "name": "OpenSession",
       "detail": "(ref session.SessionRef) (HistoryPage, error)",
-      "location": "desktop/session_workspace_api.go:868",
+      "location": "desktop/session_workspace_api.go:852",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2693,7 +2693,7 @@
       "kind": "command",
       "name": "ReadSessionHistory",
       "detail": "(ref session.SessionRef, cursor string, limit int) (HistoryPage, error)",
-      "location": "desktop/session_workspace_api.go:842",
+      "location": "desktop/session_workspace_api.go:826",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -3125,7 +3125,7 @@
       "kind": "command",
       "name": "RenameCanonicalSession",
       "detail": "(ref session.SessionRef, title string) error",
-      "location": "desktop/session_workspace_api.go:893",
+      "location": "desktop/session_workspace_api.go:877",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -3205,7 +3205,7 @@
       "kind": "command",
       "name": "RenameWorkspace",
       "detail": "(workspaceID string, title string) error",
-      "location": "desktop/session_workspace_api.go:483",
+      "location": "desktop/session_workspace_api.go:467",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -3477,7 +3477,7 @@
       "kind": "command",
       "name": "RestoreCanonicalSession",
       "detail": "(ref session.SessionRef) error",
-      "location": "desktop/session_workspace_api.go:375",
+      "location": "desktop/session_workspace_api.go:359",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -4813,7 +4813,7 @@
       "kind": "command",
       "name": "SetWorkspaceVisible",
       "detail": "(workspaceID string, visible bool) error",
-      "location": "desktop/session_workspace_api.go:491",
+      "location": "desktop/session_workspace_api.go:475",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
