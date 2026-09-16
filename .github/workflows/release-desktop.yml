@@ -592,7 +592,7 @@ jobs:
   windows-sign:
     name: sign Windows (${{ matrix.arch }})
     needs: [resolve, build, signing-contract]
-    if: ${{ needs.build.result == 'success' && github.repository == 'esengine/DeepSeek-Reasonix' && !inputs.desktop_manual_only }}
+    if: ${{ always() && !cancelled() && needs.resolve.result == 'success' && needs.build.result == 'success' && needs.signing-contract.result == 'success' && github.repository == 'esengine/DeepSeek-Reasonix' && !inputs.desktop_manual_only }}
     runs-on: windows-2022
     timeout-minutes: 45
     permissions:

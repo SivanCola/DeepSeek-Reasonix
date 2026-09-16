@@ -26,6 +26,27 @@ const ci = workflow("ci");
 const release = workflow("release-desktop");
 const appMemory = workflow("app-memory");
 
+test("Certum signing survives skipped ancestor gates but requires successful inputs", () => {
+  const body = job(release, "windows-sign");
+  // A status function is required to override GitHub's implicit success(),
+  // which otherwise propagates a skipped standalone/orchestrator ancestor.
+  assert.match(body, /if:.*always\(\)/);
+  const context = {
+    needs: { resolve: { result: "success" }, build: { result: "success" }, "signing-contract": { result: "success" } },
+    github: { repository: "esengine/DeepSeek-Reasonix" },
+    inputs: { desktop_manual_only: false },
+  };
+  assert.equal(condition(body, context), true);
+  assert.equal(condition(body, { ...context, cancelled: () => true }), false);
+  for (const name of Object.keys(context.needs)) {
+    for (const result of ["failure", "skipped", "cancelled"]) {
+      assert.equal(condition(body, { ...context, needs: { ...context.needs, [name]: { result } } }), false);
+    }
+  }
+  assert.equal(condition(body, { ...context, inputs: { desktop_manual_only: true } }), false);
+  assert.equal(condition(body, { ...context, github: { repository: "example/fork" } }), false);
+});
+
 test("Windows full runs use the partitioned suite without a duplicate module sweep", () => {
   const body = job(ci, "test");
   const enabled = (name, os, event, run = "true") => {
