@@ -6193,6 +6193,13 @@
       "location": ".github/workflows/release-desktop.yml",
       "class": "keep-business",
       "owner": "payload list covers the Electron executables and native modules"
+    },
+    {
+      "kind": "ci-job",
+      "name": "release-desktop.yml/windows-sign",
+      "location": ".github/workflows/release-desktop.yml",
+      "class": "keep-business",
+      "owner": "Certum signs native-tested x64 and ARM64 payloads and rebuilt installers on x64"
     }
   ]
 }

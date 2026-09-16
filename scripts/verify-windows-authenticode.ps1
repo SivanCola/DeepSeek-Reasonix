@@ -8,6 +8,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$PortableArchivePath,
 
+    [string]$ExpectedThumbprint,
+
     [switch]$RequireTrusted
 )
 
@@ -37,6 +39,9 @@ function Assert-AuthenticodeSignature {
     }
     if ($RequireTrusted -and $signature.Status -ne "Valid") {
         throw "Authenticode signature is not trusted for $Path`: $($signature.Status) $($signature.StatusMessage)"
+    }
+    if ($ExpectedThumbprint -and ($signature.SignerCertificate.Thumbprint -ne $ExpectedThumbprint -or -not $signature.TimeStamperCertificate)) {
+        throw "Unexpected signer or missing timestamp: $Path"
     }
     Write-Host "Authenticode $($signature.Status): $Path"
 }

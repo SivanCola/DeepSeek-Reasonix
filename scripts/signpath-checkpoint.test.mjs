@@ -167,25 +167,10 @@ test("CLI records and restores the original request without a signing API call",
   assert.notEqual(run("record").status, 0, "cannot overwrite an existing receipt");
 });
 
-test("workflow persists receipts before approval and gates both quota-consuming submissions", async () => {
+test("release no longer consumes SignPath quota while legacy receipts remain readable", async () => {
   const workflow = await readFile(new URL("../.github/workflows/release-desktop.yml", import.meta.url), "utf8");
-  for (const [stage, submit, approval] of [
-    ["payload", "Submit Windows payload for Authenticode signing", "Approve and download signed Windows payload"],
-    ["installer", "Submit installer for Authenticode signing", "Approve and download signed Windows installer"],
-  ]) {
-    const submitStep = workflow.split(`      - name: ${submit}\n`)[1].split("      - name:")[0];
-    assert.ok(submitStep.includes(`steps.${stage}-checkpoint.outputs.exists == 'false'`));
-    assert.ok(workflow.indexOf(`Preserve Windows ${stage} signing receipt`) < workflow.indexOf(approval));
-    assert.ok(workflow.indexOf(`Restore original unsigned Windows ${stage}`) < workflow.indexOf(`Validate Windows ${stage} signing receipt`));
-    const approvalStep = workflow.split(`      - name: ${approval}\n`)[1].split("      - name:")[0];
-    assert.ok(approvalStep.includes(`steps.restore-${stage}.outputs.request_id || steps.submit-windows-${stage}.outputs.signing-request-id`));
-  }
-  assert.match(workflow, /scripts\/signpath-checkpoint\.mjs\n/);
-  assert.match(workflow, /node release-control\/scripts\/signpath-checkpoint\.mjs/);
-  assert.ok(workflow.includes("name: build (${{ matrix.name }}, ${{ inputs.signing_preflight && 'preflight' || 'release' }})"));
-  for (const name of ["Upload unsigned Windows payload for SignPath", "Upload unsigned installer for SignPath"]) {
-    const step = workflow.split(`      - name: ${name}\n`)[1].split("      - name:")[0];
-    assert.match(step, /overwrite: true/);
-    assert.match(step, /checkpoint.outputs.exists == 'false'/);
-  }
+  assert.ok(!workflow.includes("signpath/github-action-submit-signing-request"));
+  assert.ok(!workflow.includes("secrets.SIGNPATH_API_TOKEN"));
+  assert.ok(!workflow.includes("node release-control/scripts/signpath-checkpoint.mjs"));
+  assert.match(workflow, /uses: \.\/release-control\/\.github\/actions\/setup-certum/);
 });

@@ -15,8 +15,8 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 | persistence | 17 | 0 | 0 | 17 |
 | shell-file | 1 | 39 | 4 | 44 |
 | artifact | 5 | 0 | 0 | 5 |
-| ci-job | 26 | 0 | 0 | 26 |
-| **all** | | | | **795** |
+| ci-job | 27 | 0 | 0 | 27 |
+| **all** | | | | **796** |
 
 ## Desktop commands (Go `App` methods bound to the UI)
 
@@ -862,3 +862,4 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 | `release-desktop.yml/release-gate` |  | .github/workflows/release-desktop.yml | keep-business (保留业务实现) | unchanged |
 | `release-desktop.yml/resolve` |  | .github/workflows/release-desktop.yml | keep-business (保留业务实现) | version/channel resolution unchanged |
 | `release-desktop.yml/signing-contract` |  | .github/workflows/release-desktop.yml | keep-business (保留业务实现) | payload list covers the Electron executables and native modules |
+| `release-desktop.yml/windows-sign` |  | .github/workflows/release-desktop.yml | keep-business (保留业务实现) | Certum signs native-tested x64 and ARM64 payloads and rebuilt installers on x64 |
