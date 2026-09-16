@@ -4,13 +4,13 @@
     "commented-code": 0,
     "complexity": 1858,
     "essay": 1928,
-    "file-size": 99475,
+    "file-size": 99623,
     "function-size": 8053,
     "layering": 1,
     "marker": 0,
     "narrative": 63,
     "struct-state": 105,
-    "test-file-size": 64141
+    "test-file-size": 64140
   },
   "files": {
     "cmd/e2ebench/main.go": {
@@ -87,7 +87,7 @@
       "test-file-size": 193
     },
     "desktop/frontend/src/__tests__/tab-switch-hydration.test.tsx": {
-      "test-file-size": 126
+      "test-file-size": 125
     },
     "desktop/frontend/src/components/ApprovalModal.tsx": {
       "file-size": 233
@@ -135,19 +135,19 @@
       "file-size": 177
     },
     "desktop/frontend/src/lib/bridge.ts": {
-      "file-size": 5025
+      "file-size": 5022
     },
     "desktop/frontend/src/lib/crash.ts": {
       "file-size": 98
     },
     "desktop/frontend/src/lib/transcriptStore.ts": {
-      "file-size": 241
+      "file-size": 239
     },
     "desktop/frontend/src/lib/types.ts": {
       "file-size": 1581
     },
     "desktop/frontend/src/lib/useController.ts": {
-      "file-size": 3940
+      "file-size": 4093
     },
     "desktop/heartbeat.go": {
       "essay": 7
