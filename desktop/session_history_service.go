@@ -5,7 +5,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 
+	"reasonix/internal/agent"
 	"reasonix/internal/control"
 	"reasonix/internal/session"
 	"reasonix/internal/sessioncontent"
@@ -54,6 +56,55 @@ func (a *App) SessionOpenForTab(tabID string) (session.SessionOpenView, error) {
 		return session.SessionOpenView{}, err
 	}
 	return query.OpenSession(context.Background(), ref)
+}
+
+// canonicalTabHistoryFingerprint returns the same identity emitted by the
+// canonical history-window endpoint. Branch metadata describes the legacy
+// JSONL projection and must never be compared with canonical session pages.
+//
+// tabMeta calls this while holding App.mu, so this helper deliberately avoids
+// canonicalSessionQuery (which would reacquire App.mu).
+func (a *App) canonicalTabHistoryFingerprint(tab *WorkspaceTab) (int64, string, bool) {
+	if tab == nil || strings.TrimSpace(tab.SessionID) == "" {
+		return 0, "", false
+	}
+	var query *session.Query
+	var ref session.SessionRef
+	if identity, ok := tab.Ctrl.(control.IdentityLifecycle); ok && identity.UsesExclusiveSession() {
+		if boundRef, bound := identity.SessionRef(); bound {
+			if service := identity.SessionService(); service != nil {
+				query, ref = service.Query(), boundRef
+			}
+		}
+	}
+	if query == nil {
+		service := a.desktopSessionService(tabSessionDir(tab))
+		if service == nil {
+			return 0, "", false
+		}
+		query = service.Query()
+		ref = session.SessionRef{HostID: service.HostID(), SessionID: strings.TrimSpace(tab.SessionID)}
+	}
+	if query == nil {
+		return 0, "", false
+	}
+	view, err := query.OpenSession(context.Background(), ref)
+	if err != nil || strings.TrimSpace(view.StorageGeneration) == "" {
+		return 0, "", false
+	}
+	return int64(view.SnapshotSequence), view.StorageGeneration, true
+}
+
+func (a *App) tabHistoryFingerprint(tab *WorkspaceTab, sessionPath string) (int64, string) {
+	if revision, digest, ok := a.canonicalTabHistoryFingerprint(tab); ok {
+		return revision, digest
+	}
+	if tab != nil && strings.TrimSpace(tab.SessionID) == "" {
+		if meta, ok, err := agent.LoadBranchMeta(sessionPath); err == nil && ok {
+			return meta.Revision, meta.ContentDigest
+		}
+	}
+	return 0, ""
 }
 
 func (a *App) SearchSessionHistoryForTab(tabID, textQuery, cursor string, limit int) (session.SearchHistoryPage, error) {
