@@ -940,23 +940,32 @@ jobs:
     if: ${{ always() && !cancelled() && inputs.signing_preflight && !inputs.orchestrated && github.repository == 'esengine/DeepSeek-Reasonix' && needs.signing-contract.result == 'success' && needs.build.result == 'success' && needs.windows-sign.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
-      actions: write
       contents: read
     env:
-      GH_TOKEN: ${{ github.token }}
       VARIABLE_NAME: SIGNPATH_RELEASE_SIGNING_ATTESTATION
       VARIABLE_VALUE: ${{ needs.signing-contract.outputs.fingerprint }}
     steps:
       - name: Record verified signing contract
         run: |
-          endpoint="repos/$GITHUB_REPOSITORY/actions/variables/$VARIABLE_NAME"
-          if gh api "$endpoint" >/dev/null 2>&1; then
-            gh api --method PATCH "$endpoint" -f value="$VARIABLE_VALUE" >/dev/null
-          else
-            gh api --method POST "repos/$GITHUB_REPOSITORY/actions/variables" \
-              -f name="$VARIABLE_NAME" -f value="$VARIABLE_VALUE" >/dev/null
-          fi
-          echo "Recorded $VARIABLE_NAME=$VARIABLE_VALUE"
+          mkdir -p signing-attestation
+          jq -n --arg fingerprint "$VARIABLE_VALUE" --arg workflow_sha "$GITHUB_SHA" \
+            --arg run_id "$GITHUB_RUN_ID" --arg run_attempt "$GITHUB_RUN_ATTEMPT" \
+            '{fingerprint: $fingerprint, workflow_sha: $workflow_sha, run_id: $run_id, run_attempt: $run_attempt}' \
+            > signing-attestation/verified-contract.json
+          {
+            echo "Both Windows signing jobs verified this contract: $VARIABLE_VALUE"
+            echo 'For standalone recovery, a maintainer must promote this verified fingerprint:'
+            echo '```sh'
+            echo "gh variable set $VARIABLE_NAME --repo $GITHUB_REPOSITORY --body '$VARIABLE_VALUE'"
+            echo '```'
+            echo 'GITHUB_TOKEN cannot write repository variables. Orchestrated releases use same-run preflight evidence.'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: verified-signing-contract-${{ github.run_id }}-${{ github.run_attempt }}
+          path: signing-attestation/verified-contract.json
+          if-no-files-found: error
+          retention-days: 90
 
   mirror:
     name: mirror to R2
