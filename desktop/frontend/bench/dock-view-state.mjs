@@ -31,6 +31,9 @@ try {
   await overview.waitFor();
   assert.equal(await overview.count(), 1, "fresh expanded workspace dock defaults to Overview");
   await overview.locator(".workbench-dock__tab-close").click();
+  await page.locator(".workbench-dock").waitFor({ state: "detached" });
+  assert.equal(await tabs.count(), 0, "closing the last tab removes the dock");
+  await page.locator(".topicbar__chrome-btn--workspace[aria-pressed=false]").click();
   await page.locator(".tab-picker__item").filter({ hasText: /^Files$/ }).click();
   await page.locator('[data-workspace-path="README.md"]').click();
   await page.waitForFunction(() => document.querySelector(".workspace-preview__body")?.textContent?.includes("Browser-dev workspace preview."));
