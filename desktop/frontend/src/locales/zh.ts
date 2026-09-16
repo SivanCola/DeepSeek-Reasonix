@@ -3161,6 +3161,7 @@ export const zh: Record<DictKey, string> = {
   "notice.planModeToolSettingsIgnored": "部分规划模式工具设置已被忽略。",
   "notice.planModeCommandSettingsIgnored": "部分规划模式命令设置已被忽略。",
   "notice.configMigrationIncomplete": "配置迁移未完成。",
+  "notice.providerConnectionRepaired": "已自动修复供应商连接设置。",
   "notice.modelMissingApiKey": "当前模型缺少 API key。",
   "notice.mcpServerFailed": "一个 MCP 服务启动失败。",
   "notice.mcpServersFailed": "部分 MCP 服务启动失败，可运行 /mcp 查看详情。",

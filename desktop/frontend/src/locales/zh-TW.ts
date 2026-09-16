@@ -2376,6 +2376,7 @@ export const zhTW: Record<DictKey, string> = {
   "notice.planModeToolSettingsIgnored": "部分規劃模式工具設定已被忽略。",
   "notice.planModeCommandSettingsIgnored": "部分規劃模式指令設定已被忽略。",
   "notice.configMigrationIncomplete": "設定遷移未完成。",
+  "notice.providerConnectionRepaired": "已自動修復供應商連線設定。",
   "notice.modelMissingApiKey": "目前模型缺少 API key。",
   "notice.mcpServerFailed": "一個 MCP 服務啟動失敗。",
   "notice.mcpServersFailed": "部分 MCP 服務啟動失敗，可執行 /mcp 查看詳情。",
