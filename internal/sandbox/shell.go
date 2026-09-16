@@ -115,6 +115,7 @@ func resolveShell(prefer, path string, warn io.Writer, goos string, lookPath fun
 		return Shell{}, false
 	}
 	auto := func() Shell { return autoDetectedShell(goos, findBash, findPOSIX, findPowerShell) }
+	prefer = effectiveShellPreference(goos, prefer, warn)
 
 	switch strings.ToLower(strings.TrimSpace(prefer)) {
 	case "", "auto":
@@ -149,6 +150,17 @@ func resolveShell(prefer, path string, warn io.Writer, goos string, lookPath fun
 		}
 		return auto()
 	}
+}
+
+func effectiveShellPreference(goos, prefer string, warn io.Writer) string {
+	legacy := goos == "windows" && strings.EqualFold(strings.TrimSpace(prefer), "bash")
+	if legacy && warn != nil {
+		fmt.Fprintln(warn, "Windows Agent now uses native PowerShell; the saved Bash preference is retained for older versions.")
+	}
+	if legacy {
+		return "auto"
+	}
+	return prefer
 }
 
 // Auto accepts native PowerShell paths on Windows. A persisted Git Bash path

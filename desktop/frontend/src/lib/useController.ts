@@ -38,7 +38,7 @@ import { setTranscriptBindingIdentity } from "./canonicalTranscriptBackend";
 import { getTranscriptStore } from "./transcriptStore";
 import { TranscriptSessionFollower } from "./transcriptSessionFollower";
 import { historyRevisionIsOlder } from "./sessionTranscriptMode";
-import { transcriptPageState, transcriptSnapshotState } from "./transcriptSnapshotState";
+import { matchingSnapshotItem, transcriptPageState, transcriptSnapshotState } from "./transcriptSnapshotState";
 import type { TranscriptSnapshot } from "./transcriptProtocol";
 import { recordFrontendDiagnostic } from "./frontendDiagnosticBridge";
 import { uiPerfTracker } from "./uiPerf";
@@ -294,7 +294,7 @@ type ModelSwitchQueueState = {
 
 export type TurnPhaseName = "working" | "checking" | "verifying" | "reviewing" | string;
 export type Item =
-  | { kind: "user"; id: string; messageId?: string; submissionId?: string; text: string; submitText?: string; failed?: boolean; createdAt?: number; checkpointTurn?: number; historyTurn?: number }
+  | { kind: "user"; id: string; messageId?: string; submissionId?: string; submissionState?: "sending" | "confirmed" | "failed" | "unknown"; text: string; submitText?: string; failed?: boolean; createdAt?: number; checkpointTurn?: number; historyTurn?: number }
   | { kind: "assistant"; id: string; text: string; reasoning: string; streaming: boolean; turnFinal?: boolean; samplingCount?: number; toolCount?: number; wasStreamed?: true; reasoningComplete?: boolean; reasoningDurationMs?: number; workDurationMs?: number; turnDurationMs?: number; turnUsage?: TurnUsage; tokensPerSecond?: number; createdAt?: number; memoryCitations?: MemoryCitation[]; searchSources?: SearchSource[] }
   | { kind: "phase"; id: string; text: string }
   | { kind: "notice"; id: string; local?: boolean; level: "info" | "warn"; text: string; detail?: string; code?: string; title?: string; variant?: "delivery" | "completion"; action?: "continue_delivery" | "open_changes" | "recover_context"; recoveryId?: string; completionSummary?: WireCompletionSummary; decisionReceipt?: WireDecisionReceipt; missing?: string[]; inboxItemId?: string }
@@ -317,6 +317,7 @@ export type Item =
       resolvedName?: string;
       capabilityId?: string; subagentOutcome?: import("./subagentOutcome").SubagentOutcome;
       status: ToolStatus;
+      resultMissing?: boolean;
       output?: string; searchSources?: SearchSource[]; searchSourcesStatus?: "available" | "not_provided"; searchSummary?: string; // display-only provider search results; replay data stays in output/serverSearch
       error?: string;
       truncated?: boolean;
@@ -794,6 +795,7 @@ export type Action =
   | { type: "management_confirmed"; submissionId: string }
   | { type: "turn_admitted"; turnId: string; submissionId: string }
   | { type: "turn_submit_rejected"; submissionId: string; error: string }
+  | { type: "turn_submit_unknown"; submissionId: string; error: string }
   | { type: "send_failed"; submissionId: string; error: string }
   | { type: "turn_interrupted" }
   | { type: "backend_status"; running: boolean; turnStartedAt?: number; pendingPrompt?: boolean; backgroundJobs?: number; cancelRequested?: boolean; cancellable?: boolean; turnId?: string; turnStatus?: string; snapshotAt?: number; runtimeEpoch?: string; turnEventSeq?: number }
@@ -823,7 +825,7 @@ export type Action =
   | { type: "history_rebase"; items: Item[]; startTurn: number; endTurn?: number; totalTurns: number; hasOlder: boolean; hasNewer?: boolean; revision?: number; digest?: string }
   | { type: "history_prepend"; items: Item[]; removeIds: string[]; startTurn: number; endTurn?: number; totalTurns: number; hasOlder: boolean; hasNewer?: boolean; revision?: number; digest?: string }
   | { type: "history_append"; items: Item[]; startTurn: number; endTurn: number; totalTurns: number; hasOlder: boolean; hasNewer: boolean; revision?: number; digest?: string }
-  | { type: "history_items_patch"; patches: Record<string, Item> }
+  | { type: "history_items_patch"; patches: Record<string, Item>; expected?: Record<string, Item> }
   | { type: "history_older_start" }
   | { type: "history_older_error"; error?: string }
   | { type: "history_newer_start" }
@@ -974,7 +976,8 @@ function resetTurnTiming(now = Date.now()): Pick<State, "turnStartAt" | "turnDon
 
 function confirmPendingUser(s: State, submissionId: string | undefined): State {
   if (!submissionId || s.pendingSubmissionId !== submissionId) return s;
-  return { ...s, pendingUser: undefined, pendingSubmissionId: undefined };
+  return { ...s, pendingUser: undefined, pendingSubmissionId: undefined,
+    items: s.items.map(item => item.kind === "user" && item.submissionId === submissionId ? { ...item, submissionState: "confirmed", failed: false } : item) };
 }
 
 function beginTurnModelActivity(s: State, now = Date.now()): State {
@@ -1273,8 +1276,8 @@ function applyEvent(s: State, e: WireEvent, preserveToolPayloads = false): State
 	if (e.source && e.source !== "executor") return s;
     if (!e.messageId) return s;
     const id = `m:${e.messageId}`;
-    const existing = s.items.find((item) => item.kind === "user" &&
-      (item.id === id || item.messageId === e.messageId || (e.submissionId && item.submissionId === e.submissionId)));
+    const incoming: Item = { kind: "user", id, messageId: e.messageId, submissionId: e.submissionId, text: e.text ?? "" };
+    const existing = matchingSnapshotItem(s.items, incoming);
     if (existing) {
       return { ...s, items: s.items.map((item) => item === existing ? { ...existing, messageId: e.messageId } : item) };
     }
@@ -1765,7 +1768,7 @@ function applyEvent(s: State, e: WireEvent, preserveToolPayloads = false): State
             reasoningDurationMs: liveReasoningDurationMs(completedLive) ?? it.reasoningDurationMs,
           };
         }
-        if (it.kind === "tool" && it.status === "running") return { ...it, status: "stopped" as const };
+        if (it.kind === "tool" && it.status === "running") return { ...it, status: "stopped" as const, resultMissing: false };
         return it;
       });
       const completedItems = s.transcriptProtocol === 2 ? settleItems : removeEmptyAssistantItems(settleItems);
@@ -1907,18 +1910,24 @@ export function reducer(s: State, a: Action): State {
         historyRevision: a.projection.revision, historyDigest: a.projection.digest };
     }
     case "transcript_records": {
-      const updates = new Map(a.projection.items.map(item => [item.id, item]));
+      const updates = new Map(a.projection.items.map(item => {
+        const mounted = matchingSnapshotItem(s.items, item);
+        return [mounted?.id ?? item.id, mounted ? { ...item, id: mounted.id } : item];
+      }));
       const removed = new Set(a.projection.removeIds);
       const present = new Set(s.items.map(item => item.id));
       const items = s.items.filter(item => !removed.has(item.id)).map(item => {
         const update = updates.get(item.id);
+        if (item.kind === "tool" && update?.kind === "tool" && update.resultMissing && item.status === "running") {
+          return { ...update, status: "running" as const, execution: item.execution, startedAt: item.startedAt };
+        }
         if (item.kind === "assistant" && update?.kind === "assistant" && item.turnFinal && !update.turnFinal) {
           return { ...update, turnFinal: true, turnDurationMs: item.turnDurationMs, turnUsage: item.turnUsage,
             samplingCount: item.samplingCount, toolCount: item.toolCount };
         }
         return update ?? item;
       });
-      items.push(...a.projection.items.filter(item => !present.has(item.id)));
+      items.push(...Array.from(updates.values()).filter(item => !present.has(item.id)));
       return { ...s, items, historyHasOlder: a.projection.hasOlder, historyHasNewer: a.projection.hasNewer };
     }
     case "transcript_snapshot": return transcriptSnapshotState(s, a.snapshot, historyMessagesToItems, (state, event) => applyEvent(state, event, a.remote), promptEventClock());
@@ -1930,7 +1939,7 @@ export function reducer(s: State, a: Action): State {
         ...s,
         completionSummary: undefined,
         seq: seq + 1,
-        items: [...s.items.map(item => item.kind==="notice" && item.action==="recover_context" ? {...item,action:undefined} : item), { kind: "user", id: userItemId, submissionId: a.submissionId, text: a.text, submitText: a.submitText, createdAt: Date.now() }],
+        items: [...s.items.map(item => item.kind==="notice" && item.action==="recover_context" ? {...item,action:undefined} : item), { kind: "user", id: userItemId, submissionId: a.submissionId, submissionState: "sending", text: a.text, submitText: a.submitText, createdAt: Date.now() }],
         running: true,
         pendingPrompt: false,
         cancelRequested: false,
@@ -1996,6 +2005,9 @@ export function reducer(s: State, a: Action): State {
         : s;
     case "turn_submit_rejected":
     case "send_failed": return reduceSubmitFailure(s, a.submissionId, a.error, a.type === "turn_submit_rejected", promptEventClock());
+    case "turn_submit_unknown":
+      return s.pendingSubmissionId !== a.submissionId ? s : { ...s, transcriptConnection: "disconnected", transcriptConnectionError: a.error,
+        items: s.items.map(item => item.kind === "user" && item.submissionId === a.submissionId ? { ...item, submissionState: "unknown" } : item) };
     case "turn_interrupted": {
       return withRemoteTurnInterrupted(s);
     }
@@ -2197,6 +2209,7 @@ export function reducer(s: State, a: Action): State {
       const next = s.items.map((item) => {
         const patch = a.patches[item.id];
         if (!patch) return item;
+        if (a.expected?.[item.id] && a.expected[item.id] !== item) return item;
         changed = true;
         if (item.kind === "assistant" && patch.kind === "assistant" && item.turnFinal) {
           return { ...patch, turnFinal: true, turnDurationMs: item.turnDurationMs, turnUsage: item.turnUsage,
@@ -2598,7 +2611,7 @@ export function useController() {
     if (transcriptSubscriptions.current.has(tabId)) return;
     const unsubscribe = getTranscriptStore().subscribe(tabId, (change) => {
       if (!statesRef.current.has(tabId)) return;
-      dispatchTo(tabId, { type: "history_items_patch", patches: change.patches });
+      dispatchTo(tabId, { type: "history_items_patch", patches: change.patches, expected: change.expected });
       const patchCount = Object.keys(change.patches).length;
       if (patchCount > 0) {
         recordFrontendDiagnostic("history", "history.items-patch", {
@@ -3421,6 +3434,11 @@ export function useController() {
 
   const rejectTurnSubmission = useCallback((tabId: string, submissionId: string, error: unknown) => {
     if (statesRef.current.get(tabId)?.pendingSubmissionId !== submissionId) return;
+    if (/timeout|timed out|network|connection|socket|channel.*closed|fetch failed|failed to fetch|\beof\b/i.test(errorMessage(error))) {
+      dispatchTo(tabId, { type: "turn_submit_unknown", submissionId, error: `${t("chat.submissionUnknown")}: ${errorMessage(error)}` });
+      void reconcileRuntimeAfterRejectedMutation(tabId);
+      return;
+    }
     dispatchTo(tabId, { type: "turn_submit_rejected", submissionId, error: `Send failed: ${errorMessage(error)}` });
     void reconcileRuntimeAfterRejectedMutation(tabId);
   }, [dispatchTo, reconcileRuntimeAfterRejectedMutation]);

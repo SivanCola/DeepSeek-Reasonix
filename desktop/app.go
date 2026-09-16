@@ -996,98 +996,6 @@ func (a *App) submitToTab(tabID, input string, fromBridge bool, submissionID ...
 	return err
 }
 
-func (a *App) submitToTabResult(tabID, input string, fromBridge, classifyManagement bool, submissionID ...string) (control.SubmitResult, error) {
-	management := control.SubmitResult{Disposition: control.SubmitManagementHandled}
-	trimmed := strings.TrimSpace(input)
-	if trimmed == "/reload" {
-		tab, _ := a.tabAndCtrlByID(tabID)
-		if a.tabIsReadOnly(tab) {
-			return control.SubmitResult{}, readOnlyChannelErr()
-		}
-		if tab == nil {
-			return control.SubmitResult{}, a.workspaceNotReadyErr(tab)
-		}
-		if !fromBridge && a.botBridge != nil {
-			a.botBridge.reclaimFromDesktop(tab.ID)
-		}
-		return management, a.ReloadRuntime(tab.ID)
-	}
-	if trimmed == "/effort" || strings.HasPrefix(trimmed, "/effort ") {
-		tab, _ := a.tabAndCtrlByID(tabID)
-		if a.tabIsReadOnly(tab) {
-			return control.SubmitResult{}, readOnlyChannelErr()
-		}
-		if tab == nil {
-			return control.SubmitResult{}, a.workspaceNotReadyErr(tab)
-		}
-		if !fromBridge && a.botBridge != nil {
-			a.botBridge.reclaimFromDesktop(tab.ID)
-		}
-		a.runEffortCommandForTab(tabID, trimmed)
-		return management, nil
-	}
-	if classifyManagement {
-		tab, ctrl := a.tabAndCtrlByID(tabID)
-		if a.tabIsReadOnly(tab) {
-			return control.SubmitResult{}, readOnlyChannelErr()
-		}
-		if err := a.workspaceRuntimeAdmissionErr(tab, ctrl); err != nil {
-			return control.SubmitResult{}, err
-		}
-		if err := a.ensureTabControllerWorkspace(tab); err != nil {
-			return control.SubmitResult{}, err
-		}
-		ctrl = a.controllerForTab(tab)
-		if ctrl == nil {
-			return control.SubmitResult{}, a.workspaceNotReadyErr(tab)
-		}
-		managementRoute := false
-		if classifier, ok := ctrl.(interface {
-			ClassifySubmitRoute(input string) control.SubmitDisposition
-		}); ok {
-			managementRoute = classifier.ClassifySubmitRoute(input) == control.SubmitManagementHandled
-		}
-		if managementRoute {
-			// Management commands still take the tab admission lock so they cannot
-			// race an active turn or a controller replacement.
-			admission, admittedCtrl, err := a.beginTabTurn(tabID, !fromBridge, submissionID...)
-			if err != nil {
-				return control.SubmitResult{}, err
-			}
-			defer admission.abort()
-			tab = admission.tab
-			a.ensureTabTopicIndexedForUserTurn(tab)
-			if submitter, supported := admittedCtrl.(interface {
-				SubmitDisplayWithResult(display, input string) control.SubmitResult
-			}); supported {
-				result := submitter.SubmitDisplayWithResult(input, input)
-				admission.finish(admittedCtrl)
-				return result, nil
-			}
-			admittedCtrl.SubmitDisplay(input, input)
-			admission.finish(admittedCtrl)
-			return management, nil
-		}
-	}
-	admission, ctrl, err := a.beginTabTurn(tabID, !fromBridge, submissionID...)
-	if err != nil {
-		return control.SubmitResult{}, err
-	}
-	defer admission.abort()
-	tab := admission.tab
-	a.ensureTabTopicIndexedForUserTurn(tab)
-	result := control.SubmitResult{Disposition: control.SubmitTurnStarted}
-	if submitter, ok := ctrl.(interface {
-		SubmitDisplayWithResult(display, input string) control.SubmitResult
-	}); ok {
-		result = submitter.SubmitDisplayWithResult(input, input)
-	} else {
-		ctrl.SubmitDisplay(input, input)
-	}
-	admission.finish(ctrl)
-	return result, nil
-}
-
 func (a *App) submitUserTurnToTabWithSink(tabID, input string, forwarder event.Sink) bool {
 	admission, ctrl, err := a.beginTabTurn(tabID, false)
 	if err != nil {
@@ -1171,9 +1079,14 @@ func (a *App) submitInitialGoalToLocalTab(
 	invocations []InvocationRequest,
 	submissionID ...string,
 ) ([]string, error) {
+	req := control.SubmissionRequest{ID: firstSubmissionID(submissionID), Input: input, Display: display,
+		Goal: strings.TrimSpace(goal), ToolApprovalMode: normalizeToolApprovalMode(toolApprovalMode), Invocations: controlInvocationRequests(invocations)}
+	if found, err := a.knownSubmission(tabID, req); found || err != nil {
+		return []string{}, err
+	}
 	admission, ctrl, err := a.beginTabTurn(tabID, true, submissionID...)
 	if err != nil {
-		return []string{}, err
+		return []string{}, a.submissionAdmissionError(tabID, req, err)
 	}
 	defer admission.abort()
 
@@ -1200,10 +1113,14 @@ func (a *App) submitInitialGoalToLocalTab(
 	ctrl.SetPlanMode(false)
 	drained := applyTabToolApprovalModeToController(ctrl, toolApprovalMode)
 	a.ensureTabTopicIndexedForUserTurn(tab)
-	if len(invocations) > 0 {
-		ctrl.SubmitInvocationDisplay(display, input, controlInvocationRequests(invocations))
-	} else {
-		ctrl.SubmitDisplay(display, input)
+	if err := submitIdentified(ctrl, req, func() {
+		if len(invocations) > 0 {
+			ctrl.SubmitInvocationDisplay(display, input, controlInvocationRequests(invocations))
+		} else {
+			ctrl.SubmitDisplay(display, input)
+		}
+	}); err != nil {
+		return []string{}, err
 	}
 	admission.finish(ctrl)
 	return drained, nil

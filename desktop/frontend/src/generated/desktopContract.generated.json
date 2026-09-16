@@ -38108,6 +38108,13 @@
     "session.PersistentMessage": {
       "fields": [
         {
+          "name": "submissionId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
           "name": "samplingCount",
           "optional": true,
           "type": {

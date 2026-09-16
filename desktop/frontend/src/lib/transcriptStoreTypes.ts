@@ -69,6 +69,7 @@ export interface TranscriptContentChange {
   tabId: string;
   /** Re-converted items keyed by their stable item id. */
   patches: Record<string, Item>;
+  expected?: Record<string, Item>;
 }
 
 export interface SessionTranscript {
@@ -116,4 +117,3 @@ export interface SessionTranscript {
   newerInFlight: boolean;
   pendingContent: Map<string, { generation: number; promise: Promise<string | undefined> }>;
 }
-

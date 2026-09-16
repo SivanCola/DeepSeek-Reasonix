@@ -74,6 +74,17 @@ func (a *App) StartTurnForTab(tabID, input, submissionID string) (TurnStartView,
 	if strings.TrimSpace(submissionID) == "" {
 		return TurnStartView{}, fmt.Errorf("submissionId is required")
 	}
+	if _, ctrl := a.tabAndCtrlByID(tabID); ctrl != nil {
+		if identified, ok := ctrl.(*control.Controller); ok {
+			receipt, found, err := identified.LookupSubmission(control.SubmissionRequest{ID: submissionID, Input: input, Display: input})
+			if err != nil {
+				return TurnStartView{}, err
+			}
+			if found {
+				return TurnStartView{TurnID: receipt.TurnID, Status: event.TurnQueued, Disposition: control.SubmitTurnStarted, SubmissionID: submissionID}, nil
+			}
+		}
+	}
 	result, err := a.submitToTabResult(tabID, input, false, true, submissionID)
 	if err != nil {
 		return TurnStartView{}, err

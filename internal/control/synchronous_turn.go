@@ -17,6 +17,11 @@ func (c *Controller) runSynchronousTurn(
 	onAdmitted func() error,
 	run func(context.Context) error,
 ) error {
+	releaseAdmission := c.trySubmissionAdmissionLock()
+	if releaseAdmission == nil {
+		return ErrTurnRunning
+	}
+	defer releaseAdmission()
 	if err := c.ensureWriteAuthorityReady(); err != nil {
 		return err
 	}
@@ -95,6 +100,7 @@ func (c *Controller) runSynchronousTurn(
 	// duplicate display event; it cannot create runtime ownership or a durable
 	// turn by itself.
 	run = c.prepareTurnAdmission(run)
+	releaseAdmission()
 	runErr := run(ctx)
 	// Keep the execution binding through the synchronous terminal commit just
 	// like the asynchronous loop. Close may make the public controller view

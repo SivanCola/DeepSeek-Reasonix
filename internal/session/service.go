@@ -101,12 +101,15 @@ func newRuntime(ref SessionRef, session *Session) *Runtime {
 	if len(baseline) > 96 {
 		baseline = baseline[len(baseline)-96:]
 	}
-	runtime.transcript, _ = transcript.NewProjection(transcript.Identity{SessionID: ref.SessionID, RuntimeEpoch: runtime.epoch}, transcript.History(baseline, transcript.HistoryOptions{}), session.next-1)
+	runtime.transcript, _ = transcript.NewProjection(transcript.Identity{SessionID: ref.SessionID, RuntimeEpoch: runtime.epoch}, session.transcriptRows(baseline), session.next-1)
 	durable := uint64(0)
 	if session.binding != nil {
 		durable, _, _ = session.binding.progress()
 	}
 	restored := transcript.Runtime{TurnID: session.projection.TurnID, Status: session.projection.TurnStatus, FinalMessageID: session.projection.CurrentTurnMessageID}
+	if receipt, ok := session.projection.Submissions.byTurn[session.id+"\x00"+restored.TurnID]; ok {
+		restored.SubmissionID = receipt.SubmissionID
+	}
 	restored.SamplingCount, restored.ToolCount = len(session.projection.CurrentAttempts), len(session.projection.CurrentCalls)
 	if restored.TurnID != "" && !restored.Status.Terminal() {
 		// A persisted open turn is recovery evidence, not a running model.

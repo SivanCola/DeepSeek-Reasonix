@@ -837,6 +837,21 @@ export class TranscriptStore {
    */
   hasContentResolver(tabId: string): boolean { return Boolean(this.contentResolvers.active(tabId)); }
 
+  publishToolDetails(tabId: string, item: Extract<Item, { kind: "tool" }>, text: string): void {
+    let value: Record<string, unknown>;
+    try { value = JSON.parse(text); } catch { return; }
+    if (!value || typeof value !== "object" || Array.isArray(value)) return;
+    if (value.execution == null || typeof value.execution !== "object" || Array.isArray(value.execution)) return;
+    const execution = value.execution as NonNullable<typeof item.execution>;
+    if (typeof execution.state !== "string" || (execution.exitCode != null && typeof execution.exitCode !== "number")) return;
+    // The reducer compares the exact requested item version. A newer event,
+    // snapshot or session replacement always wins over this detached read.
+    const patch = { ...item, execution };
+    for (const listener of this.listeners.get(tabId) ?? []) {
+      listener({ tabId, patches: { [item.id]: patch }, expected: { [item.id]: item } });
+    }
+  }
+
   hasContentReference(tabId: string, entryId: string, field: string): boolean {
     entryId = resolveTranscriptEntryAlias(this.sessions.values(), tabId, entryId);
     return Boolean(this.sessionForEntry(tabId, entryId)?.byId.get(entryId)?.refs.some(ref => ref.field === field || ref.field === "canonicalMessage"));
@@ -872,7 +887,7 @@ export class TranscriptStore {
       ...(result?.refs.filter(ref => ref.field === "content" || ref.field === "toolResultError") ?? []),
     ];
     if (refs.some(ref => ref.field === "toolArguments" || ref.field === "toolDiff") && !call?.id && calls.filter(call => !call.id).length > 1) throw new Error("Ambiguous legacy tool reference");
-    const full = { ...value };
+    const full: Record<string, unknown> = { ...value, execution: result?.message.execution ?? value.execution };
     for (const ref of refs) {
       let data = "";
       for (let index = 0; index < Math.max(1, ref.chunks); index++) {

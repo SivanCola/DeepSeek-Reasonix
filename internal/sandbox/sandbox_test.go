@@ -182,10 +182,10 @@ func TestResolveShellPrefer(t *testing.T) {
 		t.Errorf(`prefer="powershell": kind = %s, want powershell`, got.Kind)
 	}
 
-	// prefer=bash forces bash even on a host where PowerShell exists.
+	// Legacy Bash preferences retain their stored value but resolve natively.
 	got = resolveShell("bash", "", nil, "windows", onPath("bash", "powershell"), never, gitBash, nil, always, noWSL)
-	if got.Kind != ShellBash {
-		t.Errorf(`prefer="bash": kind = %s, want bash`, got.Kind)
+	if got.Kind != ShellPowerShell {
+		t.Errorf(`prefer="bash": kind = %s, want powershell`, got.Kind)
 	}
 
 	// An explicit path is honoured for the forced kind.
@@ -219,13 +219,13 @@ func TestResolveShellPrefer(t *testing.T) {
 		t.Errorf("unknown prefer should use native Windows auto-selection, got %s", got.Kind)
 	}
 
-	// git-bash.exe is automatically rewritten to bin/bash.exe when present.
+	// A saved Git Bash path must not override the Windows Agent dialect.
 	existsWithBash := func(p string) bool {
 		return strings.EqualFold(p, `C:\Git\bin\bash.exe`)
 	}
 	got = resolveShell("bash", `C:\Git\git-bash.exe`, nil, "windows", onPath(), existsWithBash, nil, nil, always, noWSL)
-	if got.Kind != ShellBash || got.Path != `C:\Git\bin\bash.exe` {
-		t.Errorf("git-bash.exe should redirect to bin/bash.exe, got %+v", got)
+	if got.Kind != ShellPowerShell || got.Path != "pwsh" {
+		t.Errorf("git-bash.exe should resolve to native PowerShell, got %+v", got)
 	}
 }
 

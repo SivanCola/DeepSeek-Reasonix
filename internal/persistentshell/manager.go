@@ -42,12 +42,13 @@ type Request struct {
 
 // Result is the structured outcome of one persistent-shell command.
 type Result struct {
-	Output    string
-	ExitCode  int
-	TimedOut  bool
-	Canceled  bool
-	ShellDied bool
-	Started   bool
+	Output        string
+	ExitCode      int
+	ExitCodeKnown bool
+	TimedOut      bool
+	Canceled      bool
+	ShellDied     bool
+	Started       bool
 	// Reset reports that the shell was retired, so the next command starts from
 	// the workspace with a fresh directory and environment. The model is told,
 	// because it otherwise keeps reasoning about a cwd that no longer exists.
@@ -61,6 +62,7 @@ type Result struct {
 // it so hot rebuilds share the live shell; Rotate closes it so a new logical
 // session cannot inherit cwd or environment.
 type Manager struct {
+	metrics            shellMetrics
 	mu                 sync.Mutex
 	runMu              sync.Mutex
 	owners             int
@@ -84,12 +86,14 @@ func (e *StartupError) Error() string {
 func (e *StartupError) Unwrap() error { return e.Err }
 
 type session struct {
+	powershell  *powershellProcess
 	mu          sync.Mutex
 	conn        ptyConn
 	fp          string
 	closed      bool
 	san         sanitizer
 	pendingRead chan readChunkResult
+	readerDone  chan struct{}
 }
 
 type readChunkResult struct {
@@ -196,10 +200,21 @@ func (m *Manager) Run(ctx context.Context, req Request) Result {
 	defer m.runMu.Unlock()
 	sess, err := m.sessionFor(req)
 	if err != nil {
+		m.metrics.startupFailed.Add(1)
 		return failResult(err, tool.ShellPhaseLaunch)
 	}
 	res := sess.run(ctx, req)
+	if res.Started {
+		m.metrics.started.Add(1)
+	}
+	if res.Started && !res.ExitCodeKnown {
+		m.metrics.completionMissing.Add(1)
+	}
+	if res.TimedOut {
+		m.metrics.timedOut.Add(1)
+	}
 	if res.ShellDied || res.TimedOut || res.Canceled {
+		m.metrics.reset.Add(1)
 		m.drop(sess)
 		res.Reset = true
 	}
@@ -309,6 +324,9 @@ func failResult(err error, phase string) Result {
 }
 
 func startSession(req Request, fp string) (*session, error) {
+	if req.Shell.Kind == sandbox.ShellPowerShell {
+		return startPowerShell(req, fp)
+	}
 	conn, err := startPTY(req.Argv, req.Dir, req.Env)
 	if err != nil {
 		return nil, err
@@ -340,13 +358,18 @@ func startSession(req Request, fp string) (*session, error) {
 
 func (s *session) startReader() {
 	s.pendingRead = make(chan readChunkResult, 1)
+	s.readerDone = make(chan struct{})
 	go func() {
 		buf := make([]byte, readChunk)
 		for {
 			n, err := s.conn.Read(buf)
 			chunk := make([]byte, n)
 			copy(chunk, buf[:n])
-			s.pendingRead <- readChunkResult{data: chunk, err: err}
+			select {
+			case s.pendingRead <- readChunkResult{data: chunk, err: err}:
+			case <-s.readerDone:
+				return
+			}
 			if err != nil {
 				return
 			}
@@ -360,6 +383,9 @@ func (s *session) writeScript(script string) error {
 }
 
 func (s *session) run(ctx context.Context, req Request) Result {
+	if s.powershell != nil {
+		return s.runPowerShell(ctx, req)
+	}
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -402,7 +428,7 @@ func (s *session) run(ctx context.Context, req Request) Result {
 		return capt.done
 	})
 	if capt.done {
-		res := Result{Output: capt.body(), ExitCode: capt.exitCode, Started: true}
+		res := Result{Output: capt.body(), ExitCode: capt.exitCode, ExitCodeKnown: true, Started: true}
 		if capt.exitCode != 0 {
 			res.State = tool.ShellStateFailed
 			res.FailurePhase = tool.ShellPhaseExecution
@@ -448,6 +474,9 @@ func (s *session) markClosed() {
 	conn := s.conn
 	s.mu.Unlock()
 	if !already && conn != nil {
+		if s.readerDone != nil {
+			close(s.readerDone)
+		}
 		_ = conn.Close()
 	}
 }
@@ -481,16 +510,11 @@ func (s *session) close() {
 	s.markClosed()
 }
 
-// unsupportedShellReason explains why a shell has no session PTY. Callers fall
-// back to one-shot execution, which is correct for every shell.
-const unsupportedShellReason = "PowerShell has no session shell; a PowerShell host needs prompt-marker readiness and echo handling that this package does not implement"
+const unsupportedShellReason = "unsupported persistent shell dialect"
 
-// Supports reports whether sh can host a session PTY. PowerShell cannot: its
-// host echoes submitted input and settles readiness through a prompt protocol,
-// which the marker wrapper here does not speak, so a PowerShell shell never
-// reports ready. Those hosts keep one-shot execution.
+// Supports includes native PowerShell's framed transport and POSIX PTYs.
 func Supports(sh sandbox.Shell) bool {
-	return sh.Kind != sandbox.ShellPowerShell
+	return sh.Kind == sandbox.ShellPowerShell || sh.Kind.IsPOSIX()
 }
 
 // InteractiveArgv is the long-lived interpreter argv (no -c / -Command) used
@@ -502,7 +526,7 @@ func InteractiveArgv(sh sandbox.Shell) []string {
 	}
 	switch sh.Kind {
 	case sandbox.ShellPowerShell:
-		return []string{path, "-NoLogo", "-NoProfile"}
+		return []string{path, "-NoLogo", "-NoProfile", "-NonInteractive", "-OutputFormat", "Text", "-EncodedCommand", encodedPowerShell(powershellBootstrap)}
 	case sandbox.ShellZsh:
 		return []string{path, "-f", "-i"}
 	case sandbox.ShellSh:

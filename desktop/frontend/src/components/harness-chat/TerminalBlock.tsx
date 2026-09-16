@@ -43,6 +43,8 @@ export interface TerminalBlockLabels {
 }
 
 export interface TerminalBlockProps {
+  /** Authoritative host presentation, shared with the collapsed tool row. */
+  presentation?: { state: StateDotState; label: string };
   /** The command line, rendered verbatim after the prompt label. */
   command: string
   /** Working directory for the prompt label; absent renders a plain `$`. */
@@ -146,6 +148,7 @@ function renderLine(line: AnsiLine) {
  * @returns the terminal block element.
  */
 export function TerminalBlock({
+  presentation,
   command,
   cwd,
   home,
@@ -182,7 +185,7 @@ export function TerminalBlock({
   const onToggle = useCallback(() => { setExpanded(value => !value) }, [])
 
   const status = statusText(exitCode, signal, copy)
-  const state = runState(running, exitCode, signal, copy)
+  const state = presentation ?? runState(running, exitCode, signal, copy)
   // A multi-line command gets one prompt row per line, so a two-command shell
   // snippet reads as the two commands it is instead of collapsing into one
   // ellipsized row. A trailing newline is a terminator, not an empty command.

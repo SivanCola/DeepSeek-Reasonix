@@ -2,7 +2,6 @@ package persistentshell
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -131,10 +130,10 @@ func TestPersistentShellTimeoutResetsState(t *testing.T) {
 	}
 }
 
-func TestPersistentShellRejectsPowerShell(t *testing.T) {
-	sh := sandbox.Shell{Kind: sandbox.ShellPowerShell, Path: "powershell"}
-	if Supports(sh) {
-		t.Fatal("PowerShell has no session shell")
+func TestPersistentShellMissingPowerShellDoesNotStartCommand(t *testing.T) {
+	sh := sandbox.Shell{Kind: sandbox.ShellPowerShell, Path: filepath.Join(t.TempDir(), "missing-powershell")}
+	if !Supports(sh) {
+		t.Fatal("PowerShell must support the framed session protocol")
 	}
 	m := testManager(t)
 	res := m.Run(context.Background(), Request{
@@ -145,8 +144,8 @@ func TestPersistentShellRejectsPowerShell(t *testing.T) {
 	if res.Started {
 		t.Fatalf("a PowerShell request must not start a shell: %+v", res)
 	}
-	if !errors.Is(res.Err, ErrUnavailable) {
-		t.Fatalf("err=%v, want ErrUnavailable so the caller falls back to one-shot", res.Err)
+	if res.Err == nil || res.ExitCodeKnown {
+		t.Fatalf("missing executable must have an unknown exit status: %+v", res)
 	}
 }
 

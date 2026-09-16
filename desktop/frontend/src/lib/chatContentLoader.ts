@@ -26,7 +26,11 @@ export class ChatContentLoader {
       const run = () => {
         if (this.closed || generation !== this.generation) { reject(new Error("Content view closed")); return; }
         void (this.resolve ? this.resolve(item, field) : this.fetch(item, field)).then(value => {
-          if (this.closed || generation !== this.generation) reject(new Error("Content view closed")); else resolve(value);
+          if (this.closed || generation !== this.generation) reject(new Error("Content view closed"));
+          else {
+            if (field === "tool" && item.kind === "tool" && this.tabId) getTranscriptStore().publishToolDetails(this.tabId, item, value);
+            resolve(value);
+          }
         }, reject).finally(() => {
           if (this.pending.get(key)?.promise === request) this.pending.delete(key);
           contentRequestScheduler.release(this.requestOwner);
@@ -44,7 +48,7 @@ export class ChatContentLoader {
         if (full === undefined) throw new Error("Tool content unavailable");
         return full;
       }
-      let value: Record<string, unknown> = { args: item.args, output: item.output, error: item.error, diff: item.fileDiff };
+      let value: Record<string, unknown> = { args: item.args, output: item.output, error: item.error, diff: item.fileDiff, execution: item.execution };
       if (item.dataArchived) {
         if (!this.tabId) throw new Error("Tool content unavailable");
         const archived = await app.ToolResultForTab(this.tabId, item.id);
@@ -68,6 +72,6 @@ export class ChatContentLoader {
 function sameContent(a: Item, b: Item): boolean {
   if (a === b) return true;
   if (a.kind === "assistant" && b.kind === "assistant") return a.text === b.text && a.reasoning === b.reasoning && a.streaming === b.streaming;
-  if (a.kind === "tool" && b.kind === "tool") return a.args === b.args && a.output === b.output && a.error === b.error && a.fileDiff === b.fileDiff && a.dataArchived === b.dataArchived;
+  if (a.kind === "tool" && b.kind === "tool") return a.args === b.args && a.output === b.output && a.error === b.error && a.fileDiff === b.fileDiff && a.dataArchived === b.dataArchived && a.execution === b.execution && a.status === b.status;
   return "text" in a && "text" in b && a.kind === b.kind && a.text === b.text;
 }

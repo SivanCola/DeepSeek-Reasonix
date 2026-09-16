@@ -240,6 +240,9 @@ func (s *Server) capabilities() []string {
 		capabilitySessionHistory,
 	}
 	if identity, ok := s.ctl().(control.IdentityLifecycle); ok && identity.UsesExclusiveSession() {
+		if _, ok := s.ctl().(*control.Controller); ok {
+			caps = append(caps, servecontract.SubmissionIdentityV1)
+		}
 		caps = append(caps, capabilitySessionIdentityV1, capabilitySessionOwnershipV1, capabilitySessionContentV1, capabilitySessionReadV2, capabilityHistoryWindowV1, capabilityGoalLifecycleV2, capabilityForkTargetsV1, servecontract.TranscriptV2)
 	}
 	if s.buildOptions.BrowserExecutor != nil {

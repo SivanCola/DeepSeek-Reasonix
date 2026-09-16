@@ -84,6 +84,8 @@ func (c *Controller) WriteGoalDiagnostics(ctx context.Context, dst io.Writer, me
 		{"metadata", metadata},
 		{"runtime", state},
 		{"observation", observation},
+		{"submissionDiagnostics", map[string]uint64{"reused": c.submissions.reused.Load(), "conflicts": c.submissions.conflicts.Load(), "unknown": c.submissions.unknown.Load()}},
+		{"shellDiagnostics", c.persistentShell.Diagnostics()},
 		{"acceptedThrough", state.Session.EventSequence},
 		{"durableThrough", state.Session.DurableSequence},
 		{"persistenceStatus", state.Session.PersistenceStatus},

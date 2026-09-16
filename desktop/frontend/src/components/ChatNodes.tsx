@@ -17,7 +17,7 @@ import { TurnProcessNodeView } from "./harness-chat/TurnProcessNodeView";
 import { ContextInjectionRow } from "./harness-chat/ContextInjectionRow";
 import { ToolRow } from "./harness-chat/ToolRow";
 import { subjectOf, summarizeFileDiff } from "../lib/tools";
-import { classifyTool, shellDisplayName } from "../lib/chatToolPresentation";
+import { classifyTool, shellDisplayName, toolPresentation } from "../lib/chatToolPresentation";
 import { RESOURCE_BUDGETS } from "../lib/resourceBudgets";
 const ChatToolBody = lazy(() => import("./ChatToolBody"));
 const ToolPayload = lazy(() => import("./ChatToolBody").then(module => ({ default: module.ToolPayload })));
@@ -147,11 +147,12 @@ function ChatTool({ node, loader, actions, scroll }: { node: Extract<ChatNode, {
     : "";
   const summary = presentSummary || description || subjectOf(item.name, item.args) || item.subject || item.summary || "";
   const toolKind = classifyTool(item);
+  const presentation = toolPresentation(item);
   const Icon = toolKind === "present" ? PackageOpen : { search: Search, web: Globe, shell: Terminal, agent: Users, file: FileText, tool: Wrench }[toolKind];
   const title = item.name === "web_search" ? t("chat.tool.search") : item.name === "web_fetch" ? t("chat.tool.web")
     : item.name === "present" ? t("present.toolTitle") : toolKind === "shell" ? shellDisplayName(item) : item.resolvedName || item.name;
   return <ToolRow icon={<Icon size={14} />} title={title} summary={[summary, summarizeFileDiff(item.fileDiff)].filter(Boolean).join(" · ")}
-    state={item.status} statusLabel={t(item.status === "running" ? "chat.running" : item.status === "stopped" ? "chat.stopped" : "chat.failed")}
+    state={presentation.state} dot={presentation.dot} statusLabel={t(presentation.label)}
     errorSummary={item.error?.trim().split("\n")[0]} beforeToggle={scroll.beforeChange}
     inspectLabel={t("chat.details")} inspect={trigger => actions.openDetails(node.key, trigger)}>
     <Suspense fallback={<p role="status">{t("chat.loading")}</p>}><ChatToolBody item={item} loader={loader} /></Suspense>
@@ -177,7 +178,10 @@ function BodyLoadError({ item, loader }: { item: Extract<ChatNode, { kind: "assi
   return error && <button className="btn" onClick={() => { setError(false); setAttempt(value => value + 1); }}>{t("chat.loadFailed")}</button>;
 }
 function ChatUser({ node, loader }: { node: Extract<ChatNode, { kind: "user" }>; loader: ChatContentLoader }) {
-  return <><UserMessage id={node.item.id} text={node.item.text} submitText={node.item.submitText} failed={node.item.failed} createdAt={node.item.createdAt} /><BodyLoadError item={node.item} loader={loader} /></>;
+  const t = useT();
+  return <><UserMessage id={node.item.id} text={node.item.text} submitText={node.item.submitText} failed={node.item.failed} createdAt={node.item.createdAt} />
+    {node.item.submissionState === "unknown" && !node.item.messageId && <span role="status">{t("chat.submissionUnknown")}</span>}
+    <BodyLoadError item={node.item} loader={loader} /></>;
 }
 function ChatAnswer({ node, loader, source, tabId, hostId }: { node: Extract<ChatNode, { kind: "assistant" }>; loader: ChatContentLoader; source: ChatSource; tabId?: string; hostId?: string }) {
   const tail = useChatNode(source, `${node.turnKey}:tail`);

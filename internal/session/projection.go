@@ -14,6 +14,7 @@ import (
 )
 
 type Projection struct {
+	Submissions          SubmissionIndex
 	TranscriptInputs     []transcriptInput
 	HiddenTurns          map[string]bool
 	RetractedInputs      map[string]string
@@ -124,6 +125,8 @@ func applyProjectionEvents(projection *Projection, commit Commit) error {
 		projection.CommittedSequence = ev.Sequence
 		var err error
 		switch ev.Kind {
+		case "submission/accepted":
+			err = projectSubmission(projection, commit, ev)
 		case "legacy/import":
 			err = projectLegacyImport(projection, commit, ev)
 		case "message/complete":

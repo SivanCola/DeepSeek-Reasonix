@@ -357,9 +357,10 @@ type Controller struct {
 	// recoverInterruptedTurn or maybeColdResumePrune) while holding it.
 	snapshotMu sync.Mutex
 	// turn counts model turns this session, passed to hooks in their payload.
-	turn       int
-	turnEvents turnEventState
-	liveness   turnLiveness
+	turn        int
+	turnEvents  turnEventState
+	submissions submissionIdentityState
+	liveness    turnLiveness
 
 	displayRecorder func(content, display string)
 
@@ -1372,8 +1373,14 @@ func (c *Controller) SubmitInvocationDisplay(display, input string, invocations 
 }
 
 func (c *Controller) submitInvocations(input, display string, requests []InvocationRequest) {
+	c.submissions.mu.Lock()
+	defer c.releaseSubmissionAdmission()
+	c.submitInvocationsLocked(input, display, requests)
+}
+
+func (c *Controller) submitInvocationsLocked(input, display string, requests []InvocationRequest) {
 	if len(requests) == 0 {
-		c.SubmitDisplay(display, input)
+		c.submitLocked(input, display, "")
 		return
 	}
 	prepared, err := c.prepareInvocationTurn(input, requests)
@@ -1466,10 +1473,18 @@ func (c *Controller) SubmitEditedDisplay(display, input, original string) {
 // commands. It still resolves references, so callers can submit trusted
 // user-authored prompt text without expanding the command surface.
 func (c *Controller) SubmitUserTurn(input, display string) {
+	c.submissions.mu.Lock()
+	defer c.releaseSubmissionAdmission()
 	c.runRefTurn(input, display)
 }
 
 func (c *Controller) submit(input, display, editedOriginal string) {
+	c.submissions.mu.Lock()
+	defer c.releaseSubmissionAdmission()
+	c.submitLocked(input, display, editedOriginal)
+}
+
+func (c *Controller) submitLocked(input, display, editedOriginal string) {
 	trimmed := strings.TrimSpace(input)
 	if note, ok := MemoryQuickAddNote(trimmed); ok {
 		c.rememberProjectNote(note)
@@ -1494,6 +1509,12 @@ func (c *Controller) submitHTTP(input, display string) {
 }
 
 func (c *Controller) submitHTTPWithFormat(input, display, format string) {
+	c.submissions.mu.Lock()
+	defer c.releaseSubmissionAdmission()
+	c.submitHTTPWithFormatLocked(input, display, format)
+}
+
+func (c *Controller) submitHTTPWithFormatLocked(input, display, format string) {
 	trimmed := strings.TrimSpace(input)
 	if note, ok := MemoryQuickAddNote(trimmed); ok {
 		c.rememberProjectNote(note)
@@ -1543,7 +1564,7 @@ func (c *Controller) submitCommandOrTurnReady(trimmed, input, display string, sc
 		}
 	}
 	if id, guidance, ok := ParseProtocolRecoveryCommand(trimmed); ok {
-		c.SubmitProtocolRecovery(id, guidance)
+		c.submitProtocolRecoveryLocked(id, guidance)
 		return
 	}
 	if c.submitFinalReadinessCommand(trimmed, display) {

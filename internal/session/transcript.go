@@ -76,10 +76,24 @@ func (s *Session) acceptTranscriptCommit(commit Commit) {
 			finalID = last.MessageID
 		}
 	}
-	rows := transcript.History(messages, transcript.HistoryOptions{})
+	rows := s.transcriptRows(messages)
 	if len(removed) > 0 && !rewrite {
 		s.transcript.AcceptRetractions(rows, removed, commit.LastSequence(), commit.TurnID, finalID)
 	} else {
 		s.transcript.AcceptBusiness(rows, commit.LastSequence(), commit.TurnID, rewrite, finalID)
 	}
+}
+
+// Caller holds s.mu; live commits and reopened sessions use the same identities.
+func (s *Session) transcriptRows(messages []provider.Message) []transcript.Message {
+	rows := transcript.History(messages, transcript.HistoryOptions{})
+	for i := range rows {
+		if rows[i].Role != "user" {
+			continue
+		}
+		if receipt, ok := s.projection.Submissions.byMessage[s.id+"\x00"+rows[i].MessageID]; ok {
+			rows[i].SubmissionID = receipt.SubmissionID
+		}
+	}
+	return rows
 }

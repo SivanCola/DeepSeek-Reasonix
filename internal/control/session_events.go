@@ -405,6 +405,11 @@ func (c *Controller) appendSessionEventLocked(ctx context.Context, e event.Event
 			e.TurnID = turnID
 		}
 		if e.TurnID == "" {
+			if ledger := c.turnEventLedger(); ledger != nil {
+				e.TurnID = ledger.ActiveTurnID()
+			}
+		}
+		if e.TurnID == "" {
 			e.TurnID = projection.TurnID
 		}
 	}
@@ -437,6 +442,7 @@ func (c *Controller) v3EventsFor(e event.Event, projection session.Projection) (
 			return nil, err
 		}
 		out = append(out, session.Event{Kind: "turn/start", Payload: payload})
+		out = c.appendSubmissionEvent(out, e.TurnID)
 		if e.DomainKind != "" {
 			if e.DomainKind != "goal/state" || len(e.DomainPayload) == 0 {
 				return nil, fmt.Errorf("unsupported turn admission domain event %q", e.DomainKind)

@@ -79,7 +79,8 @@ export function convertRecord(
   }
   if (message.role === "user") {
     if (message.content.trim() !== "") {
-      items.push({ kind: "user", id, text: message.content, submitText: message.submitText, createdAt: message.createdAt,
+      items.push({ kind: "user", id, messageId: message.messageId, submissionId: message.submissionId,
+        text: message.content, submitText: message.submitText, createdAt: message.createdAt,
         checkpointTurn: message.checkpointTurn, historyTurn: rec.turn > 0 ? rec.turn : undefined });
     }
     return { items, claims, unresolvedIds, pendingPositional, matches };
@@ -132,7 +133,7 @@ export function convertRecord(
         kind: "tool", id: itemIdForToolCall(toolCall.id, `he:${rec.entryId}:tc${callIndex}`), name: toolCall.name,
         args: toolCall.arguments ?? "", readOnly: typeof toolCall.resolvedReadOnly === "boolean" ? toolCall.resolvedReadOnly : isReadOnlyTool(toolCall.name),
         resolvedName: toolCall.resolvedName, capabilityId: toolCall.capabilityId,
-        status: result ? (error ? "error" : "done") : "stopped", output, error, dataArchived: archived || undefined,
+        status: result ? (error ? "error" : "done") : "stopped", resultMissing: !result || undefined, output, error, dataArchived: archived || undefined,
         subject: toolCall.subject, summary: summarizeFileDiff(fileDiff) || toolCall.summary, fileDiff,
         isShell: toolCall.name === "bash" || (toolCall.id || "").startsWith("shell-"), execution: result?.execution,
         presentedFiles: result?.presentedFiles,
@@ -160,7 +161,7 @@ export function applyResolvedField(rec: TranscriptRecord, ref: HistoryContentRef
     case "canonicalMessage": {
       const bytes = Uint8Array.from(data, character => character.charCodeAt(0));
       const decoded = canonicalMessage(
-        { messageId: rec.entryId, position: rec.turn, version: 1, role: message.role, eventSequence: 0, visibleTurn: rec.turn, turnFinal: message.turnFinal, turnDurationMs: message.turnDurationMs, samplingCount: message.samplingCount, toolCount: message.toolCount },
+        { messageId: rec.entryId, submissionId: message.submissionId, position: rec.turn, version: 1, role: message.role, eventSequence: 0, visibleTurn: rec.turn, turnFinal: message.turnFinal, turnDurationMs: message.turnDurationMs, samplingCount: message.samplingCount, toolCount: message.toolCount },
         JSON.parse(new TextDecoder().decode(bytes)),
       );
       rec.message = { ...message, ...decoded };

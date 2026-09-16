@@ -9,7 +9,7 @@ import { WebBlock } from "./harness-chat/WebBlock";
 import { normalizeSearchSources } from "../lib/searchSourcesPresentation";
 import { parseSearchSources, searchOutputMetadata } from "../lib/searchSources";
 import toolCss from "./harness-chat/ToolRow.styles";
-import { classifyTool } from "../lib/chatToolPresentation";
+import { classifyTool, toolPresentation } from "../lib/chatToolPresentation";
 import { boundedPayloadSections, utf8Prefix } from "../lib/toolPayloadPreview";
 import "./harness-chat/TerminalBlock.css";
 import "./harness-chat/DiffBlock.css";
@@ -26,7 +26,9 @@ export default function ChatToolBody({ item, loader }: { item: Extract<ChatNode,
   const error = errorItem === item;
   const epoch = useRef(0);
   useEffect(() => { return () => { epoch.current++; }; }, [item]);
-  const full = loaded?.item === item ? loaded.text : undefined;
+  const full = loaded && loaded.item.id === item.id && loaded.item.args === item.args &&
+    loaded.item.output === item.output && loaded.item.error === item.error && loaded.item.dataArchived === item.dataArchived
+    ? loaded.text : undefined;
   const preview = JSON.stringify({ args: item.args, output: item.output, error: item.error, diff: item.fileDiff });
   const limited = full === undefined && (loader.needsFullContent(item, "tool") || preview.length > 8000);
   const load = async () => {
@@ -51,12 +53,13 @@ export default function ChatToolBody({ item, loader }: { item: Extract<ChatNode,
     expand: (hidden: number) => t("chat.expandLines", { count: hidden }), expandAria: (hidden: number) => t("chat.expandLines", { count: hidden }) };
   const diffs = !limited ? diffsFor(item.name, value.args || "{}") : [];
   const kind = classifyTool(item);
+  const presentation = toolPresentation(item);
   const search = kind === "search" && !limited ? normalizeSearchSources(item.searchSources ?? parseSearchSources(value.output || "")) : undefined;
   const searchMeta = searchOutputMetadata(value.output);
   return <>
-    {!limited && kind === "shell" ? <TerminalBlock command={typeof args.command === "string" ? args.command : value.args || ""}
-      output={value.error || value.output} running={item.status === "running"} exitCode={item.execution?.exitCode}
-      signal={item.status === "error" && item.execution?.exitCode == null ? t("chat.failed") : item.status === "stopped" ? t("chat.stopped") : undefined}
+    {!limited && kind === "shell" && (item.execution || item.status === "running" || item.status === "stopped") ? <TerminalBlock command={typeof args.command === "string" ? args.command : value.args || ""}
+      output={value.error || value.output} running={presentation.state === "running"} exitCode={presentation.exitCode}
+      presentation={{ state: presentation.dot, label: t(presentation.label) }}
       maxLines={200} className={toolCss.terminalBody}
       labels={{ ...labels, signal: signal => signal, exitCode: code => `${code}`, running: t("chat.running"), failed: t("chat.failed"), done: t("chat.done"), noOutput: t("chat.noOutput") }} />
       : search && item.status === "done" ? <WebBlock kind="search" answer={searchMeta.summary ?? item.searchSummary}

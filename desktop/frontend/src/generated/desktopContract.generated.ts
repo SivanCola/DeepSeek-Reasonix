@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 9;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:272f091ccb003b4a18ab18951491fa0276676d079be037df7f0315c5d03909f6";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:51b4a63b0deb23f446e741f739487325413c19fab4d1c04c6a1fb18a08659a8f";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -4471,6 +4471,7 @@ export interface MessageLocation {
 }
 
 export interface PersistentMessage {
+  submissionId?: string;
   samplingCount?: number | null;
   toolCount?: number | null;
   turnFinal?: boolean;

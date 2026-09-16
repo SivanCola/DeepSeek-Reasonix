@@ -58,6 +58,12 @@ func recoveryGuidance(input string) string {
 }
 
 func (c *Controller) SubmitProtocolRecovery(id, guidance string) {
+	c.submissions.mu.Lock()
+	defer c.releaseSubmissionAdmission()
+	c.submitProtocolRecoveryLocked(id, guidance)
+}
+
+func (c *Controller) submitProtocolRecoveryLocked(id, guidance string) {
 	// Bind a token before enqueueing; a later request cannot recover a different
 	// incident just because it used the tokenless CLI shortcut.
 	if id == "" && c.executor != nil {

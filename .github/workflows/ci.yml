@@ -220,6 +220,18 @@ jobs:
         timeout-minutes: 5
         run: go test -timeout=3m -run '^TestBashPowerShellExecuteDetailedContract$|^TestBashPowerShell51PreflightRejectsAndAndDetailed$|^TestBashPowerShellOutputIsUTF8$|^TestBashPowerShellSurfacesNonZeroExit$|^TestBashPowerShellRejectsChaining$' ./internal/tool/builtin
 
+      - name: test (Windows persistent PowerShell 7 and 5.1)
+        if: env.RUN_STEPS == 'true' && runner.os == 'Windows'
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $env:REASONIX_TEST_PWSH = (Get-Command pwsh).Source
+          go test -timeout=2m -run '^TestPowerShell' ./internal/persistentshell
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:REASONIX_TEST_PWSH = (Get-Command powershell.exe).Source
+          go test -timeout=2m -run '^TestPowerShell' ./internal/persistentshell
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       # Enumerate the entire module and run every remaining package. The union
       # with the isolated jobs is exhaustive and disjoint, including new packages.
       - name: test (full)

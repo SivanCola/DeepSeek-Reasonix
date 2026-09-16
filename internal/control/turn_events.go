@@ -255,6 +255,11 @@ func (s *turnEventSink) persistAndPublish(e event.Event) error {
 	if !ok {
 		return nil
 	}
+	if e.Kind == event.TurnStarted {
+		if err := s.c.flushSubmissionAdmission(); err != nil {
+			return err
+		}
+	}
 	projectionSaved := true
 	if e.Kind == event.TurnDone {
 		if store := s.c.sessionEventStore(); store != nil {
@@ -483,6 +488,9 @@ func (c *Controller) prepareTurnAdmissionWithGoalRound(body func(context.Context
 				c.executor.BeginTurnTodoState()
 			}
 		}
+	}
+	if admissionErr == nil {
+		admissionErr = c.flushSubmissionAdmission()
 	}
 	if admissionErr == nil {
 		if c.executor != nil && goalRound != nil {
@@ -783,14 +791,4 @@ func (c *Controller) DrainTurnEventMetrics() turnevent.MetricsSnapshot {
 		return turnevent.MetricsSnapshot{}
 	}
 	return ledger.DrainMetrics()
-}
-
-// TurnIDForSubmission exposes the synchronous admission receipt without
-// depending on whether the provider is still running when the desktop call returns.
-func (c *Controller) TurnIDForSubmission(submissionID string) string {
-	ledger := c.turnEventLedger()
-	if ledger == nil {
-		return ""
-	}
-	return ledger.TurnIDForSubmission(submissionID)
 }

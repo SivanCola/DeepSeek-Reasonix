@@ -92,7 +92,7 @@ export class ChatSource implements ChatViewSource {
     const groups: Array<{ key: string; turn?: number; user?: Extract<Item, { kind: "user" }>; items: Item[] }> = [];
     let group: (typeof groups)[number] = { key: "history-head", items: [] };
     groups.push(group);
-    for (const item of input.items) {
+    for (const item of uniqueUserItems(input.items)) {
       if (item.kind === "user") {
         group = { key: item.id, user: item, turn: item.checkpointTurn ?? item.historyTurn, items: [] };
         groups.push(group);
@@ -242,3 +242,4 @@ export class ChatSource implements ChatViewSource {
     this.nodes.clear(); this.children.clear(); this.projectedGroups.clear(); this.order = []; this.input = undefined;
   }
 }
+import { uniqueUserItems } from "./transcriptUserIdentity";

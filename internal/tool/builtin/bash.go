@@ -109,6 +109,10 @@ func (bash) Name() string { return "bash" }
 func (b bash) Description() string {
 	sh := b.resolved()
 	if sh.Kind == sandbox.ShellPowerShell {
+		persistence := "Ordinary foreground calls share a persistent session: working directory, variables, functions and environment persist. Background or permission-specific calls are isolated. "
+		if os.Getenv("REASONIX_POWERSHELL_ONESHOT") == "1" {
+			persistence = "Calls run in isolated PowerShell processes; directory and variable changes do not persist. "
+		}
 		shellName := "Windows PowerShell"
 		chaining := "';' runs both regardless; 'if ($?) { ... }' is conditional. '&&' and '||' are NOT parsed."
 		if sh.SupportsChaining() {
@@ -116,6 +120,7 @@ func (b bash) Description() string {
 			chaining = "'&&' and '||' are parsed for conditional chaining; ';' runs both regardless."
 		}
 		return fmt.Sprintf("Execute a command in the shell and return combined stdout/stderr. "+
+			persistence+
 			"Commands run under %s on this host, so write PowerShell, not bash:\n"+
 			"  - chaining: %s\n"+
 			"  - redirect/vars: $null not /dev/null; $env:VAR not $VAR; '2>$null' drops stderr.\n"+
@@ -219,7 +224,7 @@ func (b bash) ExecuteDetailed(ctx context.Context, args json.RawMessage) (tool.D
 	// (the host terminal spawns with its own unfiltered environment, which
 	// would leak the credentials the user asked to strip), and never for
 	// background jobs. ok=false falls back to local execution unchanged.
-	if b.terminal != nil && !p.RunInBackground && !b.sb.Enforce() && !secrets.FilterSubprocessEnv() {
+	if b.terminal != nil && sh.Kind != sandbox.ShellPowerShell && !p.RunInBackground && !b.sb.Enforce() && !secrets.FilterSubprocessEnv() {
 		envMap := sandbox.SessionTempEnvMap(prepared.SessionTemp, prepared.LinuxSandboxed)
 		if out, ok, termErr := b.terminal.RunCommand(ctx, p.Command, b.workDir, b.timeout, envMap); ok {
 			out = appendSessionDataHint(out, b.guard.CommandHint(b.workDir, p.Command))

@@ -42,6 +42,12 @@ func (c *Controller) RunFinalReadinessRecoveryWithAdmission(ctx context.Context,
 // SubmitFinalReadinessRecovery retains the asynchronous symbol for old clients
 // and emits the stable retirement error through the ordinary turn path.
 func (c *Controller) SubmitFinalReadinessRecovery(display, input string) {
+	c.submissions.mu.Lock()
+	defer c.releaseSubmissionAdmission()
+	c.submitFinalReadinessRecoveryLocked(display, input)
+}
+
+func (c *Controller) submitFinalReadinessRecoveryLocked(display, input string) {
 	c.runGuarded(func(ctx context.Context) error {
 		return ErrNoFinalReadinessRecovery
 	})
@@ -60,6 +66,6 @@ func (c *Controller) submitFinalReadinessCommand(trimmed, display string) bool {
 	if strings.TrimSpace(display) == "" {
 		display = trimmed
 	}
-	c.SubmitFinalReadinessRecovery(display, prompt)
+	c.submitFinalReadinessRecoveryLocked(display, prompt)
 	return true
 }

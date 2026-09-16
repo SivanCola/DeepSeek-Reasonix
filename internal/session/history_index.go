@@ -505,6 +505,22 @@ func insertHistoryRows(ctx context.Context, tx *sql.Tx, prefix string, columns i
 }
 
 func indexMessageEvent(ctx context.Context, content *sessioncontent.Store, state *historyBuildState, event Event) error {
+	if event.Kind == "submission/accepted" {
+		payload := event.Payload
+		if event.PayloadRef != nil {
+			var err error
+			payload, err = resolveContentPayload(ctx, content, *event.PayloadRef)
+			if err != nil {
+				return err
+			}
+		}
+		var receipt SubmissionReceipt
+		if err := json.Unmarshal(payload, &receipt); err != nil {
+			return err
+		}
+		_, err := state.tx.ExecContext(ctx, `INSERT INTO submissions(session_id,submission_id,message_id,sequence) VALUES(?,?,?,?) ON CONFLICT(session_id,submission_id) DO NOTHING`, receipt.SessionID, receipt.SubmissionID, receipt.MessageID, event.Sequence)
+		return err
+	}
 	if err := indexTurnEvent(ctx, content, state, event); err != nil {
 		return err
 	}

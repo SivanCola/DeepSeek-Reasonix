@@ -23,9 +23,9 @@ import (
 	"reasonix/internal/sessioncontent"
 )
 
-// Version 5 combines authored previews with retraction and execution closure.
+// Version 6 retains optional submission receipts in recovery checkpoints.
 // Older projections are disposable and rebuild from the unchanged durable log.
-const recoveryProjectionVersion = 5
+const recoveryProjectionVersion = 6
 
 const (
 	recoveryFormatVersion = 1
@@ -446,6 +446,7 @@ func (s *recoveryStore) publish(ctx context.Context, checkpoint recoveryCheckpoi
 		TotalTurns: visibleBoundaryCount(checkpoint.Projection, false),
 	}
 	recent.Entries, err = buildRecentEntries(ctx, s.sessionDir, checkpoint.RecentMessages, checkpoint.DurableSequence, recent.TotalTurns)
+	attachSubmissionEntries(checkpoint.Projection.Submissions, checkpoint.SessionID, recent.Entries)
 	if err != nil {
 		return err
 	}

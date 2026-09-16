@@ -7,6 +7,8 @@ const GoalLifecycleV2 = "goal-lifecycle-v2"
 
 const TranscriptV2 = "transcript-v2"
 
+const SubmissionIdentityV1 = "submission-identity-v1"
+
 // TranscriptOutlineV1 announces the read-only turn-outline endpoint. A client
 // that does not see this token keeps the loaded-turn rail instead of probing
 // the route, so an older Serve never has to answer 404 to advertise itself.

@@ -38,10 +38,16 @@ func (c *Controller) runGuardedOrPark(body func(ctx context.Context) error) admi
 // runGuardedInbox admits a durable item without parking it in volatile memory.
 // onStart runs after admission is reserved and before its goroutine can finish.
 func (c *Controller) runGuardedInbox(body func(ctx context.Context) error, onStart func()) admissionResult {
+	if !c.submissions.mu.TryLock() {
+		return turnDroppedRunning
+	}
+	defer c.submissions.mu.Unlock()
 	return c.admitGuardedTurn(body, false, false, onStart, nil)
 }
 
 func (c *Controller) runGuardedGoalRound(reservation *goalRoundReservation, body func(ctx context.Context) error) admissionResult {
+	c.submissions.mu.Lock()
+	defer c.submissions.mu.Unlock()
 	return c.admitGuardedTurn(body, false, false, nil, reservation)
 }
 

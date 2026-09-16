@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -58,6 +59,9 @@ func hasBackgroundStatement(command string) bool {
 }
 
 func (b bash) shouldUsePersistent(ctx context.Context, p bashParams, sh sandbox.Shell) bool {
+	if sh.Kind == sandbox.ShellPowerShell && os.Getenv("REASONIX_POWERSHELL_ONESHOT") == "1" {
+		return false
+	}
 	if !persistentshell.Supports(sh) {
 		return false
 	}
@@ -67,7 +71,10 @@ func (b bash) shouldUsePersistent(ctx context.Context, p bashParams, sh sandbox.
 	if len(p.AdditionalWriteDirs) > 0 || strings.TrimSpace(p.SandboxPermissions) != "" {
 		return false
 	}
-	if hasBackgroundStatement(p.Command) {
+	if sh.Kind.IsPOSIX() && hasBackgroundStatement(p.Command) {
+		return false
+	}
+	if sh.Kind == sandbox.ShellPowerShell && powerShellIsolated(p.Command) {
 		return false
 	}
 	m := b.persistentManager(ctx)
@@ -134,6 +141,10 @@ func (b bash) runPersistent(ctx context.Context, p bashParams, sh sandbox.Shell,
 	if !res.Started && res.Err != nil && !res.Reset {
 		var startup *persistentshell.StartupError
 		if !errors.As(res.Err, &startup) {
+			if sh.Kind == sandbox.ShellPowerShell {
+				out, ex, err := b.runForegroundDetailed(ctx, p, sh, prepared.Argv, prepared.Wrapped, cmdEnv)
+				return appendSessionDataHint(out, "Persistent PowerShell was unavailable before this command started. This call ran once in an isolated process; its directory and variable changes are not retained."), ex, err, true
+			}
 			return "", nil, nil, false
 		}
 	}
@@ -141,7 +152,7 @@ func (b bash) runPersistent(ctx context.Context, p bashParams, sh sandbox.Shell,
 	ex.State = res.State
 	ex.FailurePhase = res.FailurePhase
 	code := res.ExitCode
-	if res.Started {
+	if res.ExitCodeKnown {
 		ex.ExitCode = &code
 	}
 	if res.State != tool.ShellStateCompleted && res.Output != "" {
@@ -171,4 +182,43 @@ func (b bash) runPersistent(ctx context.Context, p bashParams, sh sandbox.Shell,
 		out = appendSessionDataHint(out, shellResetNotice)
 	}
 	return out, ex, res.Err, true
+}
+
+// Conservative isolation is safe for quoted mentions too; do not parse
+// PowerShell background syntax with the Bash parser.
+func powerShellIsolated(command string) bool {
+	lower := strings.ToLower(command)
+	for _, token := range []string{"start-job", "start-threadjob", "start-process", "-asjob"} {
+		if strings.Contains(lower, token) {
+			return true
+		}
+	}
+	var quote rune
+	var previous rune
+	runes := []rune(command)
+	for i, ch := range runes {
+		if quote != 0 {
+			if ch == quote {
+				quote = 0
+			}
+			continue
+		}
+		if ch == '\'' || ch == '"' {
+			quote = ch
+			previous = ch
+			continue
+		}
+		if ch == '&' {
+			if i+1 < len(runes) && runes[i+1] == '&' || i > 0 && runes[i-1] == '&' {
+				continue
+			}
+			if previous != 0 && !strings.ContainsRune(";\n|({=", previous) {
+				return true
+			}
+		}
+		if ch != ' ' && ch != '\t' && ch != '\r' {
+			previous = ch
+		}
+	}
+	return false
 }

@@ -42,11 +42,12 @@ func TestResolveShellRejectsCrossKindConfiguredPaths(t *testing.T) {
 		},
 		{
 			name: "PowerShell path is not probed as Bash", prefer: "bash", path: `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`,
-			wantKind: ShellBash, wantPath: paths["bash"], wantArgv: []string{paths["bash"], "-c"},
+			wantKind: ShellPowerShell, wantPath: `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`,
+			wantArgv: []string{`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, "-NoProfile", "-NonInteractive", "-Command"},
 		},
 		{
 			name: "zsh path is not relabeled as Bash", prefer: "bash", path: `C:\Tools\zsh.exe`,
-			wantKind: ShellBash, wantPath: paths["bash"], wantArgv: []string{paths["bash"], "-c"},
+			wantKind: ShellPowerShell, wantPath: paths["pwsh"], wantArgv: []string{paths["pwsh"], "-NoProfile", "-NonInteractive", "-Command"},
 		},
 	}
 	for _, tc := range tests {
@@ -76,8 +77,8 @@ func TestResolveShellRejectsExplicitWSLLauncher(t *testing.T) {
 		func(string) bool { return true },
 		func(path string) bool { return path == wslBash },
 	)
-	if got.Kind != ShellBash || got.Path != gitBash {
-		t.Fatalf("resolved shell = {%s %q}, want native Git Bash %q", got.Kind, got.Path, gitBash)
+	if got.Kind != ShellPowerShell || got.Path != "pwsh" {
+		t.Fatalf("resolved shell = {%s %q}, want native PowerShell", got.Kind, got.Path)
 	}
 }
 

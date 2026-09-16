@@ -176,6 +176,11 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 	ctx = agent.WithRawUserInput(ctx, turn.raw)
 	ctx = withTurnInputOrigin(ctx, turn.synthetic)
 	userMessageID := agent.NewMessageID()
+	if _, turnID, active := c.currentTurnToken(); active {
+		if receipt, ok := c.submissionForTurn(turnID); ok {
+			userMessageID = receipt.MessageID
+		}
+	}
 	if c.executor != nil {
 		ctx = agent.WithUserMessageIdentity(ctx, c.executor.Session(), userMessageID)
 	}

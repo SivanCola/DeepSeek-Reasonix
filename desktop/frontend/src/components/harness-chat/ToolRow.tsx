@@ -3,17 +3,18 @@
 import { useState, type ReactNode } from "react";
 import { ScanSearch } from "lucide-react";
 import { DisclosureRow } from "./DisclosureRow";
-import { StateDot } from "./StateDot";
+import { StateDot, type StateDotState } from "./StateDot";
 import css from "./ToolRow.styles";
 
-export function ToolRow({ icon, title, summary, state, statusLabel, errorSummary, children, inspectLabel, inspect, beforeToggle }: {
+export function ToolRow({ icon, title, summary, state, dot, statusLabel, errorSummary, children, inspectLabel, inspect, beforeToggle }: {
+  dot?: StateDotState;
   icon: ReactNode; title: string; summary: string; state: "running" | "done" | "error" | "stopped";
   statusLabel: string; errorSummary?: string; children: ReactNode;
   inspectLabel: string; inspect: (trigger: HTMLElement) => void; beforeToggle: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const failureLine = state === "error" ? errorSummary : undefined;
-  const leading = state === "error" || state === "stopped"
+  const leading = dot ? <StateDot state={dot} /> : state === "error" || state === "stopped"
     ? <StateDot state={state === "error" ? "error" : "warning"} /> : icon;
   return <div className={`${css.root} chat-tool`} data-state={state}>
     {state !== "done" && <span className="sr-only">{statusLabel}</span>}

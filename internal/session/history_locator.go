@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	historyIndexVersion     = 8
+	historyIndexVersion     = 9
 	HistoryPageDefaultLimit = 100
 	HistoryPageMaxLimit     = 500
 	HistoryPageMaxBytes     = 2 << 20
@@ -28,6 +28,7 @@ const (
 // deliberately separate from provider.Message: provider DTOs are materialized
 // only at model or compatibility boundaries.
 type PersistentMessage struct {
+	SubmissionID   string              `json:"submissionId,omitempty"`
 	SamplingCount  *int                `json:"samplingCount,omitempty"`
 	ToolCount      *int                `json:"toolCount,omitempty"`
 	TurnFinal      bool                `json:"turnFinal,omitempty"`
@@ -152,7 +153,7 @@ func (s *historyBuildStatements) close() {
 }
 
 func historyIndexPath(root, sessionID string) string {
-	return filepath.Join(root, ".query-cache", filepath.Base(sessionID), "history-locator-v1.sqlite")
+	return filepath.Join(root, ".query-cache", filepath.Base(sessionID), "history-locator-v2.sqlite")
 }
 
 var historyMigrations = []projectiondb.Migration{{Version: 1, Apply: func(ctx context.Context, tx *sql.Tx) error {
@@ -199,6 +200,9 @@ var historyMigrations = []projectiondb.Migration{{Version: 1, Apply: func(ctx co
 	return err
 }}, {Version: 8, Apply: func(ctx context.Context, tx *sql.Tx) error {
 	_, err := tx.ExecContext(ctx, `CREATE TABLE turn_counts (turn_id TEXT NOT NULL, kind TEXT NOT NULL, id TEXT NOT NULL, sequence INTEGER NOT NULL, PRIMARY KEY(turn_id,kind,id))`)
+	return err
+}}, {Version: 9, Apply: func(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `CREATE TABLE submissions (session_id TEXT NOT NULL, submission_id TEXT NOT NULL, message_id TEXT NOT NULL, sequence INTEGER NOT NULL, PRIMARY KEY(session_id,submission_id)); CREATE INDEX submissions_message ON submissions(message_id)`)
 	return err
 }}}
 
@@ -287,7 +291,7 @@ func (q *Query) readMessageHistoryPage(ctx context.Context, db *sql.DB, filesyst
 	if err := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(visible_turn),0) FROM messages WHERE event_sequence<=? AND (valid_to=0 OR valid_to>?)`, snapshot, snapshot).Scan(&page.TotalTurns); err != nil {
 		return MessageHistoryPage{}, err
 	}
-	rows, err := db.QueryContext(ctx, `SELECT message_id,position,version,role,preview,event_sequence,visible_turn,inline,content_digest,content_bytes,content_index_digest FROM messages WHERE position<? AND event_sequence<=? AND (valid_to=0 OR valid_to>?) ORDER BY position DESC LIMIT ?`, before, snapshot, snapshot, limit+1)
+	rows, err := db.QueryContext(ctx, `SELECT message_id,position,version,role,preview,event_sequence,visible_turn,inline,content_digest,content_bytes,content_index_digest,COALESCE((SELECT submission_id FROM submissions WHERE submissions.message_id=messages.message_id AND submissions.sequence<=messages.event_sequence AND submissions.session_id=(SELECT value FROM metadata WHERE key='session_id') LIMIT 1),'') FROM messages WHERE position<? AND event_sequence<=? AND (valid_to=0 OR valid_to>?) ORDER BY position DESC LIMIT ?`, before, snapshot, snapshot, limit+1)
 	if err != nil {
 		return MessageHistoryPage{}, err
 	}
@@ -299,7 +303,7 @@ func (q *Query) readMessageHistoryPage(ctx context.Context, db *sql.DB, filesyst
 		var inline []byte
 		var digest, indexDigest string
 		var contentBytes int64
-		if err := rows.Scan(&message.MessageID, &message.Position, &message.Version, &message.Role, &message.Preview, &message.EventSequence, &message.VisibleTurn, &inline, &digest, &contentBytes, &indexDigest); err != nil {
+		if err := rows.Scan(&message.MessageID, &message.Position, &message.Version, &message.Role, &message.Preview, &message.EventSequence, &message.VisibleTurn, &inline, &digest, &contentBytes, &indexDigest, &message.SubmissionID); err != nil {
 			return MessageHistoryPage{}, err
 		}
 		if len(page.Messages) == limit {

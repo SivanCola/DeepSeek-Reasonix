@@ -335,9 +335,9 @@ func (q *Query) readHistoryWindowPage(ctx context.Context, db *sql.DB, filesyste
 	var rows *sql.Rows
 	var err error
 	if direction == historyWindowDirNewer {
-		rows, err = db.QueryContext(ctx, `SELECT message_id,position,version,role,preview,event_sequence,visible_turn,inline,content_digest,content_bytes,content_index_digest FROM messages WHERE position>=? AND event_sequence<=? AND (valid_to=0 OR valid_to>?) ORDER BY position ASC LIMIT ?`, boundary, snapshot, snapshot, limit+1)
+		rows, err = db.QueryContext(ctx, `SELECT message_id,position,version,role,preview,event_sequence,visible_turn,inline,content_digest,content_bytes,content_index_digest,COALESCE((SELECT submission_id FROM submissions WHERE submissions.message_id=messages.message_id AND submissions.sequence<=messages.event_sequence AND submissions.session_id=(SELECT value FROM metadata WHERE key='session_id') LIMIT 1),'') FROM messages WHERE position>=? AND event_sequence<=? AND (valid_to=0 OR valid_to>?) ORDER BY position ASC LIMIT ?`, boundary, snapshot, snapshot, limit+1)
 	} else {
-		rows, err = db.QueryContext(ctx, `SELECT message_id,position,version,role,preview,event_sequence,visible_turn,inline,content_digest,content_bytes,content_index_digest FROM messages WHERE position<? AND event_sequence<=? AND (valid_to=0 OR valid_to>?) ORDER BY position DESC LIMIT ?`, boundary, snapshot, snapshot, limit+1)
+		rows, err = db.QueryContext(ctx, `SELECT message_id,position,version,role,preview,event_sequence,visible_turn,inline,content_digest,content_bytes,content_index_digest,COALESCE((SELECT submission_id FROM submissions WHERE submissions.message_id=messages.message_id AND submissions.sequence<=messages.event_sequence AND submissions.session_id=(SELECT value FROM metadata WHERE key='session_id') LIMIT 1),'') FROM messages WHERE position<? AND event_sequence<=? AND (valid_to=0 OR valid_to>?) ORDER BY position DESC LIMIT ?`, boundary, snapshot, snapshot, limit+1)
 	}
 	if err != nil {
 		return HistoryWindowPage{}, err
@@ -351,7 +351,7 @@ func (q *Query) readHistoryWindowPage(ctx context.Context, db *sql.DB, filesyste
 		var inline []byte
 		var digest, indexDigest string
 		var contentBytes int64
-		if err := rows.Scan(&message.MessageID, &message.Position, &message.Version, &message.Role, &message.Preview, &message.EventSequence, &message.VisibleTurn, &inline, &digest, &contentBytes, &indexDigest); err != nil {
+		if err := rows.Scan(&message.MessageID, &message.Position, &message.Version, &message.Role, &message.Preview, &message.EventSequence, &message.VisibleTurn, &inline, &digest, &contentBytes, &indexDigest, &message.SubmissionID); err != nil {
 			return HistoryWindowPage{}, err
 		}
 		scanned++

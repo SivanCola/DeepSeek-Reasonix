@@ -52,6 +52,7 @@ export function canonicalMessage(message: PersistentMessage, body: unknown): His
     turnDurationMs: message.turnDurationMs,
     role: display.role,
     messageId: String(raw.id ?? message.messageId),
+    submissionId: message.submissionId,
     content: display.content,
     reasoning: typeof raw.reasoning_content === "string" ? raw.reasoning_content : undefined,
     createdAt: typeof raw.createdAt === "number" ? raw.createdAt : undefined,
