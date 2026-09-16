@@ -30,24 +30,7 @@ func (p *FilesystemPersistence) PurgeWithTombstone(ctx context.Context, id strin
 	staged := filepath.Join(p.Root, ".purging", id)
 	receipt := staged + ".receipt"
 	proof := "reasonix-session-purge-v1\n" + id + "\n"
-	for _, path := range []string{p.Root, filepath.Dir(staged), staged, source, filepath.Join(p.Root, ".query-cache")} {
-		info, err := os.Lstat(path)
-		if err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		if err == nil && (!info.IsDir() || info.Mode()&os.ModeSymlink != 0) {
-			return errors.New("unsafe session maintenance directory")
-		}
-	}
-	if info, err := os.Lstat(receipt); err == nil {
-		if !info.Mode().IsRegular() {
-			return errors.New("unsafe session purge receipt")
-		}
-		body, err := os.ReadFile(receipt)
-		if err != nil || string(body) != proof {
-			return errors.New("session purge receipt mismatch")
-		}
-	} else if !os.IsNotExist(err) {
+	if err := validatePurgeDirectories(p.Root, source, staged, receipt, proof); err != nil {
 		return err
 	}
 	if _, err := os.Lstat(source); err == nil {
@@ -114,4 +97,28 @@ func (p *FilesystemPersistence) AcquireMaintenance(sessionID string) (func(), er
 		return nil, fmt.Errorf("%w", ErrWriterOwned)
 	}
 	return release, err
+}
+
+func validatePurgeDirectories(root, source, staged, receipt, proof string) error {
+	for _, path := range []string{root, filepath.Dir(staged), staged, source, filepath.Join(root, ".query-cache")} {
+		info, err := os.Lstat(path)
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if err == nil && (!info.IsDir() || info.Mode()&os.ModeSymlink != 0) {
+			return errors.New("unsafe session maintenance directory")
+		}
+	}
+	if info, err := os.Lstat(receipt); err == nil {
+		if !info.Mode().IsRegular() {
+			return errors.New("unsafe session purge receipt")
+		}
+		body, err := os.ReadFile(receipt)
+		if err != nil || string(body) != proof {
+			return errors.New("session purge receipt mismatch")
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -64,23 +65,8 @@ func (a *App) archiveSessionRefsWithOperation(refs []session.SessionRef, operati
 			legacyTargets[sessionRuntimeKey(mapping.Path)] = true
 		}
 	}
-	a.mu.RLock()
-	removed := []removedSessionRuntime{}
-	for _, tab := range a.runtimeTabsLocked() {
-		if tab == nil || (!containsDesktopString(ids, tab.SessionID) && !legacyTargets[sessionRuntimeKey(tab.currentSessionPath())]) {
-			continue
-		}
-		item := removedRuntimeFromTab(tab, tabRuntimeSessionDir(tab), tab.currentSessionPath())
-		item.failedStartup = a.suppressTabStartupRestoreLocked(tab)
-		removed = append(removed, item)
-	}
-	a.mu.RUnlock()
-	for _, item := range removed {
-		if item.ctrl != nil && controllerHasActiveRuntimeWork(item.ctrl) {
-			return fallbackRuntimeTarget{}, errTopicHasActiveWork
-		}
-	}
-	if err := a.snapshotTopicRuntimeBindings(removed); err != nil {
+	removed, err := a.idleArchiveRuntimes(ids, legacyTargets)
+	if err != nil {
 		return fallbackRuntimeTarget{}, err
 	}
 	guards := []func(){}
@@ -95,8 +81,8 @@ func (a *App) archiveSessionRefsWithOperation(refs []session.SessionRef, operati
 		}
 	}
 	defer func() {
-		for i := len(guards) - 1; i >= 0; i-- {
-			guards[i]()
+		for _, release := range slices.Backward(guards) {
+			release()
 		}
 	}()
 	for _, id := range ids {
@@ -310,42 +296,6 @@ func (a *App) stageArchiveSource(ctx context.Context, path string) (session.Sess
 	return session.SessionRef{HostID: localDesktopHostID, SessionID: op.SessionIDs[0]}, opID, nil
 }
 
-func (a *App) resolveCompatibleSession(ctx context.Context, path string) (session.SessionRef, error) {
-	if id, ok := parseSessionRoute(path); ok {
-		return session.SessionRef{HostID: localDesktopHostID, SessionID: id}, nil
-	}
-	_, valid, err := a.sessionDirForPath(path)
-	if err != nil {
-		return session.SessionRef{}, err
-	}
-	if ref, found, err := a.legacyCanonicalRef(ctx, valid); found || err != nil {
-		return ref, err
-	}
-	meta, _, err := agent.LoadBranchMeta(valid)
-	if err != nil {
-		return session.SessionRef{}, err
-	}
-	scope, root := "global", ""
-	if meta.WorkspaceRoot != "" && !sameDesktopPath(meta.WorkspaceRoot, globalWorkspaceRoot()) {
-		scope, root = "project", meta.WorkspaceRoot
-	}
-	workspaceID, err := a.ensureDesktopWorkspace(ctx, scope, root)
-	if err != nil {
-		return session.SessionRef{}, err
-	}
-	if err := a.migrateLegacySession(ctx, valid, desktopMigrationSource{scope: scope, workspaceRoot: root}, workspaceID); err != nil {
-		return session.SessionRef{}, err
-	}
-	ref, found, err := a.legacyCanonicalRef(ctx, valid)
-	if err != nil {
-		return ref, err
-	}
-	if !found {
-		return ref, errors.New("legacy session import was not registered")
-	}
-	return ref, nil
-}
-
 func (a *App) restoreCanonicalSession(ctx context.Context, ref session.SessionRef, operationID string, recoveryIDs ...string) (SessionRestoreResult, error) {
 	if err := validateLocalSessionRef(ref); err != nil {
 		return SessionRestoreResult{}, err
@@ -411,4 +361,27 @@ type SessionRestoreResult struct {
 	Session     session.SessionRef `json:"session"`
 	WorkspaceID string             `json:"workspaceId"`
 	Generation  uint64             `json:"generation"`
+}
+
+func (a *App) idleArchiveRuntimes(ids []string, legacyTargets map[string]bool) ([]removedSessionRuntime, error) {
+	a.mu.RLock()
+	removed := []removedSessionRuntime{}
+	for _, tab := range a.runtimeTabsLocked() {
+		if tab == nil || (!containsDesktopString(ids, tab.SessionID) && !legacyTargets[sessionRuntimeKey(tab.currentSessionPath())]) {
+			continue
+		}
+		item := removedRuntimeFromTab(tab, tabRuntimeSessionDir(tab), tab.currentSessionPath())
+		item.failedStartup = a.suppressTabStartupRestoreLocked(tab)
+		removed = append(removed, item)
+	}
+	a.mu.RUnlock()
+	for _, item := range removed {
+		if item.ctrl != nil && controllerHasActiveRuntimeWork(item.ctrl) {
+			return nil, errTopicHasActiveWork
+		}
+	}
+	if err := a.snapshotTopicRuntimeBindings(removed); err != nil {
+		return nil, err
+	}
+	return removed, nil
 }

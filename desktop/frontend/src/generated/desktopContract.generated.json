@@ -3118,7 +3118,7 @@
     },
     {
       "cancellation": "before-dispatch",
-      "domain": "desktop/app.go",
+      "domain": "desktop/session_legacy_lifecycle_rpc.go",
       "name": "DeleteSession",
       "owner": "App.DeleteSession",
       "params": [
@@ -3135,7 +3135,7 @@
         "resolver": "App.DeleteSession"
       },
       "sources": [
-        "desktop/app.go"
+        "desktop/session_legacy_lifecycle_rpc.go"
       ]
     },
     {
@@ -8400,7 +8400,7 @@
     },
     {
       "cancellation": "before-dispatch",
-      "domain": "desktop/app.go",
+      "domain": "desktop/session_legacy_lifecycle_rpc.go",
       "name": "PurgeTrashedSession",
       "owner": "App.PurgeTrashedSession",
       "params": [
@@ -8417,7 +8417,7 @@
         "resolver": "App.PurgeTrashedSession"
       },
       "sources": [
-        "desktop/app.go"
+        "desktop/session_legacy_lifecycle_rpc.go"
       ]
     },
     {

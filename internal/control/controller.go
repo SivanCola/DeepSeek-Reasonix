@@ -5245,7 +5245,7 @@ func (c *Controller) KillJob(id string) bool {
 	return c.jobs.Kill(id)
 }
 
-// CancelJob stops one background job owned by this controller's session.
+// TaskRuntimeOwnerID identifies the recorder that admitted this runtime's jobs.
 func (c *Controller) TaskRuntimeOwnerID() string {
 	if c.jobs == nil {
 		return ""
@@ -5253,6 +5253,7 @@ func (c *Controller) TaskRuntimeOwnerID() string {
 	return c.jobs.TaskRuntimeOwnerID()
 }
 
+// CancelJob stops one background job owned by this controller's session.
 func (c *Controller) CancelJob(id string) bool {
 	if c.jobs == nil {
 		return false

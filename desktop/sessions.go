@@ -109,12 +109,6 @@ func saveSessionTitles(dir string, m map[string]string) error {
 	return fileutil.AtomicWriteFile(sessionTitlesPath(dir), b, 0o600)
 }
 
-type trashedSessionMeta struct {
-	Key       string `json:"key"`
-	DeletedAt int64  `json:"deletedAt"`
-	Kind      string `json:"kind,omitempty"`
-}
-
 type sessionTrashArtifact struct {
 	src  string
 	name string

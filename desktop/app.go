@@ -1414,12 +1414,7 @@ func (a *App) ensureTabControllerWorkspace(tab *WorkspaceTab) error {
 	}
 	desiredDir := tabSessionDir(tab)
 	rootMatches := desiredRoot == "" || sameDesktopPath(ctrlRoot, desiredRoot)
-	dirMatches := desiredDir == "" || sameDesktopPath(ctrlDir, desiredDir)
-	if !dirMatches && path != "" {
-		if validPath, _, err := validateSessionPath(ctrlDir, path); err == nil && sessionRuntimeKey(validPath) == sessionRuntimeKey(path) {
-			dirMatches = true
-		}
-	}
+	dirMatches := controllerSessionDirectoryMatches(desiredDir, ctrlDir, path)
 	if strings.TrimSpace(ctrlRoot) == "" && dirMatches {
 		rootMatches = true
 	}
@@ -2140,11 +2135,7 @@ func (a *App) clearLegacySessionRuntimeLocked(tab *WorkspaceTab, oldCtrl control
 		// path/pid/writer id out of it.
 		return SessionClearResult{}, userFacingSessionLeaseError("", err)
 	}
-	if fresh, ok := newCtrl.(interface{ SetFreshSessionPath(string) }); ok {
-		fresh.SetFreshSessionPath(path)
-	} else {
-		newCtrl.SetSessionPath(path)
-	}
+	setFreshControllerPath(newCtrl, path)
 	if err := initClearedPins(path, newCtrl, oldCtrl, tab); err != nil {
 		return SessionClearResult{}, err
 	}
@@ -2889,47 +2880,6 @@ func channelDisplayName(provider, domain string) string {
 	}
 }
 
-// DeleteSession moves a saved session to the local trash. If the session still
-// has an in-process runtime, the runtime is cancelled and removed first so
-// autosave cannot recreate or append to the deleted file later.
-func (a *App) DeleteSession(path string) error {
-	if id, ok := parseSessionRoute(path); ok {
-		return friendlySessionFileError(a.ArchiveCanonicalSession(session.SessionRef{HostID: localDesktopHostID, SessionID: id}))
-	}
-	_, valid, err := a.sessionDirForPath(path)
-	if err != nil {
-		return friendlySessionFileError(err)
-	}
-	ref, adopted, err := a.legacyCanonicalRef(a.bootContext(), valid)
-	if err != nil {
-		return friendlySessionFileError(err)
-	}
-	if adopted {
-		return friendlySessionFileError(a.ArchiveCanonicalSession(ref))
-	}
-	release, ok := a.tryLockRuntimeMutation("archive historical session")
-	if !ok {
-		return errTopicArchiveBusy
-	}
-	ref, dependency, err := a.stageArchiveSource(a.bootContext(), valid)
-	var fallback fallbackRuntimeTarget
-	if err == nil {
-		dependencies := []string{}
-		if dependency != "" {
-			dependencies = append(dependencies, dependency)
-		}
-		fallback, err = a.archiveSessionRefsLocked([]session.SessionRef{ref}, dependencies...)
-	}
-	release()
-	if err == nil {
-		if fallback.needs {
-			_ = a.openFallbackRuntime(fallback)
-		}
-		a.emitProjectTreeChanged()
-	}
-	return friendlySessionFileError(err)
-}
-
 // DeleteRecoveryCopy is the guarded bulk-cleanup path. The frontend's copy
 // marker is only a hint. Open copies are preserved, and the backend holds both
 // parent and branch removal guards while re-proving coverage and publishing a
@@ -3424,30 +3374,6 @@ func (a *App) sessionOpen(dir, sessionPath string) bool {
 		}
 	}
 	return false
-}
-
-// PurgeTrashedSession permanently removes a trashed session and its title/display
-// sidecars.
-func (a *App) PurgeTrashedSession(path string) error {
-	if _, err := a.trashedSessionDir(path); err != nil {
-		return err
-	}
-	if !explicitlyDeletedLegacyEntry(path) {
-		return errors.New("historical recovery entries cannot be permanently cleared")
-	}
-	// Legacy public RPCs retain upgrade originals too. Resolve/import the
-	// archived application identity before delegating to canonical purge.
-	if err := a.discoverHistoricalTrash(a.bootContext()); err != nil {
-		return err
-	}
-	state, err := a.workspaceRegistry().Load(a.bootContext())
-	if err != nil {
-		return err
-	}
-	if mapping, adopted := state.SourceMappings[desktopSourceKey(path, "")]; adopted {
-		return a.PurgeCanonicalSession(session.SessionRef{HostID: localDesktopHostID, SessionID: mapping.SessionID})
-	}
-	return errors.New("historical session has no verified canonical identity")
 }
 
 // PurgeRecoveryCopy is the guarded permanent-cleanup path. A trashed branch is

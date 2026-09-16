@@ -1687,10 +1687,10 @@
     }
   },
   "DeleteSession": {
-    "domain": "desktop/app.go",
+    "domain": "desktop/session_legacy_lifecycle_rpc.go",
     "owner": "App.DeleteSession",
     "sources": [
-      "desktop/app.go"
+      "desktop/session_legacy_lifecycle_rpc.go"
     ],
     "scope": {
       "kind": "owner-inputs",
@@ -4494,10 +4494,10 @@
     }
   },
   "PurgeTrashedSession": {
-    "domain": "desktop/app.go",
+    "domain": "desktop/session_legacy_lifecycle_rpc.go",
     "owner": "App.PurgeTrashedSession",
     "sources": [
-      "desktop/app.go"
+      "desktop/session_legacy_lifecycle_rpc.go"
     ],
     "scope": {
       "kind": "owner-inputs",

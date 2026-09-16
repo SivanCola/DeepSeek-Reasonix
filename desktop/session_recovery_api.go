@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -164,15 +165,16 @@ func (a *App) checkedRecoveryEntry(ctx context.Context, id string) (workspacesta
 		return entry, errors.New("recovery entry is unavailable")
 	}
 	if entry.Path != "" {
-		if entry.Format == "legacy-trash" {
+		switch entry.Format {
+		case "legacy-trash":
 			if _, err := a.trashedSessionDir(entry.Path); err != nil {
 				return entry, err
 			}
-		} else if entry.Format == "legacy" {
+		case "legacy":
 			if _, _, err := a.sessionDirForPath(entry.Path); err != nil {
 				return entry, err
 			}
-		} else if entry.Format == "canonical" {
+		case "canonical":
 			allowed := sameDesktopPath(filepath.Dir(entry.Path), config.SessionStoreDir()) || sameDesktopPath(filepath.Dir(entry.Path), config.ProjectSessionStoreDir(globalWorkspaceRoot()))
 			for _, workspace := range state.Workspaces {
 				allowed = allowed || sameDesktopPath(filepath.Dir(entry.Path), config.ProjectSessionStoreDir(workspace.Root))
@@ -180,7 +182,7 @@ func (a *App) checkedRecoveryEntry(ctx context.Context, id string) (workspacesta
 			if !allowed {
 				return entry, errors.New("canonical recovery source is outside known storage roots")
 			}
-		} else {
+		default:
 			return entry, errors.New("this historical format requires migration repair")
 		}
 		if _, err := desktopSourceFingerprint(entry.Path); err != nil {
@@ -208,7 +210,7 @@ func (a *App) PreviewRecoveryEntry(id string) (HistoryPage, error) {
 		if err != nil {
 			return HistoryPage{Messages: []HistoryMessage{}}, err
 		}
-		defer old.Shutdown(context.Background())
+		defer func() { _ = old.Shutdown(context.Background()) }()
 		messages, err := old.Query().History(a.bootContext(), session.SessionRef{HostID: "recovery-preview", SessionID: filepath.Base(entry.Path)})
 		if err != nil {
 			return HistoryPage{Messages: []HistoryMessage{}}, err
@@ -250,26 +252,12 @@ func (a *App) restoreRecoveryEntryInWorkspace(id, operationID, workspaceID strin
 	if err != nil {
 		return SessionRestoreResult{}, err
 	}
-	if workspaceID != "" {
-		state, err := a.workspaceRegistry().Load(ctx)
-		if err != nil {
-			return SessionRestoreResult{}, err
-		}
-		valid := false
-		for _, choice := range a.recoveryWorkspaceChoices(ctx, state, entry) {
-			valid = valid || choice.ID == workspaceID
-		}
-		if !valid {
-			return SessionRestoreResult{}, errors.New("recovery workspace is not an allowed destination")
-		}
-		w := state.Workspaces[workspaceID]
-		entry.Scope, entry.WorkspaceRoot = "project", w.Root
-		if workspaceID == workspacestate.GlobalWorkspaceID {
-			entry.Scope, entry.WorkspaceRoot = "global", ""
-		}
+	entry, err = a.selectRecoveryWorkspace(ctx, entry, workspaceID)
+	if err != nil {
+		return SessionRestoreResult{}, err
 	}
-	if strings.Contains(entry.Reason, "conflict") && !(entry.Reason == "workspace_conflict" && workspaceID != "") {
-		return SessionRestoreResult{}, errors.New("historical session sources conflict; originals were preserved")
+	if err := validateRecoveryConflict(entry, workspaceID); err != nil {
+		return SessionRestoreResult{}, err
 	}
 	if entry.SessionID != "" {
 		return a.restoreCanonicalSession(ctx, session.SessionRef{HostID: localDesktopHostID, SessionID: entry.SessionID}, operationID, id)
@@ -529,54 +517,22 @@ func (a *App) replayDesktopSessionOperation(ctx context.Context, state workspace
 		}
 	}
 	if op.Phase == "prepared" && op.Mapping != nil {
-		mapping := op.Mapping
-		workspace, ok := state.Workspaces[op.WorkspaceID]
-		if !ok {
-			return workspacestate.ErrWorkspaceNotFound
-		}
-		scope := "project"
-		if workspace.ID == workspacestate.GlobalWorkspaceID {
-			scope = "global"
-		}
-		source := desktopMigrationSource{scope: scope, workspaceRoot: workspace.Root, operationID: op.ID, headID: mapping.HeadID}
-		if mapping.Format == "legacy" {
-			return a.migrateLegacySession(ctx, mapping.Path, source, workspace.ID)
-		}
-		if mapping.Format == "canonical" {
-			source.root = filepath.Dir(mapping.Path)
-			old, err := session.NewService("migration-source", session.NewFilesystemPersistence(source.root))
-			if err != nil {
-				return err
-			}
-			defer old.Shutdown(context.Background())
-			return a.migrateCanonicalSession(ctx, old, source, workspace.ID, filepath.Base(mapping.Path))
-		}
-		return workspacestate.ErrUnsupportedVersion
+		return a.replayPreparedImport(ctx, state, op)
 	}
 	if len(op.SessionIDs) == 0 {
 		return workspacestate.ErrMutationConflict
 	}
 	guards := []func(){}
 	defer func() {
-		for i := len(guards) - 1; i >= 0; i-- {
-			guards[i]()
+		for _, release := range slices.Backward(guards) {
+			release()
 		}
 	}()
 	removed := []removedSessionRuntime{}
 	if op.Lifecycle == workspacestate.Archived || op.Lifecycle == workspacestate.Deleted {
-		a.mu.RLock()
-		for _, tab := range a.runtimeTabsLocked() {
-			if tab != nil && containsDesktopString(op.SessionIDs, tab.SessionID) {
-				removed = append(removed, removedRuntimeFromTab(tab, tabRuntimeSessionDir(tab), tab.currentSessionPath()))
-			}
-		}
-		a.mu.RUnlock()
-		for _, item := range removed {
-			if item.ctrl != nil && controllerHasActiveRuntimeWork(item.ctrl) {
-				return errTopicHasActiveWork
-			}
-		}
-		if err := a.snapshotTopicRuntimeBindings(removed); err != nil {
+		var err error
+		removed, err = a.idleArchiveRuntimes(op.SessionIDs, nil)
+		if err != nil {
 			return err
 		}
 	}
@@ -647,4 +603,59 @@ func (a *App) restoreLegacyRecoveryPath(path string) error {
 	}
 	_, err = a.RestoreRecoveryEntry(desktopRecoveryID(desktopSourceKey(path, ""), fingerprint), "")
 	return err
+}
+
+func (a *App) selectRecoveryWorkspace(ctx context.Context, entry workspacestate.RecoveryEntry, workspaceID string) (workspacestate.RecoveryEntry, error) {
+	if workspaceID != "" {
+		state, err := a.workspaceRegistry().Load(ctx)
+		if err != nil {
+			return entry, err
+		}
+		valid := false
+		for _, choice := range a.recoveryWorkspaceChoices(ctx, state, entry) {
+			valid = valid || choice.ID == workspaceID
+		}
+		if !valid {
+			return entry, errors.New("recovery workspace is not an allowed destination")
+		}
+		w := state.Workspaces[workspaceID]
+		entry.Scope, entry.WorkspaceRoot = "project", w.Root
+		if workspaceID == workspacestate.GlobalWorkspaceID {
+			entry.Scope, entry.WorkspaceRoot = "global", ""
+		}
+	}
+	return entry, nil
+}
+
+func (a *App) replayPreparedImport(ctx context.Context, state workspacestate.State, op workspacestate.Operation) error {
+	mapping := op.Mapping
+	workspace, ok := state.Workspaces[op.WorkspaceID]
+	if !ok {
+		return workspacestate.ErrWorkspaceNotFound
+	}
+	scope := "project"
+	if workspace.ID == workspacestate.GlobalWorkspaceID {
+		scope = "global"
+	}
+	source := desktopMigrationSource{scope: scope, workspaceRoot: workspace.Root, operationID: op.ID, headID: mapping.HeadID}
+	if mapping.Format == "legacy" {
+		return a.migrateLegacySession(ctx, mapping.Path, source, workspace.ID)
+	}
+	if mapping.Format == "canonical" {
+		source.root = filepath.Dir(mapping.Path)
+		old, err := session.NewService("migration-source", session.NewFilesystemPersistence(source.root))
+		if err != nil {
+			return err
+		}
+		defer func() { _ = old.Shutdown(context.Background()) }()
+		return a.migrateCanonicalSession(ctx, old, source, workspace.ID, filepath.Base(mapping.Path))
+	}
+	return workspacestate.ErrUnsupportedVersion
+}
+
+func validateRecoveryConflict(entry workspacestate.RecoveryEntry, workspaceID string) error {
+	if strings.Contains(entry.Reason, "conflict") && !(entry.Reason == "workspace_conflict" && workspaceID != "") {
+		return errors.New("historical session sources conflict; originals were preserved")
+	}
+	return nil
 }

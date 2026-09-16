@@ -16,6 +16,74 @@ import (
 	"reasonix/internal/store"
 )
 
+func TestMigrationRevisionIgnoresCatalogRebuildButTracksDurableSources(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.jsonl")
+	if err := os.WriteFile(path, []byte("history"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	files := legacyMigrationSourceFiles(path)
+	before, err := desktopMigrationSourceRevision(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, index := range []string{store.SessionEventIndex(path), store.SessionDisplayIndex(path), store.SessionTranscriptProjection(path)} {
+		if err := os.WriteFile(index, []byte("rebuilt cache"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	after, err := desktopMigrationSourceRevision(files)
+	if err != nil || after != before {
+		t.Fatalf("catalog rebuild changed source identity: %v", err)
+	}
+	if err := os.WriteFile(store.SessionMeta(path), []byte(`{"workspace_root":"changed"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	after, err = desktopMigrationSourceRevision(files)
+	if err != nil || after == before {
+		t.Fatalf("ownership change was ignored: %v", err)
+	}
+}
+
+func TestMigrationCheckpointAllowsProjectionRepairButRejectsHistoryChange(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	path := filepath.Join(t.TempDir(), "history.jsonl")
+	if err := os.WriteFile(path, []byte("original history"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	meta := store.SessionMeta(path)
+	if err := os.WriteFile(meta, []byte(`{"id":"history","workspace_root":"original","future":{"proof":1}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cp, err := newDesktopMigrationCheckpoint(desktopMigrationSource{}, "projection-test", legacyMigrationSourceFiles(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("original history"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(meta, []byte(`{"id":"history","workspace_root":"original","future":{"proof":1},"turns":1,"schema_version":2,"writer_id":"repair"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := cp.complete("target", "content"); err != nil {
+		t.Fatalf("projection repair rejected: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("changed history"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := cp.complete("target", "content"); err == nil {
+		t.Fatal("changed history accepted")
+	}
+	if err := os.WriteFile(path, []byte("original history"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(meta, []byte(`{"id":"history","workspace_root":"other","future":{"proof":1}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := cp.complete("target", "content"); err == nil {
+		t.Fatal("changed ownership accepted")
+	}
+}
+
 func appendMigrationTestMessage(t *testing.T, service *session.Service, ref session.SessionRef, id string) {
 	t.Helper()
 	binding, err := service.Open(t.Context(), ref)

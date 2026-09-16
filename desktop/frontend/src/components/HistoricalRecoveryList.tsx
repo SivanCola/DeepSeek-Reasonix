@@ -55,13 +55,14 @@ export function HistoricalRecoveryList({ active, onOpenSession }: {
     const surface = surfaceGeneration.current;
     mutating.current = true; setBusy(true);
     const seq = ++generation.current;
+    const key = `${entry.id}:${workspaces[entry.id] ?? ""}`;
     try {
-      const key = `${entry.id}:${workspaces[entry.id] ?? ""}`;
       const request = pendingRequests.current.get(key) ?? { operationId: crypto.randomUUID(), action: "restore",
         targets: [{ recoveryEntryId: entry.id, workspaceId: workspaces[entry.id] }], expectedGeneration: registryGeneration.current };
       pendingRequests.current.set(key, request);
       const response = await app.ApplySessionLifecycle(request);
       const item = response.items[0];
+      if (item && !item.committed && item.retryable === false) pendingRequests.current.delete(key);
       if (!item?.committed || !item.ref) throw new Error(t("history.failedLoadHistory"));
       const result: SessionRestoreResult = { session: item.ref, workspaceId: item.workspaceId, generation: response.generation };
       if (seq !== generation.current) return;
@@ -72,6 +73,12 @@ export function HistoricalRecoveryList({ active, onOpenSession }: {
         try { await onOpenSession(result.session); } catch { setError(t("history.restoredRefreshFailed")); }
       }
     } catch (err) {
+      if (String(err).includes("workspace mutation conflicts with persisted state")) {
+        pendingRequests.current.delete(key);
+        await reload().catch(() => {});
+        setError(String(err));
+        return;
+      }
       if (seq === generation.current) setError(err instanceof Error ? err.message : String(err));
     } finally { mutating.current = false; setBusy(false); }
   };

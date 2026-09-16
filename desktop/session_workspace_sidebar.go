@@ -58,100 +58,11 @@ func (a *App) unifiedProjectTopics(req ProjectTopicPageRequest) (ProjectTopicPag
 	}
 	a.mu.RUnlock()
 
-	legacyReq := req
-	legacyReq.Cursor, legacyReq.Limit = "", 200
-	legacy := ProjectTopicPage{Items: []ProjectNode{}}
-	for {
-		page, err := a.listProjectTopics(legacyReq)
-		if err != nil {
-			return page, err
-		}
-		legacy.Complete, legacy.ReadyDirectories, legacy.PendingDirectories, legacy.FailedDirectories = page.Complete, page.ReadyDirectories, page.PendingDirectories, page.FailedDirectories
-		legacy.Revision = max(legacy.Revision, page.Revision)
-		for _, node := range page.Items {
-			if adopted[sessionRuntimeKey(node.SessionPath)] || (node.SessionPath == "" && adoptedTopics[node.TopicID]) {
-				remaining := []ProjectNode{}
-				for _, child := range node.Children {
-					if !adopted[sessionRuntimeKey(child.SessionPath)] {
-						remaining = append(remaining, child)
-					}
-				}
-				if len(remaining) > 0 {
-					node.Children = remaining
-					node.SessionPath = remaining[0].SessionPath
-					legacy.Items = append(legacy.Items, node)
-				}
-				continue
-			}
-			legacy.Items = append(legacy.Items, node)
-		}
-		if page.NextCursor == "" {
-			break
-		}
-		if page.NextCursor == legacyReq.Cursor {
-			return legacy, fmt.Errorf("legacy session cursor did not advance")
-		}
-		legacyReq.Cursor = page.NextCursor
+	legacy, err := a.unadoptedLegacyTopics(req, adopted, adoptedTopics)
+	if err != nil {
+		return legacy, err
 	}
-	service := a.desktopSessionService("")
-	infos, _ := listWorkspaceSessionInfo(a.bootContext(), service.Query(), workspace.SessionIDs)
-	nodes := legacy.Items
-	query := strings.ToLower(strings.TrimSpace(req.Query))
-	cutoff := desktopSessionTimeCutoff(req.TimeFilter)
-	createdTopics := loadTopicCreatedAts(topicTitleRoot(req.Scope, req.WorkspaceRoot))
-	projects := loadProjectsFile()
-	for index, id := range workspace.SessionIDs {
-		if state.SessionStates[id].Lifecycle != workspacestate.Active {
-			continue
-		}
-		info, found := infos[id]
-		row := workspaceSessionRow(workspaceID, id, info, found, false, service)
-		if found && cutoff > 0 && max(row.CreatedAt, row.UpdatedAt) < cutoff {
-			continue
-		}
-		if query != "" && !strings.Contains(strings.ToLower(row.Title+"\n"+row.Preview+"\n"+id), query) {
-			continue
-		}
-		ref := session.SessionRef{HostID: localDesktopHostID, SessionID: id}
-		presentation := state.Presentation[id]
-		label := row.Title
-		if label == "" {
-			label = row.Preview
-		}
-		if label == "" {
-			label = presentation.Title
-		}
-		if label == "" {
-			label = defaultTopicTitle
-		}
-		kind := "topic"
-		if req.Scope != "project" {
-			kind = "global_topic"
-		}
-		topicID := presentation.TopicID
-		if topicID == "" {
-			topicID = runtimeTopics[id]
-		}
-		if topicID == "" {
-			topicID = "canonical-" + id
-		}
-		sortOrder := index
-		ordering := historicalTopicPresentationFrom(projects, workspaceID, presentation)
-		if ordering.SortOrder >= 0 {
-			sortOrder = ordering.SortOrder
-		}
-		createdAt := row.CreatedAt
-		if previous := createdTopics[topicID]; previous > 0 {
-			createdAt = previous
-		}
-		nodes = append(nodes, ProjectNode{
-			Key: "canonical_" + id, Kind: kind, Label: label, Root: workspace.Root,
-			TopicID: topicID, Session: &ref, SessionPath: sessionRoute(id), CanArchive: row.Health != "missing",
-			Preview: row.Preview, Turns: row.Turns, TurnsState: row.MetadataStatus, Health: row.Health,
-			CreatedAt: createdAt, LastActivityAt: row.UpdatedAt, Open: row.Running,
-			Pinned: presentation.Pinned, SortOrder: sortOrder, Children: []ProjectNode{},
-		})
-	}
+	nodes := a.canonicalTopicNodes(req, state, workspace, runtimeTopics, legacy.Items)
 	nodes = groupWorkspaceTopics(nodes)
 	sort.SliceStable(nodes, func(i, j int) bool {
 		return projectTopicLess(nodes[i], nodes[j], req.SortMode, manualTopicOrderFor(req.Scope, req.WorkspaceRoot))
@@ -344,4 +255,107 @@ func (a *App) mergeCanonicalWorkspaceShells(projects []ProjectNode) []ProjectNod
 		}
 	}
 	return projects
+}
+
+func (a *App) unadoptedLegacyTopics(req ProjectTopicPageRequest, adopted, adoptedTopics map[string]bool) (ProjectTopicPage, error) {
+	legacyReq := req
+	legacyReq.Cursor, legacyReq.Limit = "", 200
+	legacy := ProjectTopicPage{Items: []ProjectNode{}}
+	for {
+		page, err := a.listProjectTopics(legacyReq)
+		if err != nil {
+			return page, err
+		}
+		legacy.Complete, legacy.ReadyDirectories, legacy.PendingDirectories, legacy.FailedDirectories = page.Complete, page.ReadyDirectories, page.PendingDirectories, page.FailedDirectories
+		legacy.Revision = max(legacy.Revision, page.Revision)
+		for _, node := range page.Items {
+			if adopted[sessionRuntimeKey(node.SessionPath)] || (node.SessionPath == "" && adoptedTopics[node.TopicID]) {
+				remaining := []ProjectNode{}
+				for _, child := range node.Children {
+					if !adopted[sessionRuntimeKey(child.SessionPath)] {
+						remaining = append(remaining, child)
+					}
+				}
+				if len(remaining) > 0 {
+					node.Children = remaining
+					node.SessionPath = remaining[0].SessionPath
+					legacy.Items = append(legacy.Items, node)
+				}
+				continue
+			}
+			legacy.Items = append(legacy.Items, node)
+		}
+		if page.NextCursor == "" {
+			break
+		}
+		if page.NextCursor == legacyReq.Cursor {
+			return legacy, fmt.Errorf("legacy session cursor did not advance")
+		}
+		legacyReq.Cursor = page.NextCursor
+	}
+	return legacy, nil
+}
+
+func (a *App) canonicalTopicNodes(req ProjectTopicPageRequest, state workspacestate.State, workspace workspacestate.Workspace, runtimeTopics map[string]string, initial []ProjectNode) []ProjectNode {
+	workspaceID := workspace.ID
+	service := a.desktopSessionService("")
+	infos, _ := listWorkspaceSessionInfo(a.bootContext(), service.Query(), workspace.SessionIDs)
+	nodes := initial
+	query := strings.ToLower(strings.TrimSpace(req.Query))
+	cutoff := desktopSessionTimeCutoff(req.TimeFilter)
+	createdTopics := loadTopicCreatedAts(topicTitleRoot(req.Scope, req.WorkspaceRoot))
+	projects := loadProjectsFile()
+	for index, id := range workspace.SessionIDs {
+		if state.SessionStates[id].Lifecycle != workspacestate.Active {
+			continue
+		}
+		info, found := infos[id]
+		row := workspaceSessionRow(workspaceID, id, info, found, false, service)
+		if found && cutoff > 0 && max(row.CreatedAt, row.UpdatedAt) < cutoff {
+			continue
+		}
+		if query != "" && !strings.Contains(strings.ToLower(row.Title+"\n"+row.Preview+"\n"+id), query) {
+			continue
+		}
+		ref := session.SessionRef{HostID: localDesktopHostID, SessionID: id}
+		presentation := state.Presentation[id]
+		label := row.Title
+		if label == "" {
+			label = row.Preview
+		}
+		if label == "" {
+			label = presentation.Title
+		}
+		if label == "" {
+			label = defaultTopicTitle
+		}
+		kind := "topic"
+		if req.Scope != "project" {
+			kind = "global_topic"
+		}
+		topicID := presentation.TopicID
+		if topicID == "" {
+			topicID = runtimeTopics[id]
+		}
+		if topicID == "" {
+			topicID = "canonical-" + id
+		}
+		sortOrder := index
+		ordering := historicalTopicPresentationFrom(projects, workspaceID, presentation)
+		if ordering.SortOrder >= 0 {
+			sortOrder = ordering.SortOrder
+		}
+		createdAt := row.CreatedAt
+		if previous := createdTopics[topicID]; previous > 0 {
+			createdAt = previous
+		}
+		nodes = append(nodes, ProjectNode{
+			Key: "canonical_" + id, Kind: kind, Label: label, Root: workspace.Root,
+			TopicID: topicID, Session: &ref, SessionPath: sessionRoute(id), CanArchive: row.Health != "missing",
+			Preview: row.Preview, Turns: row.Turns, TurnsState: row.MetadataStatus, Health: row.Health,
+			CreatedAt: createdAt, LastActivityAt: row.UpdatedAt, Open: row.Running,
+			Pinned: presentation.Pinned, SortOrder: sortOrder, Children: []ProjectNode{},
+		})
+	}
+	return nodes
 }

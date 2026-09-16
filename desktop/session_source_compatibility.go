@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -100,40 +99,6 @@ func desktopSourceFingerprint(path string) (string, error) {
 		}
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
-func (a *App) reuseDesktopSource(ctx context.Context, key, fingerprint string, archiveRetry ...bool) (bool, error) {
-	state, err := a.workspaceRegistry().Load(ctx)
-	if err != nil {
-		return false, err
-	}
-	mapping, exists := state.SourceMappings[key]
-	if !exists {
-		for _, op := range state.PendingOperations {
-			if op.Kind == "archive-import" && op.Phase != "committed" && op.Mapping != nil && op.Mapping.SourceKey == key {
-				if op.Mapping.Fingerprint != fingerprint {
-					return true, workspacestate.ErrMutationConflict
-				}
-				if op.Phase == "prepared" && len(archiveRetry) > 0 && archiveRetry[0] {
-					return false, nil
-				}
-				return true, nil
-			}
-		}
-		return false, nil
-	}
-	if mapping.Fingerprint != fingerprint {
-		return true, workspacestate.ErrMutationConflict
-	}
-	if state.SessionStates[mapping.SessionID].Lifecycle == workspacestate.Deleted {
-		return true, nil
-	}
-	ref := session.SessionRef{HostID: localDesktopHostID, SessionID: mapping.SessionID}
-	if _, err := a.desktopSessionService("").Query().Stat(ctx, ref); err != nil {
-		return true, err
-	}
-	// Never reset lifecycle, ordering or workspace visibility on a repeated scan.
-	return true, nil
 }
 
 func (a *App) recordDesktopSource(ctx context.Context, path, format, fingerprint, targetID, workspaceID string) error {
@@ -472,55 +437,3 @@ func desktopRecoveryID(key, fingerprint string) string {
 }
 
 // Read legacy ledger evidence without altering it or losing unknown fields.
-func readDesktopMigrationRecord(key string) (desktopMigrationRecord, bool) {
-	desktopMigrationMu.Lock()
-	defer desktopMigrationMu.Unlock()
-	body, err := os.ReadFile(desktopMigrationLedgerPath())
-	if err != nil {
-		return desktopMigrationRecord{}, false
-	}
-	var ledger desktopMigrationLedger
-	if json.Unmarshal(body, &ledger) != nil {
-		return desktopMigrationRecord{}, false
-	}
-	record, ok := ledger.Records[key]
-	return record, ok
-}
-
-// Adopt prior releases' completed imports only when the ledger, immutable
-// ownership header and original-source manifest agree. Destination messages
-// are intentionally not compared: users may have continued the conversation.
-func (a *App) adoptCompletedLegacyImport(ctx context.Context, source desktopMigrationSource, path, fingerprint, ledgerKey, workspaceID string) (bool, error) {
-	record, ok := readDesktopMigrationRecord(ledgerKey)
-	if !ok || record.Status != "completed" || record.TargetSessionID == "" {
-		return false, nil
-	}
-	manifestBody, err := os.ReadFile(filepath.Join(a.desktopSessions.root, record.TargetSessionID, "manifest.json"))
-	if err != nil {
-		return true, err
-	}
-	var manifest session.Manifest
-	if err := json.Unmarshal(manifestBody, &manifest); err != nil {
-		return true, err
-	}
-	if manifest.SessionID != record.TargetSessionID || manifest.Source == nil || sessionRuntimeKey(manifest.Source.Path) != sessionRuntimeKey(path) {
-		return true, workspacestate.ErrMutationConflict
-	}
-	if source.headID != "" && manifest.Source.LegacyHeadID != source.headID {
-		return true, workspacestate.ErrMutationConflict
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return true, err
-	}
-	h := sha256.New()
-	size, copyErr := io.Copy(h, f)
-	closeErr := f.Close()
-	if copyErr != nil || closeErr != nil {
-		return true, errors.Join(copyErr, closeErr)
-	}
-	if size != manifest.Source.Size || hex.EncodeToString(h.Sum(nil)) != manifest.Source.SHA256 {
-		return true, workspacestate.ErrMutationConflict
-	}
-	return true, a.commitDesktopImport(ctx, source, path, "legacy", fingerprint, record.TargetSessionID, workspaceID)
-}

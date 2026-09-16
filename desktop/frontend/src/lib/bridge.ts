@@ -1,3 +1,4 @@
+import { makeMockSessionLifecycleBindings, type SessionLifecycleBindings } from "./sessionLifecycleBindings";
 import { makeMockModelSettingsBindings, type ModelSettingsBindings } from "./modelSettingsBridge";
 import { mockProviderTemplate, mockPreset, mockBundlePreset, mockKimiAPIModels, mockLongCatModels, mockTokenRhythmModels, mockTokenRhythmModelOverrides, mockMiMoV25Models, mockMiniMaxModels, mockGLMAPIModels, mockGLMCodingModels, mockGLMAnthropicModels, mockQwenAPIModels, mockQwenPlanModels, mockQwenPlanVisionModels, mockStepFunModels, mockOpenCodeGoModels, mockNovitaModels, mockGMIModels, mockVercelModels, mockOllamaCloudModels } from "./mockProviderTemplates";
 // The Electron host and the browser mock share this React-to-Go contract.
@@ -218,13 +219,7 @@ interface DesktopWindowState {
 }
 // AppBindings is the hand-written React-to-Go contract. _CheckGeneratedBindings
 // catches generated methods missing here; update this interface and typecheck.
-export interface AppBindings extends ForkTargetsBindings, ToolRecoveryBindings, ModelSettingsBindings, SessionCatalogBindings, ProjectTreeOrganizationBindings, HistoryCatalogBindings, TaskCatalogBindings, BlankProjectBindings, QualityFloorBindings, SessionTitleBindings, ScrollDiagnosticBindings, RemoteProjectBindings, MCPAppBindings, PinnedContextBindings, FollowupBindings, TranscriptProtocolBindings, SessionReaderBindings {
-	ApplySessionLifecycle(request: import("../generated/desktopContract.generated").SessionLifecycleRequest): Promise<import("../generated/desktopContract.generated").SessionLifecycleResult>;
-	ListTrashEntries(query: string, cursor: string, limit: number): Promise<import("../generated/desktopContract.generated").TrashEntryPage>;
-  ListRecoveryEntries(query: string, cursor: string, limit: number): Promise<import("../generated/desktopContract.generated").RecoveryEntryPage>;
-  PreviewRecoveryEntry(id: string): Promise<HistoryPage>;
-  RestoreRecoveryEntry(id: string, operationId: string): Promise<import("../generated/desktopContract.generated").SessionRestoreResult>;
-  GetSessionUpgradeStatus(): Promise<import("../generated/desktopContract.generated").SessionUpgradeStatus>;
+export interface AppBindings extends SessionLifecycleBindings, ForkTargetsBindings, ToolRecoveryBindings, ModelSettingsBindings, SessionCatalogBindings, ProjectTreeOrganizationBindings, HistoryCatalogBindings, TaskCatalogBindings, BlankProjectBindings, QualityFloorBindings, SessionTitleBindings, ScrollDiagnosticBindings, RemoteProjectBindings, MCPAppBindings, PinnedContextBindings, FollowupBindings, TranscriptProtocolBindings, SessionReaderBindings {
   GetWorkspaceSnapshot(): Promise<WorkspaceSnapshot>;
   CreateSession(workspaceId: string): Promise<SessionRef>;
   ForkSession(ref: SessionRef, turnBoundary: string): Promise<SessionRef>;
@@ -233,7 +228,6 @@ export interface AppBindings extends ForkTargetsBindings, ToolRecoveryBindings, 
   ReadSessionHistory(ref: SessionRef, cursor: string, limit: number): Promise<HistoryPage>;
   RenameCanonicalSession(ref: SessionRef, title: string): Promise<void>;
   ArchiveCanonicalSession(ref: SessionRef): Promise<void>;
-  PurgeCanonicalSession(ref: SessionRef): Promise<void>;
   RestoreCanonicalSession(ref: SessionRef): Promise<void>;
   MoveWorkspaceSession(workspaceId: string, sessionId: string, beforeSessionId: string): Promise<void>;
   RenameWorkspace(workspaceId: string, title: string): Promise<void>;
@@ -2274,7 +2268,6 @@ function makeMockApp(): AppBindings {
   };
   const mockArchivedSessionIDs = new Set<string>();
   const mockPurgedSessionIDs = new Set<string>();
-  const mockLifecycleResults = new Map<string, { request: string; result: import("../generated/desktopContract.generated").SessionLifecycleResult }>();
   const mockSessionIDForNode = (node: ProjectNode) => (node.topicId || node.key || "mock-session").replace(/[^a-zA-Z0-9._-]/g, "-");
   const mockWorkspaceID = (node: ProjectNode) => node.kind === "global_folder" ? "global" : `project-${(node.root || node.key).replace(/[^a-zA-Z0-9._-]/g, "-")}`;
   const mockWorkspaceSnapshot = (): WorkspaceSnapshot => ({
@@ -2289,35 +2282,7 @@ function makeMockApp(): AppBindings {
     ...makeMockSessionCatalogBindings(cloneProjectTree),
     ...makeMockBlankProjectBindings(),
     async GetWorkspaceSnapshot() { return mockWorkspaceSnapshot(); },
-    async ListTrashEntries(query, cursor, limit) {
-      const items: import("../generated/desktopContract.generated").TrashEntry[] = [];
-      for (const workspace of mockWorkspaceSnapshot().workspaces) {
-        const page = await this.ListWorkspaceSessions(workspace.id, query, "", 1000, true);
-        items.push(...page.sessions.filter(row => row.archived).map(row => ({ id: row.ref.sessionId, ref: row.ref, title: row.title,
-          workspaceId: workspace.id, workspaceTitle: workspace.title, archivedAt: 0, health: "ready", canPreview: true, canRestore: true, canPurge: true })));
-      }
-      const offset = Number(cursor || 0), end = offset + limit;
-      return { items: items.slice(offset, end), generation: 1, nextCursor: end < items.length ? String(end) : "" };
-    },
-    async ApplySessionLifecycle(request) {
-      const previous = mockLifecycleResults.get(request.operationId), encoded = JSON.stringify(request);
-      if (previous) { if (previous.request !== encoded) throw new Error("Lifecycle request conflict"); return previous.result; }
-      const result: import("../generated/desktopContract.generated").SessionLifecycleResult = { operationId: request.operationId, generation: 1, committed: true, items: [] };
-      for (const target of request.targets) {
-        if (!target.ref) throw new Error("Unknown mock recovery entry");
-        if (request.action === "archive") await this.ArchiveCanonicalSession(target.ref);
-        else if (request.action === "restore") await this.RestoreCanonicalSession(target.ref);
-        else await this.PurgeCanonicalSession(target.ref);
-        const workspace = mockWorkspaceSnapshot().workspaces.find(row => row.sessionIds.includes(target.ref!.sessionId));
-        result.items.push({ target, ref: target.ref, workspaceId: workspace?.id || "global", committed: true, retryable: false });
-      }
-      mockLifecycleResults.set(request.operationId, { request: encoded, result });
-      return result;
-    },
-    async ListRecoveryEntries() { return { items: [], generation: 1 }; },
-    async PreviewRecoveryEntry() { return { messages: [], startTurn: 0, endTurn: 0, totalTurns: 0, hasOlder: false }; },
-    async RestoreRecoveryEntry() { throw new Error("recovery entry is unavailable"); },
-    async GetSessionUpgradeStatus() { return { sources: 0, sessions: 0, operations: 0, discovered: 0, migrated: 0, pending: 0, failed: 0, conflicts: 0, pendingOperations: 0 }; },
+    ...makeMockSessionLifecycleBindings(mockWorkspaceSnapshot, mockArchivedSessionIDs, mockPurgedSessionIDs, notifyMockProjectTreeChanged),
     async CreateSession(_workspaceId: string) { return { hostId: "local", sessionId: `mock-${Date.now()}` }; },
     async ForkSession(_ref: SessionRef, _turnBoundary: string) { return { hostId: "local", sessionId: `mock-fork-${Date.now()}` }; },
     async ListWorkspaceSessions(workspaceId: string, query: string, _cursor: string, limit: number, includeArchived: boolean) {
@@ -2347,10 +2312,6 @@ function makeMockApp(): AppBindings {
     async ReadSessionHistory(_ref: SessionRef, _cursor: string, _limit: number) { return { messages: [], startTurn: 0, endTurn: 0, totalTurns: 0, hasOlder: false }; },
     async RenameCanonicalSession(_ref: SessionRef, _title: string) {},
     async ArchiveCanonicalSession(ref: SessionRef) { mockArchivedSessionIDs.add(ref.sessionId); notifyMockProjectTreeChanged(); },
-    async PurgeCanonicalSession(ref: SessionRef) {
-      if (!mockArchivedSessionIDs.has(ref.sessionId) && !mockPurgedSessionIDs.has(ref.sessionId)) throw new Error("Only archived sessions can be permanently deleted");
-      mockPurgedSessionIDs.add(ref.sessionId); mockArchivedSessionIDs.delete(ref.sessionId); notifyMockProjectTreeChanged();
-    },
     async RestoreCanonicalSession(ref: SessionRef) { mockArchivedSessionIDs.delete(ref.sessionId); notifyMockProjectTreeChanged(); },
     async MoveWorkspaceSession(_workspaceId: string, _sessionId: string, _beforeSessionId: string) {},
     async RenameWorkspace(_workspaceId: string, _title: string) {},

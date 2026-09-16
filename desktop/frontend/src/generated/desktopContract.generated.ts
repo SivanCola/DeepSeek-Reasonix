@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 10;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:4e65e6172f3a578ebaffd465ca79c78d7af88774a22d1eb5758cf4e8c783664f";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:10867b43f07784420f29c56d3d685b3b2b9f45c6eed3888fd2dcfaba1b6d8333";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",

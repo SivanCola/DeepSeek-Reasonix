@@ -29,6 +29,14 @@ func initClearedPins(path string, newCtrl, oldCtrl control.SessionAPI, tab *Work
 	return nil
 }
 
+func setFreshControllerPath(ctrl control.SessionAPI, path string) {
+	if fresh, ok := ctrl.(interface{ SetFreshSessionPath(string) }); ok {
+		fresh.SetFreshSessionPath(path)
+	} else {
+		ctrl.SetSessionPath(path)
+	}
+}
+
 // ClearSession discards the current conversation and rotates to a fresh unsaved one.
 func (a *App) ClearSession() (SessionClearResult, error) {
 	return a.ClearSessionForTab("")

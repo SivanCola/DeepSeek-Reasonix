@@ -298,17 +298,7 @@ func (a *App) submitToTabResult(tabID, input string, fromBridge, classifyManagem
 	management := control.SubmitResult{Disposition: control.SubmitManagementHandled}
 	trimmed := strings.TrimSpace(input)
 	if trimmed == "/reload" {
-		tab, _ := a.tabAndCtrlByID(tabID)
-		if a.tabIsReadOnly(tab) {
-			return control.SubmitResult{}, readOnlyChannelErr()
-		}
-		if tab == nil {
-			return control.SubmitResult{}, a.workspaceNotReadyErr(tab)
-		}
-		if !fromBridge && a.botBridge != nil {
-			a.botBridge.reclaimFromDesktop(tab.ID)
-		}
-		return management, a.ReloadRuntime(tab.ID)
+		return a.submitReloadCommand(tabID, fromBridge)
 	}
 	if trimmed == "/effort" || strings.HasPrefix(trimmed, "/effort ") {
 		tab, _ := a.tabAndCtrlByID(tabID)
@@ -394,4 +384,19 @@ func (a *App) submitToTabResult(tabID, input string, fromBridge, classifyManagem
 	}
 	admission.finish(ctrl)
 	return result, nil
+}
+
+func (a *App) submitReloadCommand(tabID string, fromBridge bool) (control.SubmitResult, error) {
+	management := control.SubmitResult{Disposition: control.SubmitManagementHandled}
+	tab, _ := a.tabAndCtrlByID(tabID)
+	if a.tabIsReadOnly(tab) {
+		return control.SubmitResult{}, readOnlyChannelErr()
+	}
+	if tab == nil {
+		return control.SubmitResult{}, a.workspaceNotReadyErr(tab)
+	}
+	if !fromBridge && a.botBridge != nil {
+		a.botBridge.reclaimFromDesktop(tab.ID)
+	}
+	return management, a.ReloadRuntime(tab.ID)
 }

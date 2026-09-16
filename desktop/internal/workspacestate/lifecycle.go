@@ -344,12 +344,8 @@ func commitOperation(state *State, id string, visiting map[string]bool) error {
 			state.Presentation[sessionID] = *op.Presentation
 		}
 	}
-	if op.Mapping != nil {
-		mapping := *op.Mapping
-		if old, exists := state.SourceMappings[mapping.SourceKey]; exists && (old.SessionID != mapping.SessionID || old.Fingerprint != mapping.Fingerprint) {
-			return ErrMutationConflict
-		}
-		state.SourceMappings[mapping.SourceKey] = mapping
+	if err := commitSourceMapping(state, op.Mapping); err != nil {
+		return err
 	}
 	if op.RecoveryEntryID != "" {
 		entry, exists := state.RecoveryEntries[op.RecoveryEntryID]
@@ -608,4 +604,15 @@ func unknownFields(body []byte, names ...string) (map[string]json.RawMessage, er
 		delete(fields, name)
 	}
 	return fields, nil
+}
+
+func commitSourceMapping(state *State, mapping *SourceMapping) error {
+	if mapping != nil {
+		mapping := *mapping
+		if old, exists := state.SourceMappings[mapping.SourceKey]; exists && (old.SessionID != mapping.SessionID || old.Fingerprint != mapping.Fingerprint) {
+			return ErrMutationConflict
+		}
+		state.SourceMappings[mapping.SourceKey] = mapping
+	}
+	return nil
 }

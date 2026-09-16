@@ -70,6 +70,52 @@ func TestPublicDeleteArchivesLegacyWithoutMovingOriginal(t *testing.T) {
 	}
 }
 
+func TestPublicLegacyTrashPurgeRetainsUpgradeOriginal(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	a := NewApp()
+	a.ctx = t.Context()
+	pinDesktopSessionRoot(t, a)
+	installNoopRuntimeEvents(a)
+	t.Cleanup(a.closeSessionServices)
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := writeLegacySession(t, dir, "old-trash.jsonl", "retained upgrade evidence", time.Now())
+	if err := deleteSessionFile(dir, path); err != nil {
+		t.Fatal(err)
+	}
+	trash := filepath.Join(dir, sessionTrashDir, "old-trash.jsonl", "old-trash.jsonl")
+	before, err := desktopSourceFingerprint(trash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.discoverHistoricalTrash(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	page, err := a.ListTrashEntries("", "", 50)
+	if err != nil || len(page.Items) != 1 {
+		t.Fatalf("legacy trash missing: %+v %v", page, err)
+	}
+	if page.Items[0].ArchivedAt != trashedSessionDeletedAt(trash) {
+		t.Fatal("legacy archive time changed")
+	}
+	if err := a.PurgeTrashedSession(trash); err != nil {
+		t.Fatal(err)
+	}
+	after, err := desktopSourceFingerprint(trash)
+	if err != nil || before != after {
+		t.Fatalf("original removed: %v", err)
+	}
+	if err := a.discoverHistoricalTrash(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	page, err = a.ListTrashEntries("", "", 50)
+	if err != nil || len(page.Items) != 0 {
+		t.Fatalf("purged history revived: %+v %v", page, err)
+	}
+}
+
 func lifecycleFixture(t *testing.T) (*App, session.SessionRef) {
 	t.Helper()
 	isolateDesktopUserDirs(t)

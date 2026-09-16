@@ -47,29 +47,8 @@ func (a *App) ApplySessionLifecycle(req SessionLifecycleRequest) (SessionLifecyc
 	desktopLifecycleCommands.Lock()
 	defer desktopLifecycleCommands.Unlock()
 	out := SessionLifecycleResult{OperationID: req.OperationID, Items: []SessionLifecycleItem{}}
-	if strings.TrimSpace(req.OperationID) == "" || len(req.OperationID) > 200 || len(req.Targets) == 0 || len(req.Targets) > 1000 {
-		return out, errors.New("invalid lifecycle request")
-	}
-	if req.Action != "archive" && req.Action != "restore" && req.Action != "purge" {
-		return out, errors.New("invalid lifecycle action")
-	}
-	seen := map[string]bool{}
-	for _, target := range req.Targets {
-		if (target.Ref == nil) == (target.RecoveryEntryID == "") {
-			return out, errors.New("exactly one session identity is required")
-		}
-		if target.Ref != nil {
-			if err := validateLocalSessionRef(*target.Ref); err != nil {
-				return out, err
-			}
-		} else if req.Action != "restore" {
-			return out, errors.New("historical recovery entries can only be restored")
-		}
-		body, _ := json.Marshal(target)
-		if seen[string(body)] {
-			return out, errors.New("duplicate lifecycle target")
-		}
-		seen[string(body)] = true
+	if err := validateLifecycleRequest(req); err != nil {
+		return out, err
 	}
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -102,93 +81,15 @@ func (a *App) ApplySessionLifecycle(req SessionLifecycleRequest) (SessionLifecyc
 	}
 	previous := out.Items
 	out.Items = []SessionLifecycleItem{}
-	var archiveErr error
-	if req.Action == "archive" {
-		child := key + "-archive"
-		state, err = store.Load(ctx)
-		if err != nil {
-			return out, err
-		}
-		if state.PendingOperations[child].Phase != "committed" {
-			for _, target := range req.Targets {
-				if state.SessionStates[target.Ref.SessionID].Generation > req.ExpectedGeneration {
-					return out, workspacestate.ErrMutationConflict
-				}
-			}
-			refs := []session.SessionRef{}
-			for _, target := range req.Targets {
-				refs = append(refs, *target.Ref)
-			}
-			release := a.lockRuntimeMutation("archive lifecycle command")
-			fallback, e := a.archiveSessionRefsWithOperation(refs, child)
-			release()
-			archiveErr = e
-			if e == nil && fallback.needs {
-				_ = a.openFallbackRuntime(fallback)
-			}
-		}
-	}
+	archiveErr := a.archiveLifecycleCommand(req, key)
 	for i, target := range req.Targets {
 		if i < len(previous) && previous[i].Committed {
 			out.Items = append(out.Items, previous[i])
 			continue
 		}
-		item := SessionLifecycleItem{Target: target, Ref: target.Ref}
-		var opErr error
-		child := fmt.Sprintf("%s-%d", key, i)
-		latest, loadErr := store.Load(ctx)
-		if loadErr != nil {
-			return out, loadErr
-		}
-		if target.Ref != nil && req.Action != "archive" && latest.PendingOperations[child].Phase != "committed" && latest.PendingOperations["purge-"+target.Ref.SessionID].Kind != "purge" && latest.SessionStates[target.Ref.SessionID].Generation > req.ExpectedGeneration {
-			item.ErrorCode = "state_conflict"
-			out.Items = append(out.Items, item)
-			continue
-		}
-		if target.Ref != nil {
-			for id, w := range state.Workspaces {
-				if containsDesktopString(w.SessionIDs, target.Ref.SessionID) {
-					item.WorkspaceID = id
-					break
-				}
-			}
-		}
-		switch req.Action {
-		case "archive":
-			opErr = archiveErr
-		case "purge":
-			release := a.lockRuntimeMutation("purge lifecycle command")
-			opErr = a.purgeCanonicalSession(ctx, *target.Ref, req.ExpectedGeneration)
-			release()
-		case "restore":
-			var restored SessionRestoreResult
-			if target.Ref == nil {
-				restored, opErr = a.restoreRecoveryEntryInWorkspace(target.RecoveryEntryID, child, target.WorkspaceID)
-			} else {
-				release := a.lockRuntimeMutation("restore lifecycle command")
-				saved, loadErr := store.Load(ctx)
-				if loadErr != nil {
-					opErr = loadErr
-				} else if done := saved.PendingOperations[child]; done.Phase == "committed" {
-					restored = SessionRestoreResult{Session: *target.Ref, WorkspaceID: done.WorkspaceID, Generation: done.ResultGeneration}
-				} else {
-					restored, opErr = a.restoreCanonicalSession(ctx, *target.Ref, child)
-				}
-				release()
-			}
-			if opErr == nil {
-				item.Ref = &restored.Session
-				item.WorkspaceID = restored.WorkspaceID
-			}
-		}
-		item.Committed = opErr == nil
-		if opErr != nil {
-			item.ErrorCode = "operation_failed"
-			item.Retryable = true
-			if errors.Is(opErr, workspacestate.ErrMutationConflict) {
-				item.ErrorCode = "state_conflict"
-				item.Retryable = false
-			}
+		item, err := a.applyLifecycleTarget(req, key, i, target, state, archiveErr)
+		if err != nil {
+			return out, err
 		}
 		out.Items = append(out.Items, item)
 	}
@@ -304,4 +205,125 @@ func (a *App) ListTrashEntries(query, cursor string, limit int) (TrashEntryPage,
 		out.NextCursor = fmt.Sprintf("%d:%d", state.Generation, end)
 	}
 	return out, nil
+}
+
+func validateLifecycleRequest(req SessionLifecycleRequest) error {
+	if strings.TrimSpace(req.OperationID) == "" || len(req.OperationID) > 200 || len(req.Targets) == 0 || len(req.Targets) > 1000 {
+		return errors.New("invalid lifecycle request")
+	}
+	if req.Action != "archive" && req.Action != "restore" && req.Action != "purge" {
+		return errors.New("invalid lifecycle action")
+	}
+	seen := map[string]bool{}
+	for _, target := range req.Targets {
+		if (target.Ref == nil) == (target.RecoveryEntryID == "") {
+			return errors.New("exactly one session identity is required")
+		}
+		if target.Ref != nil {
+			if err := validateLocalSessionRef(*target.Ref); err != nil {
+				return err
+			}
+		} else if req.Action != "restore" {
+			return errors.New("historical recovery entries can only be restored")
+		}
+		body, _ := json.Marshal(target)
+		if seen[string(body)] {
+			return errors.New("duplicate lifecycle target")
+		}
+		seen[string(body)] = true
+	}
+	return nil
+}
+
+func (a *App) archiveLifecycleCommand(req SessionLifecycleRequest, key string) error {
+	store := a.workspaceRegistry()
+	if req.Action == "archive" {
+		child := key + "-archive"
+		state, err := store.Load(a.bootContext())
+		if err != nil {
+			return err
+		}
+		if state.PendingOperations[child].Phase != "committed" {
+			for _, target := range req.Targets {
+				if state.SessionStates[target.Ref.SessionID].Generation > req.ExpectedGeneration {
+					return workspacestate.ErrMutationConflict
+				}
+			}
+			refs := []session.SessionRef{}
+			for _, target := range req.Targets {
+				refs = append(refs, *target.Ref)
+			}
+			release := a.lockRuntimeMutation("archive lifecycle command")
+			fallback, e := a.archiveSessionRefsWithOperation(refs, child)
+			release()
+			if e != nil {
+				return e
+			}
+			if e == nil && fallback.needs {
+				_ = a.openFallbackRuntime(fallback)
+			}
+		}
+	}
+	return nil
+}
+
+func (a *App) applyLifecycleTarget(req SessionLifecycleRequest, key string, index int, target SessionLifecycleTarget, state workspacestate.State, archiveErr error) (SessionLifecycleItem, error) {
+	ctx, store := a.bootContext(), a.workspaceRegistry()
+	item := SessionLifecycleItem{Target: target, Ref: target.Ref}
+	var opErr error
+	child := fmt.Sprintf("%s-%d", key, index)
+	latest, loadErr := store.Load(ctx)
+	if loadErr != nil {
+		return item, loadErr
+	}
+	if target.Ref != nil && req.Action != "archive" && latest.PendingOperations[child].Phase != "committed" && latest.PendingOperations["purge-"+target.Ref.SessionID].Kind != "purge" && latest.SessionStates[target.Ref.SessionID].Generation > req.ExpectedGeneration {
+		item.ErrorCode = "state_conflict"
+		return item, nil
+	}
+	if target.Ref != nil {
+		for id, w := range state.Workspaces {
+			if containsDesktopString(w.SessionIDs, target.Ref.SessionID) {
+				item.WorkspaceID = id
+				break
+			}
+		}
+	}
+	switch req.Action {
+	case "archive":
+		opErr = archiveErr
+	case "purge":
+		release := a.lockRuntimeMutation("purge lifecycle command")
+		opErr = a.purgeCanonicalSession(ctx, *target.Ref, req.ExpectedGeneration)
+		release()
+	case "restore":
+		var restored SessionRestoreResult
+		if target.Ref == nil {
+			restored, opErr = a.restoreRecoveryEntryInWorkspace(target.RecoveryEntryID, child, target.WorkspaceID)
+		} else {
+			release := a.lockRuntimeMutation("restore lifecycle command")
+			saved, loadErr := store.Load(ctx)
+			if loadErr != nil {
+				opErr = loadErr
+			} else if done := saved.PendingOperations[child]; done.Phase == "committed" {
+				restored = SessionRestoreResult{Session: *target.Ref, WorkspaceID: done.WorkspaceID, Generation: done.ResultGeneration}
+			} else {
+				restored, opErr = a.restoreCanonicalSession(ctx, *target.Ref, child)
+			}
+			release()
+		}
+		if opErr == nil {
+			item.Ref = &restored.Session
+			item.WorkspaceID = restored.WorkspaceID
+		}
+	}
+	item.Committed = opErr == nil
+	if opErr != nil {
+		item.ErrorCode = "operation_failed"
+		item.Retryable = true
+		if errors.Is(opErr, workspacestate.ErrMutationConflict) {
+			item.ErrorCode = "state_conflict"
+			item.Retryable = false
+		}
+	}
+	return item, nil
 }
