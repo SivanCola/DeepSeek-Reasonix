@@ -22,6 +22,9 @@ func (a *App) PurgeCanonicalSession(ref session.SessionRef) error {
 		return err
 	}
 	a.emitProjectTreeChanged()
+	a.emitSessionTargetChange("session_deleted", SessionTargetChangeEvent{
+		TargetKey: (SessionTarget{SessionRef: ref}).key(),
+	})
 	return nil
 }
 

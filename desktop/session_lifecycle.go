@@ -46,6 +46,7 @@ func (a *App) archiveSessionRefsWithOperation(refs []session.SessionRef, operati
 		if err := validateLocalSessionRef(ref); err != nil {
 			return fallbackRuntimeTarget{}, err
 		}
+		a.cancelAISessionTitle((SessionTarget{SessionRef: ref}).key())
 		unique[ref.SessionID] = ref
 	}
 	if len(unique) == 0 {

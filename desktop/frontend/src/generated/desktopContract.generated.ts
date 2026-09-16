@@ -3,10 +3,11 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 10;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:10867b43f07784420f29c56d3d685b3b2b9f45c6eed3888fd2dcfaba1b6d8333";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:2dfb800a874b097ebd3b1a30b1b69cdd02398b3e6e10f522f5a54d98d0a9e626";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
+  "AIRenameSessionTarget",
   "AbandonPendingUpdate",
   "AcceptDelivery",
   "AcceptDeliveryToTab",
@@ -162,6 +163,7 @@ export const DESKTOP_COMMANDS = [
   "ForkForTab",
   "ForkRemoteTab",
   "ForkSession",
+  "ForkSessionTarget",
   "ForkTargetsForTab",
   "ForkTargetsRemoteTab",
   "ForkWorktreeForTab",
@@ -209,6 +211,7 @@ export const DESKTOP_COMMANDS = [
   "HistoryPage",
   "HistoryPageForTab",
   "HistorySliceForTab",
+  "HistorySliceForTarget",
   "HooksSettings",
   "ImportThemePack",
   "InboxHasItems",
@@ -394,6 +397,7 @@ export const DESKTOP_COMMANDS = [
   "RenameRemoteProjectSession",
   "RenameSession",
   "RenameSessionHead",
+  "RenameSessionTarget",
   "RenameTerminalForTab",
   "RenameTopic",
   "RenameWorkspace",
@@ -491,10 +495,14 @@ export const DESKTOP_COMMANDS = [
   "SearchFileRefs",
   "SearchFileRefsForTab",
   "SearchHistoryContent",
+  "SearchHistoryContentForTarget",
   "SearchSessionHistoryForTab",
+  "SearchSessionHistoryForTarget",
   "SessionHistoryContentForTab",
   "SessionHistoryPageForTab",
+  "SessionHistoryPageForTarget",
   "SessionHistoryWindowForTab",
+  "SessionHistoryWindowForTarget",
   "SessionMessageFieldForTab",
   "SessionOpenForTab",
   "SetActiveSessionVersion",
@@ -3660,6 +3668,16 @@ export interface SessionMeta {
   recoveryCanonical?: boolean;
 }
 
+export interface SessionMutationResult {
+  targetKey: string;
+  operationId: string;
+  committed: boolean;
+  title?: string;
+  titleVersion?: string;
+  lifecycleGeneration: number;
+  projectionPending?: boolean;
+}
+
 export interface SessionRestoreResult {
   session: SessionRef;
   workspaceId: string;
@@ -3679,6 +3697,12 @@ export interface SessionRuntimeView {
   phase: string;
   epoch: string;
   issue?: SessionRuntimeIssue | null;
+}
+
+export interface SessionSelector {
+  ref?: SessionRef | null;
+  sessionPath?: string;
+  topicId?: string;
 }
 
 export interface SessionTakeoverView {
@@ -5057,6 +5081,7 @@ export interface MergeResult {
 
 export interface GeneratedDesktopCommands {
   AIRenameSession(arg0: string): Promise<string>;
+  AIRenameSessionTarget(arg0: SessionSelector): Promise<SessionMutationResult>;
   AbandonPendingUpdate(): Promise<void>;
   AcceptDelivery(): Promise<void>;
   AcceptDeliveryToTab(arg0: string): Promise<void>;
@@ -5212,6 +5237,7 @@ export interface GeneratedDesktopCommands {
   ForkForTab(arg0: string, arg1: number): Promise<TabMeta>;
   ForkRemoteTab(arg0: string, arg1: number, arg2: string): Promise<void>;
   ForkSession(arg0: SessionRef, arg1: string): Promise<SessionRef>;
+  ForkSessionTarget(arg0: SessionSelector, arg1: string): Promise<SessionRef>;
   ForkTargetsForTab(arg0: string): Promise<ForkTargetSetView>;
   ForkTargetsRemoteTab(arg0: string): Promise<ForkTargetSetView>;
   ForkWorktreeForTab(arg0: string, arg1: number): Promise<ForkWorktreeResultView>;
@@ -5259,6 +5285,7 @@ export interface GeneratedDesktopCommands {
   HistoryPage(arg0: number, arg1: number): Promise<HistoryPage>;
   HistoryPageForTab(arg0: string, arg1: number, arg2: number): Promise<HistoryPage>;
   HistorySliceForTab(arg0: string, arg1: HistorySliceRequest): Promise<HistorySlice>;
+  HistorySliceForTarget(arg0: SessionSelector, arg1: HistorySliceRequest): Promise<HistorySlice>;
   HooksSettings(arg0: string): Promise<HooksSettingsView>;
   ImportThemePack(arg0: string, arg1: boolean): Promise<ThemeImportResult>;
   InboxHasItems(arg0: string): Promise<boolean>;
@@ -5444,6 +5471,7 @@ export interface GeneratedDesktopCommands {
   RenameRemoteProjectSession(arg0: string, arg1: string, arg2: string, arg3: string): Promise<void>;
   RenameSession(arg0: string, arg1: string): Promise<void>;
   RenameSessionHead(arg0: string, arg1: string, arg2: string): Promise<void>;
+  RenameSessionTarget(arg0: SessionSelector, arg1: string): Promise<SessionMutationResult>;
   RenameTerminalForTab(arg0: string, arg1: string, arg2: string): Promise<void>;
   RenameTopic(arg0: string, arg1: string): Promise<void>;
   RenameWorkspace(arg0: string, arg1: string): Promise<void>;
@@ -5541,10 +5569,14 @@ export interface GeneratedDesktopCommands {
   SearchFileRefs(arg0: string): Promise<DirEntry[]>;
   SearchFileRefsForTab(arg0: string, arg1: string): Promise<DirEntry[]>;
   SearchHistoryContent(arg0: HistorySearchRequest): Promise<HistorySearchPage>;
+  SearchHistoryContentForTarget(arg0: SessionSelector, arg1: string, arg2: string, arg3: number): Promise<HistorySearchPage>;
   SearchSessionHistoryForTab(arg0: string, arg1: string, arg2: string, arg3: number): Promise<SearchHistoryPage>;
+  SearchSessionHistoryForTarget(arg0: SessionSelector, arg1: string, arg2: string, arg3: number): Promise<SearchHistoryPage>;
   SessionHistoryContentForTab(arg0: string, arg1: Ref, arg2: number): Promise<SessionHistoryContentChunk>;
   SessionHistoryPageForTab(arg0: string, arg1: string, arg2: number): Promise<MessageHistoryPage>;
+  SessionHistoryPageForTarget(arg0: SessionSelector, arg1: string, arg2: number): Promise<MessageHistoryPage>;
   SessionHistoryWindowForTab(arg0: string, arg1: HistoryWindowRequest): Promise<HistoryWindowPage>;
+  SessionHistoryWindowForTarget(arg0: SessionSelector, arg1: HistoryWindowRequest): Promise<HistoryWindowPage>;
   SessionMessageFieldForTab(arg0: string, arg1: string, arg2: number, arg3: string, arg4: number, arg5: number): Promise<MessageFieldPage>;
   SessionOpenForTab(arg0: string): Promise<SessionOpenView>;
   SetActiveSessionVersion(arg0: RecoveryPreferenceRequest): Promise<void>;

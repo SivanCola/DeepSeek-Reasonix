@@ -8,6 +8,9 @@ import (
 // DeleteSession is the legacy archive RPC. Canonical content and legacy
 // originals remain in place; the lifecycle owner rejects active runtimes.
 func (a *App) DeleteSession(path string) error {
+	if target, err := a.resolveSessionTargetWithArchived(sessionTargetSelector{SessionPath: path}, true); err == nil {
+		a.cancelAISessionTitle(target.key())
+	}
 	if id, ok := parseSessionRoute(path); ok {
 		return friendlySessionFileError(a.ArchiveCanonicalSession(session.SessionRef{HostID: localDesktopHostID, SessionID: id}))
 	}

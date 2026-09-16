@@ -13,6 +13,20 @@
       ]
     }
   },
+  "AIRenameSessionTarget": {
+    "domain": "desktop/session_ai_title.go",
+    "owner": "App.AIRenameSessionTarget",
+    "sources": [
+      "desktop/session_ai_title.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.AIRenameSessionTarget",
+      "inputs": [
+        "selector"
+      ]
+    }
+  },
   "AbandonPendingUpdate": {
     "domain": "desktop/updater_app.go",
     "owner": "App.AbandonPendingUpdate",
@@ -2270,6 +2284,21 @@
       ]
     }
   },
+  "ForkSessionTarget": {
+    "domain": "desktop/session_workspace_api.go",
+    "owner": "App.ForkSessionTarget",
+    "sources": [
+      "desktop/session_workspace_api.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.ForkSessionTarget",
+      "inputs": [
+        "selector",
+        "turnBoundary"
+      ]
+    }
+  },
   "ForkTargetsForTab": {
     "domain": "desktop/fork_targets.go",
     "owner": "App.ForkTargetsForTab",
@@ -2897,6 +2926,21 @@
       "resolver": "App.HistorySliceForTab",
       "inputs": [
         "tabID",
+        "req"
+      ]
+    }
+  },
+  "HistorySliceForTarget": {
+    "domain": "desktop/session_target_history_legacy.go",
+    "owner": "App.HistorySliceForTarget",
+    "sources": [
+      "desktop/session_target_history_legacy.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.HistorySliceForTarget",
+      "inputs": [
+        "selector",
         "req"
       ]
     }
@@ -5539,6 +5583,21 @@
       ]
     }
   },
+  "RenameSessionTarget": {
+    "domain": "desktop/session_operations.go",
+    "owner": "App.RenameSessionTarget",
+    "sources": [
+      "desktop/session_operations.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.RenameSessionTarget",
+      "inputs": [
+        "selector",
+        "title"
+      ]
+    }
+  },
   "RenameTerminalForTab": {
     "domain": "desktop/terminal.go",
     "owner": "App.RenameTerminalForTab",
@@ -6983,6 +7042,23 @@
       ]
     }
   },
+  "SearchHistoryContentForTarget": {
+    "domain": "desktop/session_target_history_legacy.go",
+    "owner": "App.SearchHistoryContentForTarget",
+    "sources": [
+      "desktop/session_target_history_legacy.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.SearchHistoryContentForTarget",
+      "inputs": [
+        "selector",
+        "query",
+        "cursor",
+        "limit"
+      ]
+    }
+  },
   "SearchSessionHistoryForTab": {
     "domain": "desktop/session_history_service.go",
     "owner": "App.SearchSessionHistoryForTab",
@@ -6994,6 +7070,23 @@
       "resolver": "App.SearchSessionHistoryForTab",
       "inputs": [
         "tabID",
+        "textQuery",
+        "cursor",
+        "limit"
+      ]
+    }
+  },
+  "SearchSessionHistoryForTarget": {
+    "domain": "desktop/session_history_service.go",
+    "owner": "App.SearchSessionHistoryForTarget",
+    "sources": [
+      "desktop/session_history_service.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.SearchSessionHistoryForTarget",
+      "inputs": [
+        "selector",
         "textQuery",
         "cursor",
         "limit"
@@ -7032,6 +7125,22 @@
       ]
     }
   },
+  "SessionHistoryPageForTarget": {
+    "domain": "desktop/session_history_service.go",
+    "owner": "App.SessionHistoryPageForTarget",
+    "sources": [
+      "desktop/session_history_service.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.SessionHistoryPageForTarget",
+      "inputs": [
+        "selector",
+        "cursor",
+        "limit"
+      ]
+    }
+  },
   "SessionHistoryWindowForTab": {
     "domain": "desktop/session_history_service.go",
     "owner": "App.SessionHistoryWindowForTab",
@@ -7043,6 +7152,21 @@
       "resolver": "App.SessionHistoryWindowForTab",
       "inputs": [
         "tabID",
+        "req"
+      ]
+    }
+  },
+  "SessionHistoryWindowForTarget": {
+    "domain": "desktop/session_history_service.go",
+    "owner": "App.SessionHistoryWindowForTarget",
+    "sources": [
+      "desktop/session_history_service.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.SessionHistoryWindowForTarget",
+      "inputs": [
+        "selector",
         "req"
       ]
     }

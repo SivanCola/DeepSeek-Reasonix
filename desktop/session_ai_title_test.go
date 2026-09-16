@@ -157,6 +157,26 @@ func TestAIRenameSessionDeduplicatesSameTarget(t *testing.T) {
 	}
 }
 
+func TestAISessionTitleOldFinallyCannotClearNewOperation(t *testing.T) {
+	app := NewApp()
+	_, oldCancel := context.WithCancelCause(context.Background())
+	defer oldCancel(context.Canceled)
+	_, newCancel := context.WithCancelCause(context.Background())
+	defer newCancel(context.Canceled)
+	const key = "path:/session"
+	app.aiSessionTitleInFlight[key] = aiSessionTitleOperation{ID: "old", Cancel: oldCancel}
+	app.cancelAISessionTitle(key)
+	app.aiSessionTitleInFlight[key] = aiSessionTitleOperation{ID: "new", Cancel: newCancel}
+	app.finishAISessionTitle(key, "old")
+	if got := app.aiSessionTitleInFlight[key].ID; got != "new" {
+		t.Fatalf("old finally cleared operation %q, want new", got)
+	}
+	app.finishAISessionTitle(key, "new")
+	if _, ok := app.aiSessionTitleInFlight[key]; ok {
+		t.Fatal("owning finally did not clear completed operation")
+	}
+}
+
 func newCanonicalTitleFixture(t *testing.T) (*App, *control.Controller, *session.Runtime, *desktopSessionTitleProvider, string) {
 	t.Helper()
 	isolateDesktopUserDirs(t)
@@ -264,7 +284,7 @@ func TestAIRenameCanonicalSessionPreservesManualRenameAndRejectsReboundControlle
 			prov.chunks <- provider.Chunk{Type: provider.ChunkText, Text: "stale AI title"}
 			prov.chunks <- provider.Chunk{Type: provider.ChunkDone}
 			close(prov.chunks)
-			if err := <-result; err == nil || !strings.Contains(err.Error(), "changed") {
+			if err := <-result; err == nil || (change == "binding" && !strings.Contains(err.Error(), "session_operation:target_changed:")) {
 				t.Fatalf("stale completion = %v", err)
 			}
 			info, err := ctrl.SessionService().Query().Stat(t.Context(), runtime.Ref())
@@ -289,7 +309,7 @@ func TestAIRenameSessionReadFailureIsNotEmptyHistory(t *testing.T) {
 	defer ctrl.Close()
 	app := NewApp()
 	installDesktopSessionTitleTab(app, ctrl, "topic-error", path)
-	if _, err := app.AIRenameSession("topic-error"); err == nil || !strings.Contains(err.Error(), "read conversation") || strings.Contains(err.Error(), "no user messages") {
+	if _, err := app.AIRenameSession("topic-error"); err == nil || !strings.Contains(err.Error(), "session_operation:operation_failed:") || strings.Contains(err.Error(), dir) {
 		t.Fatalf("read error = %v", err)
 	}
 }
@@ -373,7 +393,7 @@ func TestAIRenameSessionRejectsStaleProviderCompletion(t *testing.T) {
 	chunks <- provider.Chunk{Type: provider.ChunkDone}
 	close(chunks)
 
-	if err := <-result; err == nil || !strings.Contains(err.Error(), "session changed") {
+	if err := <-result; err == nil || !strings.Contains(err.Error(), "session_operation:target_changed:") {
 		t.Fatalf("stale completion error = %v", err)
 	}
 	for _, path := range []string{first, second} {

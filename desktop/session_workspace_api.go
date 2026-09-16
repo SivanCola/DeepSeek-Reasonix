@@ -365,19 +365,41 @@ func validateLocalSessionRef(ref session.SessionRef) error {
 }
 
 func (a *App) ArchiveCanonicalSession(ref session.SessionRef) error {
-	return a.archiveSessionRefs([]session.SessionRef{ref})
+	if err := a.archiveSessionRefs([]session.SessionRef{ref}); err != nil {
+		return err
+	}
+	target, _ := a.resolveCanonicalSessionTargetState(ref, "", true)
+	a.emitSessionTargetChange("session_archived", SessionTargetChangeEvent{
+		TargetKey: (SessionTarget{SessionRef: ref}).key(), LifecycleGeneration: target.LifecycleGeneration,
+		WorkspaceID: target.WorkspaceID,
+	})
+	return nil
 }
 
 func (a *App) RestoreCanonicalSession(ref session.SessionRef) error {
-	_, err := a.restoreCanonicalSession(a.bootContext(), ref, "")
-	return err
+	if _, err := a.restoreCanonicalSession(a.bootContext(), ref, ""); err != nil {
+		return err
+	}
+	target, _ := a.resolveCanonicalSessionTargetState(ref, "", true)
+	a.emitSessionTargetChange("session_restored", SessionTargetChangeEvent{
+		TargetKey: (SessionTarget{SessionRef: ref}).key(), LifecycleGeneration: target.LifecycleGeneration,
+		WorkspaceID: target.WorkspaceID,
+	})
+	return nil
 }
 
 func (a *App) MoveWorkspaceSession(workspaceID, sessionID, beforeSessionID string) error {
+	a.cancelAISessionTitle((SessionTarget{SessionRef: session.SessionRef{HostID: localDesktopHostID, SessionID: strings.TrimSpace(sessionID)}}).key())
 	if err := a.workspaceRegistry().MoveSession(context.Background(), workspaceID, sessionID, beforeSessionID); err != nil {
 		return err
 	}
 	a.emitProjectTreeChanged()
+	ref := session.SessionRef{HostID: localDesktopHostID, SessionID: strings.TrimSpace(sessionID)}
+	target, _ := a.resolveCanonicalSessionTargetState(ref, "", true)
+	a.emitSessionTargetChange("session_moved", SessionTargetChangeEvent{
+		TargetKey: (SessionTarget{SessionRef: ref}).key(), LifecycleGeneration: target.LifecycleGeneration,
+		WorkspaceID: workspaceID,
+	})
 	return nil
 }
 
@@ -467,18 +489,37 @@ func (a *App) ForkSession(ref session.SessionRef, turnBoundary string) (session.
 		return session.SessionRef{}, workspacestate.ErrSessionNotFound
 	}
 	service := a.desktopSessionService("")
-	binding, err := service.EnsureExecution(a.bootContext(), ref)
+	targets, err := service.ForkTargetSetFor(a.bootContext(), ref)
 	if err != nil {
 		return session.SessionRef{}, err
 	}
-	defer func() { _ = binding.Release(context.Background()) }()
 	turnBoundary = strings.TrimSpace(turnBoundary)
+	var selected session.ForkTarget
 	if turnBoundary == "" {
-		turns := binding.Runtime().Session().Snapshot().Projection.Turns
-		if len(turns) == 0 {
+		for i := len(targets.Targets) - 1; i >= 0; i-- {
+			if targets.Targets[i].Available {
+				selected = targets.Targets[i]
+				break
+			}
+		}
+		if selected.TurnID == "" {
 			return session.SessionRef{}, errors.New("session has no completed turn to fork")
 		}
-		turnBoundary = turns[len(turns)-1].TurnID
+		turnBoundary = selected.TurnID
+	} else {
+		for _, target := range targets.Targets {
+			if target.TurnID == turnBoundary {
+				selected = target
+				break
+			}
+		}
+		if selected.TurnID == "" || !selected.Available {
+			reason := selected.Reason
+			if reason == "" {
+				reason = session.ForkHistoryUnverifiable
+			}
+			return session.SessionRef{}, &session.ForkUnavailableError{TurnID: turnBoundary, Reason: reason}
+		}
 	}
 	childID := "desktop-" + strings.TrimPrefix(newTabID(), "tab_")
 	operationID := "fork-" + strings.TrimPrefix(newTabID(), "tab_")
@@ -487,19 +528,33 @@ func (a *App) ForkSession(ref session.SessionRef, turnBoundary string) (session.
 	}); err != nil {
 		return session.SessionRef{}, err
 	}
-	child, err := service.Fork(a.bootContext(), ref, turnBoundary, childID)
+	forked, err := service.CreateFork(a.bootContext(), session.ForkRequest{
+		Source: ref, TurnID: turnBoundary, BoundarySequence: selected.BoundarySequence,
+		OperationID: operationID, ChildID: childID,
+	})
 	if err != nil {
 		_ = a.workspaceRegistry().AbortCreate(context.Background(), childID)
-		return session.SessionRef{}, err
-	}
-	if _, err := child.Session().Flush(a.bootContext()); err != nil {
 		return session.SessionRef{}, err
 	}
 	if err := a.workspaceRegistry().AttachSession(a.bootContext(), operationID, workspaceID, childID, beforeID); err != nil {
 		return session.SessionRef{}, err
 	}
 	a.emitProjectTreeChanged()
-	return child.Ref(), nil
+	return forked.Child, nil
+}
+
+// ForkSessionTarget forks one explicit durable target without staging it into
+// the current tab. Legacy-only sources must first be adopted into canonical
+// storage so turn boundaries remain verifiable.
+func (a *App) ForkSessionTarget(selector SessionSelector, turnBoundary string) (session.SessionRef, error) {
+	target, err := a.resolveSessionTarget(selector)
+	if err != nil {
+		return session.SessionRef{}, err
+	}
+	if target.SessionRef.SessionID == "" {
+		return session.SessionRef{}, newSessionOperationError("unsupported", "This historical session has no verifiable canonical turn boundaries.")
+	}
+	return a.ForkSession(target.SessionRef, turnBoundary)
 }
 
 func (a *App) ReadSessionHistory(ref session.SessionRef, cursor string, limit int) (HistoryPage, error) {
@@ -557,6 +612,7 @@ func (a *App) RenameCanonicalSession(ref session.SessionRef, title string) error
 	if err := validateLocalSessionRef(ref); err != nil {
 		return err
 	}
+	a.cancelAISessionTitle((SessionTarget{SessionRef: ref}).key())
 	a.topicTitleMutationMu.Lock()
 	defer a.topicTitleMutationMu.Unlock()
 	contained, err := a.workspaceRegistry().Contains(a.bootContext(), ref.SessionID)

@@ -25,13 +25,17 @@ const (
 	sessionOperationRuntimeNotReady = "runtime_not_ready"
 	sessionOperationTitleConflict   = "title_conflict"
 	sessionOperationBusy            = "operation_busy"
+	sessionOperationFailed          = "operation_failed"
 )
 
 // SessionOperationError is stable at the host boundary: the code is intended
 // for frontend localization while the message remains safe for older clients.
 type SessionOperationError struct {
-	Code    string
-	Message string
+	Code        string
+	Message     string
+	TargetKey   string
+	OperationID string
+	Retryable   bool
 }
 
 func (e *SessionOperationError) Error() string {
@@ -42,7 +46,33 @@ func (e *SessionOperationError) Error() string {
 }
 
 func newSessionOperationError(code, message string) error {
-	return &SessionOperationError{Code: code, Message: message}
+	retryable := code == sessionOperationRuntimeNotReady || code == sessionOperationTitleConflict ||
+		code == sessionOperationBusy || code == "target_changed" || code == "stale_cursor"
+	return &SessionOperationError{Code: code, Message: message, Retryable: retryable}
+}
+
+// RPCErrorData exposes product-safe structured details to the generic host
+// transport without making hostrpc depend on Desktop application types.
+func (e *SessionOperationError) RPCErrorData() map[string]any {
+	if e == nil {
+		return nil
+	}
+	data := map[string]any{"sessionCode": e.Code, "retryable": e.Retryable}
+	if e.TargetKey != "" {
+		data["targetKey"] = e.TargetKey
+	}
+	if e.OperationID != "" {
+		data["operationId"] = e.OperationID
+	}
+	return data
+}
+
+// SessionSelector is the stable target address accepted by session-level
+// operations. Higher-priority fields never fall back when invalid.
+type SessionSelector struct {
+	Ref         *session.SessionRef `json:"ref,omitempty"`
+	SessionPath string              `json:"sessionPath,omitempty"`
+	TopicID     string              `json:"topicId,omitempty"`
 }
 
 // SessionTarget resolves durable identity independently from runtime state.
@@ -60,14 +90,11 @@ type SessionTarget struct {
 	Controller          *control.Controller
 	WorkspaceID         string
 	LifecycleGeneration uint64
+	Lifecycle           string
 	SharedTopic         bool
 }
 
-type sessionTargetSelector struct {
-	Ref         *session.SessionRef
-	SessionPath string
-	TopicID     string
-}
+type sessionTargetSelector = SessionSelector
 
 func (target SessionTarget) key() string {
 	if strings.TrimSpace(target.SessionRef.SessionID) != "" {
@@ -90,12 +117,16 @@ func (target SessionTarget) RequireRuntime() (*control.Controller, error) {
 }
 
 func (a *App) resolveSessionTarget(selector sessionTargetSelector) (SessionTarget, error) {
+	return a.resolveSessionTargetWithArchived(selector, false)
+}
+
+func (a *App) resolveSessionTargetWithArchived(selector sessionTargetSelector, allowArchived bool) (SessionTarget, error) {
 	if selector.Ref != nil && strings.TrimSpace(selector.Ref.SessionID) != "" {
-		return a.resolveCanonicalSessionTarget(*selector.Ref, strings.TrimSpace(selector.TopicID))
+		return a.resolveCanonicalSessionTargetState(*selector.Ref, strings.TrimSpace(selector.TopicID), allowArchived)
 	}
 	if path := strings.TrimSpace(selector.SessionPath); path != "" {
 		if ref, ok := sessionRefForRoute(a.desktopSessionService(""), path); ok {
-			return a.resolveCanonicalSessionTarget(ref, strings.TrimSpace(selector.TopicID))
+			return a.resolveCanonicalSessionTargetState(ref, strings.TrimSpace(selector.TopicID), allowArchived)
 		}
 		return a.resolveLegacySessionTarget(path, strings.TrimSpace(selector.TopicID))
 	}
@@ -106,11 +137,11 @@ func (a *App) resolveSessionTarget(selector sessionTargetSelector) (SessionTarge
 	if ref, ok, err := a.canonicalSessionRefForTopic(topicID); err != nil {
 		return SessionTarget{}, err
 	} else if ok {
-		return a.resolveCanonicalSessionTarget(ref, topicID)
+		return a.resolveCanonicalSessionTargetState(ref, topicID, allowArchived)
 	}
 	if runtime := a.runtimeSessionTarget(topicID, session.SessionRef{}, ""); runtime.Controller != nil {
 		if ref, ok := runtime.Controller.SessionRef(); ok {
-			target, err := a.resolveCanonicalSessionTarget(ref, topicID)
+			target, err := a.resolveCanonicalSessionTargetState(ref, topicID, allowArchived)
 			if err == nil {
 				return target, nil
 			}
@@ -169,6 +200,10 @@ func (a *App) canonicalSessionRefForTopic(topicID string) (session.SessionRef, b
 }
 
 func (a *App) resolveCanonicalSessionTarget(ref session.SessionRef, topicID string) (SessionTarget, error) {
+	return a.resolveCanonicalSessionTargetState(ref, topicID, false)
+}
+
+func (a *App) resolveCanonicalSessionTargetState(ref session.SessionRef, topicID string, allowArchived bool) (SessionTarget, error) {
 	if err := validateLocalSessionRef(ref); err != nil {
 		return SessionTarget{}, newSessionOperationError(sessionOperationTargetNotFound, "The session no longer exists.")
 	}
@@ -189,10 +224,11 @@ func (a *App) resolveCanonicalSessionTarget(ref session.SessionRef, topicID stri
 	if !registered || status.Lifecycle == workspacestate.Deleted {
 		return SessionTarget{}, newSessionOperationError(sessionOperationTargetNotFound, "The session no longer exists.")
 	}
-	if status.Lifecycle != workspacestate.Active {
+	if status.Lifecycle != workspacestate.Active && !allowArchived {
 		return SessionTarget{}, newSessionOperationError("archived", "Restore this session before renaming it.")
 	}
 	target.LifecycleGeneration = status.Generation
+	target.Lifecycle = status.Lifecycle
 	// Presentation belongs to this exact session, never a caller's stale topic.
 	target.TopicID = state.Presentation[ref.SessionID].TopicID
 	for id, presentation := range state.Presentation {

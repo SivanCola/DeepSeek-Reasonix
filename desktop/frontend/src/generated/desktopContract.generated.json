@@ -27,6 +27,33 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/session_ai_title.go",
+      "name": "AIRenameSessionTarget",
+      "owner": "App.AIRenameSessionTarget",
+      "params": [
+        {
+          "kind": "object",
+          "ref": "main.SessionSelector"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.SessionMutationResult"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "selector"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.AIRenameSessionTarget"
+      },
+      "sources": [
+        "desktop/session_ai_title.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/updater_app.go",
       "name": "AbandonPendingUpdate",
       "owner": "App.AbandonPendingUpdate",
@@ -4264,6 +4291,37 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/session_workspace_api.go",
+      "name": "ForkSessionTarget",
+      "owner": "App.ForkSessionTarget",
+      "params": [
+        {
+          "kind": "object",
+          "ref": "main.SessionSelector"
+        },
+        {
+          "kind": "string"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "session.SessionRef"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "selector",
+          "turnBoundary"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.ForkSessionTarget"
+      },
+      "sources": [
+        "desktop/session_workspace_api.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/fork_targets.go",
       "name": "ForkTargetsForTab",
       "owner": "App.ForkTargetsForTab",
@@ -5401,6 +5459,38 @@
       },
       "sources": [
         "desktop/history_slice.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/session_target_history_legacy.go",
+      "name": "HistorySliceForTarget",
+      "owner": "App.HistorySliceForTarget",
+      "params": [
+        {
+          "kind": "object",
+          "ref": "main.SessionSelector"
+        },
+        {
+          "kind": "object",
+          "ref": "main.HistorySliceRequest"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.HistorySlice"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "selector",
+          "req"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.HistorySliceForTarget"
+      },
+      "sources": [
+        "desktop/session_target_history_legacy.go"
       ]
     },
     {
@@ -10338,6 +10428,37 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/session_operations.go",
+      "name": "RenameSessionTarget",
+      "owner": "App.RenameSessionTarget",
+      "params": [
+        {
+          "kind": "object",
+          "ref": "main.SessionSelector"
+        },
+        {
+          "kind": "string"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.SessionMutationResult"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "selector",
+          "title"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.RenameSessionTarget"
+      },
+      "sources": [
+        "desktop/session_operations.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/terminal.go",
       "name": "RenameTerminalForTab",
       "owner": "App.RenameTerminalForTab",
@@ -13069,6 +13190,45 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/session_target_history_legacy.go",
+      "name": "SearchHistoryContentForTarget",
+      "owner": "App.SearchHistoryContentForTarget",
+      "params": [
+        {
+          "kind": "object",
+          "ref": "main.SessionSelector"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "integer"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.HistorySearchPage"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "selector",
+          "query",
+          "cursor",
+          "limit"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.SearchHistoryContentForTarget"
+      },
+      "sources": [
+        "desktop/session_target_history_legacy.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/session_history_service.go",
       "name": "SearchSessionHistoryForTab",
       "owner": "App.SearchSessionHistoryForTab",
@@ -13100,6 +13260,45 @@
         ],
         "kind": "owner-inputs",
         "resolver": "App.SearchSessionHistoryForTab"
+      },
+      "sources": [
+        "desktop/session_history_service.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/session_history_service.go",
+      "name": "SearchSessionHistoryForTarget",
+      "owner": "App.SearchSessionHistoryForTarget",
+      "params": [
+        {
+          "kind": "object",
+          "ref": "main.SessionSelector"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "integer"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "session.SearchHistoryPage"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "selector",
+          "textQuery",
+          "cursor",
+          "limit"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.SearchSessionHistoryForTarget"
       },
       "sources": [
         "desktop/session_history_service.go"
@@ -13177,6 +13376,41 @@
     {
       "cancellation": "before-dispatch",
       "domain": "desktop/session_history_service.go",
+      "name": "SessionHistoryPageForTarget",
+      "owner": "App.SessionHistoryPageForTarget",
+      "params": [
+        {
+          "kind": "object",
+          "ref": "main.SessionSelector"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "integer"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "session.MessageHistoryPage"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "selector",
+          "cursor",
+          "limit"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.SessionHistoryPageForTarget"
+      },
+      "sources": [
+        "desktop/session_history_service.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/session_history_service.go",
       "name": "SessionHistoryWindowForTab",
       "owner": "App.SessionHistoryWindowForTab",
       "params": [
@@ -13200,6 +13434,38 @@
         ],
         "kind": "owner-inputs",
         "resolver": "App.SessionHistoryWindowForTab"
+      },
+      "sources": [
+        "desktop/session_history_service.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/session_history_service.go",
+      "name": "SessionHistoryWindowForTarget",
+      "owner": "App.SessionHistoryWindowForTarget",
+      "params": [
+        {
+          "kind": "object",
+          "ref": "main.SessionSelector"
+        },
+        {
+          "kind": "object",
+          "ref": "session.HistoryWindowRequest"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "session.HistoryWindowPage"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "selector",
+          "req"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.SessionHistoryWindowForTarget"
       },
       "sources": [
         "desktop/session_history_service.go"
@@ -33991,6 +34257,55 @@
         }
       ]
     },
+    "main.SessionMutationResult": {
+      "fields": [
+        {
+          "name": "targetKey",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "operationId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "committed",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "title",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "titleVersion",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "lifecycleGeneration",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "projectionPending",
+          "optional": true,
+          "type": {
+            "kind": "boolean"
+          }
+        }
+      ]
+    },
     "main.SessionRestoreResult": {
       "fields": [
         {
@@ -34080,6 +34395,35 @@
               "ref": "main.SessionRuntimeIssue"
             },
             "kind": "nullable"
+          }
+        }
+      ]
+    },
+    "main.SessionSelector": {
+      "fields": [
+        {
+          "name": "ref",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "session.SessionRef"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "sessionPath",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "topicId",
+          "optional": true,
+          "type": {
+            "kind": "string"
           }
         }
       ]

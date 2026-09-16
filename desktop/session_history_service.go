@@ -33,6 +33,19 @@ func (a *App) SessionHistoryPageForTab(tabID, cursor string, limit int) (session
 	return query.HistoryPage(context.Background(), ref, cursor, limit)
 }
 
+// SessionHistoryPageForTarget reads a cold or live canonical session by its
+// explicit durable identity. It never stages the session into a tab.
+func (a *App) SessionHistoryPageForTarget(selector SessionSelector, cursor string, limit int) (session.MessageHistoryPage, error) {
+	target, err := a.resolveSessionTargetWithArchived(selector, true)
+	if err != nil {
+		return session.MessageHistoryPage{}, err
+	}
+	if target.SessionRef.SessionID == "" {
+		return session.MessageHistoryPage{}, newSessionOperationError("unsupported", "This historical session uses the legacy history reader.")
+	}
+	return a.desktopSessionService("").Query().HistoryPage(context.Background(), target.SessionRef, cursor, limit)
+}
+
 // SessionOpenForTab returns the bounded recent baseline and independent
 // preparation states without consulting either SQLite projection.
 func (a *App) SessionOpenForTab(tabID string) (session.SessionOpenView, error) {
@@ -49,6 +62,19 @@ func (a *App) SearchSessionHistoryForTab(tabID, textQuery, cursor string, limit 
 		return session.SearchHistoryPage{}, err
 	}
 	return query.SearchHistory(context.Background(), ref, textQuery, cursor, limit)
+}
+
+// SearchSessionHistoryForTarget searches one explicit canonical session
+// without consulting the active tab.
+func (a *App) SearchSessionHistoryForTarget(selector SessionSelector, textQuery, cursor string, limit int) (session.SearchHistoryPage, error) {
+	target, err := a.resolveSessionTargetWithArchived(selector, true)
+	if err != nil {
+		return session.SearchHistoryPage{}, err
+	}
+	if target.SessionRef.SessionID == "" {
+		return session.SearchHistoryPage{}, newSessionOperationError("unsupported", "This historical session uses the legacy search index.")
+	}
+	return a.desktopSessionService("").Query().SearchHistory(context.Background(), target.SessionRef, textQuery, cursor, limit)
 }
 
 func (a *App) LocateSessionMessageForTab(tabID, messageID string, snapshot uint64) (session.MessageLocation, error) {
@@ -90,6 +116,19 @@ func (a *App) SessionHistoryWindowForTab(tabID string, req session.HistoryWindow
 		return session.HistoryWindowPage{}, err
 	}
 	return query.ReadHistoryWindow(context.Background(), ref, req)
+}
+
+// SessionHistoryWindowForTarget resolves a fixed-snapshot window for one
+// explicit canonical target and does not alter the visible transcript.
+func (a *App) SessionHistoryWindowForTarget(selector SessionSelector, req session.HistoryWindowRequest) (session.HistoryWindowPage, error) {
+	target, err := a.resolveSessionTargetWithArchived(selector, true)
+	if err != nil {
+		return session.HistoryWindowPage{}, err
+	}
+	if target.SessionRef.SessionID == "" {
+		return session.HistoryWindowPage{}, newSessionOperationError("unsupported", "This historical session uses the legacy history reader.")
+	}
+	return a.desktopSessionService("").Query().ReadHistoryWindow(context.Background(), target.SessionRef, req)
 }
 
 // SessionMessageFieldForTab returns one bounded fragment of one top-level
