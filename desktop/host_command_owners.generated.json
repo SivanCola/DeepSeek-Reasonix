@@ -465,6 +465,20 @@
       ]
     }
   },
+  "ApplySessionLifecycle": {
+    "domain": "desktop/session_lifecycle_api.go",
+    "owner": "App.ApplySessionLifecycle",
+    "sources": [
+      "desktop/session_lifecycle_api.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.ApplySessionLifecycle",
+      "inputs": [
+        "req"
+      ]
+    }
+  },
   "ApplyUpdateRequest": {
     "domain": "desktop/updater_app.go",
     "owner": "App.ApplyUpdateRequest",
@@ -1673,10 +1687,10 @@
     }
   },
   "DeleteSession": {
-    "domain": "desktop/app.go",
+    "domain": "desktop/session_legacy_lifecycle_rpc.go",
     "owner": "App.DeleteSession",
     "sources": [
-      "desktop/app.go"
+      "desktop/session_legacy_lifecycle_rpc.go"
     ],
     "scope": {
       "kind": "owner-inputs",
@@ -2490,6 +2504,18 @@
       "inputs": []
     }
   },
+  "GetSessionUpgradeStatus": {
+    "domain": "desktop/session_recovery_api.go",
+    "owner": "App.GetSessionUpgradeStatus",
+    "sources": [
+      "desktop/session_recovery_api.go"
+    ],
+    "scope": {
+      "kind": "owner-state",
+      "resolver": "App.GetSessionUpgradeStatus",
+      "inputs": []
+    }
+  },
   "GetSessionVersionState": {
     "domain": "desktop/recovery_lineage.go",
     "owner": "App.GetSessionVersionState",
@@ -3172,6 +3198,22 @@
       "inputs": []
     }
   },
+  "ListRecoveryEntries": {
+    "domain": "desktop/session_recovery_api.go",
+    "owner": "App.ListRecoveryEntries",
+    "sources": [
+      "desktop/session_recovery_api.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.ListRecoveryEntries",
+      "inputs": [
+        "query",
+        "cursor",
+        "limit"
+      ]
+    }
+  },
   "ListRemoteDir": {
     "domain": "desktop/remote_app.go",
     "owner": "App.ListRemoteDir",
@@ -3331,6 +3373,22 @@
       "kind": "owner-state",
       "resolver": "App.ListThemePacks",
       "inputs": []
+    }
+  },
+  "ListTrashEntries": {
+    "domain": "desktop/session_lifecycle_api.go",
+    "owner": "App.ListTrashEntries",
+    "sources": [
+      "desktop/session_lifecycle_api.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.ListTrashEntries",
+      "inputs": [
+        "query",
+        "cursor",
+        "limit"
+      ]
     }
   },
   "ListTrashedSessions": {
@@ -4348,6 +4406,20 @@
       ]
     }
   },
+  "PreviewRecoveryEntry": {
+    "domain": "desktop/session_recovery_api.go",
+    "owner": "App.PreviewRecoveryEntry",
+    "sources": [
+      "desktop/session_recovery_api.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.PreviewRecoveryEntry",
+      "inputs": [
+        "id"
+      ]
+    }
+  },
   "PreviewRewindForTab": {
     "domain": "desktop/app.go",
     "owner": "App.PreviewRewindForTab",
@@ -4393,6 +4465,20 @@
       ]
     }
   },
+  "PurgeCanonicalSession": {
+    "domain": "desktop/session_purge.go",
+    "owner": "App.PurgeCanonicalSession",
+    "sources": [
+      "desktop/session_purge.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.PurgeCanonicalSession",
+      "inputs": [
+        "ref"
+      ]
+    }
+  },
   "PurgeRecoveryCopy": {
     "domain": "desktop/app.go",
     "owner": "App.PurgeRecoveryCopy",
@@ -4408,10 +4494,10 @@
     }
   },
   "PurgeTrashedSession": {
-    "domain": "desktop/app.go",
+    "domain": "desktop/session_legacy_lifecycle_rpc.go",
     "owner": "App.PurgeTrashedSession",
     "sources": [
-      "desktop/app.go"
+      "desktop/session_legacy_lifecycle_rpc.go"
     ],
     "scope": {
       "kind": "owner-inputs",
@@ -6056,6 +6142,21 @@
         "tabID",
         "ref",
         "revision"
+      ]
+    }
+  },
+  "RestoreRecoveryEntry": {
+    "domain": "desktop/session_recovery_api.go",
+    "owner": "App.RestoreRecoveryEntry",
+    "sources": [
+      "desktop/session_recovery_api.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.RestoreRecoveryEntry",
+      "inputs": [
+        "id",
+        "operationID"
       ]
     }
   },

@@ -588,7 +588,7 @@ func TestCloseTabSurvivorKeepsAutosave(t *testing.T) {
 	}
 }
 
-func TestDeleteSessionClearsRemovedRuntimeSessionPath(t *testing.T) {
+func TestLegacyDeleteSessionClearsRemovedRuntimeSessionPath(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
 	dir := t.TempDir()
@@ -609,7 +609,7 @@ func TestDeleteSessionClearsRemovedRuntimeSessionPath(t *testing.T) {
 		t.Fatalf("snapshot: %v", err)
 	}
 
-	if err := app.DeleteSession(path); err != nil {
+	if err := app.deleteSession(path); err != nil {
 		t.Fatalf("DeleteSession: %v", err)
 	}
 
@@ -671,6 +671,7 @@ func TestTrashTopicClearsRemovedRuntimeSessionPath(t *testing.T) {
 		activeTabID: "trash_open",
 	}
 
+	pinDesktopSessionRoot(t, app)
 	if err := app.TrashTopic(topicID); err != nil {
 		t.Fatalf("TrashTopic: %v", err)
 	}
@@ -678,8 +679,5 @@ func TestTrashTopicClearsRemovedRuntimeSessionPath(t *testing.T) {
 	if got := ctrl.SessionPath(); got != "" {
 		t.Fatalf("removed topic controller session path = %q, want empty before trash move can race Windows file locks", got)
 	}
-	trashPath := filepath.Join(dir, sessionTrashDir, "trash-open-topic.jsonl", "trash-open-topic.jsonl")
-	if _, err := os.Stat(trashPath); err != nil {
-		t.Fatalf("topic session should be in trash: %v", err)
-	}
+	assertLegacyLifecycle(t, app, path, "archived")
 }

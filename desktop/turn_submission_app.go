@@ -184,7 +184,9 @@ func (a *App) submitDisplayToTab(tabID, display, input, submissionID string) err
 	}
 	defer admission.abort()
 	tab := admission.tab
-	a.ensureTabTopicIndexedForUserTurn(tab)
+	if err := a.ensureTabTopicIndexedForUserTurn(tab); err != nil {
+		return err
+	}
 	if err := submitIdentified(ctrl, req, func() { ctrl.SubmitDisplay(display, input) }); err != nil {
 		return err
 	}
@@ -210,7 +212,9 @@ func (a *App) submitDeliveryRecoveryToTab(tabID, display, input, submissionID st
 	}
 	defer admission.abort()
 	tab := admission.tab
-	a.ensureTabTopicIndexedForUserTurn(tab)
+	if err := a.ensureTabTopicIndexedForUserTurn(tab); err != nil {
+		return err
+	}
 	if err := submitIdentified(ctrl, req, func() { ctrl.SubmitDeliveryRecovery(display, input) }); err != nil {
 		return err
 	}
@@ -236,7 +240,9 @@ func (a *App) submitInvocationsToTab(tabID, display, input string, invocations [
 	}
 	defer admission.abort()
 	tab := admission.tab
-	a.ensureTabTopicIndexedForUserTurn(tab)
+	if err := a.ensureTabTopicIndexedForUserTurn(tab); err != nil {
+		return err
+	}
 	if err := submitIdentified(ctrl, req, func() { ctrl.SubmitInvocationDisplay(display, input, controlInvocationRequests(invocations)) }); err != nil {
 		return err
 	}
@@ -275,7 +281,9 @@ func (a *App) submitEditedDisplayToTab(tabID, display, input, original, submissi
 	}
 	defer admission.abort()
 	tab := admission.tab
-	a.ensureTabTopicIndexedForUserTurn(tab)
+	if err := a.ensureTabTopicIndexedForUserTurn(tab); err != nil {
+		return err
+	}
 	if err := submitIdentified(ctrl, req, func() { ctrl.SubmitEditedDisplay(display, input, original) }); err != nil {
 		return err
 	}
@@ -290,17 +298,7 @@ func (a *App) submitToTabResult(tabID, input string, fromBridge, classifyManagem
 	management := control.SubmitResult{Disposition: control.SubmitManagementHandled}
 	trimmed := strings.TrimSpace(input)
 	if trimmed == "/reload" {
-		tab, _ := a.tabAndCtrlByID(tabID)
-		if a.tabIsReadOnly(tab) {
-			return control.SubmitResult{}, readOnlyChannelErr()
-		}
-		if tab == nil {
-			return control.SubmitResult{}, a.workspaceNotReadyErr(tab)
-		}
-		if !fromBridge && a.botBridge != nil {
-			a.botBridge.reclaimFromDesktop(tab.ID)
-		}
-		return management, a.ReloadRuntime(tab.ID)
+		return a.submitReloadCommand(tabID, fromBridge)
 	}
 	if trimmed == "/effort" || strings.HasPrefix(trimmed, "/effort ") {
 		tab, _ := a.tabAndCtrlByID(tabID)
@@ -346,7 +344,9 @@ func (a *App) submitToTabResult(tabID, input string, fromBridge, classifyManagem
 			}
 			defer admission.abort()
 			tab = admission.tab
-			a.ensureTabTopicIndexedForUserTurn(tab)
+			if err := a.ensureTabTopicIndexedForUserTurn(tab); err != nil {
+				return control.SubmitResult{}, err
+			}
 			if submitter, supported := admittedCtrl.(interface {
 				SubmitDisplayWithResult(display, input string) control.SubmitResult
 			}); supported {
@@ -366,7 +366,9 @@ func (a *App) submitToTabResult(tabID, input string, fromBridge, classifyManagem
 	}
 	defer admission.abort()
 	tab := admission.tab
-	a.ensureTabTopicIndexedForUserTurn(tab)
+	if err := a.ensureTabTopicIndexedForUserTurn(tab); err != nil {
+		return control.SubmitResult{}, err
+	}
 	result := control.SubmitResult{Disposition: control.SubmitTurnStarted}
 	if identified, ok := ctrl.(*control.Controller); ok && firstSubmissionID(submissionID) != "" && identified.ClassifySubmitRoute(input) != control.SubmitManagementHandled {
 		_, err := identified.SubmitIdentified(control.SubmissionRequest{ID: firstSubmissionID(submissionID), Input: input, Display: input})
@@ -382,4 +384,19 @@ func (a *App) submitToTabResult(tabID, input string, fromBridge, classifyManagem
 	}
 	admission.finish(ctrl)
 	return result, nil
+}
+
+func (a *App) submitReloadCommand(tabID string, fromBridge bool) (control.SubmitResult, error) {
+	management := control.SubmitResult{Disposition: control.SubmitManagementHandled}
+	tab, _ := a.tabAndCtrlByID(tabID)
+	if a.tabIsReadOnly(tab) {
+		return control.SubmitResult{}, readOnlyChannelErr()
+	}
+	if tab == nil {
+		return control.SubmitResult{}, a.workspaceNotReadyErr(tab)
+	}
+	if !fromBridge && a.botBridge != nil {
+		a.botBridge.reclaimFromDesktop(tab.ID)
+	}
+	return management, a.ReloadRuntime(tab.ID)
 }

@@ -16,6 +16,74 @@ import (
 	"reasonix/internal/store"
 )
 
+func TestMigrationRevisionIgnoresCatalogRebuildButTracksDurableSources(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.jsonl")
+	if err := os.WriteFile(path, []byte("history"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	files := legacyMigrationSourceFiles(path)
+	before, err := desktopMigrationSourceRevision(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, index := range []string{store.SessionEventIndex(path), store.SessionDisplayIndex(path), store.SessionTranscriptProjection(path)} {
+		if err := os.WriteFile(index, []byte("rebuilt cache"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	after, err := desktopMigrationSourceRevision(files)
+	if err != nil || after != before {
+		t.Fatalf("catalog rebuild changed source identity: %v", err)
+	}
+	if err := os.WriteFile(store.SessionMeta(path), []byte(`{"workspace_root":"changed"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	after, err = desktopMigrationSourceRevision(files)
+	if err != nil || after == before {
+		t.Fatalf("ownership change was ignored: %v", err)
+	}
+}
+
+func TestMigrationCheckpointAllowsProjectionRepairButRejectsHistoryChange(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	path := filepath.Join(t.TempDir(), "history.jsonl")
+	if err := os.WriteFile(path, []byte("original history"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	meta := store.SessionMeta(path)
+	if err := os.WriteFile(meta, []byte(`{"id":"history","workspace_root":"original","future":{"proof":1}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cp, err := newDesktopMigrationCheckpoint(desktopMigrationSource{}, "projection-test", legacyMigrationSourceFiles(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("original history"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(meta, []byte(`{"id":"history","workspace_root":"original","future":{"proof":1},"turns":1,"schema_version":2,"writer_id":"repair"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := cp.complete("target", "content"); err != nil {
+		t.Fatalf("projection repair rejected: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("changed history"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := cp.complete("target", "content"); err == nil {
+		t.Fatal("changed history accepted")
+	}
+	if err := os.WriteFile(path, []byte("original history"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(meta, []byte(`{"id":"history","workspace_root":"other","future":{"proof":1}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := cp.complete("target", "content"); err == nil {
+		t.Fatal("changed ownership accepted")
+	}
+}
+
 func appendMigrationTestMessage(t *testing.T, service *session.Service, ref session.SessionRef, id string) {
 	t.Helper()
 	binding, err := service.Open(t.Context(), ref)
@@ -46,7 +114,7 @@ func onlyMigrationRecord(t *testing.T) desktopMigrationRecord {
 	panic("unreachable")
 }
 
-func TestIncrementalMigrationPreservesContinuedTargetsAndImportsSourceChanges(t *testing.T) {
+func TestIncrementalMigrationPreservesContinuedTargetsAndQuarantinesSourceChanges(t *testing.T) {
 	for _, kind := range []string{"v4", "legacy"} {
 		for _, oldLedger := range []bool{false, true} {
 			name := kind + "/current-ledger"
@@ -165,12 +233,25 @@ func TestIncrementalMigrationPreservesContinuedTargetsAndImportsSourceChanges(t 
 					t.Fatal(err)
 				}
 				changed := onlyMigrationRecord(t)
-				if changed.TargetSessionID == first.TargetSessionID || changed.Attempts != first.Attempts+1 || changed.ContentDigest == first.ContentDigest {
-					t.Fatalf("source update not imported separately: %#v", changed)
+				if changed.TargetSessionID != first.TargetSessionID || changed.ContentDigest != first.ContentDigest {
+					t.Fatalf("source change replaced adoption: %#v", changed)
 				}
 				state, err := app.workspaceRegistry().Load(t.Context())
-				if err != nil || state.Workspaces[workspacestate.GlobalWorkspaceID].Title != "user workspace name" || state.Workspaces[workspacestate.GlobalWorkspaceID].Visible {
-					t.Fatalf("new source reset workspace presentation: %#v, %v", state, err)
+				if err != nil || len(state.RecoveryEntries) != 1 {
+					t.Fatalf("changed source not quarantined: %+v %v", state.RecoveryEntries, err)
+				}
+				var recoveryID string
+				for id := range state.RecoveryEntries {
+					recoveryID = id
+				}
+				// User review creates an independent target; old work remains intact.
+				result, err := app.RestoreRecoveryEntry(recoveryID, "review-changed-source")
+				if err != nil {
+					t.Fatal(err)
+				}
+				newRef := result.Session
+				if newRef == ref {
+					t.Fatal("review overwrote continued session")
 				}
 				for range 2 {
 					if err := migrate(app); err != nil {
@@ -179,17 +260,17 @@ func TestIncrementalMigrationPreservesContinuedTargetsAndImportsSourceChanges(t 
 				}
 				infos, err := listAllCanonicalSessionInfo(t.Context(), app.desktopSessionService("").Query())
 				if err != nil || len(infos) != 2 {
-					t.Fatalf("expected original continued target and one source update: %#v, %v", infos, err)
+					t.Fatalf("review duplicated source: %#v %v", infos, err)
 				}
 				history, err := app.desktopSessionService("").Query().History(t.Context(), ref)
 				if err != nil || len(history) == 0 || history[len(history)-1].Content != "new-v5-work" {
-					t.Fatalf("continued work changed: %#v, %v", history, err)
+					t.Fatalf("continued work changed: %#v %v", history, err)
 				}
-				newRef := session.SessionRef{HostID: localDesktopHostID, SessionID: changed.TargetSessionID}
 				history, err = app.desktopSessionService("").Query().History(t.Context(), newRef)
 				if err != nil || len(history) == 0 || history[len(history)-1].Content != "new-source-work" {
-					t.Fatalf("source update lost: %#v, %v", history, err)
+					t.Fatalf("source update lost: %#v %v", history, err)
 				}
+
 				before, err := os.ReadFile(desktopMigrationLedgerPath())
 				if err != nil {
 					t.Fatal(err)
@@ -206,7 +287,7 @@ func TestIncrementalMigrationPreservesContinuedTargetsAndImportsSourceChanges(t 
 				if err != nil || !bytes.Equal(before, after) {
 					t.Fatalf("unchanged migration rewrote ledger: %v", err)
 				}
-				if _, err := os.Stat(filepath.Join(app.desktopSessions.root, changed.TargetSessionID)); !os.IsNotExist(err) {
+				if _, err := os.Stat(filepath.Join(app.desktopSessions.root, newRef.SessionID)); !os.IsNotExist(err) {
 					t.Fatalf("deleted target was resurrected: %v", err)
 				}
 			})

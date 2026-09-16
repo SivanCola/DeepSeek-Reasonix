@@ -905,6 +905,33 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/session_lifecycle_api.go",
+      "name": "ApplySessionLifecycle",
+      "owner": "App.ApplySessionLifecycle",
+      "params": [
+        {
+          "kind": "object",
+          "ref": "main.SessionLifecycleRequest"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.SessionLifecycleResult"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "req"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.ApplySessionLifecycle"
+      },
+      "sources": [
+        "desktop/session_lifecycle_api.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/updater_app.go",
       "name": "ApplyUpdateRequest",
       "owner": "App.ApplyUpdateRequest",
@@ -3091,7 +3118,7 @@
     },
     {
       "cancellation": "before-dispatch",
-      "domain": "desktop/app.go",
+      "domain": "desktop/session_legacy_lifecycle_rpc.go",
       "name": "DeleteSession",
       "owner": "App.DeleteSession",
       "params": [
@@ -3108,7 +3135,7 @@
         "resolver": "App.DeleteSession"
       },
       "sources": [
-        "desktop/app.go"
+        "desktop/session_legacy_lifecycle_rpc.go"
       ]
     },
     {
@@ -4649,6 +4676,26 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/session_recovery_api.go",
+      "name": "GetSessionUpgradeStatus",
+      "owner": "App.GetSessionUpgradeStatus",
+      "params": [],
+      "result": {
+        "kind": "object",
+        "ref": "main.SessionUpgradeStatus"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [],
+        "kind": "owner-state",
+        "resolver": "App.GetSessionUpgradeStatus"
+      },
+      "sources": [
+        "desktop/session_recovery_api.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/recovery_lineage.go",
       "name": "GetSessionVersionState",
       "owner": "App.GetSessionVersionState",
@@ -5936,6 +5983,40 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/session_recovery_api.go",
+      "name": "ListRecoveryEntries",
+      "owner": "App.ListRecoveryEntries",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "integer"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.RecoveryEntryPage"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "query",
+          "cursor",
+          "limit"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.ListRecoveryEntries"
+      },
+      "sources": [
+        "desktop/session_recovery_api.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/remote_app.go",
       "name": "ListRemoteDir",
       "owner": "App.ListRemoteDir",
@@ -6253,6 +6334,40 @@
       },
       "sources": [
         "desktop/theme_app.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/session_lifecycle_api.go",
+      "name": "ListTrashEntries",
+      "owner": "App.ListTrashEntries",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "integer"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.TrashEntryPage"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "query",
+          "cursor",
+          "limit"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.ListTrashEntries"
+      },
+      "sources": [
+        "desktop/session_lifecycle_api.go"
       ]
     },
     {
@@ -8123,6 +8238,32 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/session_recovery_api.go",
+      "name": "PreviewRecoveryEntry",
+      "owner": "App.PreviewRecoveryEntry",
+      "params": [
+        {
+          "kind": "string"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.HistoryPage"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "id"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.PreviewRecoveryEntry"
+      },
+      "sources": [
+        "desktop/session_recovery_api.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/app.go",
       "name": "PreviewRewindForTab",
       "owner": "App.PreviewRewindForTab",
@@ -8214,6 +8355,29 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/session_purge.go",
+      "name": "PurgeCanonicalSession",
+      "owner": "App.PurgeCanonicalSession",
+      "params": [
+        {
+          "kind": "object",
+          "ref": "session.SessionRef"
+        }
+      ],
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "ref"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.PurgeCanonicalSession"
+      },
+      "sources": [
+        "desktop/session_purge.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/app.go",
       "name": "PurgeRecoveryCopy",
       "owner": "App.PurgeRecoveryCopy",
@@ -8236,7 +8400,7 @@
     },
     {
       "cancellation": "before-dispatch",
-      "domain": "desktop/app.go",
+      "domain": "desktop/session_legacy_lifecycle_rpc.go",
       "name": "PurgeTrashedSession",
       "owner": "App.PurgeTrashedSession",
       "params": [
@@ -8253,7 +8417,7 @@
         "resolver": "App.PurgeTrashedSession"
       },
       "sources": [
-        "desktop/app.go"
+        "desktop/session_legacy_lifecycle_rpc.go"
       ]
     },
     {
@@ -11317,6 +11481,36 @@
       },
       "sources": [
         "desktop/app.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/session_recovery_api.go",
+      "name": "RestoreRecoveryEntry",
+      "owner": "App.RestoreRecoveryEntry",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.SessionRestoreResult"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "id",
+          "operationID"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.RestoreRecoveryEntry"
+      },
+      "sources": [
+        "desktop/session_recovery_api.go"
       ]
     },
     {
@@ -17864,7 +18058,7 @@
     "topic:activation",
     "updater:progress"
   ],
-  "protocolVersion": 9,
+  "protocolVersion": 10,
   "types": {
     "agent.ToolRecoveryStatistics": {
       "fields": [
@@ -29692,6 +29886,24 @@
     "main.ProjectNode": {
       "fields": [
         {
+          "name": "session",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "session.SessionRef"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "canArchive",
+          "optional": true,
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
           "name": "key",
           "type": {
             "kind": "string"
@@ -31125,6 +31337,89 @@
         }
       ]
     },
+    "main.RecoveryEntryPage": {
+      "fields": [
+        {
+          "name": "items",
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "main.RecoveryEntryView"
+            },
+            "kind": "array"
+          }
+        },
+        {
+          "name": "nextCursor",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "generation",
+          "type": {
+            "kind": "integer"
+          }
+        }
+      ]
+    },
+    "main.RecoveryEntryView": {
+      "fields": [
+        {
+          "name": "workspaceChoices",
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "main.RecoveryWorkspaceChoice"
+            },
+            "kind": "array"
+          }
+        },
+        {
+          "name": "id",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "title",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "format",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "reason",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "status",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "canPreview",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "canRestore",
+          "type": {
+            "kind": "boolean"
+          }
+        }
+      ]
+    },
     "main.RecoveryLineageMember": {
       "fields": [
         {
@@ -31316,6 +31611,22 @@
         {
           "name": "headId",
           "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
+    "main.RecoveryWorkspaceChoice": {
+      "fields": [
+        {
+          "name": "id",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "title",
           "type": {
             "kind": "string"
           }
@@ -33075,6 +33386,36 @@
     "main.SessionArchitectureDiagnostics": {
       "fields": [
         {
+          "name": "pending_operations",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "missing_members",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "identity_mismatches",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "source_conflicts",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "recovery_entries",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
           "name": "session_headers_total",
           "type": {
             "kind": "integer"
@@ -33287,6 +33628,146 @@
           "name": "done",
           "type": {
             "kind": "boolean"
+          }
+        }
+      ]
+    },
+    "main.SessionLifecycleItem": {
+      "fields": [
+        {
+          "name": "target",
+          "type": {
+            "kind": "object",
+            "ref": "main.SessionLifecycleTarget"
+          }
+        },
+        {
+          "name": "ref",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "session.SessionRef"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "workspaceId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "committed",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "errorCode",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "retryable",
+          "type": {
+            "kind": "boolean"
+          }
+        }
+      ]
+    },
+    "main.SessionLifecycleRequest": {
+      "fields": [
+        {
+          "name": "operationId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "action",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "targets",
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "main.SessionLifecycleTarget"
+            },
+            "kind": "array"
+          }
+        },
+        {
+          "name": "expectedGeneration",
+          "type": {
+            "kind": "integer"
+          }
+        }
+      ]
+    },
+    "main.SessionLifecycleResult": {
+      "fields": [
+        {
+          "name": "operationId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "generation",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "committed",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "items",
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "main.SessionLifecycleItem"
+            },
+            "kind": "array"
+          }
+        }
+      ]
+    },
+    "main.SessionLifecycleTarget": {
+      "fields": [
+        {
+          "name": "workspaceId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "ref",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "session.SessionRef"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "recoveryEntryId",
+          "optional": true,
+          "type": {
+            "kind": "string"
           }
         }
       ]
@@ -33510,6 +33991,29 @@
         }
       ]
     },
+    "main.SessionRestoreResult": {
+      "fields": [
+        {
+          "name": "session",
+          "type": {
+            "kind": "object",
+            "ref": "session.SessionRef"
+          }
+        },
+        {
+          "name": "workspaceId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "generation",
+          "type": {
+            "kind": "integer"
+          }
+        }
+      ]
+    },
     "main.SessionRuntimeIssue": {
       "fields": [
         {
@@ -33639,6 +34143,64 @@
           "optional": true,
           "type": {
             "kind": "string"
+          }
+        }
+      ]
+    },
+    "main.SessionUpgradeStatus": {
+      "fields": [
+        {
+          "name": "sources",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "sessions",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "operations",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "discovered",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "migrated",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "pending",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "failed",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "conflicts",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "pendingOperations",
+          "type": {
+            "kind": "integer"
           }
         }
       ]
@@ -35954,6 +36516,105 @@
           "name": "createdAt",
           "type": {
             "kind": "integer"
+          }
+        }
+      ]
+    },
+    "main.TrashEntry": {
+      "fields": [
+        {
+          "name": "id",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "ref",
+          "type": {
+            "kind": "object",
+            "ref": "session.SessionRef"
+          }
+        },
+        {
+          "name": "title",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "workspaceId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "workspaceTitle",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "archivedAt",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "health",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "operationPhase",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "canPreview",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "canRestore",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "canPurge",
+          "type": {
+            "kind": "boolean"
+          }
+        }
+      ]
+    },
+    "main.TrashEntryPage": {
+      "fields": [
+        {
+          "name": "items",
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "main.TrashEntry"
+            },
+            "kind": "array"
+          }
+        },
+        {
+          "name": "generation",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "nextCursor",
+          "optional": true,
+          "type": {
+            "kind": "string"
           }
         }
       ]

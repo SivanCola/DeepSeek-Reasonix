@@ -43,8 +43,9 @@ and controller startup.
 
 The v5 migrator reads, but never modifies, canonical v4 and legacy JSONL data.
 Imports are staged, validated, atomically published, and attached to a Workspace
-before their ledger record becomes complete. Same-ID/same-content imports are
-idempotent; same-ID/different-content imports receive a stable `migr-<hash>` ID.
+before their ledger record becomes complete. A verified unchanged source is
+idempotent even after the destination advances. Different sources are never
+merged merely because their IDs or content match; collisions receive a stable `migr-<hash>` ID.
 Failures remain retryable and do not stop other sources from migrating.
 
 Canonical v4 migration enumerates durable session identities independently of
@@ -163,8 +164,9 @@ Topic 和项目路径都不再参与打开 canonical 会话。
   `session/config` 事件；不改变已有历史和 provider-visible prompt/tool bytes。
 
 v5 迁移器只读保留 canonical v4 与 legacy JSONL。每个导入都先在临时目录完成
-校验和原子发布，再写入 Workspace；同 ID 同内容幂等复用，同 ID 不同内容稳定
-映射为 `migr-<hash>`。Protocol 9 是 Desktop shell/host 的硬边界；远端与 Serve
+校验和原子发布，再写入 Workspace；已验证且未变化的来源幂等复用，不因为
+ID 或正文相同合并不同来源，冲突稳定映射为 `migr-<hash>`。
+Protocol 10 是 Desktop shell/host 的硬边界；远端与 Serve
 协议保持不变，旧版只能看到升级前保留的数据。
 
 canonical v4 迁移按持久化会话身份枚举，不依赖标题、轮次、预览等显示缓存。

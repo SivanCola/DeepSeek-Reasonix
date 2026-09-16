@@ -32,14 +32,16 @@ func (a *App) ensureDesktopMigrationWorkspace(ctx context.Context, source deskto
 // today's target. The target can be continued, archived or deliberately deleted.
 // None of those actions authorize importing the old conversation again.
 type desktopMigrationCheckpoint struct {
-	key      string
-	files    []string
-	revision string
-	record   desktopMigrationRecord
-	refresh  bool
+	key         string
+	files       []string
+	revision    string
+	record      desktopMigrationRecord
+	refresh     bool
+	inputDigest string
 }
 
 type desktopMigrationReceipt struct {
+	extra           map[string]json.RawMessage
 	TargetSessionID string `json:"targetSessionId"`
 	ContentDigest   string `json:"contentDigest,omitempty"`
 	SourceRevision  string `json:"sourceRevision,omitempty"`
@@ -65,7 +67,14 @@ func newDesktopMigrationCheckpoint(source desktopMigrationSource, key string, fi
 		record.Status, record.TargetSessionID = "completed", previous.TargetSessionID
 		record.ContentDigest, record.SourceRevision = previous.ContentDigest, previous.SourceRevision
 	}
-	return desktopMigrationCheckpoint{key: key, files: files, revision: revision, record: record, refresh: refresh}, nil
+	checkpoint := desktopMigrationCheckpoint{key: key, files: files, revision: revision, record: record, refresh: refresh}
+	if !checkpoint.unchanged() {
+		checkpoint.inputDigest, err = desktopMigrationInputDigest(files)
+		if err != nil {
+			return desktopMigrationCheckpoint{}, err
+		}
+	}
+	return checkpoint, nil
 }
 
 func (c desktopMigrationCheckpoint) completed() bool {
@@ -91,6 +100,15 @@ func (c desktopMigrationCheckpoint) matchesCompletedContent(digest string) bool 
 
 func (c desktopMigrationCheckpoint) complete(targetID, digest string) error {
 	revision, err := desktopMigrationSourceRevision(c.files)
+	if err == nil && revision != c.revision && c.inputDigest != "" {
+		// A catalog repair can rewrite identical JSONL bytes and refresh only
+		// derived listing fields. Verify the frozen input, not inode/mtime alone.
+		current, digestErr := desktopMigrationInputDigest(c.files)
+		if digestErr == nil && current == c.inputDigest {
+			c.revision = revision
+		}
+		err = digestErr
+	}
 	if err != nil || revision != c.revision {
 		return errors.Join(errors.New("desktop migration source changed during import"), err,
 			updateDesktopMigrationLedger(c.key, targetID, "failed", "source_changed", digest))
@@ -112,9 +130,17 @@ func desktopCanonicalMigrationKey(root, sessionID string) string {
 }
 
 func legacyMigrationSourceFiles(path string) []string {
-	// Use the same artifact set as the legacy importer's freeze operation,
-	// including DAG/event sidecars whose changes need not rewrite the JSONL.
-	return append([]string{path}, store.SessionSidecarFiles(path)...)
+	// Catalog reads may rebuild disposable indexes while an import is frozen.
+	// Their publication is not a change to the legacy conversation. Keep all
+	// durable sidecars (including ancestry/ownership metadata) in the stamp.
+	files := []string{path}
+	for _, sidecar := range store.SessionSidecarFiles(path) {
+		if sidecar == store.SessionEventIndex(path) || sidecar == store.SessionDisplayIndex(path) || sidecar == store.SessionTranscriptProjection(path) {
+			continue
+		}
+		files = append(files, sidecar)
+	}
+	return files
 }
 
 func desktopLegacyMigrationKey(path string) string {

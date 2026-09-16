@@ -73,6 +73,9 @@ export function useSessionNavigationCommands(input: SessionNavigationCommandsInp
   const handleOpenTopic = useCommittedCommand((scope: string, workspaceRoot: string, topicId: string, sessionPath?: string): Promise<void> => {
     input.closeTransientOverlays();
     input.clearImDetail();
+    if (sessionPath?.startsWith("session-id:")) {
+      return navigation.enqueueNavigation({ kind: "canonical-session", ref: { hostId: "local", sessionId: sessionPath.slice("session-id:".length) } });
+    }
     return navigation.enqueueNavigation({ kind: "topic", scope, workspaceRoot, topicId, sessionPath });
   });
 

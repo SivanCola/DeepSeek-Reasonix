@@ -12,6 +12,17 @@ import (
 
 var errSessionWorkspaceConflict = errors.New("session workspace identity is inconsistent; the session files were left unchanged")
 
+func controllerSessionDirectoryMatches(desiredDir, ctrlDir, path string) bool {
+	if desiredDir == "" || sameDesktopPath(ctrlDir, desiredDir) {
+		return true
+	}
+	if path == "" {
+		return false
+	}
+	validPath, _, err := validateSessionPath(ctrlDir, path)
+	return err == nil && sessionRuntimeKey(validPath) == sessionRuntimeKey(path)
+}
+
 // Resolve navigation from durable membership and the immutable header, never
 // from the current surface. Both authorities must agree before execution.
 func (a *App) canonicalSessionWorkspace(ctx context.Context, ref session.SessionRef) (workspacestate.Workspace, error) {
@@ -25,6 +36,9 @@ func (a *App) canonicalSessionWorkspace(ctx context.Context, ref session.Session
 	state, err := a.workspaceRegistry().Load(ctx)
 	if err != nil {
 		return workspacestate.Workspace{}, err
+	}
+	if state.SessionStates[ref.SessionID].Lifecycle == workspacestate.Deleted {
+		return workspacestate.Workspace{}, session.ErrSessionNotFound
 	}
 	var owner workspacestate.Workspace
 	for _, workspace := range state.Workspaces {

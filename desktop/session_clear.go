@@ -29,6 +29,14 @@ func initClearedPins(path string, newCtrl, oldCtrl control.SessionAPI, tab *Work
 	return nil
 }
 
+func setFreshControllerPath(ctrl control.SessionAPI, path string) {
+	if fresh, ok := ctrl.(interface{ SetFreshSessionPath(string) }); ok {
+		fresh.SetFreshSessionPath(path)
+	} else {
+		ctrl.SetSessionPath(path)
+	}
+}
+
 // ClearSession discards the current conversation and rotates to a fresh unsaved one.
 func (a *App) ClearSession() (SessionClearResult, error) {
 	return a.ClearSessionForTab("")
@@ -56,9 +64,22 @@ func (a *App) ClearSessionForTab(tabID string) (SessionClearResult, error) {
 	if controllerHasActiveRuntimeWork(ctrl) {
 		return a.clearActiveSessionRuntime(tab, ctrl)
 	}
+	unlockRuntime := a.lockRuntimeMutation("clear session")
+	defer unlockRuntime()
+	tab.turnStartMu.Lock()
+	defer tab.turnStartMu.Unlock()
+	ctrl = a.controllerForTab(tab)
+	if ctrl == nil {
+		return SessionClearResult{}, a.workspaceNotReadyErr(tab)
+	}
+	if controllerHasActiveRuntimeWork(ctrl) {
+		return SessionClearResult{}, errTopicHasActiveWork
+	}
 	if err := ctrl.ClearSession(); err != nil {
+		a.syncTabSessionIdentity(tab, ctrl)
 		return SessionClearResult{}, err
 	}
+	a.syncTabSessionIdentity(tab, ctrl)
 	if path := ctrl.SessionPath(); path != "" {
 		if err := savePinnedContextState(path, []string{}); err != nil {
 			return SessionClearResult{}, fmt.Errorf("initialize empty pinned context for cleared session: %w", err)

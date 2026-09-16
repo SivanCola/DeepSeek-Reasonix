@@ -29,6 +29,7 @@ import (
 
 	"reasonix/desktop/internal/browserops"
 	"reasonix/desktop/internal/instanceidentity"
+	"reasonix/desktop/internal/workspacestate"
 	"reasonix/internal/agent"
 	"reasonix/internal/billing"
 	"reasonix/internal/boot"
@@ -1007,7 +1008,12 @@ func (a *App) submitUserTurnToTabWithSink(tabID, input string, forwarder event.S
 	if forwarder != nil {
 		generation = tab.sink.SetBotSink(forwarder)
 	}
-	a.ensureTabTopicIndexedForUserTurn(tab)
+	if err := a.ensureTabTopicIndexedForUserTurn(tab); err != nil {
+		if forwarder != nil {
+			tab.sink.clearBotSink(generation)
+		}
+		return false
+	}
 	ctrl.SubmitUserTurn(input, input)
 	started := admission.finish(ctrl)
 	if !started && forwarder != nil {
@@ -1023,7 +1029,9 @@ func (a *App) RunShellForTab(tabID, command string) error {
 	}
 	defer admission.abort()
 	tab := admission.tab
-	a.ensureTabTopicIndexedForUserTurn(tab)
+	if err := a.ensureTabTopicIndexedForUserTurn(tab); err != nil {
+		return err
+	}
 	ctrl.RunShell(command)
 	admission.finish(ctrl)
 	return nil
@@ -1112,7 +1120,9 @@ func (a *App) submitInitialGoalToLocalTab(
 
 	ctrl.SetPlanMode(false)
 	drained := applyTabToolApprovalModeToController(ctrl, toolApprovalMode)
-	a.ensureTabTopicIndexedForUserTurn(tab)
+	if err := a.ensureTabTopicIndexedForUserTurn(tab); err != nil {
+		return []string{}, err
+	}
 	if err := submitIdentified(ctrl, req, func() {
 		if len(invocations) > 0 {
 			ctrl.SubmitInvocationDisplay(display, input, controlInvocationRequests(invocations))
@@ -1404,12 +1414,7 @@ func (a *App) ensureTabControllerWorkspace(tab *WorkspaceTab) error {
 	}
 	desiredDir := tabSessionDir(tab)
 	rootMatches := desiredRoot == "" || sameDesktopPath(ctrlRoot, desiredRoot)
-	dirMatches := desiredDir == "" || sameDesktopPath(ctrlDir, desiredDir)
-	if !dirMatches && path != "" {
-		if validPath, _, err := validateSessionPath(ctrlDir, path); err == nil && sessionRuntimeKey(validPath) == sessionRuntimeKey(path) {
-			dirMatches = true
-		}
-	}
+	dirMatches := controllerSessionDirectoryMatches(desiredDir, ctrlDir, path)
 	if strings.TrimSpace(ctrlRoot) == "" && dirMatches {
 		rootMatches = true
 	}
@@ -1910,14 +1915,19 @@ func (a *App) applyNewSessionDefaultModel(tab *WorkspaceTab) error {
 	return a.alignReusableBlankTabModel(tab, defaultModel)
 }
 
-func (a *App) assignFreshSessionTopic(tab *WorkspaceTab) {
+func (a *App) assignFreshSessionTopic(tab *WorkspaceTab) error {
 	if tab == nil {
-		return
+		return nil
 	}
 	topicID := newTopicID()
 	a.mu.Lock()
 	scope := tab.Scope
 	workspaceRoot := tab.WorkspaceRoot
+	sessionID := tab.SessionID
+	if tab.SessionWorkspace.ID == "" {
+		// Legacy controllers still persist their topic through branch metadata.
+		sessionID = ""
+	}
 	tab.TopicID = topicID
 	tab.TopicTitle = defaultTopicTitle
 	tab.topicTitleSource = topicTitleSourceAuto
@@ -1925,6 +1935,9 @@ func (a *App) assignFreshSessionTopic(tab *WorkspaceTab) {
 		a.saveTabsLocked()
 	}
 	a.mu.Unlock()
+	if err := a.workspaceRegistry().EnsureSessionTopic(a.bootContext(), sessionID, topicID, defaultTopicTitle); err != nil {
+		return err
+	}
 	if strings.TrimSpace(scope) == "global" {
 		workspaceRoot = ""
 	} else {
@@ -1935,17 +1948,18 @@ func (a *App) assignFreshSessionTopic(tab *WorkspaceTab) {
 	// session metadata repair the topic index later instead of surfacing a false
 	// "new session failed" error to the frontend.
 	_ = ensureTopicIndexedWithCreatedAt(scope, workspaceRoot, topicID, defaultTopicTitle, topicTitleSourceAuto, time.Now().UnixMilli())
+	return nil
 }
 
-func (a *App) ensureTabTopicIndexedForUserTurn(tab *WorkspaceTab) {
+func (a *App) ensureTabTopicIndexedForUserTurn(tab *WorkspaceTab) error {
 	if tab == nil {
-		return
+		return nil
 	}
 	topicID := newTopicID()
 	a.mu.Lock()
 	if strings.TrimSpace(tab.TopicID) != "" {
 		a.mu.Unlock()
-		return
+		return a.persistCanonicalTopicForTab(tab)
 	}
 	scope := tab.Scope
 	workspaceRoot := tab.WorkspaceRoot
@@ -1956,6 +1970,9 @@ func (a *App) ensureTabTopicIndexedForUserTurn(tab *WorkspaceTab) {
 		a.saveTabsLocked()
 	}
 	a.mu.Unlock()
+	if err := a.persistCanonicalTopicForTab(tab); err != nil {
+		return err
+	}
 	if strings.TrimSpace(scope) == "global" {
 		scope = "global"
 		workspaceRoot = ""
@@ -1968,6 +1985,17 @@ func (a *App) ensureTabTopicIndexedForUserTurn(tab *WorkspaceTab) {
 	path := a.currentSessionPathFor(tab)
 	a.persistTabSessionPath(tab, path)
 	a.emitProjectTreeChangedForSessionDirs(sessionDirectoryForPath(path))
+	return nil
+}
+
+func (a *App) persistCanonicalTopicForTab(tab *WorkspaceTab) error {
+	a.mu.RLock()
+	sessionID, workspaceID, topicID, title := tab.SessionID, tab.SessionWorkspace.ID, tab.TopicID, tab.TopicTitle
+	a.mu.RUnlock()
+	if workspaceID == "" {
+		return nil
+	}
+	return a.workspaceRegistry().EnsureSessionTopic(a.bootContext(), sessionID, topicID, title)
 }
 
 func messagesHaveConversationContent(messages []provider.Message) bool {
@@ -2107,11 +2135,7 @@ func (a *App) clearLegacySessionRuntimeLocked(tab *WorkspaceTab, oldCtrl control
 		// path/pid/writer id out of it.
 		return SessionClearResult{}, userFacingSessionLeaseError("", err)
 	}
-	if fresh, ok := newCtrl.(interface{ SetFreshSessionPath(string) }); ok {
-		fresh.SetFreshSessionPath(path)
-	} else {
-		newCtrl.SetSessionPath(path)
-	}
+	setFreshControllerPath(newCtrl, path)
 	if err := initClearedPins(path, newCtrl, oldCtrl, tab); err != nil {
 		return SessionClearResult{}, err
 	}
@@ -2656,6 +2680,14 @@ func (a *App) ListSessionsForTab(tabID string) []SessionMeta {
 
 func (a *App) listSessionsFromDir(dir, active string) []SessionMeta {
 	v3 := a.listCanonicalSessionsFromDir(dir, active)
+	state, stateErr := a.workspaceRegistry().Load(a.bootContext())
+	if stateErr != nil {
+		return v3
+	}
+	adopted := map[string]bool{}
+	for _, mapping := range state.SourceMappings {
+		adopted[sessionRuntimeKey(mapping.Path)] = true
+	}
 	catalog := a.sessionCatalog.Load()
 	if catalog == nil {
 		return v3
@@ -2676,6 +2708,9 @@ func (a *App) listSessionsFromDir(dir, active string) []SessionMeta {
 	out := make([]SessionMeta, 0, len(records)+len(v3))
 	out = append(out, v3...)
 	for _, record := range records {
+		if adopted[sessionRuntimeKey(record.Path)] {
+			continue
+		}
 		_, isOpen := open[record.Path]
 		meta := sessionMetaFromCatalog(record, record.Path == active, isOpen)
 		if route, ok := channelRoutes[sessionRuntimeKey(record.Path)]; ok {
@@ -2691,6 +2726,10 @@ func (a *App) listSessionsFromDir(dir, active string) []SessionMeta {
 // newest-deleted first. These can be previewed, restored, or permanently purged.
 func (a *App) ListTrashedSessions() []SessionMeta {
 	out := []SessionMeta{}
+	state, stateErr := a.workspaceRegistry().Load(a.bootContext())
+	if stateErr != nil {
+		return out
+	}
 	for _, dir := range a.knownSessionDirs() {
 		paths, err := listTrashedSessionFiles(dir)
 		if err != nil {
@@ -2698,6 +2737,12 @@ func (a *App) ListTrashedSessions() []SessionMeta {
 		}
 		titles := loadSessionTitles(dir)
 		for _, path := range paths {
+			if !explicitlyDeletedLegacyEntry(path) {
+				continue
+			}
+			if _, adopted := state.SourceMappings[desktopSourceKey(path, "")]; adopted {
+				continue
+			}
 			infos, err := agent.ListSessions(filepath.Dir(path))
 			if err != nil || len(infos) == 0 {
 				continue
@@ -2833,16 +2878,6 @@ func channelDisplayName(provider, domain string) string {
 	default:
 		return provider
 	}
-}
-
-// DeleteSession moves a saved session to the local trash. If the session still
-// has an in-process runtime, the runtime is cancelled and removed first so
-// autosave cannot recreate or append to the deleted file later.
-func (a *App) DeleteSession(path string) error {
-	if _, ok := parseSessionRoute(path); ok {
-		return a.deleteCanonicalSession(path)
-	}
-	return friendlySessionFileError(a.deleteSession(path))
 }
 
 // DeleteRecoveryCopy is the guarded bulk-cleanup path. The frontend's copy
@@ -2996,6 +3031,12 @@ func removedRuntimeFromTab(tab *WorkspaceTab, dir, sessionPath string) removedSe
 func tabMatchesSession(tab *WorkspaceTab, dir, sessionPath string) bool {
 	if tab == nil {
 		return false
+	}
+	// Canonical migration can clear the legacy path while the runtime still
+	// owns its compatibility lease. Include that owner when removing bindings
+	// or checking whether a legacy file is open.
+	if key := tab.sessionLeaseRuntimeKey(); key != "" && key == sessionRuntimeKey(sessionPath) {
+		return true
 	}
 	currentPath, _, err := validateSessionPath(dir, tab.currentSessionPath())
 	if err == nil && currentPath == sessionPath {
@@ -3264,7 +3305,7 @@ func (a *App) activeSessionPath(dir string) string {
 
 // RestoreSession moves a trashed session back into the saved-session list.
 func (a *App) RestoreSession(path string) error {
-	return friendlySessionFileError(a.restoreSession(path))
+	return friendlySessionFileError(a.restoreLegacyRecoveryPath(path))
 }
 
 func (a *App) restoreSession(path string) error {
@@ -3335,12 +3376,6 @@ func (a *App) sessionOpen(dir, sessionPath string) bool {
 	return false
 }
 
-// PurgeTrashedSession permanently removes a trashed session and its title/display
-// sidecars.
-func (a *App) PurgeTrashedSession(path string) error {
-	return friendlySessionFileError(a.purgeTrashedSession(path, false))
-}
-
 // PurgeRecoveryCopy is the guarded permanent-cleanup path. A trashed branch is
 // rechecked against its live parent; missing, stale, or divergent data is kept.
 func (a *App) PurgeRecoveryCopy(path string) error {
@@ -3351,6 +3386,16 @@ func (a *App) purgeTrashedSession(path string, requireRedundantRecovery bool) er
 	dir, err := a.trashedSessionDir(path)
 	if err != nil {
 		return err
+	}
+	state, err := a.workspaceRegistry().Load(a.bootContext())
+	if err != nil {
+		return err
+	}
+	if _, adopted := state.SourceMappings[desktopSourceKey(path, "")]; adopted {
+		return errors.New("the historical source is preserved for its restored session")
+	}
+	if !explicitlyDeletedLegacyEntry(path) {
+		return errors.New("historical recovery entries cannot be permanently cleared")
 	}
 	a.sessionRemovalMu.Lock()
 	defer a.sessionRemovalMu.Unlock()
@@ -4847,6 +4892,9 @@ func (a *App) RemoveWorkspace(dir string) error {
 				slog.Warn("desktop: snapshot before removing workspace failed", "tab", id, "workspace", dir, "err", err)
 				return fmt.Errorf("save current session before removing workspace: %w", err)
 			}
+		}
+		if err := a.workspaceRegistry().SetWorkspaceVisible(a.bootContext(), desktopWorkspaceID("project", dir), false); err != nil && !errors.Is(err, workspacestate.ErrWorkspaceNotFound) {
+			return err
 		}
 
 		a.mu.Lock()
@@ -11643,6 +11691,9 @@ func (a *App) taskMonitorTargetForTab(tabID string) (taskMonitorTabTarget, error
 	if sessionPath != "" {
 		target.sessionID = agent.BranchID(sessionPath)
 	}
+	if id := controllerTaskSessionID(ctrl); id != "" {
+		target.sessionID = id
+	}
 	return target, nil
 }
 
@@ -11658,7 +11709,7 @@ func (a *App) CurrentTaskSessionID() string {
 	if ctrl == nil {
 		return ""
 	}
-	return agent.BranchID(ctrl.SessionPath())
+	return controllerTaskSessionID(ctrl)
 }
 
 // ListTasksForSession limits the project task view to one desktop session.
@@ -11679,8 +11730,11 @@ func (a *App) ListTasksForTab(tabID string) ([]taskmonitor.TaskSnapshot, error) 
 	if err != nil {
 		return nil, err
 	}
+	if target.sessionID == "" {
+		return []taskmonitor.TaskSnapshot{}, nil
+	}
 	tasks, err := a.taskStore().ListTasks(a.ctx, target.projectDir)
-	if err != nil || target.sessionID == "" {
+	if err != nil {
 		return tasks, err
 	}
 	return filterTasksBySession(tasks, target.sessionID), nil
@@ -11768,11 +11822,24 @@ type desktopTaskJobKiller struct {
 }
 
 func (k desktopTaskJobKiller) Kill(sessionID, taskID string) bool {
+	return k.kill(sessionID, taskID, "", false)
+}
+
+func (k desktopTaskJobKiller) KillOwned(sessionID, taskID, ownerID string) bool {
+	if ownerID == "" {
+		return false
+	}
+	return k.kill(sessionID, taskID, ownerID, true)
+}
+
+func (k desktopTaskJobKiller) kill(sessionID, taskID, ownerID string, requireOwner bool) bool {
 	// Legacy task records without a session ID cannot be routed safely because
 	// jobs.Manager IDs restart at task-1 for each controller.
 	if k.app == nil || sessionID == "" || strings.TrimSpace(k.projectDir) == "" {
 		return false
 	}
+	unlockRuntime := k.app.lockRuntimeMutation("stop task")
+	defer unlockRuntime()
 
 	k.app.mu.RLock()
 	tabs := k.app.runtimeTabsLocked()
@@ -11785,8 +11852,14 @@ func (k desktopTaskJobKiller) Kill(sessionID, taskID string) bool {
 	k.app.mu.RUnlock()
 
 	for _, ctrl := range controllers {
-		if agent.BranchID(ctrl.SessionPath()) != sessionID {
+		if controllerTaskSessionID(ctrl) != sessionID {
 			continue
+		}
+		if requireOwner {
+			owner, ok := ctrl.(interface{ TaskRuntimeOwnerID() string })
+			if !ok || owner.TaskRuntimeOwnerID() != ownerID {
+				continue
+			}
 		}
 		if killer, ok := ctrl.(interface{ CancelJob(string) bool }); ok && killer.CancelJob(taskID) {
 			return true

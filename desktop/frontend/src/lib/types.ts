@@ -1,3 +1,4 @@
+export type { ProjectNode } from "./projectNodeTypes";
 import type { TranscriptTurnMetadata } from "./transcriptProtocol";
 import type { HistorySwitchPhases } from "./sessionDiagnostics";
 import type { ProviderCatalog } from "./providerCatalogTypes";
@@ -12,7 +13,7 @@ import type { HistoryServerSearch } from "./searchSources";
 import type { Todo } from "./tools";
 import type { ContextBudgetInfo, ContextMaintenanceInfo, WireContextMaintenance } from "./contextMaintenanceTypes";
 import type { WireApproval } from "./approvalTypes";
-import type { RemoteProjectNodeFields, RemoteSessionMetaFields, RemoteTabMetaFields } from "./remoteTypes";
+import type { RemoteSessionMetaFields, RemoteTabMetaFields } from "./remoteTypes";
 import type { PinnedFileInfo } from "./pinnedContextBridge";
 import type { RecoveryLineageView } from "./sessionRecoveryTypes";
 import type { SessionRef, SessionRuntimeIssue } from "./sessionRef";
@@ -638,39 +639,7 @@ export interface TerminalWorkspaceView {
   shells: TerminalShellView[];
 }
 
-export interface ProjectNode extends RemoteProjectNodeFields {
-  key: string;
-  kind: "project" | "topic" | "session" | "global_folder" | "global_topic" | "global_session";
-  label: string;
-  root?: string;
-  topicId?: string;
-  recoveryPath?: string;
-  sessionPath?: string;
-  preview?: string;
-  projectColor?: string;
-  turns?: number;
-  turnsState?: "unknown" | "valid" | "corrupt" | string;
-  health?: "ok" | "missing" | "corrupt" | "degraded" | string;
-  createdAt?: number;
-  lastActivityAt?: number;
-  open?: boolean;
-  running?: boolean;
-  status?: ProjectTopicStatus;
-  pinned?: boolean;
-  sortOrder?: number;
-  recovered?: boolean;
-  recoveryReason?: string;
-  recoveryDigest?: string;
-  recoveryParentId?: string;
-  recoveryState?: "normal" | "repairing" | "adopted" | "preferred" | "diverged" | "recovery_only" | string;
-  recoveryBranchCount?: number;
-  recoveryUnresolvedCount?: number;
-  recoveryCleanupEligibleCount?: number;
-  recoveryCopyCount?: number; // Deprecated: ordinary trees hide physical copies.
-  isolatedWorktree?: boolean;
-  runtimeOnly?: boolean;
-  children?: ProjectNode[];
-}
+
 
 export type { RecoveryLineageMember, RecoveryLineageView } from "./sessionRecoveryTypes";
 

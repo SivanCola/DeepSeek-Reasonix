@@ -7,6 +7,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { packagedSmokeEnv } from "./smoke-env.mjs";
+import { waitForSmokeCondition } from "./smoke-poll.mjs";
 
 const require = createRequire(new URL("../electron/package.json", import.meta.url));
 const { _electron } = require("playwright");
@@ -52,7 +53,7 @@ try {
     }
     await page.locator(".composer__btn--send").click();
     await transcriptContains(`ANSWER_${marker}`);
-    await page.waitForFunction(async () => (await window.reasonixDesktop.invoke("ListTabs", [])).every(tab => !tab.running));
+    await waitForSmokeCondition(async () => (await invoke("ListTabs")).every(tab => !tab.running));
     refs[marker] = (await active()).session;
     await invoke("RenameCanonicalSession", [refs[marker], marker]);
   }

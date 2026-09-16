@@ -16,7 +16,6 @@ import (
 	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/provider"
-	"reasonix/internal/store"
 )
 
 type snapshotErrorSessionController struct {
@@ -233,23 +232,22 @@ func TestTrashTopicConvertsLocalLeaseWithoutUnlockWindow(t *testing.T) {
 	keep := &WorkspaceTab{ID: "keep", Scope: "project", WorkspaceRoot: projectRoot, TopicID: "keep", Ready: true}
 	app := &App{tabs: map[string]*WorkspaceTab{tab.ID: tab, keep.ID: keep}, tabOrder: []string{tab.ID, keep.ID}, activeTabID: tab.ID}
 
+	pinDesktopSessionRoot(t, app)
 	if err := app.TrashTopic("  " + topicID + "  "); err != nil {
 		t.Fatalf("TrashTopic: %v", err)
 	}
 	if agent.IsCleanupPending(sessionPath) {
 		t.Fatal("completed archive left cleanup pending")
 	}
-	if _, err := os.Stat(sessionPath); !os.IsNotExist(err) {
-		t.Fatalf("archived session still exists, err=%v", err)
-	}
-	for _, path := range []string{store.SessionLeaseInfo(sessionPath), store.SessionLeaseLock(sessionPath), store.SessionLockFile(sessionPath)} {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Errorf("ownership sidecar survived archive: %s (err=%v)", path, err)
-		}
+	assertLegacyLifecycle(t, app, sessionPath, "archived")
+	if lease, err := agent.TryAcquireSessionLease(sessionPath); err != nil {
+		t.Fatalf("lease was not released: %v", err)
+	} else {
+		lease.Release()
 	}
 }
 
-func TestTrashTopicCommittedCleanupFailureReconcilesWithoutFailureResponse(t *testing.T) {
+func TestLegacyTrashTopicCommittedCleanupFailureReconcilesWithoutFailureResponse(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	projectRoot := t.TempDir()
 	topicID := "topic_committed_cleanup"
@@ -268,7 +266,7 @@ func TestTrashTopicCommittedCleanupFailureReconcilesWithoutFailureResponse(t *te
 	defer func() { topicArchiveCleanupHookForTest = nil }()
 
 	app := NewApp()
-	if err := app.TrashTopic(topicID); err != nil {
+	if err := app.trashTopic(topicID); err != nil {
 		t.Fatalf("committed TrashTopic returned a failure: %v", err)
 	}
 	if !agent.IsCleanupPending(sessionPath) {
@@ -293,7 +291,7 @@ func TestTrashTopicCommittedCleanupFailureReconcilesWithoutFailureResponse(t *te
 	}
 }
 
-func TestTrashTopicLegacyMirrorFailureStaysCommittedAndRepairs(t *testing.T) {
+func TestLegacyTrashTopicLegacyMirrorFailureStaysCommittedAndRepairs(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	projectRoot := t.TempDir()
 	seedLegacyTopicBridge(t, projectRoot)
@@ -318,7 +316,7 @@ func TestTrashTopicLegacyMirrorFailureStaysCommittedAndRepairs(t *testing.T) {
 	t.Cleanup(func() { topicLegacyWriteHookForTest = nil })
 
 	app := NewApp()
-	if err := app.TrashTopic(topicID); err != nil {
+	if err := app.trashTopic(topicID); err != nil {
 		t.Fatalf("committed TrashTopic returned a failure: %v", err)
 	}
 	if got := loadTopicTitle(projectRoot, topicID); got != "" {
@@ -421,27 +419,21 @@ func TestTrashTopicPreservesDivergedExistingTrash(t *testing.T) {
 	if err := app.TrashTopic(topicID); err != nil {
 		t.Fatalf("TrashTopic: %v", err)
 	}
-	trashed, err := listTrashedSessionFiles(dir)
+	ref := assertLegacyLifecycle(t, app, sessionPath, "archived")
+	old, err := agent.LoadSession(existingTrashPath)
 	if err != nil {
-		t.Fatalf("listTrashedSessionFiles: %v", err)
+		t.Fatal(err)
 	}
-	if len(trashed) != 2 {
-		t.Fatalf("trashed session count = %d, want both histories: %v", len(trashed), trashed)
+	found := false
+	for _, message := range old.Snapshot() {
+		found = found || message.Content == "older trash history"
 	}
-	seen := map[string]bool{}
-	for _, path := range trashed {
-		session, err := agent.LoadSession(path)
-		if err != nil {
-			t.Fatalf("LoadSession(%q): %v", path, err)
-		}
-		for _, message := range session.Snapshot() {
-			seen[message.Content] = true
-		}
+	if !found {
+		t.Fatal("older trash history was overwritten")
 	}
-	for _, content := range []string{"older trash history", "new live history"} {
-		if !seen[content] {
-			t.Fatalf("archived histories = %#v, missing %q", seen, content)
-		}
+	page, err := app.ReadSessionHistory(ref, "", 32)
+	if err != nil || !hasHistoryContent(page.Messages, "new live history") {
+		t.Fatalf("new archived history=%+v %v", page, err)
 	}
 }
 
@@ -580,6 +572,8 @@ func TestTrashTopicArchivesFailedRuntimeWithStaleWriteAuthority(t *testing.T) {
 		TopicTitle: "Failed authority", SessionPath: sessionPath, Ctrl: ctrl, disabledMCP: map[string]ServerView{}}
 	keep := &WorkspaceTab{ID: "keep", Scope: "project", WorkspaceRoot: projectRoot, TopicID: "keep", Ready: true}
 	app := &App{tabs: map[string]*WorkspaceTab{failed.ID: failed, keep.ID: keep}, tabOrder: []string{failed.ID, keep.ID}, activeTabID: failed.ID}
+	app.desktopSessionService(dir)
+	t.Cleanup(app.closeSessionServices)
 	app.mu.Lock()
 	app.newSessionRuntimeLocked(failed, sessionRuntimeKey(sessionPath))
 	_, save := app.markTabStartupFailureLocked(failed, agent.ErrSessionWriteAuthorityStale, suppressStartupRestore)
@@ -589,9 +583,7 @@ func TestTrashTopicArchivesFailedRuntimeWithStaleWriteAuthority(t *testing.T) {
 	if err := app.TrashTopic(topicID); err != nil {
 		t.Fatalf("TrashTopic: %v", err)
 	}
-	if _, err := os.Stat(sessionPath); !os.IsNotExist(err) {
-		t.Fatalf("archived session still exists, err=%v", err)
-	}
+	assertLegacyLifecycle(t, app, sessionPath, "archived")
 	if app.tabs[keep.ID] != keep || app.tabs[failed.ID] != nil {
 		t.Fatalf("runtime bindings after archive = %#v", app.tabs)
 	}

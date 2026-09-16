@@ -7,41 +7,41 @@ const { createRoot } = await import("react-dom/client");
 const { LocaleProvider } = await import("../lib/i18n");
 const { ToastProvider } = await import("../lib/toast");
 const { ArchivedSessionsList } = await import("../components/ArchivedSessionsList");
-const row = (id: string, archived: boolean) => ({ ref: { hostId: "local", sessionId: id }, title: id, preview: "", archived, metadataStatus: "ready" });
+const row = (id: string) => ({ id, ref: { hostId: "local", sessionId: id }, title: id, workspaceId: "hidden", workspaceTitle: "Hidden project", archivedAt: 0, health: "ready", canRestore: true, canPreview: true, canPurge: true });
 const calls: string[] = [];
-let restored = false;
+let restored = false, late = false;
 let resolveLate: ((value: unknown) => void) | undefined;
 const host = installDesktopHostStub({
-  GetWorkspaceSnapshot: async () => ({ workspaces: [{ id: "hidden", title: "Hidden project", visible: false }] }),
-  ListWorkspaceSessions: async (id: string, query: string, cursor: string, _limit: number, includeArchived: boolean) => {
-    assert.equal(includeArchived, true);
-    calls.push(`${id}:${query}:${cursor}`);
-    if (query === "late") return new Promise(resolve => { resolveLate = resolve; });
-    return cursor ? { sessions: restored ? [] : [row("archived", true)], nextCursor: "" }
-      : { sessions: [row("ordinary", false)], nextCursor: "page-2" };
+  ListTrashEntries: async (_query: string, cursor: string) => {
+    calls.push(cursor);
+    if (late) return new Promise(resolve => { resolveLate = resolve; });
+    return cursor ? { items: restored ? [] : [row("archived")], generation: 1 }
+      : { items: [], generation: 1, nextCursor: "page-2" };
   },
-  RestoreCanonicalSession: async (ref: { sessionId: string }) => { assert.equal(ref.sessionId, "archived"); restored = true; },
+  ReadSessionHistory: async () => ({ messages: [{ messageId: "preview", role: "user", content: "Read-only history" }] }),
+  ApplySessionLifecycle: async (request: {targets:{ref:{sessionId:string}}[]}) => {
+    const target = request.targets[0]; assert.equal(target.ref.sessionId, "archived"); restored = true;
+    return { committed: true, generation: 2, items: [{ target, ref: target.ref, committed: true, workspaceId: "hidden" }] };
+  },
 });
 const opened: string[] = [];
 const root = createRoot(document.getElementById("root")!);
 const render = (active = true) => <LocaleProvider><ToastProvider><ArchivedSessionsList active={active} onOpenSession={async ref => { opened.push(ref.sessionId); }} /></ToastProvider></LocaleProvider>;
 await act(async () => root.render(render()));
 assert.equal(document.querySelectorAll(".archived-sessions__row").length, 1, "archives beyond the first page stay reachable in hidden projects");
-assert.ok(calls.includes("hidden::page-2"));
+assert.ok(calls.includes("page-2"));
 assert.ok(document.body.textContent?.includes("Hidden project"));
 await act(async () => (document.querySelector(".archived-sessions__open") as HTMLButtonElement).click());
-assert.deepEqual(opened, ["archived"], "archived opens route through the shared navigation owner");
+assert.deepEqual(opened, [], "preview does not open a writable runtime");
+assert.ok(document.body.textContent?.includes("Read-only history"));
 await act(async () => (document.querySelector('[aria-label="Restore session"]') as HTMLButtonElement).click());
 assert.equal(document.querySelectorAll(".archived-sessions__row").length, 0);
 assert.ok(document.body.textContent?.includes("No archived sessions"));
-await act(async () => {
-  const input = document.querySelector("input")!;
-  Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")!.set!.call(input, "late");
-  input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
-});
-assert.ok(resolveLate, "query starts a pending read");
+late = true;
+await act(async () => Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(node => node.textContent?.trim() === "Refresh")!.click());
+assert.ok(resolveLate, "refresh starts a pending read");
 await act(async () => root.render(render(false)));
-await act(async () => resolveLate!({ sessions: [row("stale", true)], nextCursor: "" }));
+await act(async () => resolveLate!({ items: [row("stale")], generation: 2 }));
 assert.equal(document.querySelectorAll(".archived-sessions__row").length, 0, "hidden page rejects stale reads");
 await act(async () => root.unmount());
 host.uninstall();

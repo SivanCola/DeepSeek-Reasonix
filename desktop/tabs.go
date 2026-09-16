@@ -2405,6 +2405,20 @@ func (a *App) OpenTopicSession(scope, workspaceRoot, topicID, sessionPath string
 }
 
 func (a *App) openTopicSession(scope, workspaceRoot, topicID, sessionPath string) (TabMeta, error) {
+	if id, ok := parseSessionRoute(sessionPath); ok {
+		if _, err := a.OpenSession(session.SessionRef{HostID: localDesktopHostID, SessionID: id}); err != nil {
+			return TabMeta{}, err
+		}
+		a.mu.RLock()
+		tab := a.tabs[a.activeTabID]
+		if tab == nil {
+			a.mu.RUnlock()
+			return TabMeta{}, errSessionNavigationSuperseded
+		}
+		meta := a.tabMeta(tab, true)
+		a.mu.RUnlock()
+		return enrichTabMeta(meta), nil
+	}
 	scope = strings.TrimSpace(scope)
 	if scope != "project" {
 		scope = "global"
@@ -3750,6 +3764,9 @@ func (a *App) buildTabControllerWithContextCore(tab *WorkspaceTab, loadedSession
 		ref, workspaceID, bindErr := a.bindTabCanonicalSession(
 			buildCtx, identity, cfg, tabScope, tabWorkspaceRoot, tabSessionID, startupSessionPath, model, modelFallback,
 		)
+		if bindErr == nil {
+			bindErr = a.workspaceRegistry().EnsureSessionTopic(buildCtx, ref.SessionID, tabTopicID, "")
+		}
 		if bindErr != nil {
 			a.recordTabStartupFailure(tab, buildGeneration, appCtx, friendlySessionLoadError(bindErr))
 			ctrl.Close()
@@ -6045,45 +6062,6 @@ func loadTelemetry(path string) tabTelemetrySnapshot {
 
 // project tree
 
-// ProjectNode is one node in the sidebar project tree (a project folder or a
-// topic leaf).
-type ProjectNode struct {
-	Key                          string `json:"key"`  // stable key for React
-	Kind                         string `json:"kind"` // "project" | "topic" | "session" | "global_folder" | "global_topic" | "global_session"
-	Label                        string `json:"label"`
-	Root                         string `json:"root,omitempty"` // project workspace root
-	TopicID                      string `json:"topicId,omitempty"`
-	SessionPath                  string `json:"sessionPath,omitempty"`
-	Preview                      string `json:"preview,omitempty"`
-	ProjectColor                 string `json:"projectColor,omitempty"`
-	Turns                        int    `json:"turns,omitempty"`
-	TurnsState                   string `json:"turnsState,omitempty"`
-	Health                       string `json:"health,omitempty"`
-	CreatedAt                    int64  `json:"createdAt,omitempty"`
-	LastActivityAt               int64  `json:"lastActivityAt,omitempty"`
-	Open                         bool   `json:"open,omitempty"`
-	Running                      bool   `json:"running,omitempty"`
-	Status                       string `json:"status,omitempty"`
-	Pinned                       bool   `json:"pinned,omitempty"`
-	SortOrder                    int    `json:"sortOrder"` // manual topic order index (0-based); -1 when unknown
-	Recovered                    bool   `json:"recovered,omitempty"`
-	RecoveryReason               string `json:"recoveryReason,omitempty"`
-	RecoveryDigest               string `json:"recoveryDigest,omitempty"`
-	RecoveryParentID             string `json:"recoveryParentId,omitempty"`
-	RecoveryState                string `json:"recoveryState,omitempty"`
-	RecoveryBranchCount          int    `json:"recoveryBranchCount,omitempty"`
-	RecoveryUnresolvedCount      int    `json:"recoveryUnresolvedCount,omitempty"`
-	RecoveryCleanupEligibleCount int    `json:"recoveryCleanupEligibleCount,omitempty"`
-	// RecoveryCopyCount is retained for compatibility with older desktop
-	// frontends. Ordinary project-tree payloads intentionally leave it at zero:
-	// physical recovery copies are an internal persistence detail.
-	RecoveryCopyCount int           `json:"recoveryCopyCount,omitempty"`
-	IsolatedWorktree  bool          `json:"isolatedWorktree,omitempty"`
-	Remote            *RemoteTabRef `json:"remote,omitempty"`
-	RuntimeOnly       bool          `json:"runtimeOnly,omitempty"`
-	Children          []ProjectNode `json:"children,omitempty"`
-}
-
 func normalizeTopicStatus(status string) string {
 	switch status {
 	case topicStatusThinking, topicStatusStreaming, topicStatusWaitingConfirmation, topicStatusBackgroundJob, topicStatusPaused, topicStatusAwaitingDelivery, topicStatusError, topicStatusDivergedRecovery:
@@ -6423,6 +6401,9 @@ func (a *App) ReorderProjects(workspaceRoots []string) error {
 
 // RenameTopic updates a topic's display title.
 func (a *App) RenameTopic(topicID, title string) error {
+	if handled, err := a.updateCanonicalTopicPresentation(topicID, &title, nil); handled || err != nil {
+		return err
+	}
 	a.topicTitleMutationMu.Lock()
 	defer a.topicTitleMutationMu.Unlock()
 	trimmed := strings.TrimSpace(title)
@@ -6659,6 +6640,9 @@ func (a *App) deleteTopic(topicID string) error {
 // SetTopicPinned controls whether a topic is pinned to the top of its project
 // or Global section in the desktop project tree.
 func (a *App) SetTopicPinned(topicID string, pinned bool) error {
+	if handled, err := a.updateCanonicalTopicPresentation(topicID, nil, &pinned); handled || err != nil {
+		return err
+	}
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
 		return fmt.Errorf("topicID is required")

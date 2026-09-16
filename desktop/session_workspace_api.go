@@ -65,6 +65,11 @@ type WorkspaceSessionPage struct {
 }
 
 type SessionArchitectureDiagnostics struct {
+	PendingOperations       int    `json:"pending_operations"`
+	MissingMembers          int    `json:"missing_members"`
+	IdentityMismatches      int    `json:"identity_mismatches"`
+	SourceConflicts         int    `json:"source_conflicts"`
+	RecoveryEntries         int    `json:"recovery_entries"`
 	SessionHeadersTotal     int    `json:"session_headers_total"`
 	WorkspaceMembersTotal   int    `json:"workspace_members_total"`
 	UnassignedSessions      int    `json:"unassigned_sessions"`
@@ -92,7 +97,7 @@ func (a *App) GetWorkspaceSnapshot() (WorkspaceSnapshot, error) {
 	result := WorkspaceSnapshot{
 		Generation:         state.Generation,
 		Workspaces:         make([]WorkspaceSummary, 0, len(state.WorkspaceIDs)),
-		ArchivedSessionIDs: append([]string(nil), state.ArchivedSessionIDs...),
+		ArchivedSessionIDs: append([]string{}, state.ArchivedSessionIDs...),
 		PendingCreates:     make([]WorkspacePendingCreate, 0, len(state.PendingCreates)),
 	}
 	for _, id := range state.WorkspaceIDs {
@@ -102,7 +107,7 @@ func (a *App) GetWorkspaceSnapshot() (WorkspaceSnapshot, error) {
 		}
 		result.Workspaces = append(result.Workspaces, WorkspaceSummary{
 			ID: workspace.ID, Root: workspace.Root, Title: workspace.Title,
-			SessionIDs: append([]string(nil), workspace.SessionIDs...), Visible: workspace.Visible,
+			SessionIDs: append([]string{}, workspace.SessionIDs...), Visible: workspace.Visible,
 			CreatedAt: unixMillis(workspace.CreatedAt), UpdatedAt: unixMillis(workspace.UpdatedAt),
 		})
 	}
@@ -126,10 +131,29 @@ func (a *App) GetSessionArchitectureDiagnostics() (SessionArchitectureDiagnostic
 		PruneBlockedPersistence: a.desktopSessions.pruneBlockedPersistence.Load(),
 	}
 	members := map[string]bool{}
+	for _, op := range state.PendingOperations {
+		if op.Phase != "committed" {
+			result.PendingOperations++
+		}
+	}
+	for _, entry := range state.RecoveryEntries {
+		if entry.Status == "restored" {
+			continue
+		}
+		result.RecoveryEntries++
+		if strings.Contains(entry.Reason, "conflict") {
+			result.SourceConflicts++
+		}
+	}
 	for _, workspace := range state.Workspaces {
 		result.WorkspaceMembersTotal += len(workspace.SessionIDs)
 		for _, sessionID := range workspace.SessionIDs {
 			members[sessionID] = true
+			if info, found := infos[sessionID]; !found {
+				result.MissingMembers++
+			} else if !sameDesktopPath(info.CWD, workspace.Root) {
+				result.IdentityMismatches++
+			}
 		}
 	}
 	for sessionID, info := range infos {
@@ -196,6 +220,9 @@ func (a *App) ListWorkspaceSessions(workspaceID, queryText, cursor string, limit
 	}
 	ids := make([]string, 0, len(workspace.SessionIDs))
 	for _, id := range workspace.SessionIDs {
+		if state.SessionStates[id].Lifecycle == workspacestate.Deleted {
+			continue
+		}
 		if includeArchived || !archived[id] {
 			ids = append(ids, id)
 		}
@@ -204,6 +231,9 @@ func (a *App) ListWorkspaceSessions(workspaceID, queryText, cursor string, limit
 	needle := strings.ToLower(strings.TrimSpace(queryText))
 	rows := make([]WorkspaceSessionSummary, 0, len(workspace.SessionIDs))
 	for _, sessionID := range workspace.SessionIDs {
+		if state.SessionStates[sessionID].Lifecycle == workspacestate.Deleted {
+			continue
+		}
 		isArchived := archived[sessionID]
 		if isArchived && !includeArchived {
 			continue
@@ -220,7 +250,7 @@ func (a *App) ListWorkspaceSessions(workspaceID, queryText, cursor string, limit
 	}
 	end := min(start+limit, len(rows))
 	page := WorkspaceSessionPage{
-		Sessions:           append([]WorkspaceSessionSummary(nil), rows[start:end]...),
+		Sessions:           append([]WorkspaceSessionSummary{}, rows[start:end]...),
 		RegistryGeneration: state.Generation,
 	}
 	if end < len(rows) {
@@ -335,25 +365,12 @@ func validateLocalSessionRef(ref session.SessionRef) error {
 }
 
 func (a *App) ArchiveCanonicalSession(ref session.SessionRef) error {
-	if err := validateLocalSessionRef(ref); err != nil {
-		return err
-	}
-	if err := a.workspaceRegistry().ArchiveSession(context.Background(), ref.SessionID); err != nil {
-		return err
-	}
-	a.emitProjectTreeChanged()
-	return nil
+	return a.archiveSessionRefs([]session.SessionRef{ref})
 }
 
 func (a *App) RestoreCanonicalSession(ref session.SessionRef) error {
-	if err := validateLocalSessionRef(ref); err != nil {
-		return err
-	}
-	if err := a.workspaceRegistry().RestoreSession(context.Background(), ref.SessionID); err != nil {
-		return err
-	}
-	a.emitProjectTreeChanged()
-	return nil
+	_, err := a.restoreCanonicalSession(a.bootContext(), ref, "")
+	return err
 }
 
 func (a *App) MoveWorkspaceSession(workspaceID, sessionID, beforeSessionID string) error {

@@ -159,6 +159,11 @@ func (source *desktopMigrationSource) includePairedConversion(path, head, key st
 func saveDesktopMigrationHeads(key string, heads []string, selected, revision string, conversions []desktopMigrationConversion) (desktopMigrationRecord, error) {
 	desktopMigrationMu.Lock()
 	defer desktopMigrationMu.Unlock()
+	release, lockErr := lockDesktopMigrationLedger()
+	if lockErr != nil {
+		return desktopMigrationRecord{}, lockErr
+	}
+	defer release()
 	ledger, original, err := readDesktopMigrationLedgerFile()
 	if err != nil {
 		return desktopMigrationRecord{}, err
@@ -177,6 +182,13 @@ func saveDesktopMigrationHeads(key string, heads []string, selected, revision st
 	}
 	record.SourceKey = key
 	record.LegacyHeads, record.LegacySelectedHead, record.LegacyHeadsRevision = heads, selected, revision
+	for i := range conversions {
+		for _, previous := range record.LegacyConversions {
+			if previous.Root == conversions[i].Root && previous.SessionID == conversions[i].SessionID && previous.HeadID == conversions[i].HeadID {
+				conversions[i].extra = previous.extra
+			}
+		}
+	}
 	record.LegacyConversions = conversions
 	ledger.Records[key] = record
 	body, err := marshalDesktopMigrationRecord(original, ledger, key)
@@ -191,29 +203,23 @@ func saveDesktopMigrationHeads(key string, heads []string, selected, revision st
 
 func (a *App) migratePreviewSession(ctx context.Context, source desktopMigrationSource, id string) (retErr error) {
 	key := desktopCanonicalMigrationKey(source.root, id)
+	if source.versionFingerprint != "" {
+		key += ":review:" + source.versionFingerprint
+	}
 	cp, err := newDesktopMigrationCheckpoint(source, key, canonicalMigrationSourceFiles(source.root, id))
 	if err != nil {
 		return err
 	}
+	if handled, err := a.checkAdoptedMigrationSource(ctx, source, cp); handled || err != nil {
+		return err
+	}
 	if cp.unchanged() {
-		return cp.skip()
+		return a.completeRegisteredMigration(ctx, source, cp, cp.record.TargetSessionID, cp.record.ContentDigest)
 	}
-	tmp, err := os.MkdirTemp("", "reasonix-v3-import-")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(tmp)
-	stage, err := session.NewService("migration-stage", session.NewFilesystemPersistence(filepath.Join(tmp, "sessions-v4")))
-	if err != nil {
-		return err
-	}
-	defer func() { retErr = errors.Join(retErr, stage.Shutdown(context.Background())) }()
-	runtime, _, err := stage.ContinuePrototype(ctx, filepath.Join(source.root, id))
+	stage, ref, cleanup, err := stageDesktopStoredPreview(ctx, filepath.Join(source.root, id))
 	if err != nil {
 		return errors.Join(err, updateDesktopMigrationLedger(key, id, "failed", "preview_import"))
 	}
-	if err := stage.Close(ctx, runtime.Ref()); err != nil {
-		return err
-	}
-	return a.publishStagedMigration(ctx, source, cp, stage, runtime.Ref(), "", session.SessionOriginCanonicalImport)
+	defer cleanup()
+	return a.publishStagedMigration(ctx, source, cp, stage, ref, "", session.SessionOriginCanonicalImport)
 }

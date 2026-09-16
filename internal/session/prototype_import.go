@@ -42,6 +42,24 @@ func ImportPrototype(ctx context.Context, sourceDir, targetRoot string) (Prototy
 	return importPreview(ctx, sourceDir, targetRoot)
 }
 
+// ImportStoredPreview uses the existing explicit adapter for pre-ownership
+// stores, but publishes to a separate staging root. The source is never
+// upgraded in place, including for the unpublished v4 draft.
+func ImportStoredPreview(ctx context.Context, sourceDir, targetRoot string) (PrototypeImportResult, error) {
+	if err := ctx.Err(); err != nil {
+		return PrototypeImportResult{}, err
+	}
+	if strings.TrimSpace(targetRoot) == "" || filepath.Clean(targetRoot) == "." {
+		return PrototypeImportResult{}, errors.New("session: preview target root is required")
+	}
+	frozen, err := freezePairedPreview(ctx, sourceDir)
+	if err != nil {
+		return PrototypeImportResult{}, err
+	}
+	defer os.RemoveAll(frozen.freezeDir)
+	return importFrozenPreview(ctx, frozen, targetRoot, CreateOptions{})
+}
+
 // importPreview accepts both retired prototype codecs produced before the
 // identity cutover. Callers must resolve it together with the paired legacy
 // transcript; opening either source in isolation can silently drop newer work.
