@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -64,7 +65,7 @@ func rewriteProviderEndpointContracts(raw string) (string, []ProviderEndpointRep
 	blocks := providerTOMLBlocks(lines)
 	if len(blocks) == len(decoded.Providers) {
 		var err error
-		for i := len(decoded.Providers) - 1; i >= 0; i-- {
+		for i := range slices.Backward(decoded.Providers) {
 			if !repaired[i] {
 				continue
 			}
