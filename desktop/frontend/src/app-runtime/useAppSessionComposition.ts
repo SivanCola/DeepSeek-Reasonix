@@ -355,7 +355,7 @@ export function useAppSessionComposition(input: AppSessionCompositionInput) {
   // the submission resources still use `controllerReady` as the write fence,
   // so drafts remain editable while send/control actions stay disabled until
   // the target runtime is ready.  Decision surfaces remain exclusive.
-  const composerSurfaceHidden = Boolean(decisionSurface);
+  const composerSurfaceHidden = (runtimeTransitioning && remoteSurfaceActive) || Boolean(decisionSurface);
   useDecisionSurfaceFocus({ surface: decisionSurface, activeTabId, closeOverlays: closeTransientOverlays });
 
   // Extension form surface (stage 8b2): submit delivers the structured values

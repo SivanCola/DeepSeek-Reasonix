@@ -3272,7 +3272,7 @@ export function useController() {
       // already published, keep that transcript selected and make only the
       // write side unavailable. Treating this as a history failure used to
       // restore the source surface and throw away a perfectly readable target.
-      if (current?.hydrating) dispatchTo(tabId, { type: "hydrate_done" });
+      if (current?.hydrating) dispatchTo(tabId, { type: "hydrate_error", reason: "open-topic", error: safeError });
       if (current?.meta) {
         dispatchTo(tabId, {
           type: "meta",
@@ -4708,10 +4708,14 @@ export function useController() {
     // History is independently readable from the canonical session service as
     // soon as StartTopicActivation has published the tab identity. Do not wait
     // for the controller build/lease/MCP path before showing it.
-    void primeReadableHistoryForTab(meta.id, meta, "open-topic", navigationSeq, () =>
-      navigationCompletionCurrent(navigationSeq, "topic.activate.history", meta.id)
-      && activeTabIdRef.current === meta.id,
-    );
+    if (sameSession && hasCachedLiveTurn(previousSurface)) {
+      dispatchTo(meta.id, { type: "hydrate_done" });
+    } else {
+      void primeReadableHistoryForTab(meta.id, meta, "open-topic", navigationSeq, () =>
+        navigationCompletionCurrent(navigationSeq, "topic.activate.history", meta.id)
+        && activeTabIdRef.current === meta.id,
+      );
+    }
     if (pending.terminal && pendingTopicActivationRef.current === pending) {
       // The terminal event beat the ticket resolution; process it now.
       handleTopicActivationEvent(pending.terminal);
@@ -4808,6 +4812,8 @@ export function useController() {
       // durable projection in the store's existing bounded LRU so reopening a
       // local session can paint immediately while its runtime reattaches.
       detachTranscriptState(id);
+      // Without a follower, backend completion cannot clear a renderer pin.
+      getTranscriptStore().setPinned(id, false);
       notifyLiveListeners(id);
     }
     return true;
