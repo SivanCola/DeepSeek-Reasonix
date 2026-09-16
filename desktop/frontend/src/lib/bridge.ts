@@ -2092,6 +2092,9 @@ function makeMockApp(): AppBindings {
       tokenMode: "full",
       active: true,
       cwd: "~/projects/reasonix",
+      sessionRevision: 1,
+      sessionDigest: "mock:tab_bench_markdown",
+      sessionGeneration: 1,
     },
     {
       id: "tab_bench_tools",
@@ -2112,6 +2115,9 @@ function makeMockApp(): AppBindings {
       tokenMode: "full",
       active: false,
       cwd: "~/projects/reasonix",
+      sessionRevision: 1,
+      sessionDigest: "mock:tab_bench_tools",
+      sessionGeneration: 1,
     },
   ] : noticePreviewMock ? [
     {
@@ -3193,7 +3199,10 @@ function makeMockApp(): AppBindings {
           return turns;
         },
         async HistorySliceForTab(tabID: string, req: HistorySliceRequest) {
-          return mockHistorySlice(tabID, await this.HistoryForTab(tabID), req, benchMock);
+          const slice = mockHistorySlice(tabID, await this.HistoryForTab(tabID), req, benchMock);
+          return benchMock
+            ? { ...slice, revision: 1, revisionKnown: true, digest: `mock:${tabID}` }
+            : slice;
         },
         async HistoryContentForTab(tabID: string, ref: HistoryContentRef, chunkIndex: number): Promise<HistoryContentChunk> {
           const out: HistoryContentChunk = { entryId: ref.entryId, field: ref.field, chunk: Math.max(0, chunkIndex), chunks: 1, data: "", done: true, stale: false };
@@ -5148,8 +5157,9 @@ function makeMockApp(): AppBindings {
         return { ...restored };
       }
       const defaultToolApprovalMode = normalizeToolApprovalMode(settings.defaultToolApprovalMode);
+      const id = "tab_" + Date.now();
       const tab: TabMeta = {
-        id: "tab_" + Date.now(),
+        id,
         scope: "project",
         workspaceRoot,
         workspaceName: workspaceRoot.split("/").filter(Boolean).pop() ?? workspaceRoot,
@@ -5168,6 +5178,11 @@ function makeMockApp(): AppBindings {
         tokenMode: "full",
         active: true,
         cwd: workspaceRoot,
+        ...(benchMock ? {
+          sessionRevision: 1,
+          sessionDigest: `mock:${id}`,
+          sessionGeneration: 1,
+        } : {}),
       };
       mockTabs = [...mockTabs.map((item) => ({ ...item, active: false })), tab];
       return { ...tab };
@@ -5214,8 +5229,9 @@ function makeMockApp(): AppBindings {
         return { ...existing, active: true };
       }
       const defaultToolApprovalMode = normalizeToolApprovalMode(settings.defaultToolApprovalMode);
+      const id = "tab_" + Date.now();
       const tab: TabMeta = {
-        id: "tab_" + Date.now(),
+        id,
         scope: "global",
         workspaceRoot: globalWorkspaceRoot,
         workspaceName: "Global",
@@ -5232,6 +5248,11 @@ function makeMockApp(): AppBindings {
         tokenMode: "full",
         active: true,
         cwd: globalWorkspaceRoot,
+        ...(benchMock ? {
+          sessionRevision: 1,
+          sessionDigest: `mock:${id}`,
+          sessionGeneration: 1,
+        } : {}),
       };
       mockTabs = [...mockTabs.map((item) => ({ ...item, active: false })), tab];
       return { ...tab };

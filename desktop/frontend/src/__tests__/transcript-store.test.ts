@@ -416,6 +416,17 @@ console.log("\ntranscript store");
 // ── weighted LRU: count, pin, byte budget, re-open ──────────────────────────
 {
   const store = new TranscriptStore(new FakeBackend([]));
+  store.installSlice("tab-aba", "/s/same.jsonl", {
+    entries: [{ entryId: "m:old", turn: 1, order: 0, message: { role: "user", content: "old generation" }, refs: [] }],
+    nextCursor: "", newerCursor: "", hasOlder: false, hasNewer: false,
+    startTurn: 1, endTurn: 1, totalTurns: 1, revision: 4, digest: "digest-v4", stale: false,
+  });
+  ok(Boolean(store.peek("tab-aba", "/s/same.jsonl", { revision: 4, digest: "digest-v4" })), "matching fingerprint serves the resident projection");
+  eq(store.peek("tab-aba", "/s/same.jsonl", { revision: 5, digest: "digest-v5" }), undefined, "same-path ABA fingerprint mismatch is a cache miss");
+}
+
+{
+  const store = new TranscriptStore(new FakeBackend([]));
   const initial = store.installSlice("reader-v2", "/reader", {
     entries: [{ entryId: "m:old", turn: 1, order: 0, message: { role: "user", content: "old reader page" }, refs: [] }],
     nextCursor: "", newerCursor: "newer", hasOlder: false, hasNewer: true,
@@ -561,7 +572,8 @@ console.log("\ntranscript store");
 }
 
 {
-  // Content chunks arriving after a fresh load (session switch) are discarded.
+  // A content request spanning a fresh load discards the old chunk and
+  // transparently retries against the replacement generation.
   const full = "y".repeat(80);
   const refs: RefTable = new Map([["s1:r0:m1:o0:content", full]]);
   const backend = new FakeBackend(
@@ -579,11 +591,11 @@ console.log("\ntranscript store");
   // load's content request is still awaiting its chunk.
   const reload = store.loadLatest("tab-l", "/s/l.jsonl", { turns: 12 });
   staleGate.resolve({ entryId: "s1:r0:m1:o0", field: "content", chunk: 0, chunks: 2, data: "STALE", done: true, stale: false });
-  await first;
+  const resolved = await first;
   await reload;
-  await store.requestFullContent("tab-l", "s1:r0:m1:o0", "content");
-  await new Promise((resolve) => setTimeout(resolve, 0));
   const assistant = (store.peek("tab-l", "/s/l.jsonl")?.items ?? []).find((item) => item.kind === "assistant");
+  eq(resolved, full, "generation rollover retries the original request against the replacement record");
+  eq(backend.contentCalls.length, 3, "the replacement generation fetches both content chunks once");
   eq(assistant?.kind === "assistant" && assistant.text, full, "late content chunk from a previous generation is discarded");
 }
 

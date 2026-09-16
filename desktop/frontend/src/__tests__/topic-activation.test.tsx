@@ -242,13 +242,16 @@ await act(async () => {
   await flushPromises();
 });
 eq(controller?.activeTabId, "tab-b", "B applies optimistically on its ticket");
-eq(controller?.state.hydrating, true, "B shows the hydrating surface until its terminal event");
+eq(controller?.state.hydrating, false, "B becomes readable before its runtime terminal event");
+ok(hasHistory("tab-b"), "B publishes canonical history while runtime activation is still pending");
 
 await act(async () => {
   await controller?.activateTopic("project", tabC.workspaceRoot, tabC.topicId ?? "");
   await flushPromises();
 });
 eq(controller?.activeTabId, "tab-c", "C applies optimistically over B");
+eq(controller?.state.hydrating, false, "C history also settles independently of runtime activation");
+ok(hasHistory("tab-c"), "C is readable before its runtime terminal event");
 
 // Out of order: B's terminal events arrive (superseded) before C's ready.
 await act(async () => {
@@ -259,13 +262,14 @@ await act(async () => {
 });
 eq(controller?.activeTabId, "tab-c", "superseded terminal events do not flip the visible tab");
 ok(!hasHistory("tab-b") && !hasHistory("tab-a"), "superseded terminal events never hydrate");
-eq(controller?.state.hydrating, true, "C still waits for its own terminal event");
+eq(controller?.state.hydrating, false, "C remains readable while it waits for its own runtime terminal event");
 
 await act(async () => {
   emitActivation({ requestId: requestIdByTab.get("tab-c") ?? "", tabId: "tab-c", phase: "starting" });
   await flushPromises();
 });
-eq(controller?.state.hydrating, true, "starting does not hydrate");
+eq(controller?.state.hydrating, false, "runtime starting does not hide already-readable history");
+ok(hasHistory("tab-c"), "runtime starting preserves the readable C transcript");
 await act(async () => {
   emitActivation({ requestId: requestIdByTab.get("tab-c") ?? "", tabId: "tab-c", phase: "ready" });
   await flushPromises();
@@ -283,11 +287,20 @@ await act(async () => {
   emitActivation({ requestId: requestIdByTab.get("tab-a") ?? "", tabId: "tab-a", phase: "failed", error: "session failed to start" });
   await flushPromises();
 });
-eq(controller?.activeTabId, "tab-c", "failed activation restores the previously committed source tab");
-eq(controller?.state.hydrating, false, "restored source is immediately usable");
-ok(hasHistory("tab-c"), "failed activation retains the source transcript");
+eq(controller?.activeTabId, "tab-a", "failed runtime activation keeps the selected readable target");
+eq(controller?.state.hydrating, false, "failed runtime activation does not re-enter history hydration");
+ok(hasHistory("tab-a"), "failed runtime activation retains the target transcript");
+eq(controller?.state.meta?.ready, false, "failed runtime activation keeps write actions fenced");
+ok(Boolean(controller?.state.meta?.startupErr), "failed runtime activation exposes a safe retry state");
 const failureNotice = controller?.state.items.findLast((item) => item.kind === "notice");
-ok(Boolean(failureNotice && failureNotice.kind === "notice" && !failureNotice.text.includes("session failed to start")), "failure notice is sanitized before it reaches the restored source");
+ok(Boolean(failureNotice && failureNotice.kind === "notice" && !failureNotice.text.includes("session failed to start")), "failure notice is sanitized before it reaches the readable target");
+
+await act(async () => {
+  await controller?.activateTopic("project", tabC.workspaceRoot, tabC.topicId ?? "");
+  emitActivation({ requestId: requestIdByTab.get("tab-c") ?? "", tabId: "tab-c", phase: "ready" });
+  await flushPromises();
+});
+await waitFor("C is restored as the committed source", () => controller?.activeTabId === "tab-c" && hasHistory("tab-c"));
 
 // ── activation succeeds but target history fails: source still wins ─────────
 failedHistoryTabId = "tab-a";

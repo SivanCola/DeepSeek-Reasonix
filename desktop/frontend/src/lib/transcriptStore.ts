@@ -261,10 +261,17 @@ export class TranscriptStore {
     };
   }
 
-  /** Synchronous projection for an LRU-resident session; undefined on a miss. */
-  peek(tabId: string, sessionPath: string): TranscriptProjection | undefined {
+  /** Synchronous projection for an LRU-resident session; undefined on a miss
+   *  or when the caller's authoritative fingerprint cannot prove the resident
+   *  cut belongs to the selected session generation. */
+  peek(
+    tabId: string,
+    sessionPath: string,
+    expected?: { revision?: number; digest?: string },
+  ): TranscriptProjection | undefined {
     const session = this.sessions.get(sessionKeyFor(tabId, sessionPath));
-    if (!session || session.records.length === 0) return undefined;
+    if (!session || session.records.length === 0
+      || (expected !== undefined && !this.matchesExpectedFingerprint(session, expected.revision, expected.digest))) return undefined;
     this.touch(session);
     return this.projectionOf(session);
   }
@@ -646,37 +653,47 @@ export class TranscriptStore {
     // A fresh load supersedes every in-flight request of the previous load.
     session.generation += 1;
     const generation = session.generation;
+    let settleGeneration!: () => void;
+    const generationSettled = new Promise<void>((resolve) => { settleGeneration = resolve; });
+    session.generationSettlement = { generation, promise: generationSettled };
     this.sessions.set(key, session);
     this.touch(session);
 
-    const { turns, entries, bytes } = options;
-    const current = () => this.sessions.get(key) === session && session.generation === generation && (options.current?.() ?? true);
-    let slice = await this.fetchSlice(tabId, { cursor: "", turns, entries, bytes }, current);
-    if (!slice || !current()) return undefined;
-    if (slice.stale) {
-      // cursor "" cannot bind a stale identity, but a concurrent rewrite may
-      // still report one — retry once against the settled revision.
-      slice = await this.fetchSlice(tabId, { cursor: "", turns, entries, bytes }, current);
+    try {
+      const { turns, entries, bytes } = options;
+      const current = () => this.sessions.get(key) === session && session.generation === generation && (options.current?.() ?? true);
+      let slice = await this.fetchSlice(tabId, { cursor: "", turns, entries, bytes }, current);
       if (!slice || !current()) return undefined;
+      if (slice.stale) {
+        // cursor "" cannot bind a stale identity, but a concurrent rewrite may
+        // still report one — retry once against the settled revision.
+        slice = await this.fetchSlice(tabId, { cursor: "", turns, entries, bytes }, current);
+        if (!slice || !current()) return undefined;
+      }
+      const newestEntries = asArray<HistoryEntry>(slice.entries);
+      this.replaceRecords(session, newestEntries);
+      session.pages = [this.pageFor(newestEntries, slice.nextCursor ?? "", slice.newerCursor ?? "")];
+      session.reclaimedOlder = 0;
+      session.reclaimedNewer = 0;
+      session.nextCursor = slice.nextCursor ?? "";
+      session.hasOlder = Boolean(slice.hasOlder);
+      session.newerCursor = slice.newerCursor ?? "";
+      session.hasNewer = Boolean(slice.hasNewer);
+      session.totalTurns = slice.totalTurns ?? 0;
+      session.startTurn = slice.startTurn ?? 0;
+      session.endTurn = slice.endTurn ?? 0;
+      session.revision = slice.revision ?? 0;
+      session.revisionKnown = sliceRevisionKnown(slice);
+      session.digest = slice.digest ?? "";
+      this.enforceBudgets();
+      if (this.sessions.get(key) !== session) return undefined; // evicted by the budget
+      return this.projectionOf(session);
+    } finally {
+      settleGeneration();
+      if (session.generationSettlement?.generation === generation) {
+        session.generationSettlement = undefined;
+      }
     }
-    const newestEntries = asArray<HistoryEntry>(slice.entries);
-    this.replaceRecords(session, newestEntries);
-    session.pages = [this.pageFor(newestEntries, slice.nextCursor ?? "", slice.newerCursor ?? "")];
-    session.reclaimedOlder = 0;
-    session.reclaimedNewer = 0;
-    session.nextCursor = slice.nextCursor ?? "";
-    session.hasOlder = Boolean(slice.hasOlder);
-    session.newerCursor = slice.newerCursor ?? "";
-    session.hasNewer = Boolean(slice.hasNewer);
-    session.totalTurns = slice.totalTurns ?? 0;
-    session.startTurn = slice.startTurn ?? 0;
-    session.endTurn = slice.endTurn ?? 0;
-    session.revision = slice.revision ?? 0;
-    session.revisionKnown = sliceRevisionKnown(slice);
-    session.digest = slice.digest ?? "";
-    this.enforceBudgets();
-    if (this.sessions.get(key) !== session) return undefined; // evicted by the budget
-    return this.projectionOf(session);
   }
 
   /**
@@ -906,6 +923,15 @@ export class TranscriptStore {
   }
 
   async requestFullContent(tabId: string, entryId: string, field: string): Promise<string | undefined> {
+    return this.requestFullContentAttempt(tabId, entryId, field, true);
+  }
+
+  private async requestFullContentAttempt(
+    tabId: string,
+    entryId: string,
+    field: string,
+    retryOnGenerationRollover: boolean,
+  ): Promise<string | undefined> {
     const resolver = this.contentResolvers.active(tabId);
     if (resolver) return resolver.resolve(entryId, field);
     entryId = resolveTranscriptEntryAlias(this.sessions.values(), tabId, entryId);
@@ -927,7 +953,17 @@ export class TranscriptStore {
       const chunks = Math.max(1, ref.chunks);
       for (let index = 0; index < chunks; index += 1) {
         const chunk = await this.backend.HistoryContentForTab(tabId, ref, index);
-        if (this.sessions.get(session.key) !== session || session.generation !== generation) return undefined;
+        if (this.sessions.get(session.key) !== session || session.generation !== generation) {
+          // An early durable baseline may start resolving a lazy body just
+          // before the canonical follower installs its cut. The old chunk
+          // must never land in the new generation, but the caller should not
+          // have to notice that ownership hand-off and click Retry. Resolve
+          // the alias/ref again against the current generation exactly once.
+          if (!retryOnGenerationRollover) return undefined;
+          const settlement = session.generationSettlement;
+          if (settlement?.generation === session.generation) await settlement.promise;
+          return this.requestFullContentAttempt(tabId, entryId, field, false);
+        }
         if (chunk.stale) {
           rec.staleRefs = { ...rec.staleRefs, [field]: true };
           return undefined;
@@ -935,6 +971,10 @@ export class TranscriptStore {
         data += chunk.data ?? "";
         if (chunk.done) break;
       }
+      // A fresh load bumps the generation before fetching its replacement
+      // page. If that page lands while this attempt is reading chunks, reject
+      // the detached record even though the generation itself is unchanged.
+      if (session.byId.get(entryId) !== rec) return undefined;
       if (!applyResolvedField(rec, ref, data)) return undefined;
       const previousBytes = rec.bytes;
       rec.bytes = recordBytes(rec.message);
