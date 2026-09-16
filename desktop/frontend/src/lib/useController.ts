@@ -31,13 +31,25 @@ import { invalidateSharedQuery } from "./queryCoalesce";
 import { replayPendingPromptsForActiveTab } from "./promptReplay";
 import { createRafBatch } from "./rafBatch";
 import { foregroundRunningFromRuntimeMeta, type RuntimeMetaSnapshot } from "./runtimeMeta";
-import { aliasActivationRequest, noteActivationRequested, noteActivationSettled, noteActivationStarted, beginResumeHistory, noteTranscriptFollowSwitch } from "./sessionDiagnostics";
+import {
+  aliasActivationRequest,
+  beginResumeHistory,
+  noteActivationRequested,
+  noteActivationSettled,
+  noteActivationStarted,
+  noteNavigationHistoryReadable,
+  noteNavigationHistoryRequested,
+  noteNavigationIdentityPublished,
+  noteNavigationRequested,
+  noteNavigationRuntimeReady,
+  noteTranscriptFollowSwitch,
+} from "./sessionDiagnostics";
 import { applyLiveSegments, coalesceStreamDeltas, completeLiveReasoning, type StreamDeltaEntry, type StreamSegment } from "./streamDeltaBatch";
 import { assistantHasContent, ensureActiveAssistant, ensureAssistant, removeEmptyAssistantItems } from "./assistantItems";
 import { setTranscriptBindingIdentity } from "./canonicalTranscriptBackend";
 import { getTranscriptStore } from "./transcriptStore";
 import { TranscriptSessionFollower } from "./transcriptSessionFollower";
-import { historyRevisionIsOlder } from "./sessionTranscriptMode";
+import { historyReplaceAction, historyRevisionIsOlder } from "./sessionTranscriptMode";
 import { matchingSnapshotItem, transcriptPageState, transcriptSnapshotState } from "./transcriptSnapshotState";
 import type { TranscriptSnapshot } from "./transcriptProtocol";
 import { recordFrontendDiagnostic } from "./frontendDiagnosticBridge";
@@ -276,6 +288,7 @@ type PendingTopicActivation = {
   requestId: string;
   navigationSeq: number;
   tabId?: string;
+  runtimeInitiallyReady?: boolean;
   placeholderItems?: Item[];
   /** Terminal event that arrived before the ticket resolved. */
   terminal?: TopicActivationEvent;
@@ -2415,6 +2428,7 @@ export function useController() {
   const beginActiveNavigation = useCallback(() => {
     activeNavigationSeqRef.current += 1;
     const seq = activeNavigationSeqRef.current;
+    noteNavigationRequested(seq);
     const sourceTabId = activeTabIdRef.current;
     const source: NavigationSourceSnapshot = {
       tabId: sourceTabId,
@@ -2607,7 +2621,11 @@ export function useController() {
   // Ref-resolved content updates flow from the transcript store into the tab's
   // state as id-keyed patches. Subscribed once per tab; released when the tab
   // state is dropped (close / single-surface prune).
-  const ensureTranscriptSubscription = useCallback((tabId: string) => {
+  const ensureTranscriptSubscription = useCallback((tabId: string, binding?: { path: string; key: string }) => {
+    if (binding?.key && getTranscriptStore().noteSessionBinding(tabId, binding.path, binding.key)) {
+      followers.current.get(tabId)?.stop();
+      followers.current.delete(tabId);
+    }
     if (transcriptSubscriptions.current.has(tabId)) return;
     const unsubscribe = getTranscriptStore().subscribe(tabId, (change) => {
       if (!statesRef.current.has(tabId)) return;
@@ -2623,7 +2641,7 @@ export function useController() {
     transcriptSubscriptions.current.set(tabId, unsubscribe);
   }, [dispatchTo]);
   const startTranscriptFollow = useCallback(async (tabId: string, path: string) => {
-    ensureTranscriptSubscription(tabId);
+    ensureTranscriptSubscription(tabId, { path, key: sessionIdentityStableKey(statesRef.current.get(tabId)?.meta) });
     followers.current.get(tabId)?.stop();
     const follower = new TranscriptSessionFollower(tabId, path, false, action => {
       if (followers.current.get(tabId) === follower) dispatchTo(tabId, action);
@@ -2632,17 +2650,20 @@ export function useController() {
     await follower.start();
     return follower.metrics;
   }, [dispatchTo, ensureTranscriptSubscription]);
-  const releaseTranscriptState = useCallback((tabId: string) => {
+  const detachTranscriptState = useCallback((tabId: string) => {
     followers.current.get(tabId)?.stop();
     followers.current.delete(tabId);
-    // A released tab can still have an older-page request awaiting the bridge. Keep
+    // A detached tab can still have an older-page request awaiting the bridge. Keep
     // a tombstone generation so a later tab reusing the same id cannot make
     // that completion current again.
     historyWindowSeq.current.set(tabId, (historyWindowSeq.current.get(tabId) ?? 0) + 1);
     transcriptSubscriptions.current.get(tabId)?.();
     transcriptSubscriptions.current.delete(tabId);
-    getTranscriptStore().evictTab(tabId);
   }, []);
+  const releaseTranscriptState = useCallback((tabId: string) => {
+    detachTranscriptState(tabId);
+    getTranscriptStore().evictTab(tabId);
+  }, [detachTranscriptState]);
   const sessionLoadCurrent = useCallback((tabId: string, seq: number): boolean => {
     return sessionLoadSeq.current.get(tabId) === seq;
   }, []);
@@ -2828,6 +2849,87 @@ export function useController() {
       }
     }
   }, [bumpSessionLoadSeq, cancelHydrateCurrent, dispatchTo, invalidateCheckpoints, loadMetaForTab, refreshBalanceForTab, refreshTurnBoundaries, sessionLoadCurrent, startTranscriptFollow]);
+
+  /**
+   * Publish the bounded durable history window before a local controller has
+   * finished booting. The canonical history service can resolve a tab's
+   * SessionID without a bound controller, so navigation must not wait for MCP,
+   * provider, lease, or runtime setup merely to make the conversation readable.
+   *
+   * This is deliberately a one-shot readable baseline, not a second live
+   * transcript owner. Once the runtime is ready, TranscriptSessionFollower
+   * installs the authoritative protocol-v2 cut and owns subsequent changes.
+   */
+  const primeReadableHistoryForTab = useCallback(async (
+    tabId: string,
+    target: TabMeta,
+    reason: HydrateReason,
+    navigationIntent: number,
+    current: () => boolean,
+  ): Promise<"cached" | "loaded" | "miss"> => {
+    const sessionPath = (target.sessionPath ?? "").trim();
+    const identity = sessionIdentityFields(target);
+    const seq = bumpSessionLoadSeq(tabId);
+    const stillCurrent = () => current()
+      && sessionLoadCurrent(tabId, seq)
+      && hydrateIdentityCurrent(identity, statesRef.current.get(tabId)?.meta);
+    if (!stillCurrent()) return "miss";
+    ensureTranscriptSubscription(tabId, { path: sessionPath, key: sessionIdentityStableKey(target) });
+    const store = getTranscriptStore();
+    const startedAt = Date.now();
+    const resident = store.peek(tabId, sessionPath, {
+      revision: target.sessionRevision,
+      digest: target.sessionDigest,
+    });
+    noteNavigationHistoryRequested(navigationIntent, Boolean(resident));
+    recordFrontendDiagnostic("navigation", resident ? "navigation.history-cache-hit" : "navigation.history-cache-miss", {
+      tabId,
+      reason,
+    });
+    if (resident) {
+      if (!stillCurrent()) return "miss";
+      dispatchTo(tabId, historyReplaceAction(resident));
+      dispatchTo(tabId, { type: "hydrate_done" });
+      noteNavigationHistoryReadable(navigationIntent, true);
+      recordFrontendDiagnostic("navigation", "navigation.history-readable", {
+        tabId,
+        reason,
+        source: "cache",
+        durationMs: Date.now() - startedAt,
+      });
+      return "cached";
+    }
+    try {
+      const projection = await store.loadLatest(tabId, sessionPath, {
+        preferResident: true,
+        expectedRevision: target.sessionRevision,
+        expectedDigest: target.sessionDigest,
+        current: stillCurrent,
+      });
+      if (!projection || !stillCurrent()) return "miss";
+      dispatchTo(tabId, historyReplaceAction(projection));
+      dispatchTo(tabId, { type: "hydrate_done" });
+      noteNavigationHistoryReadable(navigationIntent, false);
+      recordFrontendDiagnostic("navigation", "navigation.history-readable", {
+        tabId,
+        reason,
+        source: "disk",
+        durationMs: Date.now() - startedAt,
+      });
+      return "loaded";
+    } catch (error) {
+      // Runtime activation may still succeed and its protocol-v2 follower will
+      // retry from the controller-owned cut. Keep the target skeleton instead
+      // of turning an early-read miss into a terminal navigation failure.
+      addBreadcrumb("tab.hydrate", `readable baseline failed ${reason} ${tabId}: ${errorMessage(error)}`);
+      recordFrontendDiagnostic("navigation", "navigation.history-readable-failed", {
+        tabId,
+        reason,
+        durationMs: Date.now() - startedAt,
+      });
+      return "miss";
+    }
+  }, [bumpSessionLoadSeq, dispatchTo, ensureTranscriptSubscription, sessionLoadCurrent]);
 
   // On-demand full content for a ref-replaced history field (entries carrying
   // refs[] ship a ≤4KiB preview inline). Resolves through the transcript
@@ -3168,15 +3270,31 @@ export function useController() {
     if (event.phase === "failed") {
       noteActivationSettled(event.requestId, "failed", event.error);
       const safeError = t("history.failedOpenSession");
-      dispatchTo(tabId, {
-        type: "hydrate_error",
-        reason: "open-topic",
-        error: safeError,
-      });
-      void restoreNavigationSource(pending.navigationSeq, tabId, safeError);
+      const current = statesRef.current.get(tabId);
+      // Runtime activation and readable history are independent. If the
+      // controller/lease/MCP phase fails after the canonical transcript was
+      // already published, keep that transcript selected and make only the
+      // write side unavailable. Treating this as a history failure used to
+      // restore the source surface and throw away a perfectly readable target.
+      if (current?.hydrating) dispatchTo(tabId, { type: "hydrate_error", reason: "open-topic", error: safeError });
+      if (current?.meta) {
+        dispatchTo(tabId, {
+          type: "meta",
+          meta: {
+            ...current.meta,
+            ready: false,
+            startupErr: safeError,
+            runtime: current.meta.runtime
+              ? { ...current.meta.runtime, phase: "failed" }
+              : current.meta.runtime,
+          },
+        });
+      }
+      dispatchTo(tabId, { type: "local_notice", level: "warn", text: safeError, preserveRuntime: true });
       return;
     }
     noteActivationSettled(event.requestId, "ready");
+    noteNavigationRuntimeReady(pending.navigationSeq, pending.runtimeInitiallyReady);
     ensureTranscriptSubscription(tabId);
     // The ticket already prepared the target. Preserve any Ask that raced
     // ready while reset=true supersedes the earlier agent-ready history read.
@@ -4304,6 +4422,7 @@ export function useController() {
     addBreadcrumb("tab.switch", `click ${tabId}`);
     setActiveTabId(tabId);
     activeTabIdRef.current = tabId;
+    noteNavigationIdentityPublished(navigationSeq, tabId);
     dispatchTo(tabId, { type: "backend_activation_start", backendPendingPrompt: Boolean(optimisticTab?.pendingPrompt) });
     noteActivationStarted(switchRequestId, tabId);
     if (optimisticTab) {
@@ -4346,6 +4465,15 @@ export function useController() {
     if (!preserveTargetSurface) dispatchTo(tabId, { type: "reset" });
     if (optimisticStatus?.running) dispatchTo(tabId, optimisticStatus);
     dispatchTo(tabId, { type: "hydrate_start", reason: "switch-tab", placeholderItems });
+    const readableTarget = optimisticTab ?? listedSessionIdentityByTabRef.current.get(tabId);
+    // A resident/live target is already the freshest readable surface. A
+    // durable baseline read must not replace its optimistic user message or
+    // active assistant tail while backend activation is pending.
+    if (readableTarget && !preserveCachedHistory && !hasCachedLiveTurn(targetState)) {
+      void primeReadableHistoryForTab(tabId, readableTarget, "switch-tab", navigationSeq, () =>
+        isNavigationIntentCurrent(navigationSeq) && activeTabIdRef.current === tabId,
+      );
+    }
     addBreadcrumb("tab.switch", `active-rendered ${tabId} ms=${Date.now() - startedAt}`);
     const backendActivation = app.SetActiveTab(tabId)
       .then(async () => {
@@ -4386,6 +4514,13 @@ export function useController() {
         }
         const tabs = await reconcileTabRuntime(tabId, { hydrateSessionData: false, refreshAncillary: false });
         if (!isNavigationIntentCurrent(navigationSeq)) return tabs;
+        const runtimeMeta = statesRef.current.get(tabId)?.meta;
+        if (runtimeReadyForSubmit(runtimeMeta)) {
+          noteNavigationRuntimeReady(
+            navigationSeq,
+            Boolean(optimisticTab?.ready && (!optimisticTab.runtime || optimisticTab.runtime.phase === "ready")),
+          );
+        }
         const hydration = loadSessionDataForTab(tabId, false, "switch-tab", {
           skipHistory: sameSession && hasCachedLiveTurn(statesRef.current.get(tabId)),
           placeholderItems,
@@ -4426,7 +4561,7 @@ export function useController() {
         return undefined;
       });
     return backendSwitch;
-  }, [beginActiveNavigation, confirmBackendActiveTab, dispatchTo, isNavigationIntentCurrent, loadSessionDataForTab, navigationCompletionCurrent, reassertVisibleTabAfterStaleNavigation, reconcileTabRuntime, requireRegisteredNavigationIntent, restoreNavigationSource, snapshotNavigationSourceTab, trackBackendActivation]);
+  }, [beginActiveNavigation, confirmBackendActiveTab, dispatchTo, isNavigationIntentCurrent, loadSessionDataForTab, navigationCompletionCurrent, primeReadableHistoryForTab, reassertVisibleTabAfterStaleNavigation, reconcileTabRuntime, requireRegisteredNavigationIntent, restoreNavigationSource, snapshotNavigationSourceTab, trackBackendActivation]);
 
   const switchRemoteTab = useRemoteTabSwitch({
     activeTabIdRef, setActiveTabId, beginNavigation: beginActiveNavigation,
@@ -4540,6 +4675,7 @@ export function useController() {
     });
     const meta = ticket.meta;
     pending.tabId = ticket.tabId;
+    pending.runtimeInitiallyReady = Boolean(meta.ready && (!meta.runtime || meta.runtime.phase === "ready"));
     if (pendingTopicActivationRef.current === pending && ticket.requestId) {
       if (ticket.requestId !== pending.requestId) aliasActivationRequest(pending.requestId, ticket.requestId);
       pending.requestId = ticket.requestId;
@@ -4562,6 +4698,7 @@ export function useController() {
     pending.placeholderItems = prevItems;
     setActiveTabId(meta.id);
     activeTabIdRef.current = meta.id;
+    noteNavigationIdentityPublished(navigationSeq, meta.id);
     confirmBackendActiveTab(meta.id);
     noteActivationStarted(pending.requestId, meta.id);
     dispatchTo(meta.id, { type: "optimistic_meta", meta: metaFromTab(meta, statesRef.current.get(meta.id)?.meta) });
@@ -4572,12 +4709,23 @@ export function useController() {
     dispatchRuntimeStatusForTab(meta.id, meta, snapshotAt);
     // Ready hydrates; only same-session items are a safe placeholder.
     dispatchTo(meta.id, { type: "hydrate_start", reason: "open-topic", placeholderItems: prevItems });
+    // History is independently readable from the canonical session service as
+    // soon as StartTopicActivation has published the tab identity. Do not wait
+    // for the controller build/lease/MCP path before showing it.
+    if (sameSession && hasCachedLiveTurn(previousSurface)) {
+      dispatchTo(meta.id, { type: "hydrate_done" });
+    } else {
+      void primeReadableHistoryForTab(meta.id, meta, "open-topic", navigationSeq, () =>
+        navigationCompletionCurrent(navigationSeq, "topic.activate.history", meta.id)
+        && activeTabIdRef.current === meta.id,
+      );
+    }
     if (pending.terminal && pendingTopicActivationRef.current === pending) {
       // The terminal event beat the ticket resolution; process it now.
       handleTopicActivationEvent(pending.terminal);
     }
     return meta;
-  }, [beginActiveNavigation, confirmBackendActiveTab, dispatchRuntimeStatusForTab, dispatchTo, handleTopicActivationEvent, navigationCompletionCurrent, reassertVisibleTabAfterStaleNavigation, requireRegisteredNavigationIntent, snapshotNavigationSourceTab]);
+  }, [beginActiveNavigation, confirmBackendActiveTab, dispatchRuntimeStatusForTab, dispatchTo, handleTopicActivationEvent, navigationCompletionCurrent, primeReadableHistoryForTab, reassertVisibleTabAfterStaleNavigation, requireRegisteredNavigationIntent, snapshotNavigationSourceTab]);
 
   // Ensure a blank tab exists for the given scope — reuses an existing one
   // or creates a new tab, then loads its session data.
@@ -4664,11 +4812,16 @@ export function useController() {
       invalidateProviderStateForTab(id);
       disposeComposerProfileState(id);
       statesRef.current.delete(id);
-      releaseTranscriptState(id);
+      // Single-surface navigation only releases live ownership. Keep the
+      // durable projection in the store's existing bounded LRU so reopening a
+      // local session can paint immediately while its runtime reattaches.
+      detachTranscriptState(id);
+      // Without a follower, backend completion cannot clear a renderer pin.
+      getTranscriptStore().setPinned(id, false);
       notifyLiveListeners(id);
     }
     return true;
-  }, [disposeComposerProfileState, invalidateProviderStateForTab, notifyLiveListeners, releaseTranscriptState]);
+  }, [detachTranscriptState, disposeComposerProfileState, invalidateProviderStateForTab, notifyLiveListeners]);
 
   const closeTab = useCallback(async (
     tabId: string,

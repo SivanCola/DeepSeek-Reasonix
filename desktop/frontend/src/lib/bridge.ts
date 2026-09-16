@@ -5372,10 +5372,7 @@ function makeMockApp(): AppBindings {
       return { ...mockTabs[0] };
     },
     async StartTopicActivation(req: TopicActivationRequest): Promise<TopicActivationTicket> {
-      // Mirror the real two-phase contract: the surface switches synchronously
-      // (same open + single-tab prune as ActivateTopic), the terminal event
-      // lands asynchronously on the mock "topic:activation" listeners, and a
-      // superseded pending activation is cancelled at supersede time.
+      // Publish identity first; terminal runtime events arrive asynchronously.
       const tab = req.sessionPath
         ? await this.OpenTopicSession(req.scope, req.workspaceRoot, req.topicId, req.sessionPath)
         : req.scope === "project"

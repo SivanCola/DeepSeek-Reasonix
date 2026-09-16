@@ -29,6 +29,12 @@ func NewProviderWithProxyAndModelInfo(e *config.ProviderEntry, proxy netclient.P
 // clientSearch suppresses new native searches while retaining the adapter's
 // ability to read and replay existing native search history.
 func newProviderWithSearchMode(e *config.ProviderEntry, proxy netclient.ProxySpec, modelInfo *provider.ModelInfo, clientSearch bool) (provider.Provider, error) {
+	// Runtime callers may share the resolved config entry across role/provider
+	// factories. Repair a private copy so construction cannot race or mutate the
+	// caller while still honoring exact catalog routes.
+	repaired := *e
+	config.RepairProviderEndpointContract(&repaired)
+	e = &repaired
 	if err := config.ValidateProviderEndpoint(e); err != nil {
 		return nil, err
 	}

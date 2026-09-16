@@ -1,15 +1,15 @@
 import type { HistoryPreparationWait } from "./historyPreparation";
 // Bounded transcript records with stable ids, lazy content, generation-aware paging, and weighted LRU eviction.
 import { asArray } from "./array";
-import { canonicalHistoryContent, canonicalHistorySlice, resolvedHistoryField } from "./canonicalTranscriptBackend";
+import { canonicalHistoryContent, canonicalHistorySlice } from "./canonicalTranscriptBackend";
 import { fetchPreparedHistorySlice } from "./transcriptHistoryFetch";
 import { registerTranscriptCacheDiagnostics } from "./sessionDiagnostics";
 import { TranscriptMarkdownCache, type ParsedMarkdownValue } from "./transcriptMarkdownCache";
 export type { ParsedMarkdownValue } from "./transcriptMarkdownCache";
 import type { Item, State } from "./useController";
 import { resolveTranscriptEntryAlias, TranscriptContentResolverRegistry } from "./transcriptContentResolver";
-import { applyResolvedField, convertRecord, entryToRecord, itemIdForToolCall, type RecordConversion, type TranscriptRecord } from "./transcriptRecordProjection";
-import { recordBytes } from "./transcriptRecordBytes";
+import { convertRecord, entryToRecord, itemIdForToolCall, type RecordConversion, type TranscriptRecord } from "./transcriptRecordProjection";
+import { readTranscriptContent } from "./transcriptContentRead";
 import { appendLivePageEntries, type TranscriptWindowPage } from "./transcriptLiveWindow";
 import { RESOURCE_BUDGETS } from "./resourceBudgets";
 import { fileDiffFromWire } from "./tools";
@@ -118,6 +118,19 @@ export class TranscriptStore {
   }
 
   // ── session identity / LRU ────────────────────────────────────────────────
+
+  /** Fence same-path binding replacements before any cache lookup or read. */
+  noteSessionBinding(tabId: string, sessionPath: string, bindingKey: string): boolean {
+    const key = sessionKeyFor(tabId, sessionPath);
+    let session = this.sessions.get(key);
+    if (session?.bindingKey === bindingKey) return false;
+    const replaced = Boolean(session);
+    if (session) this.evictSession(session);
+    session = this.newSession(key, tabId, sessionPath);
+    session.bindingKey = bindingKey;
+    this.sessions.set(key, session);
+    return replaced;
+  }
 
   private newSession(key: string, tabId: string, sessionPath: string): SessionTranscript {
     return {
@@ -261,10 +274,17 @@ export class TranscriptStore {
     };
   }
 
-  /** Synchronous projection for an LRU-resident session; undefined on a miss. */
-  peek(tabId: string, sessionPath: string): TranscriptProjection | undefined {
+  /** Synchronous projection for an LRU-resident session; undefined on a miss
+   *  or when the caller's authoritative fingerprint cannot prove the resident
+   *  cut belongs to the selected session generation. */
+  peek(
+    tabId: string,
+    sessionPath: string,
+    expected?: { revision?: number; digest?: string },
+  ): TranscriptProjection | undefined {
     const session = this.sessions.get(sessionKeyFor(tabId, sessionPath));
-    if (!session || session.records.length === 0) return undefined;
+    if (!session || session.records.length === 0
+      || (expected !== undefined && !this.matchesExpectedFingerprint(session, expected.revision, expected.digest))) return undefined;
     this.touch(session);
     return this.projectionOf(session);
   }
@@ -646,37 +666,47 @@ export class TranscriptStore {
     // A fresh load supersedes every in-flight request of the previous load.
     session.generation += 1;
     const generation = session.generation;
+    let settleGeneration!: () => void;
+    const generationSettled = new Promise<void>((resolve) => { settleGeneration = resolve; });
+    session.generationSettlement = { generation, promise: generationSettled };
     this.sessions.set(key, session);
     this.touch(session);
 
-    const { turns, entries, bytes } = options;
-    const current = () => this.sessions.get(key) === session && session.generation === generation && (options.current?.() ?? true);
-    let slice = await this.fetchSlice(tabId, { cursor: "", turns, entries, bytes }, current);
-    if (!slice || !current()) return undefined;
-    if (slice.stale) {
-      // cursor "" cannot bind a stale identity, but a concurrent rewrite may
-      // still report one — retry once against the settled revision.
-      slice = await this.fetchSlice(tabId, { cursor: "", turns, entries, bytes }, current);
+    try {
+      const { turns, entries, bytes } = options;
+      const current = () => this.sessions.get(key) === session && session.generation === generation && (options.current?.() ?? true);
+      let slice = await this.fetchSlice(tabId, { cursor: "", turns, entries, bytes }, current);
       if (!slice || !current()) return undefined;
+      if (slice.stale) {
+        // cursor "" cannot bind a stale identity, but a concurrent rewrite may
+        // still report one — retry once against the settled revision.
+        slice = await this.fetchSlice(tabId, { cursor: "", turns, entries, bytes }, current);
+        if (!slice || !current()) return undefined;
+      }
+      const newestEntries = asArray<HistoryEntry>(slice.entries);
+      this.replaceRecords(session, newestEntries);
+      session.pages = [this.pageFor(newestEntries, slice.nextCursor ?? "", slice.newerCursor ?? "")];
+      session.reclaimedOlder = 0;
+      session.reclaimedNewer = 0;
+      session.nextCursor = slice.nextCursor ?? "";
+      session.hasOlder = Boolean(slice.hasOlder);
+      session.newerCursor = slice.newerCursor ?? "";
+      session.hasNewer = Boolean(slice.hasNewer);
+      session.totalTurns = slice.totalTurns ?? 0;
+      session.startTurn = slice.startTurn ?? 0;
+      session.endTurn = slice.endTurn ?? 0;
+      session.revision = slice.revision ?? 0;
+      session.revisionKnown = sliceRevisionKnown(slice);
+      session.digest = slice.digest ?? "";
+      this.enforceBudgets();
+      if (this.sessions.get(key) !== session) return undefined; // evicted by the budget
+      return this.projectionOf(session);
+    } finally {
+      settleGeneration();
+      if (session.generationSettlement?.generation === generation) {
+        session.generationSettlement = undefined;
+      }
     }
-    const newestEntries = asArray<HistoryEntry>(slice.entries);
-    this.replaceRecords(session, newestEntries);
-    session.pages = [this.pageFor(newestEntries, slice.nextCursor ?? "", slice.newerCursor ?? "")];
-    session.reclaimedOlder = 0;
-    session.reclaimedNewer = 0;
-    session.nextCursor = slice.nextCursor ?? "";
-    session.hasOlder = Boolean(slice.hasOlder);
-    session.newerCursor = slice.newerCursor ?? "";
-    session.hasNewer = Boolean(slice.hasNewer);
-    session.totalTurns = slice.totalTurns ?? 0;
-    session.startTurn = slice.startTurn ?? 0;
-    session.endTurn = slice.endTurn ?? 0;
-    session.revision = slice.revision ?? 0;
-    session.revisionKnown = sliceRevisionKnown(slice);
-    session.digest = slice.digest ?? "";
-    this.enforceBudgets();
-    if (this.sessions.get(key) !== session) return undefined; // evicted by the budget
-    return this.projectionOf(session);
   }
 
   /**
@@ -908,51 +938,19 @@ export class TranscriptStore {
   async requestFullContent(tabId: string, entryId: string, field: string): Promise<string | undefined> {
     const resolver = this.contentResolvers.active(tabId);
     if (resolver) return resolver.resolve(entryId, field);
-    entryId = resolveTranscriptEntryAlias(this.sessions.values(), tabId, entryId);
-    const session = this.sessionForEntry(tabId, entryId);
-    const rec = session?.byId.get(entryId);
-    if (!session || !rec) return undefined;
-    if (rec.resolved?.[field]) return rec.resolved[field];
-    const ref = rec.refs.find((candidate) => candidate.field === field || candidate.field === "canonicalMessage");
-    if (!ref) return undefined;
-    const pendingKey = `${entryId}${field}`;
-    // Dedupe only within the same generation: a request started before a
-    // session switch/evict is doomed to discard, never join it.
-    const pending = session.pendingContent.get(pendingKey);
-    if (pending && pending.generation === session.generation) return pending.promise;
-
-    const generation = session.generation;
-    const request = (async (): Promise<string | undefined> => {
-      let data = "";
-      const chunks = Math.max(1, ref.chunks);
-      for (let index = 0; index < chunks; index += 1) {
-        const chunk = await this.backend.HistoryContentForTab(tabId, ref, index);
-        if (this.sessions.get(session.key) !== session || session.generation !== generation) return undefined;
-        if (chunk.stale) {
-          rec.staleRefs = { ...rec.staleRefs, [field]: true };
-          return undefined;
-        }
-        data += chunk.data ?? "";
-        if (chunk.done) break;
-      }
-      if (!applyResolvedField(rec, ref, data)) return undefined;
-      const previousBytes = rec.bytes;
-      rec.bytes = recordBytes(rec.message);
-      session.bodyBytes += rec.bytes - previousBytes;
-      const resolvedValue = ref.field === "canonicalMessage" ? resolvedHistoryField(rec.message, field) : data;
-      if (resolvedValue === undefined) return undefined;
-      rec.resolved = { ...rec.resolved, [field]: resolvedValue };
-      this.reconvertAndNotify(session, rec);
-      this.enforceBudgets();
-      return resolvedValue;
-    })();
-    const entry = { generation, promise: request };
-    const release = () => {
-      if (session.pendingContent.get(pendingKey) === entry) session.pendingContent.delete(pendingKey);
-    };
-    void request.then(release, release);
-    session.pendingContent.set(pendingKey, entry);
-    return request;
+    return readTranscriptContent({
+      locate: id => {
+        const resolvedId = resolveTranscriptEntryAlias(this.sessions.values(), tabId, id);
+        const session = this.sessionForEntry(tabId, resolvedId);
+        return session ? { session, entryId: resolvedId } : undefined;
+      },
+      resident: session => this.sessions.get(session.key) === session,
+      read: (ref, index) => this.backend.HistoryContentForTab(tabId, ref, index),
+      publish: (session, record) => {
+        this.reconvertAndNotify(session, record);
+        this.enforceBudgets();
+      },
+    }, entryId, field);
   }
 
   private reconvertAndNotify(session: SessionTranscript, rec: TranscriptRecord): void {

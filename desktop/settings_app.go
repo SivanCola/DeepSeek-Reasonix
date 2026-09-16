@@ -2360,13 +2360,13 @@ func saveProviderConfig(c *config.Config, p ProviderView) error {
 	e.Headers = p.Headers
 	e.ExtraBody = p.ExtraBody
 	e.AuthHeader = p.AuthHeader
+	config.RepairProviderEndpointContract(&e)
 	e.NoProxy = p.NoProxy
 	e.BalanceURL = strings.TrimSpace(p.BalanceURL)
 	e.ContextWindow = p.ContextWindow
 	e.ReasoningProtocol = p.ReasoningProtocol
 	e.Thinking = providerThinkingForSettings(p.Thinking)
-	// Settings exposes this switch only for verified endpoints. Preserve an
-	// existing advanced override, but never carry an official default to a new URL.
+	// Preserve advanced search overrides only for verified endpoints, never for a new URL.
 	if config.IsOfficialDeepSeekSearchEndpoint(&e) {
 		enabled := p.WebSearch
 		e.WebSearch = &enabled

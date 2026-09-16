@@ -121,6 +121,7 @@ export function AppRuntimeView(props: AppRuntimeViewProps) {
   } = session;
   const { chromeCommands, navigationCommands } = navigation;
   const runtimeTransitioning = core.surface.transitioning;
+  const presentationTransitioning = runtimeTransitioning && core.remoteSurfaceActive;
   const browserPreviewChrome = navigation.browserPreviewChrome;
 
   const workbenchChromeHidden = true;
@@ -300,7 +301,13 @@ export function AppRuntimeView(props: AppRuntimeViewProps) {
           })} />
 
           <ChatPaneRegion
-            transitioning={runtimeTransitioning}
+            // Local navigation is now history-first: keep the transcript
+            // mounted while the controller is rebuilt in the background.  The
+            // transcript's own hydrating/readiness state still reports progress
+            // and the controllerReady fence keeps writes disabled.  Remote
+            // surfaces retain their existing transition gate because they do
+            // not share the local runtime/cache ownership model.
+            transitioning={presentationTransitioning}
             t={t}
             imDetail={sidebarImDetailConnection ? {
               connection: sidebarImDetailConnection,
@@ -355,7 +362,7 @@ export function AppRuntimeView(props: AppRuntimeViewProps) {
 
           <DecisionFooterRegion
             hidden={Boolean(sidebarImDetailConnection)}
-            className={["footer", terminalSurfaceOpen ? "footer--compact" : "", visibleDecisionSurface ? "footer--decision" : "", runtimeTransitioning ? "footer--navigation-hidden" : ""].filter(Boolean).join(" ")}
+            className={["footer", terminalSurfaceOpen ? "footer--compact" : "", visibleDecisionSurface ? "footer--decision" : "", presentationTransitioning ? "footer--navigation-hidden" : ""].filter(Boolean).join(" ")}
             footerRef={footerRef}
             style={core.surface.surface?.phase === "source-retained" && footerHeight > 0 ? { height: footerHeight, minHeight: footerHeight, boxSizing: "border-box" } : undefined}
             todo={footerTodo}
@@ -364,14 +371,14 @@ export function AppRuntimeView(props: AppRuntimeViewProps) {
             composer={buildComposerSurface({
               view: {
                 hidden: composerSurfaceHidden,
-                inert: runtimeTransitioning,
+                inert: presentationTransitioning,
                 hero: session.transcript.emptyHero,
                 headline: t("welcome.creation.title"),
                 remote: core.remoteSurfaceActive,
                 rewindCommitting: session.sessionUndo.rewindCommitting,
                 messageActionPending: state.messageAction != null,
                 decisionActive: Boolean(decisionSurface),
-                runtimeTransitioning,
+                runtimeTransitioning: presentationTransitioning,
                 controllerReady: controllerReady && session.transcript.availability.kind === "ready",
                 submitDisabledReason: session.transcript.availability.kind !== "ready" && session.transcript.availability.source !== "runtime"
                   ? t("sessionRecovery.sendAfterRecovery") : undefined,
