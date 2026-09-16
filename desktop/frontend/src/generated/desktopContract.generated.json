@@ -30565,6 +30565,13 @@
           }
         },
         {
+          "name": "resultSequence",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
           "name": "open",
           "optional": true,
           "type": {
@@ -38048,6 +38055,13 @@
         },
         {
           "name": "updatedAt",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "resultSequence",
+          "optional": true,
           "type": {
             "kind": "integer"
           }

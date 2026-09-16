@@ -44,23 +44,6 @@ type WorkspaceSnapshot struct {
 	PendingCreates     []WorkspacePendingCreate `json:"pendingCreates"`
 }
 
-type WorkspaceSessionSummary struct {
-	Ref             session.SessionRef `json:"ref"`
-	WorkspaceID     string             `json:"workspaceId"`
-	Title           string             `json:"title"`
-	Preview         string             `json:"preview"`
-	Turns           int                `json:"turns"`
-	CreatedAt       int64              `json:"createdAt"`
-	UpdatedAt       int64              `json:"updatedAt"`
-	ModelRef        string             `json:"modelRef,omitempty"`
-	ParentSessionID string             `json:"parentSessionId,omitempty"`
-	Blank           bool               `json:"blank"`
-	Archived        bool               `json:"archived"`
-	Running         bool               `json:"running"`
-	MetadataStatus  string             `json:"metadataStatus"`
-	Health          string             `json:"health"`
-}
-
 type WorkspaceSessionPage struct {
 	Sessions           []WorkspaceSessionSummary `json:"sessions"`
 	NextCursor         string                    `json:"nextCursor,omitempty"`
@@ -326,6 +309,7 @@ func workspaceSessionRow(workspaceID, sessionID string, info session.SessionInfo
 	if found {
 		row.Title, row.Preview, row.Turns = info.Title, info.Preview, info.Turns
 		row.CreatedAt, row.UpdatedAt = unixMillis(info.CreatedAt), unixMillis(info.UpdatedAt)
+		row.ResultSequence = info.ResultSequence
 		row.ModelRef, row.ParentSessionID = info.ModelRef, info.ParentSessionID
 		row.Blank = info.MetadataStatus == session.MetadataReady && info.Turns == 0 && strings.TrimSpace(info.Title) == "" && strings.TrimSpace(info.Preview) == ""
 		row.MetadataStatus = info.MetadataStatus

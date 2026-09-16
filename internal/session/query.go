@@ -249,6 +249,7 @@ func applyCatalogMetadata(info *SessionInfo, metadata catalogMetadata) {
 	info.Title, info.TitleSequence = metadata.Title, metadata.TitleSequence
 	info.ModelRef, info.ModelIdentity = metadata.ModelRef, metadata.ModelIdentity
 	info.Turns, info.Preview, info.MetadataStatus = metadata.Turns, metadata.Preview, MetadataReady
+	info.EventSequence, info.ResultSequence = metadata.Sequence, metadata.ResultSequence
 }
 
 func (q *Query) scheduleMetadataRebuild(sessionID string) {

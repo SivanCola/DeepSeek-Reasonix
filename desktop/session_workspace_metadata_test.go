@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"testing"
 
+	"reasonix/desktop/internal/workspacestate"
 	"reasonix/internal/session"
 )
 
@@ -45,5 +46,19 @@ func TestWorkspacePendingMetadataIsNotBlank(t *testing.T) {
 	row = workspaceSessionRow("global", "named", session.SessionInfo{MetadataStatus: session.MetadataReady, Title: "Saved title"}, true, false, nil)
 	if row.Blank {
 		t.Fatal("named session should not be hidden")
+	}
+}
+
+func TestCanonicalSessionTopicIdentityUsesTargetPresentation(t *testing.T) {
+	state := workspacestate.State{Presentation: map[string]workspacestate.Presentation{
+		"target": {TopicID: "topic-target", Title: "Target"},
+	}}
+	topicID, title := canonicalSessionTopicIdentity(state, "target")
+	if topicID != "topic-target" || title != "Target" {
+		t.Fatalf("identity = %q/%q, want target presentation", topicID, title)
+	}
+	topicID, title = canonicalSessionTopicIdentity(state, "missing")
+	if topicID != "canonical-missing" || title != "" {
+		t.Fatalf("fallback identity = %q/%q", topicID, title)
 	}
 }

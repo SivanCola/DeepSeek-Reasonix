@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 10;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:5958b6442a67d62ae38a894126126b70e01c91e19d0d3165ec1252b70621b0ff";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:45a11eab281d355780eb7dcc798c4dea3c305276418e48db22155917380fd847";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -2940,6 +2940,7 @@ export interface ProjectNode {
   health?: string;
   createdAt?: number;
   lastActivityAt?: number;
+  resultSequence?: number;
   open?: boolean;
   running?: boolean;
   status?: string;
@@ -4343,6 +4344,7 @@ export interface WorkspaceSessionSummary {
   turns: number;
   createdAt: number;
   updatedAt: number;
+  resultSequence?: number;
   modelRef?: string;
   parentSessionId?: string;
   blank: boolean;

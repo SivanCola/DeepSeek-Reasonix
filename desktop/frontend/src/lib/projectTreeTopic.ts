@@ -372,13 +372,35 @@ export function topicActivityAt(node: ProjectNode): number {
   return node.lastActivityAt || node.createdAt || 0;
 }
 
+export function topicReadRevision(node: ProjectNode): number {
+  if (node.session) return node.resultSequence ?? 0;
+  return topicActivityAt(node);
+}
+
 export function projectTreeReadActivityKey(node: ProjectNode): string | null {
+  if (node.session?.sessionId) return ["session", node.session.hostId, node.session.sessionId].join("\u001f");
   const request = projectTreeTopicOpenRequest(node);
   if (!request?.topicId) return null;
   return [request.scope, request.workspaceRoot, request.topicId].join("\u001f");
 }
 
 export type ProjectTreeReadActivity = Record<string, number>;
+
+export function projectTreeSeedReadActivity(nodes: readonly ProjectNode[], current: ProjectTreeReadActivity): ProjectTreeReadActivity {
+  let next = current;
+  const visit = (items: readonly ProjectNode[]) => {
+    for (const node of items) {
+      const key = projectTreeReadActivityKey(node);
+      if (node.session && key && next[key] === undefined) {
+        if (next === current) next = { ...current };
+        next[key] = topicReadRevision(node);
+      }
+      visit(node.children ?? []);
+    }
+  };
+  visit(nodes);
+  return next;
+}
 
 export function projectTreeTopicHasUnreadActivity(
   node: ProjectNode,
@@ -394,9 +416,10 @@ export function projectTreeTopicHasUnreadActivity(
   if (topicMatchesActiveIdentity(node, activeScope, activeWorkspaceRoot, activeTopicId)) return false;
   if (topicStatus(node) !== "") return false;
   const key = projectTreeReadActivityKey(node);
-  const activityAt = topicActivityAt(node);
-  if (!key || activityAt <= 0) return false;
-  return Math.max(readActivity[key] ?? 0, baselineAt) < activityAt;
+  const revision = topicReadRevision(node);
+  if (!key || revision <= 0) return false;
+  if (node.session) return readActivity[key] !== undefined && readActivity[key] < revision;
+  return Math.max(readActivity[key] ?? 0, baselineAt) < revision;
 }
 
 export function projectTreeShouldRenderTopicActions(isSessionNode: boolean, variant: ProjectTreeVariant, unread: boolean): boolean {

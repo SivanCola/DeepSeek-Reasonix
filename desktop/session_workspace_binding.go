@@ -80,7 +80,21 @@ func applyCanonicalWorkspaceLocked(tab *WorkspaceTab, workspace workspacestate.W
 	tab.SessionWorkspace.ID = workspace.ID
 }
 
+func canonicalSessionTopicIdentity(state workspacestate.State, sessionID string) (string, string) {
+	presentation := state.Presentation[sessionID]
+	topicID := strings.TrimSpace(presentation.TopicID)
+	if topicID == "" {
+		topicID = "canonical-" + sessionID
+	}
+	return topicID, presentation.Title
+}
+
 func (a *App) commitCanonicalSessionBinding(tab *WorkspaceTab, ctrl control.SessionAPI, ref session.SessionRef, workspace workspacestate.Workspace, navigation uint64) error {
+	state, err := a.workspaceRegistry().Load(a.bootContext())
+	if err != nil {
+		return err
+	}
+	topicID, topicTitle := canonicalSessionTopicIdentity(state, ref.SessionID)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if tab.removed || a.tabs[tab.ID] != tab || tab.Ctrl != ctrl || (navigation != 0 && a.desktopSessions.navigationSeq.Load() != navigation) {
@@ -88,6 +102,14 @@ func (a *App) commitCanonicalSessionBinding(tab *WorkspaceTab, ctrl control.Sess
 	}
 	applyCanonicalWorkspaceLocked(tab, workspace)
 	tab.SessionID, tab.SessionPath = ref.SessionID, ""
+	tab.TopicID, tab.TopicTitle = topicID, topicTitle
+	tab.topicTitleSource = ""
+	if topicTitle != "" {
+		tab.topicTitleSource = topicTitleSourceManual
+		if isDefaultTopicTitle(topicTitle) {
+			tab.topicTitleSource = topicTitleSourceAuto
+		}
+	}
 	a.bindSessionRuntimeKeyLocked(tab, tab.currentSessionIdentity())
 	a.saveTabsLocked()
 	return nil

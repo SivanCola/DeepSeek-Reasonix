@@ -8,7 +8,7 @@ import { onProjectTreeChangedV2 } from "../lib/sessionCatalogBridge";
 import { sessionCatalogNotice } from "../lib/sessionCatalogPresentation";
 import { sessionTitleErrorKey, sessionTitleTarget } from "../lib/sessionTitleOperation";
 import { useSessionTitleOperation } from "../lib/useSessionTitleOperation";
-import { isRuntimeSessionNode, isTopicNode, loadWorkbenchOrganizeMode, loadWorkbenchSortMode, mergeIncompleteProjectTopicPage, mergeProjectTopicPage, projectTreeDedupedExactTime, projectTreeEventAffectsFolder, projectTreeFolderDisclosure, projectTreeReadActivityKey, projectTreeRevisionIsFresh, projectTreeShellChildren, projectTreeShellSignature, projectTreeShouldApplyShellSnapshot, projectTreeShouldRenderTopicActions, projectTreeShouldSuppressOpenForRename, projectTreeTopicArchiveBlocked, projectTreeTopicHasUnreadActivity, projectTreeTopicMenuOffersPin, projectTreeTopicMetaLine, projectTreeTopicOpenRequest, projectTreeTopicPageIsFresh, projectTreeTopicPageSignature, projectTreeWithoutTopic, projectTreeWithTopicTitle, topicActivityAt, topicActivityDateLabel, topicActivityLabel, topicIsActive, topicStatus, topicStatusLabel, topicUnknownTimeLabel, WORKBENCH_ORGANIZE_KEY, WORKBENCH_SORT_KEY, type ProjectTreePendingTopicOpen, type ProjectTreeReadActivity, type WorkbenchOrganizeMode, type WorkbenchSortMode } from "../lib/projectTreeTopic";
+import { isRuntimeSessionNode, isTopicNode, loadWorkbenchOrganizeMode, loadWorkbenchSortMode, mergeIncompleteProjectTopicPage, mergeProjectTopicPage, projectTreeDedupedExactTime, projectTreeEventAffectsFolder, projectTreeFolderDisclosure, projectTreeRevisionIsFresh, projectTreeShellChildren, projectTreeShellSignature, projectTreeShouldApplyShellSnapshot, projectTreeShouldRenderTopicActions, projectTreeShouldSuppressOpenForRename, projectTreeTopicArchiveBlocked, projectTreeTopicHasUnreadActivity, projectTreeTopicMenuOffersPin, projectTreeTopicMetaLine, projectTreeTopicOpenRequest, projectTreeTopicPageIsFresh, projectTreeTopicPageSignature, projectTreeWithoutTopic, projectTreeWithTopicTitle, topicActivityDateLabel, topicActivityLabel, topicIsActive, topicStatus, topicStatusLabel, topicUnknownTimeLabel, WORKBENCH_ORGANIZE_KEY, WORKBENCH_SORT_KEY, type ProjectTreePendingTopicOpen, type WorkbenchOrganizeMode, type WorkbenchSortMode } from "../lib/projectTreeTopic";
 export * from "../lib/projectTreeTopic";
 import { arrangeWorkbenchTree, splitPinnedProjectTree, type PinnedTreeSections } from "../lib/projectTreePresentation";
 export * from "../lib/projectTreePresentation";
@@ -30,6 +30,7 @@ import { ProjectTreeSessionArchiveMenu } from "./ProjectTreeSessionArchiveMenu";
 import { ProjectTreeHeaderAddControl, ProjectTreeRemoteAction, projectTreeHeaderAddItems } from "./ProjectTreeAddControls";
 import { activeRemoteProjectAncestorKeys, buildRemoteProjectMenuItems, useRemoteRuntimeTree, openRemoteSessionNode, remoteProjectKey, remoteServeBadgeState, renameRemoteProjectTitle, RemoteProjectEmptyState, useRemoteProjectGroups, useRemoteSessionActions } from "./ProjectTreeRemoteGroups";
 import type { ProjectTreeProps } from "./ProjectTreeProps";
+import { useProjectTreeReadActivity } from "./useProjectTreeReadActivity";
 
 function projectNodeKey(node: ProjectNode, depth: number): string {
   return node.key || `${node.kind}-${node.root ?? ""}-${node.topicId ?? ""}-${node.sessionPath ?? ""}-${depth}`;
@@ -42,46 +43,9 @@ type CollapseSnapshot = {
   manuallyCollapsed: Set<string>;
 };
 
-const READ_ACTIVITY_KEY = "projectTree:readActivity";
-const READ_ACTIVITY_BASELINE_KEY = "projectTree:readActivityBaselineAt";
 // summarizeProjectTreeSessions still accepts a per-folder window override; no
 // folder is windowed any more, so it always receives the empty set.
 const EMPTY_FOLDER_WINDOW: ReadonlySet<string> = new Set<string>();
-
-function loadReadActivity(): ProjectTreeReadActivity {
-  try {
-    const raw = localStorage.getItem(READ_ACTIVITY_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const out: ProjectTreeReadActivity = {};
-    for (const [key, value] of Object.entries(parsed)) {
-      if (typeof value === "number" && Number.isFinite(value)) out[key] = value;
-    }
-    return out;
-  } catch {
-    return {};
-  }
-}
-
-function saveReadActivity(readActivity: ProjectTreeReadActivity) {
-  try {
-    localStorage.setItem(READ_ACTIVITY_KEY, JSON.stringify(readActivity));
-  } catch {
-    /* localStorage unavailable */
-  }
-}
-
-function loadReadActivityBaselineAt(): number {
-  try {
-    const parsed = Number(localStorage.getItem(READ_ACTIVITY_BASELINE_KEY));
-    if (Number.isFinite(parsed) && parsed > 0) return parsed;
-    const now = Date.now();
-    localStorage.setItem(READ_ACTIVITY_BASELINE_KEY, String(now));
-    return now;
-  } catch {
-    return Date.now();
-  }
-}
 
 function collapsibleFolderKeys(nodes: ProjectNode[], depth = 0): string[] {
   const keys: string[] = [];
@@ -269,8 +233,6 @@ export function ProjectTree({
   const [workbenchOrganizeMode, setWorkbenchOrganizeMode] = useState<WorkbenchOrganizeMode>(loadWorkbenchOrganizeMode);
   const [workbenchSortMode, setWorkbenchSortMode] = useState<WorkbenchSortMode>(loadWorkbenchSortMode);
   const workbenchSortModeRef = useRef(workbenchSortMode);
-  const [readActivity, setReadActivity] = useState<ProjectTreeReadActivity>(loadReadActivity);
-  const [readBaselineAt] = useState(loadReadActivityBaselineAt);
   const filterRef = useRef<HTMLDivElement>(null);
   const filterTriggerRef = useRef<HTMLButtonElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -520,18 +482,7 @@ export function ProjectTree({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tree, activeScope, activeWorkspaceRoot, activeTopicId, activeSessionPath, activeRemote]);
 
-  const markNodeRead = useCallback((node: ProjectNode) => {
-    const key = projectTreeReadActivityKey(node);
-    const activityAt = topicActivityAt(node);
-    if (!key || activityAt <= 0) return;
-    setReadActivity((prev) => {
-      const readAt = Math.max(activityAt, Date.now());
-      if ((prev[key] ?? 0) >= readAt) return prev;
-      const next = { ...prev, [key]: readAt };
-      saveReadActivity(next);
-      return next;
-    });
-  }, []);
+  const { readActivity, readBaselineAt, markNodeRead } = useProjectTreeReadActivity(treeWithRemoteSessions);
 
   useEffect(() => {
     const markActive = (nodes: ProjectNode[]) => {
@@ -1191,10 +1142,14 @@ export function ProjectTree({
               }
               const timer = setTimeout(() => {
                 if (clickTimerRef.current?.timer === timer) clickTimerRef.current = null;
-                markNodeRead(node);
-                if (!openRemoteSessionNode(remote, openRemoteProject) && openRequest) {
-                  onOpenTopic(openRequest.scope, openRequest.workspaceRoot, openRequest.topicId, openRequest.sessionPath);
+                if (remote) {
+                  if (openRemoteSessionNode(remote, openRemoteProject)) markNodeRead(node);
+                  return;
                 }
+                if (openRequest) void Promise.resolve()
+                  .then(() => onOpenTopic(openRequest.scope, openRequest.workspaceRoot, openRequest.topicId, openRequest.sessionPath))
+                  .then(() => markNodeRead(node))
+                  .catch((error) => showToast(String(error), "error"));
               }, 200);
               clickTimerRef.current = { ...nextClick, timer };
             }}
