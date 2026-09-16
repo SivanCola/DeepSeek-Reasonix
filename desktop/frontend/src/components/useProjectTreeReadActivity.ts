@@ -1,20 +1,27 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ProjectNode } from "../lib/types";
-import { projectTreeReadActivityKey, projectTreeSeedReadActivity, topicReadRevision, type ProjectTreeReadActivity } from "../lib/projectTreeTopic";
+import { projectTreeMigrateReadActivity, projectTreeReadActivityKey, projectTreeSeedReadActivity, topicReadRevision, type ProjectTreeReadActivity } from "../lib/projectTreeTopic";
 
 const READ_ACTIVITY_KEY = "projectTree:readActivity";
 const READ_ACTIVITY_BASELINE_KEY = "projectTree:readActivityBaselineAt";
+const READ_ACTIVITY_VERSION_KEY = "projectTree:readActivityVersion";
+const READ_ACTIVITY_VERSION = 2;
 
 function loadReadActivity(): ProjectTreeReadActivity {
   try {
     const raw = localStorage.getItem(READ_ACTIVITY_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
     const out: ProjectTreeReadActivity = {};
     for (const [key, value] of Object.entries(parsed)) {
       if (typeof value === "number" && Number.isFinite(value)) out[key] = value;
     }
-    return out;
+    const storedVersion = Number(localStorage.getItem(READ_ACTIVITY_VERSION_KEY));
+    const migrated = projectTreeMigrateReadActivity(out, Number.isFinite(storedVersion) ? storedVersion : 0);
+    if (migrated !== out) localStorage.setItem(READ_ACTIVITY_KEY, JSON.stringify(migrated));
+    if (!Number.isFinite(storedVersion) || storedVersion < READ_ACTIVITY_VERSION) {
+      localStorage.setItem(READ_ACTIVITY_VERSION_KEY, String(READ_ACTIVITY_VERSION));
+    }
+    return migrated;
   } catch {
     return {};
   }

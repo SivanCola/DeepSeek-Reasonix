@@ -13,6 +13,7 @@ import {
   activeSessionAncestorKeys,
   projectTreeTopicOpenRequest,
   projectTreeShouldSuppressOpenForRename,
+  projectTreeMigrateReadActivity,
   projectTreeReadActivityKey,
   projectTreeSeedReadActivity,
   projectTreeTopicHasUnreadActivity,
@@ -203,8 +204,23 @@ const completedTopic: ProjectNode = {
   lastActivityAt: 2000,
   session: { hostId: "local", sessionId: "session-complete" },
   resultSequence: 20,
+  turnsState: "ready",
 };
 const completedTopicKey = projectTreeReadActivityKey(completedTopic) ?? "";
+const legacyTopicKey = "project\u001f/repo\u001ftopic-complete";
+const migratedReadActivity = projectTreeMigrateReadActivity({
+  [completedTopicKey]: 0,
+  ["session\u001flocal\u001falready-read"]: 12,
+  [legacyTopicKey]: 2000,
+}, 1);
+eq(migratedReadActivity[completedTopicKey], undefined, "read-state v2 removes a placeholder session zero baseline");
+eq(migratedReadActivity["session\u001flocal\u001falready-read"], 12, "read-state v2 preserves durable session read progress");
+eq(migratedReadActivity[legacyTopicKey], 2000, "read-state v2 preserves legacy topic read progress");
+eq(
+  projectTreeMigrateReadActivity({ [completedTopicKey]: 0 }, 2)[completedTopicKey],
+  0,
+  "read-state v2 migration runs only once so new-session zero baselines remain durable",
+);
 
 const zeroResultTopic = { ...completedTopic, resultSequence: 0 };
 const zeroResultKey = projectTreeReadActivityKey(zeroResultTopic) ?? "";
@@ -220,6 +236,24 @@ eq(
   projectTreeTopicHasUnreadActivity(completedTopic, seededHistorical, "project", "/repo", "other-topic"),
   false,
   "historical results present on first observation seed as already read",
+);
+const pendingHistoricalTopic = { ...completedTopic, resultSequence: 0, turnsState: "pending" };
+const pendingHistorical = projectTreeSeedReadActivity([pendingHistoricalTopic], {});
+eq(
+  pendingHistorical[completedTopicKey],
+  undefined,
+  "pending catalog metadata does not persist a placeholder result baseline",
+);
+const rebuiltHistorical = projectTreeSeedReadActivity([completedTopic], pendingHistorical);
+eq(
+  rebuiltHistorical[completedTopicKey],
+  20,
+  "the first ready catalog projection seeds the durable historical result as read",
+);
+eq(
+  projectTreeTopicHasUnreadActivity(completedTopic, rebuiltHistorical, "project", "/repo", "other-topic"),
+  false,
+  "pending-to-ready catalog migration does not show historical results as unread",
 );
 
 eq(
