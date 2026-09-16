@@ -16,7 +16,6 @@ import type { useAppShellStores } from "../app-runtime/useAppShellStores";
 import type { useAppSessionComposition } from "../app-runtime/useAppSessionComposition";
 import type { useAppNavigationComposition } from "../app-runtime/useAppNavigationComposition";
 import type { HistoryViewState } from "../app-runtime/historyViewProjection";
-import type { TopicTimeFilter } from "../app-runtime/useLocalUiLifecycles";
 import { ShellHotkeys, TextSizeHotkeys } from "./HotkeyRegistrations";
 import { WindowChromeLifecycle } from "../app-runtime/WindowChromeLifecycle";
 import { StartupGateLifecycle } from "../app-runtime/StartupGateLifecycle";
@@ -73,8 +72,6 @@ export type AppRuntimeViewProps = {
   local: {
     tasksOpen: false | "session" | "all";
     setTasksOpen: React.Dispatch<React.SetStateAction<false | "session" | "all">>;
-    topicTimeFilter: TopicTimeFilter;
-    setTopicTimeFilter: (value: TopicTimeFilter) => void;
     sidebarImDetailConnectionId: string;
     setSidebarImDetailConnectionId: React.Dispatch<React.SetStateAction<string>>;
     tabRevealSignal: number;
@@ -236,7 +233,6 @@ export function AppRuntimeView(props: AppRuntimeViewProps) {
           geometry: shellGeometry,
           projectTree: {
             activeTab, imTopicSources: shell.preferences.imTopicSources, refreshSignal: local.projectRevision,
-            timeFilter: local.topicTimeFilter, onTimeFilterChange: local.setTopicTimeFilter,
             searchExpanded: true, searchFocusSignal: shell.sidebarSearchFocusSignal,
             showShortcutBadges: navigation.topicShortcuts.showTopicBadges, shortcutPlatform: shell.desktopPlatform,
             onVisibleTopicsChange: navigation.topicShortcuts.handleVisibleTopicsChange,

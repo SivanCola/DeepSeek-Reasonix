@@ -1,5 +1,5 @@
 import { asArray } from "./array";
-import { isRuntimeSessionNode, isTopicNode, type WorkbenchOrganizeMode, type WorkbenchSortMode } from "./projectTreeTopic";
+import { isRuntimeSessionNode, isTopicNode, type WorkbenchSortMode } from "./projectTreeTopic";
 import { topicActivityTime } from "./session";
 import type { ProjectNode } from "./types";
 
@@ -42,18 +42,11 @@ function sortWorkbenchChildren(children: ProjectNode[], sortMode: WorkbenchSortM
 
 export function arrangeWorkbenchTree(
   nodes: ProjectNode[],
-  organizeMode: WorkbenchOrganizeMode,
   sortMode: WorkbenchSortMode,
 ): ProjectNode[] {
-  const arranged = nodes.map((node) => {
+  return nodes.map((node) => {
     if (node.kind !== "project" && node.kind !== "global_folder") return node;
     return { ...node, children: sortWorkbenchChildren(asArray(node.children), sortMode) };
-  });
-  if (organizeMode === "project") return arranged;
-  const mode = organizeMode === "recent" ? "updated" : sortMode;
-  return [...arranged].sort((a, b) => {
-    if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1;
-    return projectSortValue(b, mode) - projectSortValue(a, mode);
   });
 }
 

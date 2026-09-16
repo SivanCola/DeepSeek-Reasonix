@@ -25,8 +25,6 @@ export interface ProjectTreeProps {
   onRenameTopic?: (topicId: string, title: string) => Promise<void> | void;
   onTopicsChanged?: () => Promise<void> | void;
   refreshSignal?: number;
-  timeFilter: "all" | "10" | "20" | "1h" | "3h" | "5h" | "1d";
-  onTimeFilterChange: (filter: "all" | "10" | "20" | "1h" | "3h" | "5h" | "1d") => void;
   searchExpanded?: boolean;
   searchFocusSignal?: number;
   showShortcutBadges?: boolean;

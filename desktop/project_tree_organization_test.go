@@ -13,7 +13,7 @@ func TestCompleteTopicOrderPreservesTopicsMissingFromPartialClient(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"c", "a", "b"}; !reflect.DeepEqual(got, want) {
+	if want := []string{"c", "b", "a"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("order = %v, want %v", got, want)
 	}
 	if _, err := completeTopicOrder([]string{"a", "a"}, []string{"a", "b"}); err == nil {
@@ -47,7 +47,7 @@ func TestReorderTopicsEnablesManualOrderOnlyAfterExplicitDrag(t *testing.T) {
 		t.Fatal(err)
 	}
 	project := loadProjectsFile().Projects[projectIndexByRoot(loadProjectsFile().Projects, root)]
-	if want := []string{"c", "a", "b"}; !reflect.DeepEqual(project.Topics, want) {
+	if want := []string{"c", "b", "a"}; !reflect.DeepEqual(project.Topics, want) {
 		t.Fatalf("topics = %v, want %v", project.Topics, want)
 	}
 	if !project.ManualTopicOrder {

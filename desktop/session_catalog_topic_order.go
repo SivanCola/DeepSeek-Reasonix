@@ -41,26 +41,26 @@ func manualTopicOrderFor(scope, workspaceRoot string) bool {
 	return false
 }
 
-func encodeProjectTopicCursor(topic sessioncatalog.TopicRecord, sortMode string, manualOrder bool) string {
+func encodeProjectTopicCursor(topic sessioncatalog.TopicRecord, sortMode string, manualOrder bool, binding string) string {
 	pinned := 0
 	if topic.Pinned {
 		pinned = 1
 	}
 	activity := projectTopicSortValue(topic.CreatedAt, topic.LastActivityAt, sortMode)
 	if manualOrder {
-		return sessioncatalog.EncodeOrderedTopicCursor(pinned, topic.SortOrder, activity, topic.TopicID)
+		return sessioncatalog.EncodeOrderedTopicCursorBound(pinned, topic.SortOrder, activity, topic.TopicID, binding)
 	}
-	return sessioncatalog.EncodeTopicCursor(pinned, activity, topic.TopicID)
+	return sessioncatalog.EncodeTopicCursorBound(pinned, activity, topic.TopicID, binding)
 }
 
-func encodeProjectNodeCursor(topic ProjectNode, sortMode string, manualOrder bool) string {
+func encodeProjectNodeCursor(topic ProjectNode, sortMode string, manualOrder bool, binding string) string {
 	pinned := 0
 	if topic.Pinned {
 		pinned = 1
 	}
 	activity := projectTopicSortValue(topic.CreatedAt, topic.LastActivityAt, sortMode)
 	if manualOrder {
-		return sessioncatalog.EncodeOrderedTopicCursor(pinned, topic.SortOrder, activity, topic.TopicID)
+		return sessioncatalog.EncodeOrderedTopicCursorBound(pinned, topic.SortOrder, activity, topic.TopicID, binding)
 	}
-	return sessioncatalog.EncodeTopicCursor(pinned, activity, topic.TopicID)
+	return sessioncatalog.EncodeTopicCursorBound(pinned, activity, topic.TopicID, binding)
 }

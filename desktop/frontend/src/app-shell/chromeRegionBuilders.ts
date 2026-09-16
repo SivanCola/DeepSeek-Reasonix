@@ -27,8 +27,6 @@ export function buildSidebarRegionProps(input: {
     activeTab: TabMeta | undefined;
     imTopicSources: Record<string, SidebarImTopicSource>;
     refreshSignal: number;
-    timeFilter: SidebarRegionProps["projectTree"]["timeFilter"];
-    onTimeFilterChange: SidebarRegionProps["projectTree"]["onTimeFilterChange"];
     searchExpanded: boolean;
     searchFocusSignal: number;
     showShortcutBadges: boolean;
@@ -70,7 +68,6 @@ export function buildSidebarRegionProps(input: {
       onCreateTopic: topics.onCreateTopic, onCreateIsolatedWorktree: topics.onCreateIsolatedWorktree,
       onTopicsChanged: topics.refreshProjectsAndTabs, onRenameTopic: topics.renameTopic, refreshSignal: input.projectTree.refreshSignal,
       onAddProject: topics.onAddProject,
-      timeFilter: input.projectTree.timeFilter, onTimeFilterChange: input.projectTree.onTimeFilterChange,
       searchExpanded: input.projectTree.searchExpanded, searchFocusSignal: input.projectTree.searchFocusSignal,
       showShortcutBadges: input.projectTree.showShortcutBadges, shortcutPlatform: input.projectTree.shortcutPlatform,
       onVisibleTopicsChange: input.projectTree.onVisibleTopicsChange,

@@ -3,22 +3,10 @@ import { getLocale, type DictKey, type Translator } from "./i18n";
 import type { ProjectNode, ProjectTopicStatus } from "./types";
 
 export type ProjectTreeVariant = "workbench" | "creation";
-export type WorkbenchOrganizeMode = "project" | "recent" | "time";
 export type WorkbenchSortMode = "created" | "updated";
 
-export const WORKBENCH_ORGANIZE_KEY = "projectTree:workbenchOrganize";
 // Shared by workbench and creation; key string kept for existing saved choices.
 export const WORKBENCH_SORT_KEY = "projectTree:workbenchSort";
-
-export function loadWorkbenchOrganizeMode(): WorkbenchOrganizeMode {
-  try {
-    const value = localStorage.getItem(WORKBENCH_ORGANIZE_KEY);
-    if (value === "recent" || value === "time") return value;
-  } catch {
-    /* localStorage unavailable */
-  }
-  return "project";
-}
 
 export function loadWorkbenchSortMode(): WorkbenchSortMode {
   try {
@@ -93,15 +81,6 @@ export function mergeIncompleteProjectTopicPage(current: ProjectNode[], incoming
   const residentKeys = new Set(current.map((node) => node.key));
   const discovered = incoming.filter((node) => !residentKeys.has(node.key));
   return discovered.length === 0 ? current : [...current, ...discovered];
-}
-
-export function projectTreeTopicPageSignature(
-  query: string,
-  timeFilter: string,
-  sortMode: WorkbenchSortMode,
-  limit: number,
-): string {
-  return [query.trim(), timeFilter, sortMode, String(limit)].join("\u001f");
 }
 
 // Topic page loads rewrite children, so a signature keyed only on the project
@@ -197,7 +176,16 @@ export function projectTreeFolderKeyForSession(tree: ProjectNode[], sessionPath:
 }
 
 export function invalidateProjectTreeTopicLoads(sequences: Record<string, number>, keys: Iterable<string>): void {
-  for (const key of keys) sequences[key] = (sequences[key] ?? 0) + 1;
+  for (const key of keys) {
+    let matched = false;
+    const prefix = `${key}\u001f`;
+    for (const sequenceKey of Object.keys(sequences)) {
+      if (sequenceKey !== key && !sequenceKey.startsWith(prefix)) continue;
+      sequences[sequenceKey] = (sequences[sequenceKey] ?? 0) + 1;
+      matched = true;
+    }
+    if (!matched) sequences[key] = (sequences[key] ?? 0) + 1;
+  }
 }
 
 export function projectTreeShellChildren(

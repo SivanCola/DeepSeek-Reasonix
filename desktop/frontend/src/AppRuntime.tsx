@@ -20,7 +20,7 @@ import { useAppRuntimeAdapter } from "./app-runtime/useAppRuntimeAdapter";
 import { useAppShellStores } from "./app-runtime/useAppShellStores";
 import { useAppSessionComposition } from "./app-runtime/useAppSessionComposition";
 import { useAppNavigationComposition } from "./app-runtime/useAppNavigationComposition";
-import { useTopicTimeFilter } from "./app-runtime/useLocalUiLifecycles";
+import { useRetiredProjectTreeUiMigration } from "./app-runtime/useLocalUiLifecycles";
 import { AppRuntimeView } from "./app-shell/AppRuntimeView";
 
 // Hold reasoning UI until the authoritative desktop startup settings arrive;
@@ -87,7 +87,7 @@ export function AppRuntime() {
   const [tabRevealSignal, setTabRevealSignal] = useState(0);
   const [histView, setHistView] = useState<HistoryViewState | null>(null);
   const [sidebarImDetailConnectionId, setSidebarImDetailConnectionId] = useState("");
-  const [topicTimeFilter, setTopicTimeFilter] = useTopicTimeFilter();
+  useRetiredProjectTreeUiMigration();
   const [tasksOpen, setTasksOpen] = useState<false | "session" | "all">(false);
   const workspaceScopeActiveTabRef = useRef(activeTabId);
   const [workspaceControllerEpoch, setWorkspaceControllerEpoch] = useState(0);
@@ -151,7 +151,7 @@ export function AppRuntime() {
       navigation={navigation}
       runtime={runtime}
       local={{
-        tasksOpen, setTasksOpen, topicTimeFilter, setTopicTimeFilter,
+        tasksOpen, setTasksOpen,
         sidebarImDetailConnectionId, setSidebarImDetailConnectionId,
         tabRevealSignal, histView,
         projectRevision, dockRefreshKey, composerFileRefRefreshKey, refreshComposerFileRefs,

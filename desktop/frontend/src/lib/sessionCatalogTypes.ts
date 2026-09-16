@@ -37,6 +37,9 @@ export interface ProjectTopicPageRequest {
   query?: string;
   timeFilter?: string;
   sortMode?: "created" | "updated" | string;
+  groupFilter?: "all" | "ungrouped" | "group" | string;
+  groupId?: string;
+  excludePinned?: boolean;
 }
 
 export interface ProjectTopicPage {

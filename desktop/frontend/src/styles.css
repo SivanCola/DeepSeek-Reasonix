@@ -23135,19 +23135,10 @@ body > .mermaid-diagram--fullscreen {
   opacity: 0.96;
 }
 
-/* Header-action-btn in the header-actions row uses min-width so it can
-/* Header-action-btn in the header-actions row uses min-width so it can
-   expand when a time-filter label is shown alongside the clock icon. */
 .project-tree__header-actions .project-tree__header-action-btn {
   width: auto;
   min-width: 22px;
   padding: 0 4px;
-}
-
-/* Time-filter action slot: no fixed width so the button can grow when label shown. */
-.project-tree__header-action-slot--filter {
-  flex-basis: auto !important;
-  width: auto !important;
 }
 
 .project-tree__header-action-btn--active {
@@ -23157,68 +23148,24 @@ body > .mermaid-diagram--fullscreen {
   opacity: 0.96;
 }
 
-.project-tree__time-filter {
-  display: inline-flex;
-  position: relative;
-}
-
-.project-tree__time-filter-label {
-  font-size: 9px;
-  line-height: 1;
-  margin-left: 3px;
-  font-weight: 500;
-}
-
-.project-tree__time-filter-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  /* Right-aligned: the trigger sits in the right-aligned header inside the
-     overflow:hidden sidebar, so opening leftward keeps the menu unclipped. */
-  right: 0;
-  z-index: var(--z-menu);
-  min-width: 84px;
-  padding: 4px;
-  border: none;
-  border-radius: 8px;
-  background: var(--bg-elev);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
-}
-
-.project-tree__time-filter-opt {
-  --reasonix-draggable: no-drag;
+.project-tree__topic-window-actions {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  width: 100%;
-  height: 28px;
-  padding: 0 8px;
-  border: none;
-  border-radius: 5px;
-  background: transparent;
+  min-height: 24px;
+  gap: 10px;
+}
+
+.project-tree__topic-window-actions .project-tree__topic-window-toggle {
+  width: auto;
+  padding: 0;
+}
+
+.project-tree__topic-window-status {
   color: var(--fg-faint);
-  font-size: 12px;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: background 0.12s, color 0.12s;
+  font-size: 11px;
 }
 
-.project-tree__time-filter-opt:hover {
-  background: var(--sidebar-hover);
-  color: var(--fg);
-}
-
-.project-tree__time-filter-opt--on {
-  color: var(--accent);
-  font-weight: 400;
-}
-
-.project-tree__time-filter-sep {
-  height: 1px;
-  margin: 4px 8px;
-  background: var(--border-soft);
-}
-
-/* Classic per-folder show-more toggle and empty-folder placeholder rows. */
+/* Per-list show-more toggle and empty-folder placeholder rows. */
 .project-tree__topic-window-toggle {
   --reasonix-draggable: no-drag;
   display: flex;
@@ -23237,7 +23184,7 @@ body > .mermaid-diagram--fullscreen {
 }
 
 .project-tree__topic-window-toggle:hover {
-  color: var(--fg-faint);
+  color: var(--fg);
 }
 
 .project-tree__topic-window-toggle:focus-visible {
@@ -28216,13 +28163,6 @@ body > .mermaid-diagram--fullscreen {
   height: var(--project-tree-action-column);
 }
 
-.sidebar--workbench .project-tree__header-action-slot--filter,
-:root[data-theme-style] .sidebar--workbench .project-tree__header-action-slot--filter {
-  flex-basis: auto;
-  width: auto;
-  min-width: var(--project-tree-action-column);
-}
-
 .sidebar--workbench .project-tree__header-icon-btn {
   --reasonix-draggable: no-drag;
   width: var(--project-tree-action-column);
@@ -28244,19 +28184,6 @@ body > .mermaid-diagram--fullscreen {
   background: var(--sidebar-hover);
   color: var(--fg);
   opacity: 1;
-}
-
-.sidebar--workbench .project-tree__header-action-slot--filter .project-tree__header-icon-btn,
-:root[data-theme-style] .sidebar--workbench .project-tree__header-action-slot--filter .project-tree__header-icon-btn {
-  flex-basis: auto;
-  width: auto;
-  min-width: var(--project-tree-action-column);
-  padding: 0 6px;
-}
-
-.sidebar--workbench .project-tree__header-action-slot--filter .project-tree__time-filter-label {
-  font-size: 10px;
-  font-weight: 620;
 }
 
 .sidebar--workbench .project-tree__header-icon-btn:disabled {

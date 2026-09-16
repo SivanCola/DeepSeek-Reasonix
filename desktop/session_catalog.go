@@ -81,6 +81,15 @@ type ProjectTopicPageRequest struct {
 	Query         string `json:"query,omitempty"`
 	TimeFilter    string `json:"timeFilter,omitempty"`
 	SortMode      string `json:"sortMode,omitempty"`
+	GroupFilter   string `json:"groupFilter,omitempty"`
+	GroupID       string `json:"groupId,omitempty"`
+	ExcludePinned bool   `json:"excludePinned,omitempty"`
+
+	groupIncludeJSON string
+	groupExcludeJSON string
+	groupCursorBind  string
+	groupInclude     map[string]struct{}
+	groupExclude     map[string]struct{}
 }
 
 type ProjectTopicKey struct {

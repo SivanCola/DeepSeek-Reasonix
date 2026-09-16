@@ -6,6 +6,7 @@ import type { Translator } from "../lib/i18n";
 import { isTopicNode, projectTreeTopicArchiveBlocked } from "../lib/projectTreeTopic";
 import type { ProjectTreeRefresh } from "../lib/projectTreeArchive";
 import type { ProjectNode, ProjectTreeOrganizationBindings, SessionGroup } from "../lib/types";
+import { PROJECT_TREE_WINDOW_INITIAL, forgetProjectTreeWindowLimit, projectTreeListKey, projectTreeWindowRows, type ProjectTreeListPageState } from "../lib/projectTreeWindow";
 import { ContextMenu, contextMenuPointFromEvent, type ContextMenuItem, type ContextMenuPoint } from "./ContextMenu";
 
 export type ProjectDropPosition = "before" | "after";
@@ -275,6 +276,11 @@ export function useProjectTreeOrganization({
     mutateGroups(key, (groups) => groups.map((group) => ({ ...group, topicIds: (group.topicIds ?? []).filter((id) => id !== topicID) })));
   }, [mutateGroups]);
 
+  const forgetGroupWindow = useCallback((key: string, id: string) => {
+    const folder = tree.find((node) => projectTreeOrganizationKey(node) === key);
+    if (folder) forgetProjectTreeWindowLimit(projectTreeListKey(folder.key, id));
+  }, [tree]);
+
   return {
     topicRow,
     topicMenuItems(node, t) {
@@ -298,9 +304,13 @@ export function useProjectTreeOrganization({
     },
     renameGroup(key, id, title) {
       const trimmed = title.trim();
+      if (!trimmed) forgetGroupWindow(key, id);
       mutateGroups(key, (groups) => trimmed ? groups.map((group) => group.id === id ? { ...group, title: trimmed } : group) : groups.filter((group) => group.id !== id));
     },
-    deleteGroup(key, id) { mutateGroups(key, (groups) => groups.filter((group) => group.id !== id)); },
+    deleteGroup(key, id) {
+      forgetGroupWindow(key, id);
+      mutateGroups(key, (groups) => groups.filter((group) => group.id !== id));
+    },
     canDropTopicInto(key) {
       const context = dragContextRef.current;
       return Boolean(dragTopicID && context && key === (context.scope === "global" ? "global|" : `project|${context.root}`));
@@ -326,6 +336,17 @@ export function ProjectTreeGroupRows({
   organization,
   renderNode,
   t,
+  queryActive,
+  remote,
+  activeTopicId,
+  isActive,
+  listState,
+  listLimit,
+  onEnsureList,
+  onExpandList,
+  onCollapseList,
+  onRetryList,
+  onForgetList,
 }: {
   folder: ProjectNode;
   children: ProjectNode[];
@@ -335,6 +356,17 @@ export function ProjectTreeGroupRows({
   organization: ProjectTreeOrganizationController;
   renderNode: (node: ProjectNode, depth: number, section: "pinned" | "projects", visible: boolean) => ReactNode;
   t: Translator;
+  queryActive: boolean;
+  remote: boolean;
+  activeTopicId?: string;
+  isActive: (node: ProjectNode) => boolean;
+  listState: (groupID: string) => ProjectTreeListPageState | undefined;
+  listLimit: (groupID: string) => number;
+  onEnsureList: (groupID: string) => void;
+  onExpandList: (groupID: string) => void;
+  onCollapseList: (groupID: string) => void;
+  onRetryList: (groupID: string) => void;
+  onForgetList: (groupID: string) => void;
 }) {
   const [menuGroup, setMenuGroup] = useState<string | null>(null);
   const [menuPoint, setMenuPoint] = useState<ContextMenuPoint | null>(null);
@@ -343,15 +375,80 @@ export function ProjectTreeGroupRows({
   const key = projectTreeOrganizationKey(folder);
   const groups = organization.groupsFor(folder);
   const groupedIDs = new Set(groups.flatMap((group) => group.topicIds ?? []));
+  const groupIDs = groups.map((group) => group.id).join("\u001f");
+  const previousActiveTopicRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const previous = previousActiveTopicRef.current;
+    previousActiveTopicRef.current = activeTopicId;
+    if (!activeTopicId || previous === activeTopicId) return;
+    const activeGroup = groups.find((group) => group.topicIds?.includes(activeTopicId));
+    if (activeGroup && organization.groupCollapsed(key, activeGroup.id)) organization.toggleGroup(key, activeGroup.id);
+  }, [activeTopicId, groupIDs, groups, key, organization]);
+  useEffect(() => {
+    if (!visible || queryActive || remote) return;
+    onEnsureList("");
+    for (const group of groups) onEnsureList(group.id);
+  }, [groupIDs, groups, onEnsureList, queryActive, remote, visible]);
+
+  const renderWindowControls = (groupID: string, label: string, loadedCount: number) => {
+    if (queryActive) return null;
+    const state = listState(groupID);
+    const limit = listLimit(groupID);
+    const canExpand = remote ? loadedCount > limit : Boolean(state?.nextCursor);
+    const canCollapse = limit > PROJECT_TREE_WINDOW_INITIAL;
+    if (!state?.loading && !state?.error && !canExpand && !canCollapse) return null;
+    const collapseAndRestoreFocus = (button: HTMLButtonElement) => {
+      const actions = button.parentElement;
+      const groupHeader = button.closest(".project-tree__group")?.querySelector<HTMLElement>(".project-tree__group-main");
+      const firstTopic = actions?.parentElement?.querySelector<HTMLButtonElement>(".project-tree__topic-main");
+      onCollapseList(groupID);
+      requestAnimationFrame(() => {
+        const replacement = actions?.querySelector<HTMLButtonElement>("button:not(:disabled)");
+        (replacement ?? firstTopic ?? groupHeader)?.focus();
+      });
+    };
+    return <div className="project-tree__topic-window-actions" style={{ paddingLeft: 14 + depth * 16 }}>
+      {state?.error ? <button type="button" className="project-tree__topic-window-toggle" aria-label={t("projectTree.retryGroup", { name: label })} onClick={() => onRetryList(groupID)}>
+        {t("projectTree.loadFailedRetry")}
+      </button> : null}
+      {state?.loading ? <span className="project-tree__topic-window-status">{t("projectTree.loadingMore")}</span> : null}
+      {!state?.loading && !state?.error && canExpand ? <button type="button" className="project-tree__topic-window-toggle" aria-label={t("projectTree.expandGroup", { name: label })} onClick={() => onExpandList(groupID)}>
+        {t("projectTree.expandDisplay")}
+      </button> : null}
+      {!state?.loading && canCollapse ? <button type="button" className="project-tree__topic-window-toggle" aria-label={t("projectTree.collapseGroup", { name: label })} onClick={(event) => collapseAndRestoreFocus(event.currentTarget)}>
+        {t("projectTree.collapseDisplay")}
+      </button> : null}
+    </div>;
+  };
+
+  const scopedRows = (groupID: string, members: ProjectNode[]) => {
+    if (remote) return members;
+    const state = listState(queryActive ? "" : groupID);
+    const accepted = new Set(state?.itemKeys ?? []);
+    const rows = members.filter((member) => accepted.has(member.key));
+    if (!queryActive) {
+      const active = members.find(isActive);
+      if (active && !rows.some((row) => row.key === active.key)) rows.push(active);
+    }
+    return rows;
+  };
+
+  const ungrouped = children.filter((child) => !groupedIDs.has(child.topicId ?? ""));
+  const ungroupedRows = scopedRows("", ungrouped);
+  const visibleUngrouped = queryActive ? ungroupedRows : projectTreeWindowRows(ungroupedRows, listLimit(""), isActive);
   const commitRename = (id: string) => {
+    if (!groupDraft.trim()) onForgetList(id);
     organization.renameGroup(key, id, groupDraft);
     setEditingGroup(null);
   };
   return <>
-    {children.filter((child) => !groupedIDs.has(child.topicId ?? "")).map((child) => renderNode(child, depth, section, visible))}
+    {visibleUngrouped.map((child) => renderNode(child, depth, section, visible))}
+    {renderWindowControls("", folder.label, ungroupedRows.length)}
     {groups.map((group) => {
-      const collapsed = organization.groupCollapsed(key, group.id);
+      const collapsed = queryActive ? false : organization.groupCollapsed(key, group.id);
       const members = children.filter((child) => group.topicIds?.includes(child.topicId ?? ""));
+      const groupRows = scopedRows(group.id, members);
+      if (queryActive && groupRows.length === 0) return null;
       const canDrop = organization.canDropTopicInto(key);
       return <div key={group.id} className={`project-tree__group${collapsed ? " project-tree__group--collapsed" : ""}`}>
         <div
@@ -394,21 +491,21 @@ export function ProjectTreeGroupRows({
             onBlur={() => commitRename(group.id)}
             onClick={(event) => event.stopPropagation()}
           /> : <span className="project-tree__group-title">{group.title}</span>}
-          <span className="project-tree__group-count">{members.length}</span>
         </div>
         {menuGroup === group.id && <ContextMenu
           open
           point={menuPoint}
           items={[
             { key: "rename", icon: <Pencil size={13} />, label: t("projectTree.renameGroup"), onSelect: () => { setEditingGroup(group.id); setGroupDraft(group.title); setMenuGroup(null); } },
-            { key: "delete", icon: <Archive size={13} />, label: t("projectTree.deleteGroup"), danger: true, onSelect: () => { organization.deleteGroup(key, group.id); setMenuGroup(null); } },
+            { key: "delete", icon: <Archive size={13} />, label: t("projectTree.deleteGroup"), danger: true, onSelect: () => { onForgetList(group.id); organization.deleteGroup(key, group.id); setMenuGroup(null); } },
           ]}
           minWidth={178}
           ariaLabel={t("projectTree.renameGroup")}
           onClose={() => setMenuGroup(null)}
         />}
-        {!collapsed && members.length > 0 && <div className="project-tree__group-children">
-          {members.map((child) => renderNode(child, depth, section, visible))}
+        {!collapsed && <div className="project-tree__group-children">
+          {(queryActive ? groupRows : projectTreeWindowRows(groupRows, listLimit(group.id), isActive)).map((child) => renderNode(child, depth, section, visible))}
+          {renderWindowControls(group.id, group.title, groupRows.length)}
         </div>}
       </div>;
     })}

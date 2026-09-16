@@ -1381,7 +1381,7 @@
       "kind": "command",
       "name": "GetProjectGroups",
       "detail": "(scope string, workspaceRoot string) (ProjectGroupsSnapshot, error)",
-      "location": "desktop/project_tree_organization.go:239",
+      "location": "desktop/project_tree_organization.go:245",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1397,7 +1397,7 @@
       "kind": "command",
       "name": "GetProjectTreeSnapshot",
       "detail": "() ProjectTreeSnapshot",
-      "location": "desktop/session_catalog.go:574",
+      "location": "desktop/session_catalog.go:583",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1429,7 +1429,7 @@
       "kind": "command",
       "name": "GetSessionCatalogStatus",
       "detail": "() SessionCatalogStatus",
-      "location": "desktop/session_catalog_runtime.go:688",
+      "location": "desktop/session_catalog_runtime.go:683",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1485,7 +1485,7 @@
       "kind": "command",
       "name": "GetTopicSummary",
       "detail": "(key ProjectTopicKey) (ProjectNode, error)",
-      "location": "desktop/session_catalog_runtime.go:663",
+      "location": "desktop/topic_state_catalog.go:24",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1829,7 +1829,7 @@
       "kind": "command",
       "name": "ListProjectGroups",
       "detail": "(scope string, workspaceRoot string) ([]desktopGroup, error)",
-      "location": "desktop/project_tree_organization.go:213",
+      "location": "desktop/project_tree_organization.go:219",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1837,7 +1837,7 @@
       "kind": "command",
       "name": "ListProjectTopics",
       "detail": "(req ProjectTopicPageRequest) (ProjectTopicPage, error)",
-      "location": "desktop/topic_state_catalog.go:8",
+      "location": "desktop/topic_state_catalog.go:10",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1845,7 +1845,7 @@
       "kind": "command",
       "name": "ListProjectTree",
       "detail": "() []ProjectNode",
-      "location": "desktop/session_catalog_runtime.go:695",
+      "location": "desktop/session_catalog_runtime.go:690",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -3229,7 +3229,7 @@
       "kind": "command",
       "name": "ReorderTopics",
       "detail": "(scope string, workspaceRoot string, orderedTopicIDs []string) error",
-      "location": "desktop/project_tree_organization.go:177",
+      "location": "desktop/project_tree_organization.go:183",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -3877,7 +3877,7 @@
       "kind": "command",
       "name": "SaveSessionGroups",
       "detail": "(scope string, workspaceRoot string, groups []desktopGroup) error",
-      "location": "desktop/project_tree_organization.go:255",
+      "location": "desktop/project_tree_organization.go:261",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -3885,7 +3885,7 @@
       "kind": "command",
       "name": "SaveSessionGroupsVersioned",
       "detail": "(scope string, workspaceRoot string, expectedRevision uint64, groups []desktopGroup) (ProjectGroupsSnapshot, error)",
-      "location": "desktop/project_tree_organization.go:299",
+      "location": "desktop/project_tree_organization.go:305",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -5497,7 +5497,7 @@
     {
       "kind": "event",
       "name": "project-tree:changed-v2",
-      "location": "desktop/session_catalog.go:373",
+      "location": "desktop/session_catalog.go:382",
       "class": "keep-business",
       "owner": "desktop/event frame (seq + generation), same payload"
     },
@@ -5630,7 +5630,7 @@
     {
       "kind": "frontend-event",
       "name": "project-tree:changed-v2",
-      "location": "desktop/frontend/src/lib/sessionCatalogBridge.ts:15",
+      "location": "desktop/frontend/src/lib/sessionCatalogBridge.ts:16",
       "class": "keep-business",
       "owner": "desktopHost().events.on, same payload"
     },

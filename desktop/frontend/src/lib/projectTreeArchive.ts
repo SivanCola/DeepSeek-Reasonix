@@ -6,7 +6,7 @@ import type { ProjectNode } from "./types";
 
 export { projectTreeWithoutTopics } from "./projectTreeTopic";
 
-type TopicPageState = { nextCursor?: string; loading: boolean };
+type TopicPageState = { itemKeys?: string[]; nextCursor?: string; loading: boolean; initialized?: boolean; error?: string };
 
 export type ProjectTreeRefreshOptions = {
   reloadTopicKeys?: string[];
@@ -150,6 +150,7 @@ export function useProjectTreeArchiveState() {
 export function useProjectTreeArchiveController({
   treeRef,
   topicLoadSeqRef,
+  topicLoadPendingRef,
   topicPageStateRef,
   updateTopicPageState,
   refreshRef,
@@ -161,6 +162,7 @@ export function useProjectTreeArchiveController({
 }: {
   treeRef: { current: ProjectNode[] };
   topicLoadSeqRef: { current: Record<string, number> };
+  topicLoadPendingRef: { current: Record<string, number> };
   topicPageStateRef: { current: Record<string, TopicPageState> };
   updateTopicPageState: (key: string, next: TopicPageState) => void;
   refreshRef: { current: ProjectTreeRefresh };
@@ -203,8 +205,15 @@ export function useProjectTreeArchiveController({
           // Fence every load that captured the catalog before backend commit,
           // then remove the topic while the tombstone covers newer arrivals.
           invalidateProjectTreeTopicLoads(topicLoadSeqRef.current, invalidatedKeys);
-          for (const key of invalidatedKeys) {
-            updateTopicPageState(key, { ...topicPageStateRef.current[key], loading: false });
+          for (const folderKey of invalidatedKeys) {
+            const prefix = `${folderKey}\u001f`;
+            for (const key of Object.keys(topicLoadPendingRef.current)) {
+              if (key === folderKey || key.startsWith(prefix)) delete topicLoadPendingRef.current[key];
+            }
+            for (const [key, state] of Object.entries(topicPageStateRef.current)) {
+              if (key !== folderKey && !key.startsWith(prefix)) continue;
+              updateTopicPageState(key, { ...state, nextCursor: undefined, loading: false, initialized: false, error: undefined });
+            }
           }
           optimisticallyRemoveTopic(topicId);
         },
@@ -221,7 +230,7 @@ export function useProjectTreeArchiveController({
     });
     archiveQueueRef.current = queued;
     await queued;
-  }, [beginTrashingTopic, closeMenu, commitArchiveTombstone, endTrashingTopic, onTopicsChanged, optimisticallyRemoveTopic, refreshRef, releaseArchiveTombstone, showToast, topicLoadSeqRef, topicPageStateRef, treeRef, updateTopicPageState]);
+  }, [beginTrashingTopic, closeMenu, commitArchiveTombstone, endTrashingTopic, onTopicsChanged, optimisticallyRemoveTopic, refreshRef, releaseArchiveTombstone, showToast, topicLoadPendingRef, topicLoadSeqRef, topicPageStateRef, treeRef, updateTopicPageState]);
 
   const trashSession = useCallback(async (rawSessionPath: string) => {
     const sessionPath = rawSessionPath.trim();

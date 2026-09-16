@@ -1,0 +1,122 @@
+import type { ProjectNode } from "./types";
+
+export const PROJECT_TREE_WINDOW_INITIAL = 5;
+export const PROJECT_TREE_WINDOW_STEP = 10;
+export const PROJECT_TREE_SEARCH_PAGE = 50;
+export const PROJECT_TREE_BACKEND_PAGE_MAX = 200;
+
+export type ProjectTreeListPageState = {
+  itemKeys?: string[];
+  nextCursor?: string;
+  loading: boolean;
+  initialized?: boolean;
+  error?: string;
+};
+
+const runtimeWindowLimits = new Map<string, number>();
+
+export function projectTreeRuntimeWindowLimits(): Record<string, number> {
+  return Object.fromEntries(runtimeWindowLimits);
+}
+
+export function rememberProjectTreeWindowLimit(key: string, limit: number): void {
+  if (limit <= PROJECT_TREE_WINDOW_INITIAL) runtimeWindowLimits.delete(key);
+  else runtimeWindowLimits.set(key, limit);
+}
+
+export function forgetProjectTreeWindowLimit(key: string): void {
+  runtimeWindowLimits.delete(key);
+}
+
+export function forgetProjectTreeWindowLimits(projectKeys: ReadonlySet<string>): void {
+  for (const key of runtimeWindowLimits.keys()) {
+    const separator = key.indexOf("\u001f");
+    const projectKey = separator >= 0 ? key.slice(0, separator) : key;
+    if (!projectKeys.has(projectKey)) runtimeWindowLimits.delete(key);
+  }
+}
+
+export type ProjectTreeRequestLimiter = {
+  run<T>(task: () => Promise<T>): Promise<T>;
+};
+
+type ProjectTreePage<T> = {
+  items: T[];
+  nextCursor?: string;
+  revision: number;
+  complete?: boolean;
+};
+
+export async function loadProjectTreePageWindow<T, TPage extends ProjectTreePage<T>>(
+  initialCursor: string,
+  requestedLimit: number,
+  load: (cursor: string, limit: number) => Promise<TPage>,
+): Promise<TPage> {
+  const items: T[] = [];
+  let cursor = initialCursor;
+  let remaining = Math.max(1, Math.floor(requestedLimit));
+  let result: TPage | undefined;
+  let revision = 0;
+  let incomplete = false;
+
+  while (remaining > 0) {
+    const page = await load(cursor, Math.min(remaining, PROJECT_TREE_BACKEND_PAGE_MAX));
+    result = page;
+    items.push(...page.items);
+    revision = Math.max(revision, page.revision);
+    incomplete = incomplete || page.complete === false;
+    remaining -= page.items.length;
+    if (!page.nextCursor || page.items.length === 0) break;
+    cursor = page.nextCursor;
+  }
+
+  if (!result) throw new Error("project tree page loader returned no page");
+  return {
+    ...result,
+    items,
+    revision,
+    complete: incomplete ? false : result.complete,
+  };
+}
+
+export function createProjectTreeRequestLimiter(maxConcurrent = 4): ProjectTreeRequestLimiter {
+  const limit = Math.max(1, Math.floor(maxConcurrent));
+  let active = 0;
+  const pending: Array<() => void> = [];
+
+  const release = () => {
+    active = Math.max(0, active - 1);
+    pending.shift()?.();
+  };
+
+  return {
+    run<T>(task: () => Promise<T>): Promise<T> {
+      return new Promise<T>((resolve, reject) => {
+        const start = () => {
+          active += 1;
+          void task().then(resolve, reject).finally(release);
+        };
+        if (active < limit) start();
+        else pending.push(start);
+      });
+    },
+  };
+}
+
+export function projectTreeListKey(projectKey: string, groupID = "", query = ""): string {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (normalizedQuery) return `${projectKey}\u001fsearch\u001f${normalizedQuery}`;
+  return `${projectKey}\u001f${groupID ? `group:${groupID}` : "ungrouped"}`;
+}
+
+export function projectTreeWindowRows(
+  rows: ProjectNode[],
+  limit: number,
+  isActive: (node: ProjectNode) => boolean,
+): ProjectNode[] {
+  if (rows.length <= limit) return rows;
+  const visible = rows.slice(0, limit);
+  const active = rows.find((row) => isActive(row));
+  if (!active || visible.some((row) => row.key === active.key)) return visible;
+  return [...visible, active];
+}

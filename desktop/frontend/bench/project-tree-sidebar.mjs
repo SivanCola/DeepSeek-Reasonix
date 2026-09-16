@@ -18,20 +18,24 @@ try {
   await page.locator(".project-tree__topic-main").first().waitFor();
   assert.equal(await page.locator(".app--workbench").count(), 1);
   assert.equal(await page.locator(".workspace-browser,.app--creation").count(), 0);
+  assert.equal(await page.locator('.project-tree__topic-main').count(), 5, 'project starts with five rendered sessions');
+  await page.getByRole('button', { name: 'Show more in reasonix', exact: true }).click();
+  await page.waitForFunction(() => document.querySelectorAll('.project-tree__topic-main').length === 9);
+  await page.getByRole('button', { name: 'Show less in reasonix', exact: true }).click();
+  await page.waitForFunction(() => document.querySelectorAll('.project-tree__topic-main').length === 5);
   await selectSession(page, "bench:small-6t");
   await page.waitForFunction(() => document.querySelector('.transcript')?.textContent?.includes('ASYNC LAYOUT EXPANSION COMPLETE'));
   assert.ok((await page.locator('.topicbar h1').textContent()).includes('bench:small-6t'));
   const geometry = await page.locator('.project-tree__topic-label').first().evaluate(el => ({ whiteSpace: getComputedStyle(el).whiteSpace, overflow: getComputedStyle(el).textOverflow }));
   assert.deepEqual(geometry, { whiteSpace: 'nowrap', overflow: 'ellipsis' });
   await page.getByRole('button', { name: 'Trash', exact: true }).click();
-  await page.getByRole('button', { name: 'Archived', exact: true }).click();
-  await page.locator('.archived-sessions').waitFor();
+  await page.locator('.archived-sessions:visible').waitFor();
   await page.getByRole('button', { name: 'Back to workspace', exact: true }).click();
   await page.locator('.sidebar__utility-button').filter({ hasText: 'Settings' }).click();
   await page.locator('.settings-page--general').waitFor();
   assert.equal(await page.getByText('Desktop style', { exact: true }).count(), 0);
   assert.deepEqual(errors, []);
-  console.log('PASS workbench-only ProjectTree, compact labels, session navigation, archived recovery and settings');
+  console.log('PASS workbench ProjectTree 5/10 window, compact labels, session navigation, archived recovery and settings');
 } finally {
   await browser?.close();
   await preview.close();

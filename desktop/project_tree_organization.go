@@ -136,7 +136,7 @@ func completeTopicOrder(orderedTopicIDs, previous []string) ([]string, error) {
 		available[id] = true
 	}
 	seen := make(map[string]bool, len(orderedTopicIDs))
-	next := make([]string, 0, len(previous))
+	ordered := make([]string, 0, len(orderedTopicIDs))
 	for _, id := range orderedTopicIDs {
 		id = strings.TrimSpace(id)
 		if id == "" || !available[id] {
@@ -146,11 +146,17 @@ func completeTopicOrder(orderedTopicIDs, previous []string) ([]string, error) {
 			return nil, fmt.Errorf("duplicate topic %q", id)
 		}
 		seen[id] = true
-		next = append(next, id)
+		ordered = append(ordered, id)
 	}
-	for _, id := range previous {
-		if !seen[id] {
-			next = append(next, id)
+	// A paged sidebar only sends the rows it has loaded. Replace those rows in
+	// their existing slots so omitted topics keep both their relative order and
+	// their position among the visible subset.
+	next := append([]string(nil), previous...)
+	orderedIndex := 0
+	for index, id := range previous {
+		if seen[id] {
+			next[index] = ordered[orderedIndex]
+			orderedIndex++
 		}
 	}
 	return next, nil

@@ -4959,7 +4959,7 @@
     },
     {
       "cancellation": "before-dispatch",
-      "domain": "desktop/session_catalog_runtime.go",
+      "domain": "desktop/topic_state_catalog.go",
       "name": "GetTopicSummary",
       "owner": "App.GetTopicSummary",
       "params": [
@@ -4981,7 +4981,7 @@
         "resolver": "App.GetTopicSummary"
       },
       "sources": [
-        "desktop/session_catalog_runtime.go"
+        "desktop/topic_state_catalog.go"
       ]
     },
     {
@@ -30859,6 +30859,27 @@
           "optional": true,
           "type": {
             "kind": "string"
+          }
+        },
+        {
+          "name": "groupFilter",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "groupId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "excludePinned",
+          "optional": true,
+          "type": {
+            "kind": "boolean"
           }
         }
       ]

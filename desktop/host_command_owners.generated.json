@@ -2655,10 +2655,10 @@
     }
   },
   "GetTopicSummary": {
-    "domain": "desktop/session_catalog_runtime.go",
+    "domain": "desktop/topic_state_catalog.go",
     "owner": "App.GetTopicSummary",
     "sources": [
-      "desktop/session_catalog_runtime.go"
+      "desktop/topic_state_catalog.go"
     ],
     "scope": {
       "kind": "owner-inputs",

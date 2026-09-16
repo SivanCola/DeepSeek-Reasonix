@@ -425,7 +425,7 @@ const sortTree: ProjectNode[] = [
 // Creation mode is the surviving non-compact arrangement: project order, with
 // each folder's topics sorted by the stored sort mode.
 eq(
-  arrangeWorkbenchTree(sortTree, "project", "updated").map((node) => (node.children ?? []).map((child) => child.topicId)),
+  arrangeWorkbenchTree(sortTree, "updated").map((node) => (node.children ?? []).map((child) => child.topicId)),
   [["newest", "blank", "old"], ["only"]],
   "project arrange sorts topics by last activity while keeping project order",
 );
@@ -444,7 +444,6 @@ eq(
         ],
       },
     ],
-    "project",
     "created",
   ).map((node) => (node.children ?? []).map((child) => child.topicId)),
   [["created-last", "created-first"]],
@@ -465,7 +464,6 @@ eq(
         ],
       },
     ],
-    "project",
     "updated",
   ).map((node) => (node.children ?? []).map((child) => child.topicId)),
   [["pinned-old", "recent"]],

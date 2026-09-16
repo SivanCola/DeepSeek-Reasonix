@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 10;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:5958b6442a67d62ae38a894126126b70e01c91e19d0d3165ec1252b70621b0ff";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:0a92bc61affc7be307608954174c48efc4bc1d02b47e9f82f503f7f695696bb2";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -2992,6 +2992,9 @@ export interface ProjectTopicPageRequest {
   query?: string;
   timeFilter?: string;
   sortMode?: string;
+  groupFilter?: string;
+  groupId?: string;
+  excludePinned?: boolean;
 }
 
 export interface ProjectTreeRuntimeSnapshot {

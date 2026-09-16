@@ -1,19 +1,56 @@
 package main
 
-import "strings"
+import (
+	"strings"
 
-// ListProjectTopics keeps authoritative topic-state failures visible to the
-// Wails caller instead of converting a future-schema or unreadable database
-// into an apparently empty sidebar page.
+	"reasonix/internal/sessioncatalog"
+)
+
+// ListProjectTopics surfaces topic-state failures instead of hiding them as empty pages.
 func (a *App) ListProjectTopics(req ProjectTopicPageRequest) (ProjectTopicPage, error) {
-	// Remote roots are virtual identities whose sessions come from the Serve
-	// catalog. Never build local topic-state or legacy metadata paths from them;
-	// their colon is an invalid Windows path component.
+	// Remote roots come from Serve and must never map to local metadata paths.
 	if strings.HasPrefix(strings.TrimSpace(req.WorkspaceRoot), "remote-project:") {
 		return ProjectTopicPage{Items: []ProjectNode{}}, nil
+	}
+	if err := resolveProjectTopicGroupFilter(&req); err != nil {
+		return ProjectTopicPage{Items: []ProjectNode{}}, err
 	}
 	if err := topicStateReadable(topicTitleRoot(req.Scope, req.WorkspaceRoot)); err != nil {
 		return ProjectTopicPage{Items: []ProjectNode{}}, err
 	}
 	return a.unifiedProjectTopics(req)
+}
+
+func (a *App) GetTopicSummary(key ProjectTopicKey) (ProjectNode, error) {
+	scope, workspaceRoot := normalizeDesktopTopicScope(key.Scope, key.WorkspaceRoot)
+	topicID := strings.TrimSpace(key.TopicID)
+	if topicID == "" {
+		return ProjectNode{Children: []ProjectNode{}}, nil
+	}
+	if catalog := a.sessionCatalog.Load(); catalog != nil {
+		ctx, cancel := a.catalogReadContext()
+		defer cancel()
+		topic, ok, err := catalog.GetTopic(ctx, sessioncatalog.TopicKey{
+			Scope: scope, WorkspaceRoot: workspaceRoot, TopicID: topicID,
+		})
+		if err != nil {
+			return ProjectNode{Children: []ProjectNode{}}, err
+		}
+		if ok {
+			topicOverlays, sessionOverlays := a.catalogRuntimeOverlays()
+			preferred, prefErr := catalog.PreferredOrdinarySessionPaths(ctx, scope, workspaceRoot)
+			if prefErr != nil {
+				preferred = nil
+			}
+			if node, visible := a.projectNodeFromCatalogTopic(topic, topicOverlays, sessionOverlays, preferred); visible {
+				return node, nil
+			}
+		}
+	}
+	for _, node := range a.metadataProjectTopics(scope, workspaceRoot) {
+		if node.TopicID == topicID {
+			return node, nil
+		}
+	}
+	return ProjectNode{Children: []ProjectNode{}}, nil
 }
