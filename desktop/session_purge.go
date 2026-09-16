@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"reasonix/desktop/internal/workspacestate"
 	"reasonix/internal/session"
@@ -37,9 +38,8 @@ func (a *App) purgeCanonicalSession(ctx context.Context, ref session.SessionRef,
 	if !retry && state.SessionStates[ref.SessionID].Lifecycle != workspacestate.Archived {
 		return errors.New("only archived sessions can be permanently deleted")
 	}
-	service := a.desktopSessionService("")
-	if _, live := service.Runtime(ref); live {
-		return errors.New("close the session preview before permanently deleting it")
+	if err := a.retireArchivedSessionRuntime(ctx, ref); err != nil {
+		return fmt.Errorf("session runtime is still in use: %w", err)
 	}
 	filesystem := session.NewFilesystemPersistence(a.desktopSessions.root)
 	if err := filesystem.PurgeWithTombstone(ctx, ref.SessionID, func() error {
@@ -54,4 +54,19 @@ func (a *App) purgeCanonicalSession(ctx context.Context, ref session.SessionRef,
 		return err
 	}
 	return store.CompletePurge(ctx, ref.SessionID)
+}
+
+// Client release may retain an idle runtime for fast navigation. Archive and
+// purge must retire that cache entry; Service.Close still refuses bound clients
+// and executing turns, so this cannot close a live user's session underneath it.
+func (a *App) retireArchivedSessionRuntime(ctx context.Context, ref session.SessionRef) error {
+	service := a.desktopSessionService("")
+	if _, live := service.Runtime(ref); !live {
+		return nil
+	}
+	err := service.Close(ctx, ref)
+	if errors.Is(err, session.ErrSessionNotRunning) {
+		return nil
+	}
+	return err
 }

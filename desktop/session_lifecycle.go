@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"sort"
 	"strings"
@@ -126,7 +127,15 @@ func (a *App) archiveSessionRefsWithOperation(refs []session.SessionRef, operati
 	if err := a.workspaceRegistry().CommitOperation(ctx, op.ID); err != nil {
 		return fallbackRuntimeTarget{}, err
 	}
-	return a.finishArchivedRuntimeBindings(removed), nil
+	fallback := a.finishArchivedRuntimeBindings(removed)
+	for _, ref := range unique {
+		if err := a.retireArchivedSessionRuntime(ctx, ref); err != nil {
+			// Archive is already durable. Preserve that result and let purge's
+			// ownership check retry retirement after the client releases it.
+			slog.Warn("desktop: archived runtime retirement deferred", "err", err)
+		}
+	}
+	return fallback, nil
 }
 
 // Called only after durable commit, with runtime mutation admission held.

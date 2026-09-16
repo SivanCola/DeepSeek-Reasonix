@@ -3,10 +3,11 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { createServer } from "node:http";
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { packagedSmokeEnv } from "./smoke-env.mjs";
+import { waitForSmokeCondition } from "./smoke-poll.mjs";
 
 const require = createRequire(new URL("../electron/package.json", import.meta.url));
 const { _electron } = require("playwright");
@@ -35,6 +36,7 @@ const launch = async () => {
 };
 const invoke = (method, args = []) => page.evaluate(({ method, args }) => window.reasonixDesktop.invoke(method, args), { method, args });
 const close = async () => { await application.close(); application = null; };
+const recordRegistry = name => writeFileSync(join(artifacts, `${name}.json`), readFileSync(join(home, "desktop/workspace-state-v1.json")));
 const active = async () => (await invoke("ListTabs")).find(tab => tab.active);
 try {
   await launch();
@@ -44,7 +46,7 @@ try {
   await composer.fill("ARCHIVE_RESTART_FIXTURE");
   await page.locator(".composer__btn--send").click();
   await page.waitForFunction(() => document.querySelector(".chat-transcript")?.textContent?.includes("ARCHIVE_HISTORY_RETAINED"));
-  await page.waitForFunction(async () => (await window.reasonixDesktop.invoke("ListTabs", [])).every(tab => !tab.running));
+  await waitForSmokeCondition(async () => (await invoke("ListTabs")).every(tab => !tab.running));
   const ref = (await active()).session;
   await invoke("RenameCanonicalSession", [ref, "Archive restart fixture"]);
   const initialTopics = await invoke("ListProjectTopics", [{ scope: "global", workspaceRoot: "", limit: 50 }]);
@@ -57,7 +59,7 @@ try {
   await row.hover();
   const archiveButton = row.locator(".project-tree__topic-action--archive");
   await archiveButton.click();
-  await page.waitForFunction(async id => (await window.reasonixDesktop.invoke("GetWorkspaceSnapshot", [])).archivedSessionIds.includes(id), ref.sessionId);
+  await waitForSmokeCondition(async () => (await invoke("GetWorkspaceSnapshot")).archivedSessionIds.includes(ref.sessionId));
   await page.screenshot({ path: join(artifacts, "archived.png") });
   await close();
   await launch();
@@ -72,7 +74,7 @@ try {
   assert.deepEqual(await invoke("ListTabs"), tabsBeforePreview, "preview created a writable runtime");
   await page.screenshot({ path: join(artifacts, "trash-after-restart.png") });
   await page.locator(".archived-sessions__row:visible").getByRole("button", { name: /恢复|Restore|還原/i }).click();
-  await page.waitForFunction(async id => !(await window.reasonixDesktop.invoke("GetWorkspaceSnapshot", [])).archivedSessionIds.includes(id), ref.sessionId);
+  await waitForSmokeCondition(async () => !(await invoke("GetWorkspaceSnapshot")).archivedSessionIds.includes(ref.sessionId));
   await page.waitForFunction(() => document.querySelector(".chat-transcript")?.textContent?.includes("ARCHIVE_HISTORY_RETAINED"));
   assert.equal((await active()).session.sessionId, ref.sessionId);
   await close();
@@ -100,14 +102,17 @@ try {
   const restoredRow = page.locator(".project-tree__topic").filter({ has: page.getByText("Archive restart fixture", { exact: true }) }).first();
   await restoredRow.hover();
   await restoredRow.locator(".project-tree__topic-action--archive").click();
-  await page.waitForFunction(async id => (await window.reasonixDesktop.invoke("GetWorkspaceSnapshot", [])).archivedSessionIds.includes(id), ref.sessionId);
+  await waitForSmokeCondition(async () => (await invoke("GetWorkspaceSnapshot")).archivedSessionIds.includes(ref.sessionId));
   await page.getByRole("button", { name: /回收站|Trash|垃圾桶/i }).first().click();
   await page.locator(".archived-sessions__delete:visible").click();
   await page.getByRole("dialog").getByRole("button", { name: /彻底删除|Permanently delete|徹底刪除/i }).click();
-  await page.waitForFunction(async () => (await window.reasonixDesktop.invoke("ListTrashEntries", ["", "", 50])).items.length === 0);
+  await waitForSmokeCondition(async () => (await invoke("ListTrashEntries", ["", "", 50])).items.length === 0);
+  recordRegistry("purge-observed");
   await page.screenshot({ path: join(artifacts, "purged.png") });
   await close();
+  recordRegistry("purge-closed");
   await launch();
+  recordRegistry("purge-restarted");
   assert.equal((await invoke("ListTrashEntries", ["", "", 50])).items.length, 0);
   assert.equal(containsSession((await invoke("ListProjectTopics", [{ scope: "global", workspaceRoot: "", limit: 50 }])).items), false);
   await assert.rejects(invoke("ReadSessionHistory", [ref, "", 32]));
@@ -117,6 +122,8 @@ try {
 } catch (error) {
   if (page && !page.isClosed()) {
     writeFileSync(join(artifacts, "failure-state.json"), JSON.stringify({
+      trash: await invoke("ListTrashEntries", ["", "", 50]).catch(() => null),
+      workspace: await invoke("GetWorkspaceSnapshot").catch(() => null),
       topics: await invoke("ListProjectTopics", [{ scope: "global", workspaceRoot: "", limit: 50 }]).catch(() => null),
       tree: await invoke("GetProjectTreeSnapshot").catch(() => null),
       tabs: await invoke("ListTabs").catch(() => null),

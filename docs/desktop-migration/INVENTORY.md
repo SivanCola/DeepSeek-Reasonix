@@ -336,7 +336,7 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 | `PreviewRewindForTab` | `(tabID string, turn int, scope string) RewindPlanView` | desktop/app.go:2385 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `PreviewSession` | `(path string) ([]HistoryMessage, error)` | desktop/app.go:4230 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `PreviewWorkspaceFileRevertForTab` | `(tabID string, path string) RewindPlanView` | desktop/app.go:2412 | keep-business (保留业务实现) | hostrpc desktop/invoke |
-| `PurgeCanonicalSession` | `(ref session.SessionRef) error` | desktop/session_purge.go:14 | keep-business (保留业务实现) | hostrpc desktop/invoke |
+| `PurgeCanonicalSession` | `(ref session.SessionRef) error` | desktop/session_purge.go:15 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `PurgeRecoveryCopy` | `(path string) error` | desktop/app.go:3381 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `PurgeTrashedSession` | `(path string) error` | desktop/session_legacy_lifecycle_rpc.go:50 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `QuerySessionTakeover` | `(tabID string) (*SessionTakeoverView, error)` | desktop/session_takeover.go:215 | keep-business (保留业务实现) | hostrpc desktop/invoke |
