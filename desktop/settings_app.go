@@ -2383,6 +2383,10 @@ func saveProviderConfig(c *config.Config, p ProviderView) error {
 	e.Headers = p.Headers
 	e.ExtraBody = p.ExtraBody
 	e.AuthHeader = p.AuthHeader
+	// Treat an exact registered request URL as the authoritative protocol when
+	// stale frontend or legacy state submits a mismatched kind. Unknown/custom
+	// routes still fall through to ValidateProviderEndpoint below.
+	config.RepairProviderEndpointContract(&e)
 	e.NoProxy = p.NoProxy
 	e.BalanceURL = strings.TrimSpace(p.BalanceURL)
 	e.ContextWindow = p.ContextWindow

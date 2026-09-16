@@ -298,12 +298,29 @@ func ApplyUserConfigUpgradesOnStartup(path string) (bool, error) {
 	}
 	classicDesktopLayout := strings.EqualFold(strings.TrimSpace(header.Desktop.LayoutStyle), "classic")
 	if header.ConfigVersion == defaultVersion && !classicDesktopLayout {
-		return false, nil
+		repairs, err := repairProviderEndpointContractsFileLocked(path)
+		if err != nil {
+			return false, err
+		}
+		recordProviderEndpointRepairs(path, repairs)
+		return len(repairs) > 0, nil
 	}
 	// Versions 7-9 commit the protocol upgrades and final version together,
 	// preserving the original bytes in one backup before any replacement.
 	if header.ConfigVersion >= deepSeekScheduledPricingConfigVersion && header.ConfigVersion < openCodeGoUpgradeVersion {
-		return upgradeOpenCodeGoFileLocked(path)
+		upgraded, err := upgradeOpenCodeGoFileLocked(path)
+		if err != nil {
+			return false, err
+		}
+		repairs, err := repairProviderEndpointContractsFileLocked(path)
+		if err != nil {
+			return false, err
+		}
+		repaired := len(repairs) > 0
+		if repaired {
+			recordProviderEndpointRepairs(path, repairs)
+		}
+		return upgraded || repaired, nil
 	}
 	cfg := LoadForEdit(path)
 	changed := false
@@ -347,21 +364,25 @@ func ApplyUserConfigUpgradesOnStartup(path string) (bool, error) {
 		migrateOfficialDeepSeekChat(cfg)
 		changed = true
 	}
-	if !changed {
-		return false, nil
-	}
-	if header.ConfigVersion < defaultVersion {
-		cfg.ConfigVersion = deepSeekOfficialChatUpgradeConfigVersion
-	}
-	if err := cfg.SaveTo(path); err != nil {
-		return false, err
-	}
-	if header.ConfigVersion < openCodeGoUpgradeVersion {
-		if _, err := upgradeOpenCodeGoFileLocked(path); err != nil {
+	if changed {
+		if header.ConfigVersion < defaultVersion {
+			cfg.ConfigVersion = deepSeekOfficialChatUpgradeConfigVersion
+		}
+		if err := cfg.SaveTo(path); err != nil {
 			return false, err
 		}
+		if header.ConfigVersion < openCodeGoUpgradeVersion {
+			if _, err := upgradeOpenCodeGoFileLocked(path); err != nil {
+				return false, err
+			}
+		}
 	}
-	return true, nil
+	repairs, err := repairProviderEndpointContractsFileLocked(path)
+	if err != nil {
+		return false, err
+	}
+	recordProviderEndpointRepairs(path, repairs)
+	return changed || len(repairs) > 0, nil
 }
 
 // ResetOfficialProviderPricingOnUpgrade is retained for older call sites.

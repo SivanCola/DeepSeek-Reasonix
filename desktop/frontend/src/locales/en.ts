@@ -3158,6 +3158,7 @@ export const en = {
   "notice.planModeToolSettingsIgnored": "Some plan-mode tool settings were ignored.",
   "notice.planModeCommandSettingsIgnored": "Some plan-mode command settings were ignored.",
   "notice.configMigrationIncomplete": "Config migration did not complete.",
+  "notice.providerConnectionRepaired": "Provider connection settings were repaired.",
   "notice.modelMissingApiKey": "Selected model is missing its API key.",
   "notice.mcpServerFailed": "An MCP server failed to start.",
   "notice.mcpServersFailed": "Some MCP servers failed to start; run /mcp for details.",
