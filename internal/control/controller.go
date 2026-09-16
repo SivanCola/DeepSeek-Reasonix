@@ -5061,7 +5061,7 @@ func (c *Controller) close(fireSessionEnd bool, jobsMode closeJobsMode) {
 		// A phase marker alone is not a live turn: recovery may retain one after
 		// cancel/done ownership has gone. Only a live body or terminal fanout
 		// defers final resource release.
-		turnActive := done != nil || c.finalizingLocked()
+		turnActive := done != nil || c.finalizingLocked() || c.turns.recoveryFanout
 		// Seal turn admission and drop anything already parked: a parked turn
 		// must not start against a controller that is being torn down, and
 		// without the closed flag a submit landing after this critical

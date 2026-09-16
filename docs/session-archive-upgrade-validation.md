@@ -16,11 +16,11 @@ not claim that a user's existing data has already been repaired.
 | Gate / 门禁 | Status / 状态 |
 | --- | --- |
 | Root Go full suite / 根模块全量 | All packages except stale generated inventory passed; regenerated inventory owning tests passed / 除生成物过期外通过，重新生成后 inventory 测试通过 |
-| Desktop full suite / Desktop 全量 | One source-error diagnostic regression found and fixed; focused reproduction passes, final full run pending / 发现并修复一项来源错误诊断回归，定向通过，最终全量待执行 |
+| Desktop full suite / Desktop 全量 | Passed after the migration/catalog checkpoint and source diagnostic fixes (415 seconds) / 迁移与目录索引校验、来源诊断修复后全量通过（415 秒） |
 | Frontend / 前端 | 379 suites passed; production build and typecheck passed / 379 套件及生产构建、类型检查通过 |
-| Race / 竞态 | Focused desktop registry/runtime and session purge race checks passed before final review fixes; rerun pending / 定向检测通过，评审修复后待复核 |
+| Race / 竞态 | Desktop registry/runtime/migration and session purge race checks passed. Recovery-close deterministic interleavings and related cancellation race tests passed ten repetitions / Desktop 身份、注册表、迁移及删除竞态检查通过；恢复关闭确定性交错和取消竞态回归重复十次通过 |
 | Fault tests / 故障测试 | Content-publication interruption, receipt replay, pending purge visibility, external writer exclusion, symlink/staging refusal / 正文发布中断、回执重放、删除未完成入口、外部写锁、符号链接及暂存冲突 |
-| Production package / 生产包 | New integrated package and real UI restart cycle pending / 新集成包及真实界面重启闭环待验证 |
+| Production package / 生产包 | Integrated v2.6 passed the real sidebar archive, restart, read-only preview, restore, restart/history, confirmed purge and no-resurrection cycle. It predates the final review repairs; use the final PR review's exact SHA and package receipt for delivery / 集成 v2.6 已通过真实侧栏归档、重启、只读预览、恢复、重启历史、确认删除及防复活闭环；该包早于最终评审修复，交付以 PR 最终评审记录的 SHA 和包回执为准 |
 | Windows/Linux / 跨平台 | Native runs unavailable on this macOS host; no native success claim / 本机未原生运行，不标记为通过 |
 
 ## Review repairs / 评审修复
@@ -35,12 +35,42 @@ not claim that a user's existing data has already been repaired.
   repeated adoption. Reject unowned purge staging directories.
 - Report malformed source manifests in the ledger while migrating healthy
   sources; replay failure does not suppress independent discovery.
+- Compare durable migration inputs when catalog repair rewrites identical
+  source bytes or disposable metadata; retain unknown metadata in the digest
+  and reject changes to content, ancestry or workspace identity.
+- Keep recovery terminal fanout and watchdog publication under controller
+  resource ownership until both finish. The deterministic close interleaving
+  failed before the repair; CI's temporary-directory cleanup failure was not
+  addressed by disabling the race job or retrying cleanup.
 
 - 保留上游多 head 迁移与持久提交回执；已采用来源变化进入待校验，不覆盖后续正文。
 - 注册表写锁内写入准确 generation，子事务再次拒绝过期生命周期意图。
 - 明确的旧回收站记录使用专用归档导入提交，保留已有时间或显示未知。
 - 旧 purge RPC 同样保留原件；canonical 墓碑阻止再次采用，拒绝无归属的删除暂存。
 - 损坏 manifest 记录失败且不影响健康来源，重放失败不阻断独立发现。
+- 目录索引修复重写相同正文或派生元数据时比较持久输入；摘要保留未知元数据，正文、谱系及工作区变化仍拒绝采用。
+- 恢复末尾事件分发和 watchdog 发布完成前保留控制器资源所有权；确定性交错测试在修复前失败，未通过关闭 race 检查或重试目录清理掩盖问题。
+
+## CI assessment / CI 核查
+
+The root Windows smoke selector excludes the separately owned agent, boot and
+control groups. Full memory profiling is applicable because this change touches
+the bridge and lifecycle owners. The earlier memory run was cancelled, not an
+assertion failure or an exhausted 90-minute timeout; cancellation alone does not
+justify deleting the guard. No CI budgets or required checks were weakened.
+The build-contract guard now tests unchanged, changed, added, removed and failed
+generation behavior instead of requiring a specific `git diff` spelling; an
+uncommitted but correctly generated local contract may be packaged.
+Current-head terminal checks and package receipts are recorded on
+[PR #10396](https://github.com/esengine/DeepSeek-Reasonix/pull/10396), rather than
+claiming that an older run qualifies a later commit.
+
+Windows smoke 已排除单独执行的 agent、boot 和 control 分组。本次涉及桥接和生命周期，
+完整内存检查适用。此前内存任务是被取消，并非断言失败或耗尽 90 分钟超时；仅凭取消不能
+删掉门禁。本次未放宽预算或必需检查。构建契约检查改为验证无变化、修改、新增、删除及
+生成失败的行为，不再硬编码要求某种 `git diff` 写法；尚未提交但生成正确的本地契约可打包。
+当前提交的最终 CI 和打包证据记录在 PR #10396，
+不以旧提交的通过结果替代新提交验收。
 
 ## Remaining qualification / 尚待验收
 

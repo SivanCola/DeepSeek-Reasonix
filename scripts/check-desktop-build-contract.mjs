@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -82,11 +84,43 @@ assert.match(
   /go run \. -emit-contract frontend\/src\/generated/,
   "desktop builds must regenerate the host contract",
 );
-assert.match(
-  desktopBuildScript,
-  /git -C "\$ROOT" diff --exit-code -- desktop\/frontend\/src\/generated/,
-  "desktop builds must fail on host contract drift",
-);
+// Verify the build guard's behavior, not its choice of git or diff syntax.
+// A locally edited but current contract is valid; regeneration drift is not.
+const guardStart = desktopBuildScript.indexOf('echo "==> desktop host contract drift check"');
+const guardEnd = desktopBuildScript.indexOf("# The packaging script", guardStart);
+assert.ok(guardStart >= 0 && guardEnd > guardStart, "contract guard must precede packaging");
+const contractGuard = desktopBuildScript.slice(guardStart, guardEnd);
+const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "reasonix-contract-guard-"));
+try {
+  for (const mode of ["current", "changed", "added", "removed", "generator-failed"]) {
+    const cwd = path.join(fixture, mode);
+    const generated = path.join(cwd, "frontend/src/generated");
+    fs.mkdirSync(generated, { recursive: true });
+    fs.writeFileSync(path.join(generated, "contract.json"), '{"version":10}\n');
+    const script = `set -euo pipefail
+go() {
+  case "$GUARD_TEST_MODE" in
+    current) : ;;
+    changed) echo '{"version":11}' > frontend/src/generated/contract.json ;;
+    added) echo '{}' > frontend/src/generated/new.json ;;
+    removed) rm frontend/src/generated/contract.json ;;
+    generator-failed) return 42 ;;
+  esac
+}
+${contractGuard}`;
+    const result = spawnSync("bash", ["-c", script], {
+      cwd, encoding: "utf8", env: { ...process.env, GUARD_TEST_MODE: mode, TMPDIR: fixture },
+    });
+    assert.ifError(result.error);
+    if (mode === "current") {
+      assert.equal(result.status, 0, `current uncommitted contract rejected: ${result.stderr}`);
+    } else {
+      assert.notEqual(result.status, 0, `contract guard accepted ${mode}`);
+    }
+  }
+} finally {
+  fs.rmSync(fixture, { recursive: true, force: true });
+}
 // The release channel now rides in the Go service ldflags (the shell reads
 // the same identity from resources/build.json written by package.mjs).
 assert.match(
