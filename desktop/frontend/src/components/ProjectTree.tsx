@@ -6,7 +6,8 @@ import { useToast } from "../lib/toast";
 import { app } from "../lib/bridge";
 import { onProjectTreeChangedV2 } from "../lib/sessionCatalogBridge";
 import { sessionCatalogNotice } from "../lib/sessionCatalogPresentation";
-import { sessionTitleTarget, sessionTitleErrorKey } from "../lib/sessionTitleOperation";
+import { sessionTitleTarget } from "../lib/sessionTitleOperation";
+import { useSessionTitleOperation } from "../lib/useSessionTitleOperation";
 import { isRuntimeSessionNode, isTopicNode, loadWorkbenchOrganizeMode, loadWorkbenchSortMode, mergeIncompleteProjectTopicPage, mergeProjectTopicPage, projectTreeDedupedExactTime, projectTreeEventAffectsFolder, projectTreeFolderDisclosure, projectTreeReadActivityKey, projectTreeRevisionIsFresh, projectTreeShellChildren, projectTreeShellSignature, projectTreeShouldApplyShellSnapshot, projectTreeShouldRenderTopicActions, projectTreeShouldSuppressOpenForRename, projectTreeTopicArchiveBlocked, projectTreeTopicHasUnreadActivity, projectTreeTopicMenuOffersPin, projectTreeTopicMetaLine, projectTreeTopicOpenRequest, projectTreeTopicPageIsFresh, projectTreeTopicPageSignature, projectTreeWithoutTopic, projectTreeWithTopicTitle, topicActivityAt, topicActivityDateLabel, topicActivityLabel, topicIsActive, topicStatus, topicStatusLabel, topicUnknownTimeLabel, WORKBENCH_ORGANIZE_KEY, WORKBENCH_SORT_KEY, type ProjectTreePendingTopicOpen, type ProjectTreeReadActivity, type WorkbenchOrganizeMode, type WorkbenchSortMode } from "../lib/projectTreeTopic";
 export * from "../lib/projectTreeTopic";
 import { arrangeWorkbenchTree, splitPinnedProjectTree, type PinnedTreeSections } from "../lib/projectTreePresentation";
@@ -40,10 +41,6 @@ type CollapseSnapshot = {
   expanded: Set<string>;
   manuallyCollapsed: Set<string>;
 };
-
-function sessionOperationErrorText(error: unknown, t: Translator): string {
-  return t(sessionTitleErrorKey(error));
-}
 
 const READ_ACTIVITY_KEY = "projectTree:readActivity";
 const READ_ACTIVITY_BASELINE_KEY = "projectTree:readActivityBaselineAt";
@@ -279,7 +276,6 @@ export function ProjectTree({
   const topicIndexRef = useRef(0);
   const visibleTopicsCollectorRef = useRef<TopicShortcutEntry[]>([]);
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
-  const [aiRenamingTopics, setAiRenamingTopics] = useState<Set<string>>(() => new Set());
   const creatingRef = useRef(false);
   const closeMenu = useCallback(() => {
     setMenuNodeKey(null);
@@ -779,29 +775,7 @@ export function ProjectTree({
     }
   };
 
-  const aiRenameSession = async (topicId: string) => {
-    setAiRenamingTopics((current) => {
-      if (current.has(topicId)) return current;
-      const next = new Set(current);
-      next.add(topicId);
-      return next;
-    });
-    try {
-      const title = await app.AIRenameSession(topicId);
-      await refresh();
-      await onTopicsChanged?.();
-      if (title) showToast(t("projectTree.aiRenameDone", { title }));
-    } catch (err) {
-      showToast(sessionOperationErrorText(err, t), "error");
-    } finally {
-      setAiRenamingTopics((current) => {
-        if (!current.has(topicId)) return current;
-        const next = new Set(current);
-        next.delete(topicId);
-        return next;
-      });
-    }
-  };
+  const { renaming: aiRenamingTopics, rename: aiRenameSession } = useSessionTitleOperation(refresh, onTopicsChanged);
 
   const commitRenameProject = async (root: string) => {
     const title = projectDraft.trim();

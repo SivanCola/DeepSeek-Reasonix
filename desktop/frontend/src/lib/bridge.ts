@@ -32,7 +32,7 @@ import { modeHasAutoApproveTools, modeWithAutoApproveTools, modeWithPlan, normal
 import { makeMockProjectTreeOrganizationBindings, subscribeMockProjectTreeChanged, notifyMockProjectTreeChanged } from "./mockProjectTreeOrganization";
 import { decisionSurfaceMockFromInput, isLongDecisionOptionsMockInput } from "./decisionSurfaceMock";
 import { mockWorkspaceFile } from "./mockWorkspaceFile";
-import { mockAIRenameSession, type SessionTitleBindings } from "./mockSessionTitle";
+import { mockAIRenameTarget, type SessionTitleBindings } from "./mockSessionTitle";
 import { mockHistoryContentField, mockHistorySlice, mockTopicHistory as topicHistoryFixture } from "./bridgeHistoryFixtures";
 import { createMockModelScopePreset, type MockProviderPresetTemplate } from "./mockModelScopePreset";
 import { createMockRemoteProjects } from "./mockRemoteProjects";
@@ -5462,17 +5462,7 @@ function makeMockApp(): AppBindings {
         tab.topicId === topicID ? { ...tab, topicTitle: nextTitle } : tab,
       );
     },
-    async AIRenameSession(topicID: string) {
-      const findTarget = (nodes: ProjectNode[]): ProjectNode | null => {
-        for (const node of nodes) {
-          if (node.sessionPath === topicID || (node.session?.sessionId && `session-id:${node.session.sessionId}` === topicID)) return node;
-          const child = findTarget(node.children ?? []);
-          if (child) return child;
-        }
-        return null;
-      };
-      return mockAIRenameSession(findTarget(mockProjectTree) ?? findMockTopic(topicID));
-    },
+    async AIRenameSession(topicID: string) { return mockAIRenameTarget(mockProjectTree, topicID); },
     async DeleteTopic(topicID: string) {
       deleteMockTopic(topicID);
     },

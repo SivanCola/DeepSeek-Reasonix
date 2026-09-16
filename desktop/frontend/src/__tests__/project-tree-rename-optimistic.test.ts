@@ -77,12 +77,12 @@ eq(
   "a stale project-tree revision falls back to a full snapshot refetch instead of dropping the event",
 );
 eq(
-  projectTreeSource.includes("const [aiRenamingTopics, setAiRenamingTopics] = useState<Set<string>>"),
+  projectTreeSource.includes("renaming: aiRenamingTopics, rename: aiRenameSession } = useSessionTitleOperation"),
   true,
   "AI rename progress is tracked per target instead of globally blocking unrelated sessions",
 );
 eq(
-  projectTreeSource.includes("sessionOperationErrorText(err, t)"),
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../lib/useSessionTitleOperation.ts"), "utf8").includes("sessionTitleErrorKey(error)"),
   true,
   "session operation error codes are localized before they reach the toast",
 );
