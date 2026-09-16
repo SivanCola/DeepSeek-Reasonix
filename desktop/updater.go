@@ -74,12 +74,6 @@ func normalizeUpdateChannel(ch string) string {
 	return config.NormalizeDesktopUpdateChannel(ch)
 }
 
-// desktopUpdaterEnabled is a build capability, not a user preference. Only an
-// exact stable release build may contact or execute the production updater.
-func desktopUpdaterEnabled() bool {
-	return channel == "stable" && stableDesktopVersionRE.MatchString(version)
-}
-
 func configuredUpdateChannel() string {
 	cfg, err := config.Load()
 	if err != nil {
