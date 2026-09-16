@@ -104,6 +104,13 @@ export function useWorkspacePanelCommands(input: Input) {
     layout.setWorkspacePanelOpen(false);
     saveWorkspacePanelOpen(false, input.workspaceRoot);
   });
+  // Closing the last tab must release the dock's layout space as well as its
+  // content. Observe the transition synchronously so close-all and close/open
+  // in one batch use the same panel command. Project restoration is not a close.
+  useEffect(() => useActivityBarStore.subscribe((state, previous) => {
+    if (state.workspaceRoot !== previous.workspaceRoot || state.workspaceRoot !== input.workspaceRoot) return;
+    if (previous.tabs.length > 0 && state.tabs.length === 0) closeWorkspacePanel();
+  }), [input.workspaceRoot, closeWorkspacePanel]);
   // The toggle owns the card and nothing else — the dock panel has its own
   // button. It is inert only while the surface is too narrow for the card to
   // occupy space at all.
@@ -176,8 +183,8 @@ export function useWorkspacePanelCommands(input: Input) {
     useActivityBarStore.getState().setWorkspaceRoot(input.workspaceRoot);
   }, [input.workspaceRoot]);
   // A restored, expanded dock should show useful session context immediately.
-  // Remember the session after its first open-state decision so closing the
-  // final tab remains a deliberate action until the user changes sessions.
+  // Seed only once per session so manually reopening an emptied dock can show
+  // the tab picker without immediately recreating Overview.
   useLayoutEffect(() => {
     if (!input.visible || !input.sessionId) return;
     const sessionKey = `${input.workspaceRoot}\u0000${input.sessionId}`;

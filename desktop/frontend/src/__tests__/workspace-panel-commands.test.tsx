@@ -60,9 +60,43 @@ try {
   await paint("B", true);
   assert.deepEqual(useActivityBarStore.getState().tabs, [],
     "closing the default tab does not reopen it during the same session");
+  assert.equal(useLayoutStore.getState().workspacePanelOpen, false,
+    "closing the final dock tab collapses the entire workspace panel");
+  assert.equal(loadWorkspacePanelOpen("B"), false, "automatic collapse persists for the current project");
+  await paint("B", true, "session:B:next");
+  assert.deepEqual(useActivityBarStore.getState().tabs, [], "a new session preserves the collapsed dock");
+  await act(async () => commands.toggleWorkspacePanel());
   await paint("B", true, "session:B:next");
   assert.deepEqual(useActivityBarStore.getState().tabs.map(tab => tab.type), ["context"],
-    "the next session seeds Overview again when the dock is still expanded");
+    "explicitly reopening the dock in a new session seeds Overview");
+  await act(async () => commands.openRightDockMode("files"));
+  await act(async () => useActivityBarStore.getState().closeTab(useActivityBarStore.getState().activeTabId!));
+  assert.equal(useLayoutStore.getState().workspacePanelOpen, true, "closing one of multiple tabs keeps the dock open");
+  await act(async () => {
+    commands.openRightDockMode("changed");
+    commands.toggleWorkspaceMaximized();
+  });
+  const beforeCloseAll = widthClears;
+  await act(async () => {
+    useActivityBarStore.getState().tabs.forEach(tab => useActivityBarStore.getState().closeTab(tab.id));
+    assert.equal(useLayoutStore.getState().workspacePanelOpen, false, "close-all collapses synchronously");
+  });
+  assert.equal(useLayoutStore.getState().workspacePanelMaximized, false, "closing all tabs resets maximized mode");
+  assert.equal(widthClears, beforeCloseAll + 1, "automatic collapse clears the live resize width once");
+  await act(async () => commands.openDockEntry("files"));
+  assert.equal(useLayoutStore.getState().workspacePanelOpen, true, "opening an entry expands the dock again");
+  assert.deepEqual(useActivityBarStore.getState().tabs.map(tab => tab.type), ["file"]);
+  await act(async () => {
+    useActivityBarStore.getState().closeTab(useActivityBarStore.getState().activeTabId!);
+    commands.openRightDockMode("changed");
+  });
+  assert.equal(useLayoutStore.getState().workspacePanelOpen, true, "a later open in the same batch wins over the close");
+  assert.equal(loadWorkspacePanelOpen("B"), true);
+  saveWorkspacePanelOpen(true, "empty-project");
+  await paint("empty-project");
+  assert.equal(useLayoutStore.getState().workspacePanelOpen, true,
+    "restoring an empty project is not mistaken for closing the final tab");
+  assert.equal(loadWorkspacePanelOpen("B"), true, "project restoration does not overwrite the previous preference");
   await paint("A");
   assert.equal(useLayoutStore.getState().workspacePanelOpen, false);
   assert.equal(commands.closeWorkspacePanel, first.closeWorkspacePanel);
