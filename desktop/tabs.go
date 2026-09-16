@@ -6401,11 +6401,11 @@ func (a *App) ReorderProjects(workspaceRoots []string) error {
 
 // RenameTopic updates a topic's display title.
 func (a *App) RenameTopic(topicID, title string) error {
+	a.topicTitleMutationMu.Lock()
+	defer a.topicTitleMutationMu.Unlock()
 	if handled, err := a.updateCanonicalTopicPresentation(topicID, &title, nil); handled || err != nil {
 		return err
 	}
-	a.topicTitleMutationMu.Lock()
-	defer a.topicTitleMutationMu.Unlock()
 	trimmed := strings.TrimSpace(title)
 	if trimmed == "" {
 		trimmed = defaultTopicTitle

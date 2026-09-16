@@ -557,6 +557,8 @@ func (a *App) RenameCanonicalSession(ref session.SessionRef, title string) error
 	if err := validateLocalSessionRef(ref); err != nil {
 		return err
 	}
+	a.topicTitleMutationMu.Lock()
+	defer a.topicTitleMutationMu.Unlock()
 	contained, err := a.workspaceRegistry().Contains(a.bootContext(), ref.SessionID)
 	if err != nil {
 		return err

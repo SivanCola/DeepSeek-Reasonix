@@ -40,6 +40,22 @@ type CollapseSnapshot = {
   manuallyCollapsed: Set<string>;
 };
 
+function sessionOperationErrorText(error: unknown, t: Translator): string {
+  const fallback = error instanceof Error ? error.message : String(error);
+  const match = fallback.match(/session_operation:([a-z_]+):/);
+  switch (match?.[1]) {
+    case "target_not_found": return t("projectTree.sessionError.targetNotFound");
+    case "no_messages": return t("projectTree.sessionError.noMessages");
+    case "runtime_not_open": return t("projectTree.sessionError.runtimeNotOpen");
+    case "runtime_not_ready": return t("projectTree.sessionError.runtimeNotReady");
+    case "remote_disconnected": return t("projectTree.sessionError.remoteDisconnected");
+    case "title_conflict": return t("projectTree.sessionError.titleConflict");
+    case "archived": return t("projectTree.sessionError.archived");
+    case "operation_busy": return t("projectTree.sessionError.operationBusy");
+    default: return fallback;
+  }
+}
+
 const READ_ACTIVITY_KEY = "projectTree:readActivity";
 const READ_ACTIVITY_BASELINE_KEY = "projectTree:readActivityBaselineAt";
 // summarizeProjectTreeSessions still accepts a per-folder window override; no
@@ -274,7 +290,7 @@ export function ProjectTree({
   const topicIndexRef = useRef(0);
   const visibleTopicsCollectorRef = useRef<TopicShortcutEntry[]>([]);
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
-  const [aiRenamingTopic, setAiRenamingTopic] = useState<string | null>(null);
+  const [aiRenamingTopics, setAiRenamingTopics] = useState<Set<string>>(() => new Set());
   const creatingRef = useRef(false);
   const closeMenu = useCallback(() => {
     setMenuNodeKey(null);
@@ -775,16 +791,26 @@ export function ProjectTree({
   };
 
   const aiRenameSession = async (topicId: string) => {
-    setAiRenamingTopic(topicId);
+    setAiRenamingTopics((current) => {
+      if (current.has(topicId)) return current;
+      const next = new Set(current);
+      next.add(topicId);
+      return next;
+    });
     try {
       const title = await app.AIRenameSession(topicId);
       await refresh();
       await onTopicsChanged?.();
       if (title) showToast(t("projectTree.aiRenameDone", { title }));
     } catch (err) {
-      showToast(err instanceof Error ? err.message : String(err), "error");
+      showToast(sessionOperationErrorText(err, t), "error");
     } finally {
-      setAiRenamingTopic(null);
+      setAiRenamingTopics((current) => {
+        if (!current.has(topicId)) return current;
+        const next = new Set(current);
+        next.delete(topicId);
+        return next;
+      });
     }
   };
 
@@ -1099,8 +1125,8 @@ export function ProjectTree({
         {
           key: "aiRename",
           icon: <Sparkles size={13} />,
-          label: aiRenamingTopic === topicId ? t("projectTree.aiRenamingTopic") : t("projectTree.aiRenameTopic"),
-          disabled: aiRenamingTopic !== null || Boolean(node.remoteSession),
+          label: aiRenamingTopics.has(topicId) ? t("projectTree.aiRenamingTopic") : t("projectTree.aiRenameTopic"),
+          disabled: aiRenamingTopics.has(topicId) || Boolean(node.remoteSession),
           onSelect: () => void aiRenameSession(topicId),
         },
         {

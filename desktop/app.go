@@ -118,6 +118,10 @@ type App struct {
 	// session-sidecar publication in the same order for manual and automatic
 	// renames. It is never held by generic topic-state reads or other metadata.
 	topicTitleMutationMu sync.Mutex
+	// aiSessionTitleMu deduplicates explicit AI rename requests by durable
+	// session identity. It never serializes different sessions.
+	aiSessionTitleMu       sync.Mutex
+	aiSessionTitleInFlight map[string]struct{}
 
 	// sessionCatalog is a disposable, asynchronously opened projection of
 	// authoritative session sidecars. Project-shell APIs must tolerate nil here:
@@ -456,19 +460,20 @@ func (a *App) jsProfilingMiddleware() func(http.Handler) http.Handler {
 // last session's desktop-tabs.json.
 func NewApp() *App {
 	a := &App{
-		tabs:                 map[string]*WorkspaceTab{},
-		runtimeByID:          map[string]*desktopSessionRuntime{},
-		runtimeBySessionKey:  map[string]*desktopSessionRuntime{},
-		sessionServices:      map[string]*session.Service{},
-		desktopSessions:      newDesktopSessionState(),
-		catalogReconcileJobs: map[string]*desktopCatalogReconcileJob{},
-		detachedSessions:     map[string]*WorkspaceTab{},
-		mediaTokens:          newMediaTokenStore(),
-		presentPreview:       newWorkspacePreviewOrigin(),
-		botInstalls:          map[string]*botInstallSession{},
-		botRuntime:           newDesktopBotRuntime(),
-		remoteWindows:        newRemoteWindowRegistry(),
-		topicState:           desktopTopicState,
+		tabs:                   map[string]*WorkspaceTab{},
+		runtimeByID:            map[string]*desktopSessionRuntime{},
+		runtimeBySessionKey:    map[string]*desktopSessionRuntime{},
+		sessionServices:        map[string]*session.Service{},
+		aiSessionTitleInFlight: map[string]struct{}{},
+		desktopSessions:        newDesktopSessionState(),
+		catalogReconcileJobs:   map[string]*desktopCatalogReconcileJob{},
+		detachedSessions:       map[string]*WorkspaceTab{},
+		mediaTokens:            newMediaTokenStore(),
+		presentPreview:         newWorkspacePreviewOrigin(),
+		botInstalls:            map[string]*botInstallSession{},
+		botRuntime:             newDesktopBotRuntime(),
+		remoteWindows:          newRemoteWindowRegistry(),
+		topicState:             desktopTopicState,
 		worktreeReservations: worktreeRuntimeReservations{
 			cleanup: map[string]struct{}{},
 			merge:   map[string]struct{}{},
@@ -3426,6 +3431,8 @@ func (a *App) purgeTrashedSession(path string, requireRedundantRecovery bool) er
 // the branch meta sidecar, with the legacy .titles.json map kept as a
 // compatibility write-through for older desktop data paths.
 func (a *App) RenameSession(path, title string) error {
+	a.topicTitleMutationMu.Lock()
+	defer a.topicTitleMutationMu.Unlock()
 	if _, ok := parseSessionRoute(path); ok {
 		service := a.desktopSessionService(a.activeSessionDir())
 		ref, valid := sessionRefForRoute(service, path)

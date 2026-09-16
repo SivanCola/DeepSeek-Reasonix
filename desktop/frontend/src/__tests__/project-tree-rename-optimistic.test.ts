@@ -76,6 +76,21 @@ eq(
   true,
   "a stale project-tree revision falls back to a full snapshot refetch instead of dropping the event",
 );
+eq(
+  projectTreeSource.includes("const [aiRenamingTopics, setAiRenamingTopics] = useState<Set<string>>"),
+  true,
+  "AI rename progress is tracked per target instead of globally blocking unrelated sessions",
+);
+eq(
+  projectTreeSource.includes("sessionOperationErrorText(err, t)"),
+  true,
+  "session operation error codes are localized before they reach the toast",
+);
+eq(
+  projectTreeSource.includes("disabled: aiRenamingTopics.has(topicId) || Boolean(node.remoteSession)"),
+  true,
+  "an AI rename only disables the targeted local session",
+);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

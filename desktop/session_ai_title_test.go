@@ -80,6 +80,79 @@ func TestAIRenameCanonicalSessionUsesDurableHistoryInsteadOfEmptyLegacyFile(t *t
 	}
 }
 
+func TestAIRenameCanonicalSessionDoesNotRequireTargetTab(t *testing.T) {
+	app, _, runtime, prov, path := newCanonicalTitleFixture(t)
+	appendSessionTestMessage(t, runtime, "user", provider.Message{
+		ID: "user", Role: provider.RoleUser, Origin: provider.MessageOriginUser, Content: "rename a cold sidebar session",
+	})
+	if _, err := runtime.Session().Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	workspaceID, err := app.ensureDesktopWorkspace(t.Context(), "global", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.workspaceRegistry().AttachSession(t.Context(), "", workspaceID, runtime.Ref().SessionID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.workspaceRegistry().EnsureSessionTopic(t.Context(), runtime.Ref().SessionID, "cold-topic", "Cold topic"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Keep another conversation active only as the provider host. The target
+	// has no tab/controller binding and must be resolved from durable identity.
+	generator := newDesktopSessionTitleController(filepath.Dir(path), path, prov)
+	t.Cleanup(generator.Close)
+	app.mu.Lock()
+	app.tabs["test"].Ctrl = generator
+	app.tabs["test"].TopicID = "active-other-topic"
+	app.tabs["test"].SessionID = "active-other-session"
+	app.mu.Unlock()
+
+	title, err := app.AIRenameSession("cold-topic")
+	if err != nil || title != "制作扫雷游戏" {
+		t.Fatalf("AIRenameSession = %q, %v", title, err)
+	}
+	if app.tabs["test"].TopicID != "active-other-topic" || app.tabs["test"].SessionID != "active-other-session" {
+		t.Fatal("AI rename navigated away from the active conversation")
+	}
+	info, err := app.desktopSessionService("").Query().Stat(t.Context(), runtime.Ref())
+	if err != nil || info.Title != title {
+		t.Fatalf("cold target title = %+v, %v", info, err)
+	}
+}
+
+func TestAIRenameCanonicalEmptySessionReturnsProductError(t *testing.T) {
+	app, _, _, _, _ := newCanonicalTitleFixture(t)
+	if _, err := app.AIRenameSession("topic-canonical"); err == nil || !strings.Contains(err.Error(), "session_operation:no_messages:") {
+		t.Fatalf("empty session error = %v", err)
+	}
+}
+
+func TestAIRenameSessionDeduplicatesSameTarget(t *testing.T) {
+	app, _, runtime, prov, _ := newCanonicalTitleFixture(t)
+	appendSessionTestMessage(t, runtime, "user", provider.Message{
+		ID: "user", Role: provider.RoleUser, Origin: provider.MessageOriginUser, Content: "deduplicate this rename",
+	})
+	prov.started = make(chan struct{})
+	prov.chunks = make(chan provider.Chunk, 2)
+	first := make(chan error, 1)
+	go func() {
+		_, err := app.AIRenameSession("topic-canonical")
+		first <- err
+	}()
+	<-prov.started
+	if _, err := app.AIRenameSession("topic-canonical"); err == nil || !strings.Contains(err.Error(), "session_operation:operation_busy:") {
+		t.Fatalf("duplicate rename error = %v", err)
+	}
+	prov.chunks <- provider.Chunk{Type: provider.ChunkText, Text: "Deduplicated title"}
+	prov.chunks <- provider.Chunk{Type: provider.ChunkDone}
+	close(prov.chunks)
+	if err := <-first; err != nil {
+		t.Fatalf("first rename: %v", err)
+	}
+}
+
 func newCanonicalTitleFixture(t *testing.T) (*App, *control.Controller, *session.Runtime, *desktopSessionTitleProvider, string) {
 	t.Helper()
 	isolateDesktopUserDirs(t)
