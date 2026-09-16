@@ -2093,9 +2093,14 @@ func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 	sessionPath := tab.currentSessionPath()
 	var sessionRevision int64
 	var sessionDigest string
-	if meta, ok, err := agent.LoadBranchMeta(sessionPath); err == nil && ok {
-		sessionRevision = meta.Revision
-		sessionDigest = meta.ContentDigest
+	if revision, digest, ok := a.canonicalTabHistoryFingerprint(tab); ok {
+		sessionRevision = revision
+		sessionDigest = digest
+	} else if strings.TrimSpace(tab.SessionID) == "" {
+		if meta, ok, err := agent.LoadBranchMeta(sessionPath); err == nil && ok {
+			sessionRevision = meta.Revision
+			sessionDigest = meta.ContentDigest
+		}
 	}
 	floor := derivedQualityFloor(tab)
 	m := TabMeta{

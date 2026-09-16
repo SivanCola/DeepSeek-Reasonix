@@ -4,16 +4,42 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"reasonix/internal/agent"
 	"reasonix/internal/boot"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
 	"reasonix/internal/session"
 )
+
+func TestTabMetaDoesNotCompareLegacyFingerprintWithCanonicalSession(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := NewApp()
+	t.Cleanup(app.closeSessionServices)
+	sessionPath := filepath.Join(t.TempDir(), "legacy.jsonl")
+	if err := os.WriteFile(sessionPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.SaveBranchMetaPreserveUpdated(sessionPath, agent.BranchMeta{
+		ID: "legacy", Revision: 41, ContentDigest: "legacy-digest",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	tab := &WorkspaceTab{
+		ID: "canonical-without-head", SessionID: "missing-canonical-session",
+		SessionPath: sessionPath, disabledMCP: map[string]ServerView{},
+	}
+	meta := app.tabMeta(tab, true)
+	if meta.SessionRevision != 0 || meta.SessionDigest != "" {
+		t.Fatalf("canonical tab fell back to legacy fingerprint (%d, %q)", meta.SessionRevision, meta.SessionDigest)
+	}
+}
 
 func TestDesktopHistorySliceUsesCanonicalDurableIndex(t *testing.T) {
 	isolateDesktopUserDirs(t)
@@ -41,11 +67,35 @@ func TestDesktopHistorySliceUsesCanonicalDurableIndex(t *testing.T) {
 	// Append after the controller's agent projection was created. The legacy
 	// live-history path cannot see this message; the canonical query can.
 	appendSessionTestMessage(t, runtime, "history-assistant", provider.Message{ID: "history-assistant", Role: provider.RoleAssistant, Content: large})
-	tab := &WorkspaceTab{ID: "canonical-history-tab", Scope: "project", WorkspaceRoot: root, SessionID: runtime.Ref().SessionID, Ready: true, Ctrl: ctrl, sink: &tabEventSink{tabID: "canonical-history-tab", app: app}, disabledMCP: map[string]ServerView{}}
+	legacyPath := filepath.Join(dir, "legacy-projection.jsonl")
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tab := &WorkspaceTab{ID: "canonical-history-tab", Scope: "project", WorkspaceRoot: root, SessionID: runtime.Ref().SessionID, SessionPath: legacyPath, Ready: true, Ctrl: ctrl, sink: &tabEventSink{tabID: "canonical-history-tab", app: app}, disabledMCP: map[string]ServerView{}}
 	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
 	app.tabOrder = []string{tab.ID}
 	app.activeTabID = tab.ID
 	t.Cleanup(func() { ctrl.Close() })
+
+	openView, err := app.SessionOpenForTab(tab.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.SaveBranchMetaPreserveUpdated(legacyPath, agent.BranchMeta{
+		ID:            "legacy-projection",
+		Revision:      int64(openView.SnapshotSequence) + 100,
+		ContentDigest: "legacy-projection-digest",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	meta := app.tabMeta(tab, true)
+	if meta.SessionRevision != int64(openView.SnapshotSequence) || meta.SessionDigest != openView.StorageGeneration {
+		t.Fatalf("tab canonical fingerprint = (%d, %q), want (%d, %q)",
+			meta.SessionRevision, meta.SessionDigest, openView.SnapshotSequence, openView.StorageGeneration)
+	}
 
 	page := app.HistorySliceForTab(tab.ID, HistorySliceRequest{Turns: 12, Entries: 120, Bytes: 512 << 10})
 	if page.Error != "" || page.Source != "canonical-index" {
