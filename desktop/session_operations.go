@@ -316,6 +316,9 @@ func (a *App) MoveSessionTarget(selector SessionSelector, workspaceID, beforeSes
 func (a *App) DeleteSessionTarget(selector SessionSelector) (SessionMutationResult, error) {
 	target, err := a.resolveSessionTargetWithArchived(selector, true)
 	operationID := "delete-" + strings.TrimPrefix(newTabID(), "tab_")
+	if err != nil && selector.Ref != nil {
+		target, err = a.resolveCanonicalPurgeTarget(*selector.Ref)
+	}
 	if err != nil {
 		return SessionMutationResult{}, sessionOperationErrorForTarget(err, "", operationID)
 	}
@@ -324,7 +327,7 @@ func (a *App) DeleteSessionTarget(selector SessionSelector) (SessionMutationResu
 		err = newSessionOperationError("unsupported", "This historical recovery source cannot be permanently deleted.")
 		return SessionMutationResult{}, sessionOperationErrorForTarget(err, key, operationID)
 	}
-	if target.Lifecycle != workspacestate.Archived {
+	if target.Lifecycle != workspacestate.Archived && target.Lifecycle != workspacestate.Deleted {
 		err = newSessionOperationError("archived", "Archive this session before deleting it.")
 		return SessionMutationResult{}, sessionOperationErrorForTarget(err, key, operationID)
 	}

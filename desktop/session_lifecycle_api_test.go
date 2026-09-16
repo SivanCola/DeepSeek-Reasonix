@@ -350,8 +350,9 @@ func TestPurgeInterruptedTombstoneRemainsActionableAndResumes(t *testing.T) {
 	if err := a.recoverDesktopSessionOperations(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.PurgeCanonicalSession(ref); err != nil {
-		t.Fatal(err)
+	deleted, err := a.DeleteSessionTarget(SessionSelector{Ref: &ref})
+	if err != nil || !deleted.Committed {
+		t.Fatalf("resume explicit delete: %+v %v", deleted, err)
 	}
 	page, err = a.ListTrashEntries("", "", 50)
 	if err != nil || len(page.Items) != 0 {
@@ -360,6 +361,9 @@ func TestPurgeInterruptedTombstoneRemainsActionableAndResumes(t *testing.T) {
 	state, _ := store.Load(ctx)
 	if state.SessionStates[ref.SessionID].Lifecycle != workspacestate.Deleted {
 		t.Fatal("tombstone lost")
+	}
+	if deleted.LifecycleGeneration != state.SessionStates[ref.SessionID].Generation {
+		t.Fatalf("deleted generation = %d, want %d", deleted.LifecycleGeneration, state.SessionStates[ref.SessionID].Generation)
 	}
 	if _, err := os.Stat(filepath.Join(a.desktopSessions.root, ref.SessionID)); !os.IsNotExist(err) {
 		t.Fatalf("body remains: %v", err)
