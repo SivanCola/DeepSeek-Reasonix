@@ -2681,7 +2681,7 @@ export function useController() {
     const sessionDigest = "sessionDigest" in options ? options.sessionDigest : stateMeta?.sessionDigest;
     const targetIdentity = { ...resolvedIdentity, sessionPath };
     const targetIdentityKey = sessionIdentityStableKey(targetIdentity);
-    const canJoinInFlight = !resetSurface && !options.skipHistory && !options.recoveryCurrent;
+    const canJoinInFlight = !resetSurface && !options.skipHistory && !options.recoveryCurrent && !options.freshSnapshot;
     const shouldTrackInFlight = !options.skipHistory;
     if (canJoinInFlight) {
       const existing = sessionLoadInFlight.current.get(tabId);
@@ -3931,6 +3931,7 @@ export function useController() {
     const m = statesRef.current.get(id)?.meta;
     await loadSessionDataForTab(id, false, "startup", {
       ...sessionIdentityFields(m),
+      freshSnapshot: true,
       sessionRevision: m?.sessionRevision, sessionDigest: m?.sessionDigest, preserveCachedHistory: false,
     });
   }, [loadSessionDataForTab]);

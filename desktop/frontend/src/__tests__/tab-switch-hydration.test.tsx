@@ -9,6 +9,7 @@ import { verifyDeferredHistoryCloseRace, verifyStaleHistoryFingerprint } from ".
 import { historySliceFromMessages } from "./mockHistorySlice";
 import type { BalanceInfo, CheckpointMeta, ContextInfo, EffortInfo, HistoryMessage, HistorySlice, HistorySliceRequest, JobView, Meta, TabMeta, TopicActivationEvent, TopicActivationRequest, WireEvent } from "../lib/types";
 import { installDesktopHostStub } from "./desktopHostStub";
+import { verifyExplicitTranscriptRetry } from "./helpers/explicitTranscriptRetry";
 
 let passed = 0;
 let failed = 0;
@@ -162,6 +163,8 @@ const staleForkReassertGGate = deferred<void>();
 const historyCalls: string[] = [];
 let historyLCalls = 0;
 let historyMCalls = 0;
+const contextMGate = deferred<ContextInfo>();
+let contextMCalls = 0;
 let historyNCalls = 0;
 let startTabNDuringMeta = false;
 const cancelCalls: string[] = [];
@@ -213,6 +216,7 @@ const appStubTable = ({
         return metaFor(tabsById.get(tabID) ?? tabA);
       },
       ContextUsageForTab: async (tabID: string) => {
+        if (tabID === "tab-m" && ++contextMCalls === 1) return contextMGate.promise;
         if (tabID === "tab-d" && holdNextContextForD) {
           contextDCalls += 1;
           holdNextContextForD = false;
@@ -892,17 +896,15 @@ await verifyDeferredHistoryCloseRace({
   historyCalls: () => historyLCalls, waitFor, flushPromises, equal: eq, sessionPath: tabL.sessionPath,
 });
 
-// Transcript and sidecar reads must reconcile when a save advances between them.
+// An explicit retry needs a new cut even while the old cut's ancillary read is pending.
 await act(async () => {
   await controller?.openProjectTab(tabM.workspaceRoot, tabM.topicId || "");
   await flushPromises();
 });
-await waitFor("Follow cut remains independent of metadata", () => controller?.activeTabId === "tab-m"
-  && (controller.state.items.some((item) => item.kind === "user" && item.text === "stale M v1") ?? false));
-eq(historyMCalls, 1, "metadata does not attach a later version to earlier body data");
-await act(async () => { await controller?.retrySessionHistory("tab-m"); await flushPromises(); });
-eq(historyMCalls, 2, "mismatched page and metadata trigger one bounded history reload");
-ok(!(controller?.state.items.some((item) => item.kind === "user" && item.text === "stale M v1") ?? false), "reconciled hydration does not retain the stale page");
+await verifyExplicitTranscriptRetry({
+  controller: () => controller, historyCalls: () => historyMCalls, ancillaryCalls: () => contextMCalls,
+  releaseAncillary: () => contextMGate.resolve({ ...context, used: 99999 }), waitFor, flush: flushPromises, ok,
+});
 
 // A live turn that starts between durable page and metadata reads owns the transcript.
 startTabNDuringMeta = true;
