@@ -64,24 +64,41 @@ func (a *Agent) commitSummaryProjection(commit summaryProjectionCommit) (Compact
 }
 
 func (a *Agent) persistInstalledProjectionLocked(ctx context.Context, state CompactionState, canonical []provider.Message) (bool, error) {
+	accepted := false
 	if recorder, ok := a.svc.sessionCheckpointer.(SessionModelContextRecorder); ok {
 		visible := modelVisibleFromProjection(state.Projection, canonical)
-		result, err := recorder.RecordSessionModelContext(ctx, SessionModelContextCommit{
+		commit := cloneSessionModelContextCommit(SessionModelContextCommit{
 			OperationID: state.LastReceipt.OperationID,
 			Reason:      state.LastReceipt.Action,
 			Messages:    visible,
 		})
+		result, err := recorder.RecordSessionModelContext(ctx, commit)
+		accepted = result.Accepted
 		if err != nil {
-			return result.Accepted, err
+			if accepted {
+				a.sess.pendingModelContextCommit = &commit
+			}
+			return accepted, err
 		}
 		if result.Accepted && !result.Durable {
+			a.sess.pendingModelContextCommit = &commit
 			return true, errors.New("model context commit was accepted but is not durable")
 		}
 	}
 	if err := a.persistCompactionStateLocked(); err != nil {
-		return false, err
+		if accepted {
+			visible := modelVisibleFromProjection(state.Projection, canonical)
+			commit := cloneSessionModelContextCommit(SessionModelContextCommit{
+				OperationID: state.LastReceipt.OperationID,
+				Reason:      state.LastReceipt.Action,
+				Messages:    visible,
+			})
+			a.sess.pendingModelContextCommit = &commit
+		}
+		return accepted, err
 	}
-	return false, nil
+	a.sess.pendingModelContextCommit = nil
+	return accepted, nil
 }
 
 func (a *Agent) summaryProjectionState(commit summaryProjectionCommit) CompactionState {

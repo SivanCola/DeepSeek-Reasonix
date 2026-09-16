@@ -77,6 +77,11 @@ func (a *Agent) streamProviderRequest(ctx context.Context, req provider.Request)
 // Output budgets are resolved only here and never change the compact_ratio
 // trigger. Physical overflow may attempt at most one recovery summary.
 func (a *Agent) prepareSamplingRequest(ctx context.Context) (samplingRequest, error) {
+	// Recover an accepted context-maintenance event before ContextManager can
+	// perform more maintenance or freeze a request from unconfirmed state.
+	if err := a.confirmPendingModelContext(ctx); err != nil {
+		return samplingRequest{}, err
+	}
 	frozen, err := a.buildSamplingRequest(ctx, CompactionTriggerPressure)
 	if err != nil {
 		return samplingRequest{}, err
