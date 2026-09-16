@@ -138,7 +138,7 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 | `DeleteRecoveryCopy` | `(path string) error` | desktop/app.go:2887 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `DeleteRemotePath` | `(hostID string, path string, recursive bool) error` | desktop/remote_app.go:766 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `DeleteRemoteProjectSession` | `(hostID string, workspace string, name string) error` | desktop/remote_tab_commands.go:245 | keep-business (保留业务实现) | hostrpc desktop/invoke |
-| `DeleteSession` | `(path string) error` | desktop/session_legacy_lifecycle_rpc.go:11 | keep-business (保留业务实现) | hostrpc desktop/invoke |
+| `DeleteSession` | `(path string) error` | desktop/session_legacy_lifecycle_rpc.go:10 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `DeleteSubagentProfile` | `(name string, scope string) error` | desktop/subagents_app.go:220 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `DeleteThemePack` | `(id string) error` | desktop/theme_app.go:529 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `DeleteTopic` | `(topicID string) error` | desktop/tabs.go:6585 | keep-business (保留业务实现) | hostrpc desktop/invoke |
@@ -338,7 +338,7 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 | `PreviewWorkspaceFileRevertForTab` | `(tabID string, path string) RewindPlanView` | desktop/app.go:2412 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `PurgeCanonicalSession` | `(ref session.SessionRef) error` | desktop/session_purge.go:14 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `PurgeRecoveryCopy` | `(path string) error` | desktop/app.go:3381 | keep-business (保留业务实现) | hostrpc desktop/invoke |
-| `PurgeTrashedSession` | `(path string) error` | desktop/session_legacy_lifecycle_rpc.go:51 | keep-business (保留业务实现) | hostrpc desktop/invoke |
+| `PurgeTrashedSession` | `(path string) error` | desktop/session_legacy_lifecycle_rpc.go:50 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `QuerySessionTakeover` | `(tabID string) (*SessionTakeoverView, error)` | desktop/session_takeover.go:215 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `ReadFile` | `(rel string) FilePreview` | desktop/app.go:10223 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `ReadFileForTab` | `(tabID string, rel string) FilePreview` | desktop/app.go:10228 | keep-business (保留业务实现) | hostrpc desktop/invoke |

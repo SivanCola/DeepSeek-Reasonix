@@ -933,7 +933,7 @@
       "kind": "command",
       "name": "DeleteSession",
       "detail": "(path string) error",
-      "location": "desktop/session_legacy_lifecycle_rpc.go:11",
+      "location": "desktop/session_legacy_lifecycle_rpc.go:10",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2533,7 +2533,7 @@
       "kind": "command",
       "name": "PurgeTrashedSession",
       "detail": "(path string) error",
-      "location": "desktop/session_legacy_lifecycle_rpc.go:51",
+      "location": "desktop/session_legacy_lifecycle_rpc.go:50",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
