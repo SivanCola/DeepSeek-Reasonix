@@ -9,6 +9,25 @@ import (
 	"reasonix/internal/fileutil"
 )
 
+func TestModelConfigRevisionUsesStableKeyedDigest(t *testing.T) {
+	isolateUserConfigHome(t)
+	first, err := modelConfigContentRevision([]byte("api_key = secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := modelConfigContentRevision([]byte("api_key = secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, err := modelConfigContentRevision([]byte("api_key = different"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(first, "hmac-sha256:") || first != second || first == changed {
+		t.Fatalf("unexpected revisions: first=%q second=%q changed=%q", first, second, changed)
+	}
+}
+
 func TestModelCredentialCommitRecoveryAtPersistenceBoundaries(t *testing.T) {
 	for _, crash := range []struct {
 		name         string

@@ -76,41 +76,58 @@ func fileContentRevision(path string) string {
 	if err != nil {
 		return "unreadable"
 	}
-	return modelConfigContentRevision(raw)
+	revision, err := modelConfigContentRevision(raw)
+	if err != nil {
+		return "unreadable"
+	}
+	return revision
 }
 
-func modelConfigContentRevision(raw []byte) string {
-	sum := sha256.Sum256(raw)
-	return "sha256:" + hex.EncodeToString(sum[:])
-}
-
-// ModelSettingsRequestDigest survives process restarts without exposing an
-// unkeyed digest of user-entered secrets in durable receipts.
-func ModelSettingsRequestDigest(raw []byte) (string, error) {
+func modelSettingsDigestKey() ([]byte, error) {
 	dir := modelSettingsReceiptDir()
 	if dir == "" {
-		return "", fmt.Errorf("receipt store unavailable")
+		return nil, fmt.Errorf("receipt store unavailable")
 	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		return "", err
+		return nil, err
 	}
 	path := filepath.Join(dir, "request-digest.key")
 	key, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		key = make([]byte, 32)
 		if _, err := rand.Read(key); err != nil {
-			return "", err
+			return nil, err
 		}
 		if err := fileutil.AtomicCreateFile(path, key, 0600); err != nil && !os.IsExist(err) {
-			return "", err
+			return nil, err
 		}
 		key, err = os.ReadFile(path)
 	}
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if len(key) != 32 {
-		return "", fmt.Errorf("invalid receipt digest key")
+		return nil, fmt.Errorf("invalid receipt digest key")
+	}
+	return key, nil
+}
+
+func modelConfigContentRevision(raw []byte) (string, error) {
+	key, err := modelSettingsDigestKey()
+	if err != nil {
+		return "", err
+	}
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write(raw)
+	return "hmac-sha256:" + hex.EncodeToString(mac.Sum(nil)), nil
+}
+
+// ModelSettingsRequestDigest survives process restarts without exposing an
+// unkeyed digest of user-entered secrets in durable receipts.
+func ModelSettingsRequestDigest(raw []byte) (string, error) {
+	key, err := modelSettingsDigestKey()
+	if err != nil {
+		return "", err
 	}
 	mac := hmac.New(sha256.New, key)
 	_, _ = mac.Write(raw)
@@ -124,7 +141,11 @@ func (c *Config) publishModelConfigBytes(path string, raw []byte, perm os.FileMo
 		if fileContentRevision(j.ConfigPath) != j.BeforeRevision {
 			return fmt.Errorf("model settings changed before publication")
 		}
-		j.AfterRevision = modelConfigContentRevision(raw)
+		revision, err := modelConfigContentRevision(raw)
+		if err != nil {
+			return err
+		}
+		j.AfterRevision = revision
 		j.Phase = "config_prepared"
 		if err := writeModelCredentialJournal(j); err != nil {
 			return err
