@@ -198,7 +198,7 @@ signing_upload_line="$(grep -n -m1 'name: Upload Windows signing inputs' "$repo_
 [ "$(grep -Fc 'IN_ORCHESTRATOR: ${{ inputs.orchestrator }}' "$repo_root/.github/workflows/release-desktop.yml")" = "3" ]
 [ "$(grep -Fc 'name: Revalidate immutable Desktop candidate' "$repo_root/.github/workflows/release-desktop.yml")" = "2" ]
 [ "$(grep -Fc 'ref: ${{ needs.resolve.outputs.sha }}' "$repo_root/.github/workflows/release-desktop.yml")" -ge 4 ]
-[ "$(grep -Ec '^          path: release-control$' "$repo_root/.github/workflows/release-desktop.yml")" = "4" ]
+[ "$(grep -Ec '^          path: release-control$' "$repo_root/.github/workflows/release-desktop.yml")" = "5" ]
 grep -Fq 'name: Checkout protected release verifier' "$repo_root/.github/workflows/release-desktop.yml"
 grep -Fq 'scripts/desktop-release-artifacts.mjs' "$repo_root/.github/workflows/release-desktop.yml"
 if grep -Fq 'test-webview2-native-smoke.ps1' "$repo_root/.github/workflows/release-desktop.yml"; then

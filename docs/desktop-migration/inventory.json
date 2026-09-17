@@ -6379,6 +6379,13 @@
     },
     {
       "kind": "ci-job",
+      "name": "release-desktop.yml/windows-runtime-acceptance",
+      "location": ".github/workflows/release-desktop.yml",
+      "class": "keep-business",
+      "owner": "installs and starts the exact signed x64 and ARM64 installers on native runners"
+    },
+    {
+      "kind": "ci-job",
       "name": "release-desktop.yml/windows-sign",
       "location": ".github/workflows/release-desktop.yml",
       "class": "keep-business",

@@ -216,7 +216,7 @@ test("every ci job is reachable from a required aggregate", () => {
 test("reuse skips only build work and still gates every publisher on validation", () => {
   const context = {
     inputs: { preflight_artifact_prefix: "desktop-123-1-preflight", orchestrated: true, signing_preflight_verified: true, signing_preflight: false, production_signing_smoke: false },
-    needs: { resolve: { result: "success" }, "cache-guard": { result: "success" }, "signing-contract": { result: "success" }, "mac-universal-intel": { result: "skipped" }, "windows-sign": { result: "skipped" }, build: { result: "skipped" } },
+    needs: { resolve: { result: "success" }, "cache-guard": { result: "success" }, "signing-contract": { result: "success" }, "mac-universal-intel": { result: "skipped" }, "windows-sign": { result: "skipped" }, "windows-runtime-acceptance": { result: "skipped" }, build: { result: "skipped" } },
   };
   assert.equal(condition(job(release, "build"), context), false);
   assert.equal(condition(job(release, "publish"), context), true);
@@ -241,12 +241,27 @@ test("reuse skips only build work and still gates every publisher on validation"
   fresh.needs["mac-universal-intel"].result = "success";
   assert.equal(condition(job(release, "publish"), fresh), false, "unsigned Windows bundles cannot publish");
   fresh.needs["windows-sign"].result = "success";
+  assert.equal(condition(job(release, "publish"), fresh), false, "signed Windows installers must pass native runtime acceptance");
+  fresh.needs["windows-runtime-acceptance"].result = "success";
   assert.equal(condition(job(release, "publish"), fresh), true);
 });
 
 test("Certum signing preserves native builds and gates publication and attestation", () => {
+  const packageJob = job(ci, "desktop-windows-package");
+  assert.match(packageJob, /test-windows-installer-startup\.ps1/);
+  assert.match(packageJob, /ExpectedVersion v0\.0\.0-ci/);
   const signer = job(release, "windows-sign");
-  assert.match(job(release, "build"), /runner: windows-11-arm, platform: windows\/arm64/);
+  const releaseBuild = job(release, "build");
+  assert.match(releaseBuild, /Install and smoke-test Windows installer identity/);
+  assert.match(releaseBuild, /runner: windows-11-arm, platform: windows\/arm64/);
+  assert.match(releaseBuild, /scripts\/test-windows-installer-startup\.ps1/);
+  assert.match(releaseBuild, /scripts\/test-windows-startup-recovery\.ps1/);
+  assert.match(releaseBuild, /scripts\/windows-acceptance-environment\.ps1/);
+  assert.match(releaseBuild, /\.\/release-control\/scripts\/test-windows-installer-startup\.ps1/);
+  const acceptance = releaseBuild.indexOf('name: Install and smoke-test Windows installer identity');
+  assert.ok(acceptance > releaseBuild.lastIndexOf('scripts/package-windows-desktop.sh'), 'test the final manual installer after rebuilding');
+  assert.ok(acceptance < releaseBuild.indexOf('name: Sign artifacts (minisign)'), 'acceptance precedes artifact signing and publication');
+  assert.match(job(ci, 'test'), /test-windows-installer-startup\.test\.ps1/);
   assert.match(signer, /runs-on: windows-2022/);
   assert.match(signer, /arch: \[amd64, arm64\]/);
   assert.match(signer, /max-parallel: 1/);
@@ -255,16 +270,23 @@ test("Certum signing preserves native builds and gates publication and attestati
   assert.ok(signer.indexOf("scripts/package-windows-desktop.sh") < signer.indexOf("-FilePath"));
   assert.ok(signer.indexOf("-ExpectedThumbprint") < signer.indexOf("Sign artifacts (minisign)"));
   assert.ok(!release.includes("secrets.SIGNPATH_API_TOKEN"));
+  const runtimeAcceptance = job(release, "windows-runtime-acceptance");
+  assert.match(runtimeAcceptance, /runner: windows-latest, arch: amd64/);
+  assert.match(runtimeAcceptance, /runner: windows-11-arm, arch: arm64/);
+  assert.match(runtimeAcceptance, /test-windows-installer-startup\.ps1/);
+  assert.match(runtimeAcceptance, /ExpectedVersion "\$\{\{ needs\.resolve\.outputs\.version \}\}"/);
   const attestation = job(release, "attest-signing-contract");
   assert.ok(!attestation.includes("gh api --method"), "GITHUB_TOKEN cannot mutate repository variables");
   assert.match(attestation, /uses: actions\/upload-artifact@v7/);
   assert.match(attestation, /verified-contract\.json/);
   assert.match(attestation, /gh variable set/);
   const context = { github: { repository: "esengine/DeepSeek-Reasonix" }, inputs: { signing_preflight: true, orchestrated: false },
-    needs: { "signing-contract": { result: "success" }, build: { result: "success" }, "windows-sign": { result: "success" } } };
+    needs: { "signing-contract": { result: "success" }, build: { result: "success" }, "windows-sign": { result: "success" }, "windows-runtime-acceptance": { result: "success" } } };
   assert.equal(condition(attestation, context), true);
-  for (const result of ["failure", "cancelled", "skipped"]) {
-    assert.equal(condition(attestation, { ...context, needs: { ...context.needs, "windows-sign": { result } } }), false);
+  for (const key of ["windows-sign", "windows-runtime-acceptance"]) {
+    for (const result of ["failure", "cancelled", "skipped"]) {
+      assert.equal(condition(attestation, { ...context, needs: { ...context.needs, [key]: { result } } }), false);
+    }
   }
 });
 

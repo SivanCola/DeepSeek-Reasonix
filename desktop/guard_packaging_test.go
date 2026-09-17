@@ -230,7 +230,7 @@ func TestDesktopPackagesPreserveNativePlatformLaunchers(t *testing.T) {
 		`!define REASONIX_UNINST_FINALIZE 'cmd.exe /C copy /Y "%1" "reasonix-uninstall.exe" >NUL'`,
 		`!uninstfinalize '${REASONIX_UNINST_FINALIZE}'`,
 		`File "/oname=uninstall.exe" "${ARG_REASONIX_SIGNED_UNINSTALLER}"`,
-		`StrCpy $R9 "$INSTDIR\versions\.installer-v${INFO_PRODUCTVERSION}-$R8"`,
+		`StrCpy $R9 "$INSTDIR\versions\.installer-${REASONIX_VERSION_TAG}-$R8"`,
 		`File "/oname=${REASONIX_LAYOUT_INSTALLER}" "${REASONIX_GUARD}"`,
 		`nsExec::ExecToLog /OEM`,
 		`Reasonix layout activator output:`,
@@ -247,6 +247,15 @@ func TestDesktopPackagesPreserveNativePlatformLaunchers(t *testing.T) {
 	if strings.Contains(windows, `FileOpen $0 "$INSTDIR\current.json" w`) ||
 		strings.Contains(windows, `SetOutPath "$INSTDIR\versions\v${INFO_PRODUCTVERSION}"`) {
 		t.Fatal("normal Windows installer must not write the live version or current.json in place")
+	}
+	for _, leak := range []string{
+		`$INSTDIR\versions\v${INFO_PRODUCTVERSION}`,
+		`.installer-v${INFO_PRODUCTVERSION}`,
+		`--version "v${INFO_PRODUCTVERSION}"`,
+	} {
+		if strings.Contains(windows, leak) {
+			t.Errorf("numeric Windows resource version leaked into release identity: %q", leak)
+		}
 	}
 	if strings.Contains(windows, `ExecWait '"$PLUGINSDIR\${REASONIX_LAYOUT_INSTALLER}"`) {
 		t.Fatal("Windows installer must not discard layout activator stdout/stderr")

@@ -345,8 +345,8 @@ jobs:
           - { runner: macos-15, platform: darwin/arm64, name: darwin-arm64 }
           - { runner: macos-15-intel, platform: darwin/amd64, name: darwin-amd64 }
           - { runner: macos-15, platform: darwin/universal, name: darwin-universal }
-          - { runner: windows-latest, platform: windows/amd64, name: windows-amd64 }
-          - { runner: windows-11-arm, platform: windows/arm64, name: windows-arm64 }
+          - { runner: windows-latest, platform: windows/amd64, name: windows-amd64, arch: amd64 }
+          - { runner: windows-11-arm, platform: windows/arm64, name: windows-arm64, arch: arm64 }
           - { runner: ubuntu-22.04, platform: linux/amd64, name: linux-amd64 }
     runs-on: ${{ matrix.runner }}
     env:
@@ -466,6 +466,9 @@ jobs:
             scripts/verify-windows-authenticode.ps1
             scripts/desktop-release-artifacts.mjs
             scripts/signpath-checkpoint.mjs
+            scripts/test-windows-installer-startup.ps1
+            scripts/test-windows-startup-recovery.ps1
+            scripts/windows-acceptance-environment.ps1
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
@@ -556,6 +559,27 @@ jobs:
           go run ./cmd/sign verify build/windows/signing-payload/reasonix-payload.json
           cd ..
           scripts/package-windows-desktop.sh "${{ matrix.platform == 'windows/arm64' && 'arm64' || 'amd64' }}" desktop/build/windows/signing-payload
+
+      # Manual distribution rebuilds the installer above. Test those final
+      # bytes before minisign and upload; signed releases also test again after
+      # Authenticode in windows-runtime-acceptance.
+      - name: Install and smoke-test Windows installer identity
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: >-
+          ./release-control/scripts/test-windows-installer-startup.ps1
+          -InstallerPath "dist/Reasonix-windows-${{ matrix.arch }}-installer.exe"
+          -ExpectedVersion "${{ needs.resolve.outputs.version }}"
+          -EvidenceDirectory "$env:RUNNER_TEMP/reasonix-installer-acceptance"
+
+      - name: Upload Windows installer acceptance evidence
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-installer-acceptance-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.name }}-unsigned
+          path: ${{ runner.temp }}/reasonix-installer-acceptance
+          if-no-files-found: ignore
+          retention-days: 30
 
       - name: Sign artifacts (minisign)
         if: runner.os != 'Windows' || env.HAS_CERTUM != 'true'
@@ -728,6 +752,48 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  windows-runtime-acceptance:
+    name: verify signed Windows installer (${{ matrix.arch }})
+    needs: [resolve, windows-sign]
+    if: ${{ always() && !cancelled() && needs.resolve.result == 'success' && needs.windows-sign.result == 'success' }}
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: windows-latest, arch: amd64 }
+          - { runner: windows-11-arm, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-control
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.resolve.outputs.artifact_prefix }}-windows-${{ matrix.arch }}
+          path: ${{ runner.temp }}/windows-bundle
+      - name: Install and smoke-test exact signed installer
+        shell: pwsh
+        run: |
+          $installer = @(Get-ChildItem -LiteralPath "$env:RUNNER_TEMP/windows-bundle/files" -Filter '*installer.exe' -File)
+          if ($installer.Count -ne 1) { throw "Expected one signed installer, found $($installer.Count)" }
+          ./release-control/scripts/test-windows-installer-startup.ps1 `
+            -InstallerPath $installer[0].FullName `
+            -ExpectedVersion "${{ needs.resolve.outputs.version }}" `
+            -EvidenceDirectory "$env:RUNNER_TEMP/reasonix-installer-acceptance"
+      - name: Upload signed Windows installer acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-installer-acceptance-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}-signed
+          path: ${{ runner.temp }}/reasonix-installer-acceptance
+          if-no-files-found: ignore
+          retention-days: 90
+
   mac-universal-intel:
     name: verify Universal candidate on Intel
     needs: [resolve, build, signing-contract, cache-guard]
@@ -771,8 +837,8 @@ jobs:
 
   publish:
     name: publish release
-    needs: [resolve, signing-contract, cache-guard, build, windows-sign, mac-universal-intel]
-    if: ${{ always() && !cancelled() && needs.resolve.result == 'success' && (needs.build.result == 'success' || (needs.build.result == 'skipped' && inputs.preflight_artifact_prefix != '' && inputs.orchestrated && inputs.signing_preflight_verified)) && ((inputs.preflight_artifact_prefix == '' && needs.mac-universal-intel.result == 'success') || (inputs.preflight_artifact_prefix != '' && needs.mac-universal-intel.result == 'skipped')) && needs.signing-contract.result == 'success' && needs.cache-guard.result == 'success' && (needs.windows-sign.result == 'success' || (needs.windows-sign.result == 'skipped' && (inputs.desktop_manual_only || inputs.preflight_artifact_prefix != ''))) && !inputs.production_signing_smoke && !inputs.signing_preflight }}
+    needs: [resolve, signing-contract, cache-guard, build, windows-sign, windows-runtime-acceptance, mac-universal-intel]
+    if: ${{ always() && !cancelled() && needs.resolve.result == 'success' && (needs.build.result == 'success' || (needs.build.result == 'skipped' && inputs.preflight_artifact_prefix != '' && inputs.orchestrated && inputs.signing_preflight_verified)) && ((inputs.preflight_artifact_prefix == '' && needs.mac-universal-intel.result == 'success') || (inputs.preflight_artifact_prefix != '' && needs.mac-universal-intel.result == 'skipped')) && needs.signing-contract.result == 'success' && needs.cache-guard.result == 'success' && (needs.windows-sign.result == 'success' || (needs.windows-sign.result == 'skipped' && (inputs.desktop_manual_only || inputs.preflight_artifact_prefix != ''))) && (needs.windows-sign.result != 'success' || needs.windows-runtime-acceptance.result == 'success') && !inputs.production_signing_smoke && !inputs.signing_preflight }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -943,8 +1009,8 @@ jobs:
 
   attest-signing-contract:
     name: record standalone Windows signing attestation
-    needs: [signing-contract, build, windows-sign]
-    if: ${{ always() && !cancelled() && inputs.signing_preflight && !inputs.orchestrated && github.repository == 'esengine/DeepSeek-Reasonix' && needs.signing-contract.result == 'success' && needs.build.result == 'success' && needs.windows-sign.result == 'success' }}
+    needs: [signing-contract, build, windows-sign, windows-runtime-acceptance]
+    if: ${{ always() && !cancelled() && inputs.signing_preflight && !inputs.orchestrated && github.repository == 'esengine/DeepSeek-Reasonix' && needs.signing-contract.result == 'success' && needs.build.result == 'success' && needs.windows-sign.result == 'success' && needs.windows-runtime-acceptance.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

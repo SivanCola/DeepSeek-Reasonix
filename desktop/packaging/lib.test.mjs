@@ -9,6 +9,7 @@ import { deflateRawSync } from "node:zlib";
 import {
   checkEntryModes,
   checkMembers,
+  displayVersion,
   inferArtifactKind,
   listZipEntries,
   readZipMember,
@@ -20,6 +21,7 @@ import {
   parseVerboseListing,
   PRODUCT,
   readProductIdentity,
+  releaseVersions,
   requiredMembers,
   runBuildScript,
   sanitizeShellPackageJson,
@@ -65,8 +67,11 @@ test("targets map Go platform names onto packager platform and arch", () => {
 });
 
 test("versions keep the full tag for identity and strip it for OS resources", () => {
+  assert.deepEqual(releaseVersions("v1.38.9-2"), { canonical: "v1.38.9-2", display: "1.38.9-2", resource: "1.38.9" });
+  assert.deepEqual(releaseVersions("v1.2.3-preview.42"), { canonical: "v1.2.3-preview.42", display: "1.2.3-preview.42", resource: "1.2.3" });
   assert.equal(numericVersion("v1.2.3"), "1.2.3");
   assert.equal(numericVersion("v1.2.3-rc.1"), "1.2.3");
+  assert.equal(displayVersion("v1.2.3-rc.1"), "1.2.3-rc.1");
   assert.equal(numericVersion("v0.0.0-local"), "0.0.0");
   assert.equal(versionTag("v1.20.0-preview.42"), "v1.20.0-preview.42");
   for (const bad of ["1.2.3", "v1.2", "v01.2.3", "v1.2.3+meta", ""]) assert.throws(() => numericVersion(bad), /version must look like/);
@@ -130,14 +135,15 @@ test("packager options pin the product identity and layout for every target", ()
 });
 
 test("NSIS project defines replace the Wails-generated INFO_* values", () => {
-  const defines = nsisProjectDefines(identity, "v1.2.3-rc.1");
+  const defines = nsisProjectDefines(identity, "v1.38.9-2");
   assert.ok(defines.startsWith("﻿"), "UTF-8 BOM for makensis");
   assert.match(defines, /!define INFO_PROJECTNAME "reasonix-desktop"\r\n/);
   assert.match(defines, /!define INFO_COMPANYNAME "Reasonix"\r\n/);
   assert.match(defines, /!define INFO_PRODUCTNAME "Reasonix"\r\n/);
-  assert.match(defines, /!define INFO_PRODUCTVERSION "1\.2\.3"\r\n/);
+  assert.match(defines, /!define INFO_PRODUCTVERSION "1\.38\.9"\r\n/);
+  assert.match(defines, /!define REASONIX_DISPLAY_VERSION "1\.38\.9-2"\r\n/);
   assert.match(defines, /!define INFO_COPYRIGHT "Copyright © 2026 Reasonix Contributors"\r\n/);
-  assert.match(defines, /!define REASONIX_VERSION_TAG "v1\.2\.3-rc\.1"\r\n/);
+  assert.match(defines, /!define REASONIX_VERSION_TAG "v1\.38\.9-2"\r\n/);
 });
 
 test("signing files are every PE file, sorted, deduplicated and slash-normalised", () => {
@@ -364,6 +370,25 @@ test("the NSIS script installs the Electron tree with both payload modes and no 
   assert.match(nsi, /!define PRODUCT_EXECUTABLE "\$\{INFO_PROJECTNAME\}\.exe"/);
   assert.match(nsi, /RMDir \/r "\$INSTDIR\\versions"/);
   assert.match(nsi, /File "\/oname=uninstall\.exe" "\$\{ARG_REASONIX_SIGNED_UNINSTALLER\}"/);
+  for (const releaseIdentity of [
+    /\$INSTDIR\\versions\\\$\{REASONIX_VERSION_TAG\}/,
+    /\.installer-\$\{REASONIX_VERSION_TAG\}-\$R8/,
+    /--version "\$\{REASONIX_VERSION_TAG\}"/,
+  ]) assert.match(nsi, releaseIdentity);
+  for (const nativeIdentityLeak of [
+    /\$INSTDIR\\versions\\v\$\{INFO_PRODUCTVERSION\}/,
+    /\.installer-v\$\{INFO_PRODUCTVERSION\}/,
+    /--version "v\$\{INFO_PRODUCTVERSION\}"/,
+  ]) assert.doesNotMatch(nsi, nativeIdentityLeak);
+  assert.deepEqual(
+    nsi.split(/\r?\n/).map(line => line.trim()).filter(line => line.includes("INFO_PRODUCTVERSION")),
+    [
+      "## INFO_PRODUCTVERSION is numeric metadata only.",
+      'VIProductVersion "${INFO_PRODUCTVERSION}.0"',
+      'VIFileVersion    "${INFO_PRODUCTVERSION}.0"',
+    ],
+    "numeric resource versions must never become install or runtime identity",
+  );
   const activation = nsi.slice(nsi.indexOf("Reasonix layout activator output:"));
   const retry = activation.indexOf('MessageBox MB_ICONEXCLAMATION|MB_RETRYCANCEL "$(reasonixActivateLocked)" IDRETRY reasonix_layout_activate');
   assert.ok(retry > 0, "activation failure offers Retry against the kept staging directory");
