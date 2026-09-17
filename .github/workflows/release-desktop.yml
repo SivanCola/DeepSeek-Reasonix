@@ -468,6 +468,7 @@ jobs:
             scripts/signpath-checkpoint.mjs
             scripts/test-windows-installer-startup.ps1
             scripts/test-windows-startup-recovery.ps1
+            scripts/windows-upgrade-ui-evidence.ps1
             scripts/windows-acceptance-environment.ps1
           sparse-checkout-cone-mode: false
           persist-credentials: false
