@@ -26,13 +26,18 @@ function Get-DefaultReasonixDataHome {
   return (Join-Path $script:testRoot "default-data-$script:testCount")
 }
 function Test-Path {
-  param([string]$LiteralPath, [string]$PathType)
-  if ($LiteralPath -eq $script:occupiedPath) { return $true }
-  if ($LiteralPath.StartsWith($script:testRoot, [StringComparison]::OrdinalIgnoreCase)) {
-    return Microsoft.PowerShell.Management\Test-Path @PSBoundParameters
+  param([string]$Path, [string]$LiteralPath, [string]$PathType)
+  $candidate = if ($PSBoundParameters.ContainsKey('LiteralPath')) { $LiteralPath } else { $Path }
+  if ([string]::IsNullOrEmpty($candidate)) { return $false }
+  if ($candidate -eq $script:occupiedPath) { return $true }
+  if ($candidate.StartsWith($script:testRoot, [StringComparison]::OrdinalIgnoreCase)) {
+    $native = @{}
+    if ($PSBoundParameters.ContainsKey('LiteralPath')) { $native.LiteralPath = $candidate } else { $native.Path = $candidate }
+    if ($PSBoundParameters.ContainsKey('PathType')) { $native.PathType = $PathType }
+    return Microsoft.PowerShell.Management\Test-Path @native
   }
   # All account state is virtual, including on a developer's existing VM.
-  return $LiteralPath -eq $script:occupiedPath
+  return $candidate -eq $script:occupiedPath
 }
 function Get-Process {
   param($Name, $ErrorAction)
