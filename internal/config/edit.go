@@ -1588,7 +1588,7 @@ func (c *Config) SaveTo(path string) error {
 	if scope == RenderScopeProject {
 		return c.saveProjectIncrementalResolved(path, resolved)
 	}
-	return writeConfigFileResolved(resolved, RenderTOMLForScope(c, scope), configFilePerm(path))
+	return c.writeModelConfigResolved(resolved, RenderTOMLForScope(c, scope), configFilePerm(path))
 }
 
 func (c *Config) SaveToScope(path string, scope RenderScope) error {
@@ -1611,7 +1611,7 @@ func (c *Config) SaveToScope(path string, scope RenderScope) error {
 	if err != nil {
 		return err
 	}
-	return writeConfigFileResolved(resolved, RenderTOMLForScope(c, scope), configFilePerm(path))
+	return c.writeModelConfigResolved(resolved, RenderTOMLForScope(c, scope), configFilePerm(path))
 }
 
 func (c *Config) saveProjectIncrementalResolved(logicalPath, resolvedPath string) error {
@@ -1626,7 +1626,7 @@ func (c *Config) saveProjectIncrementalResolved(logicalPath, resolvedPath string
 	body := string(raw)
 	isNew := body == ""
 	if isNew {
-		return writeConfigFileResolved(resolvedPath, RenderTOMLForScope(c, RenderScopeProject), configFilePerm(logicalPath))
+		return c.writeModelConfigResolved(resolvedPath, RenderTOMLForScope(c, RenderScopeProject), configFilePerm(logicalPath))
 	}
 	delta := RenderTOMLProjectDelta(c)
 	if tomlBodyHasTopLevelKey(body, "config_version") && !tomlBodyHasTopLevelKey(delta, "config_version") {
@@ -1665,7 +1665,7 @@ func (c *Config) saveProjectIncrementalResolved(logicalPath, resolvedPath string
 	if writeProviderAccess {
 		body = upsertTOMLSectionKey(body, "desktop", "provider_access", "provider_access = "+renderStringArray(c.Desktop.ProviderAccess))
 	}
-	return writeConfigFileResolved(resolvedPath, body, configFilePerm(logicalPath))
+	return c.writeModelConfigResolved(resolvedPath, body, configFilePerm(logicalPath))
 }
 
 // projectSkillsKeysToRemove reports whether an existing project [skills]
@@ -1849,7 +1849,7 @@ func writeConfigFileResolved(path, body string, perm os.FileMode) error {
 	if err := finalizeOpenCodeGoJournal(path); err != nil {
 		return err
 	}
-	return fileutil.AtomicWriteFile(path, []byte(body), perm)
+	return fileutil.AtomicWriteFileStrict(path, []byte(body), perm)
 }
 
 // atomicWriteToConfigFile resolves the path once and writes only the validated

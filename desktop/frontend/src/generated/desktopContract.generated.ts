@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 10;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:443d6c2d386cb010a89e47f4ce3921c2fc1b8c5bbef383858f57914b4de7bf66";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:951ffc4338cb0e89a3e7179fd800aec57f8f606579c8abbdc54815806203821b";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -119,6 +119,7 @@ export const DESKTOP_COMMANDS = [
   "CreateTerminalForTab",
   "CreateTopic",
   "CreateWorkspaceBrowserPreviewForTab",
+  "CredentialDiagnostics",
   "CurrentTaskSessionID",
   "DeleteInboxItem",
   "DeleteProvider",
@@ -413,6 +414,7 @@ export const DESKTOP_COMMANDS = [
   "ReorderSessions",
   "ReorderTabs",
   "ReorderTopics",
+  "RepairCredentials",
   "ReplayPendingPromptIdentitiesForTab",
   "ReplayPendingPrompts",
   "ReplayPendingPromptsForTab",
@@ -457,6 +459,7 @@ export const DESKTOP_COMMANDS = [
   "ResumeSessionPage",
   "ResumeSessionPageForTab",
   "ResumeTranscriptSessionForTab",
+  "RetryAuthenticationForTab",
   "RetryInboxItem",
   "RetryModelSettingsApplication",
   "RetrySessionRecovery",
@@ -959,6 +962,21 @@ export interface TurnFile {
   patch?: string;
 }
 
+export interface CredentialDiagnosticCheck {
+  id: string;
+  status: string;
+  path?: string;
+  message?: string;
+}
+
+export interface CredentialDiagnosticReport {
+  home: string;
+  credentialPath: string;
+  checks: CredentialDiagnosticCheck[];
+  pendingTransactions: number;
+  actions: string[];
+}
+
 export interface ProviderCatalog {
   brandId: string;
   brandLabel: string;
@@ -975,6 +993,16 @@ export interface ProviderProtocolEndpoint {
   checkedOn: string;
   authHeader?: boolean;
   responsesMode?: string;
+}
+
+export interface AuthenticationState {
+  status: string;
+  providerName?: string;
+  modelRef?: string;
+  keyEnv?: string;
+  httpStatus?: number;
+  code?: string;
+  message?: string;
 }
 
 export interface CancelReceipt {
@@ -4033,6 +4061,7 @@ export interface TabMeta {
   versionState?: string;
   parentVersionId?: string;
   startupErr?: string;
+  authentication?: AuthenticationState | null;
   active: boolean;
   cwd: string;
 }
@@ -5272,6 +5301,7 @@ export interface GeneratedDesktopCommands {
   CreateTerminalForTab(arg0: string, arg1: string, arg2: string): Promise<TerminalSessionView>;
   CreateTopic(arg0: string, arg1: string, arg2: string): Promise<TopicMeta>;
   CreateWorkspaceBrowserPreviewForTab(arg0: string, arg1: string): Promise<string>;
+  CredentialDiagnostics(arg0: boolean): Promise<CredentialDiagnosticReport>;
   CurrentTaskSessionID(): Promise<string>;
   DeleteInboxItem(arg0: string, arg1: string): Promise<void>;
   DeleteProvider(arg0: string): Promise<void>;
@@ -5566,6 +5596,7 @@ export interface GeneratedDesktopCommands {
   ReorderSessions(arg0: string, arg1: string, arg2: string[]): Promise<void>;
   ReorderTabs(arg0: string[]): Promise<void>;
   ReorderTopics(arg0: string, arg1: string, arg2: string[]): Promise<void>;
+  RepairCredentials(arg0: boolean): Promise<CredentialDiagnosticReport>;
   ReplayPendingPromptIdentitiesForTab(arg0: string): Promise<PromptIdentityView[]>;
   ReplayPendingPrompts(): Promise<void>;
   ReplayPendingPromptsForTab(arg0: string): Promise<void>;
@@ -5610,6 +5641,7 @@ export interface GeneratedDesktopCommands {
   ResumeSessionPage(arg0: string, arg1: number): Promise<HistoryPage>;
   ResumeSessionPageForTab(arg0: string, arg1: string, arg2: number): Promise<HistoryPage>;
   ResumeTranscriptSessionForTab(arg0: string, arg1: string): Promise<HistorySwitchPhases>;
+  RetryAuthenticationForTab(arg0: string): Promise<AuthenticationState>;
   RetryInboxItem(arg0: string, arg1: string): Promise<void>;
   RetryModelSettingsApplication(arg0: string): Promise<ModelSettingsResult>;
   RetrySessionRecovery(arg0: RecoveryPreferenceRequest): Promise<void>;

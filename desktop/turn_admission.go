@@ -149,6 +149,15 @@ func (a *App) beginRuntimeTurn(tabID string, reclaim, detached bool, submissionI
 			}
 			continue
 		}
+		if authentication, ok := ctrl.(interface {
+			AuthenticationState() control.AuthenticationState
+		}); ok {
+			state := authentication.AuthenticationState()
+			if !state.Ready() {
+				abort()
+				return nil, nil, &control.AuthenticationError{State: state}
+			}
+		}
 		if tab.sink != nil && !tab.sink.tryBeginTurn(submissionID...) {
 			abort()
 			return nil, nil, control.ErrTurnRunning

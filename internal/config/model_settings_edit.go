@@ -51,7 +51,7 @@ func (c *Config) SaveModelSettingsTo(path, baseline string) error {
 	if err := toml.NewEncoder(&encoded).Encode(doc); err != nil {
 		return err
 	}
-	return writeConfigFileResolved(resolved, encoded.String(), configFilePerm(path))
+	return c.writeModelConfigResolved(resolved, encoded.String(), configFilePerm(path))
 }
 
 func mergeModelSettingsDelta(doc, before, after map[string]any) {

@@ -230,6 +230,26 @@ type Options struct {
 	deferPublish bool
 }
 
+func authenticationStateForModelEntry(entry *config.ProviderEntry, modelRef string) control.AuthenticationState {
+	if entry == nil || !entry.RequiresAPIKey() || entry.APIKey() != "" {
+		return control.AuthenticationState{Status: control.AuthenticationReady}
+	}
+	status := control.AuthenticationMissingCredential
+	code := "missing_credential"
+	switch config.CredentialStoreRevision() {
+	case "unavailable", "unreadable":
+		status = control.AuthenticationCredentialStoreUnavailable
+		code = "credential_store_unavailable"
+	}
+	return control.AuthenticationState{
+		Status:       status,
+		ProviderName: entry.Name,
+		ModelRef:     modelRef,
+		KeyEnv:       entry.APIKeyEnv,
+		Code:         code,
+	}
+}
+
 func recoveryHeadlessMode(opts Options) bool {
 	return strings.TrimSpace(opts.HeadlessApprovalMode) != ""
 }
@@ -478,8 +498,13 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	// RequireKey fails fast on a missing credential (run/serve); plugin-
 	// namespaced refs carry no config credential — the extension provider holds
 	// its own keys — so the merged resolver's resolution is their only gate.
+	authentication := authenticationStateForModelEntry(entry, modelRef)
 	if opts.RequireKey && opts.ProviderResolver == nil && providerext.PluginRefOwner(modelName) == "" {
 		if err := cfg.Validate(modelName); err != nil {
+			if entry.RequiresAPIKey() && entry.APIKey() == "" {
+				authentication.Message = err.Error()
+				return nil, &control.AuthenticationError{State: authentication}
+			}
 			return nil, err
 		}
 	}
@@ -551,8 +576,12 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	// A resolvable model whose API key env is unset would otherwise build fine
 	// (RequireKey is false so the UI stays reachable) and then fail silently on the
 	// first request, showing as an empty/dead model. Surface the cause up front.
-	if !opts.RequireKey && entry.RequiresAPIKey() && entry.APIKey() == "" {
-		sink.Emit(event.Event{Kind: event.Notice, Text: "Selected model is missing its API key.", Detail: fmt.Sprintf("model %q is selected but its API key %s is not set — requests will fail until you set it", modelName, entry.APIKeyEnv)})
+	if !opts.RequireKey && !authentication.Ready() {
+		if authentication.Status == control.AuthenticationCredentialStoreUnavailable {
+			sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "The credential store is unavailable.", Detail: "Reasonix could not read its credential file; open credential diagnostics before retrying"})
+		} else {
+			sink.Emit(event.Event{Kind: event.Notice, Text: "Selected model is missing its API key.", Detail: fmt.Sprintf("model %q is selected but its API key %s is not set — requests will fail until you set it", modelName, entry.APIKeyEnv)})
+		}
 	}
 	// Every role setting lazily acquires a workspace write lease on the first
 	// real writer. Read-only turns never take the lease.
@@ -1819,6 +1848,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	}
 	imageSnapshot := config.ModelCapabilitySnapshot(cfg, modelCapabilities)
 	ctrlOpts := control.Options{
+		Authentication:                 authentication,
 		ModelSettingsRevision:          cfg.ModelRuntimeFingerprint(modelRef),
 		ModelSettingsCurrent:           runtimeModelSettingsReader(root, modelName, modelRef, opts.ModelSettings),
 		FrozenImageInput:               &imageEnabled,

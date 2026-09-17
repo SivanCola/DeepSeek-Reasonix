@@ -101,7 +101,7 @@
       "kind": "command",
       "name": "ActivateTopic",
       "detail": "(scope string, workspaceRoot string, topicID string, sessionPath string) (TabMeta, error)",
-      "location": "desktop/tabs.go:2473",
+      "location": "desktop/tabs.go:2479",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -253,7 +253,7 @@
       "kind": "command",
       "name": "ApplyModelSettings",
       "detail": "(change ModelSettingsChange) ModelSettingsResult",
-      "location": "desktop/model_settings_api.go:85",
+      "location": "desktop/model_settings_api.go:83",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -677,7 +677,7 @@
       "kind": "command",
       "name": "CloseTab",
       "detail": "(tabID string) error",
-      "location": "desktop/tabs.go:3011",
+      "location": "desktop/tabs.go:3017",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -789,7 +789,7 @@
       "kind": "command",
       "name": "ContextPanel",
       "detail": "(tabID string) ContextPanelInfo",
-      "location": "desktop/tabs.go:6761",
+      "location": "desktop/tabs.go:6767",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -893,7 +893,7 @@
       "kind": "command",
       "name": "CreateTopic",
       "detail": "(scope string, workspaceRoot string, title string) (TopicMeta, error)",
-      "location": "desktop/tabs.go:6230",
+      "location": "desktop/tabs.go:6236",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -902,6 +902,14 @@
       "name": "CreateWorkspaceBrowserPreviewForTab",
       "detail": "(tabID string, rel string) (string, error)",
       "location": "desktop/app.go:10418",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
+      "name": "CredentialDiagnostics",
+      "detail": "(probe bool) (config.CredentialDiagnosticReport, error)",
+      "location": "desktop/credential_diagnostics_app.go:7",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -989,7 +997,7 @@
       "kind": "command",
       "name": "DeleteTopic",
       "detail": "(topicID string) error",
-      "location": "desktop/tabs.go:6556",
+      "location": "desktop/tabs.go:6562",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1109,7 +1117,7 @@
       "kind": "command",
       "name": "EnsureBlankSurface",
       "detail": "(scope string, workspaceRoot string) (TabMeta, error)",
-      "location": "desktop/tabs.go:2504",
+      "location": "desktop/tabs.go:2510",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1117,7 +1125,7 @@
       "kind": "command",
       "name": "EnsureBlankTab",
       "detail": "(scope string, workspaceRoot string) (TabMeta, error)",
-      "location": "desktop/tabs.go:2547",
+      "location": "desktop/tabs.go:2553",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1205,7 +1213,7 @@
       "kind": "command",
       "name": "FetchProviderModelCatalogDraft",
       "detail": "(p ProviderView, key string) ([]ProviderModelCapabilityView, error)",
-      "location": "desktop/provider_settings_probe.go:67",
+      "location": "desktop/provider_settings_probe.go:38",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1357,7 +1365,7 @@
       "kind": "command",
       "name": "GetModelSettingsApplication",
       "detail": "() ModelSettingsResult",
-      "location": "desktop/model_settings_api.go:439",
+      "location": "desktop/model_settings_api.go:493",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1365,7 +1373,7 @@
       "kind": "command",
       "name": "GetModelSettingsRequest",
       "detail": "(requestID string) ModelSettingsResult",
-      "location": "desktop/model_settings_api.go:183",
+      "location": "desktop/model_settings_api.go:225",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1909,7 +1917,7 @@
       "kind": "command",
       "name": "ListTabs",
       "detail": "() []TabMeta",
-      "location": "desktop/tabs.go:2173",
+      "location": "desktop/tabs.go:2179",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2309,7 +2317,7 @@
       "kind": "command",
       "name": "OpenGlobalTab",
       "detail": "(topicID string) (TabMeta, error)",
-      "location": "desktop/tabs.go:2390",
+      "location": "desktop/tabs.go:2396",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2341,7 +2349,7 @@
       "kind": "command",
       "name": "OpenProjectTab",
       "detail": "(workspaceRoot string, topicID string) (TabMeta, error)",
-      "location": "desktop/tabs.go:2223",
+      "location": "desktop/tabs.go:2229",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2397,7 +2405,7 @@
       "kind": "command",
       "name": "OpenTopicSession",
       "detail": "(scope string, workspaceRoot string, topicID string, sessionPath string) (TabMeta, error)",
-      "location": "desktop/tabs.go:2410",
+      "location": "desktop/tabs.go:2416",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -3149,7 +3157,7 @@
       "kind": "command",
       "name": "RenameProject",
       "detail": "(workspaceRoot string, title string) error",
-      "location": "desktop/tabs.go:6264",
+      "location": "desktop/tabs.go:6270",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -3213,7 +3221,7 @@
       "kind": "command",
       "name": "RenameTopic",
       "detail": "(topicID string, title string) error",
-      "location": "desktop/tabs.go:6374",
+      "location": "desktop/tabs.go:6380",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -3229,7 +3237,7 @@
       "kind": "command",
       "name": "ReorderProjects",
       "detail": "(workspaceRoots []string) error",
-      "location": "desktop/tabs.go:6320",
+      "location": "desktop/tabs.go:6326",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -3245,7 +3253,7 @@
       "kind": "command",
       "name": "ReorderTabs",
       "detail": "(tabIDs []string) error",
-      "location": "desktop/tabs.go:2955",
+      "location": "desktop/tabs.go:2961",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -3254,6 +3262,14 @@
       "name": "ReorderTopics",
       "detail": "(scope string, workspaceRoot string, orderedTopicIDs []string) error",
       "location": "desktop/project_tree_organization.go:271",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
+      "name": "RepairCredentials",
+      "detail": "(dryRun bool) (config.CredentialDiagnosticReport, error)",
+      "location": "desktop/credential_diagnostics_app.go:13",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -3611,6 +3627,14 @@
     },
     {
       "kind": "command",
+      "name": "RetryAuthenticationForTab",
+      "detail": "(tabID string) (control.AuthenticationState, error)",
+      "location": "desktop/authentication_app.go:12",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
       "name": "RetryInboxItem",
       "detail": "(tabID string, id string) error",
       "location": "desktop/inbox_app.go:435",
@@ -3621,7 +3645,7 @@
       "kind": "command",
       "name": "RetryModelSettingsApplication",
       "detail": "(tabID string) ModelSettingsResult",
-      "location": "desktop/model_settings_api.go:498",
+      "location": "desktop/model_settings_api.go:552",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -4525,7 +4549,7 @@
       "kind": "command",
       "name": "SetProjectColor",
       "detail": "(workspaceRoot string, color string) error",
-      "location": "desktop/tabs.go:6275",
+      "location": "desktop/tabs.go:6281",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -4533,7 +4557,7 @@
       "kind": "command",
       "name": "SetProjectPinned",
       "detail": "(workspaceRoot string, pinned bool) error",
-      "location": "desktop/tabs.go:6286",
+      "location": "desktop/tabs.go:6292",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -4813,7 +4837,7 @@
       "kind": "command",
       "name": "SetTopicPinned",
       "detail": "(topicID string, pinned bool) error",
-      "location": "desktop/tabs.go:6613",
+      "location": "desktop/tabs.go:6619",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -5221,7 +5245,7 @@
       "kind": "command",
       "name": "TestProviderModel",
       "detail": "(p ProviderView, model string, key string) error",
-      "location": "desktop/provider_settings_probe.go:16",
+      "location": "desktop/provider_settings_probe.go:15",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -5607,7 +5631,7 @@
     {
       "kind": "event",
       "name": "session:recovered",
-      "location": "desktop/tabs.go:5839",
+      "location": "desktop/tabs.go:5845",
       "class": "keep-business",
       "owner": "desktop/event frame (seq + generation), same payload"
     },

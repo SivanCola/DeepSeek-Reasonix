@@ -1642,6 +1642,20 @@
       ]
     }
   },
+  "CredentialDiagnostics": {
+    "domain": "desktop/credential_diagnostics_app.go",
+    "owner": "App.CredentialDiagnostics",
+    "sources": [
+      "desktop/credential_diagnostics_app.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.CredentialDiagnostics",
+      "inputs": [
+        "probe"
+      ]
+    }
+  },
   "CurrentTaskSessionID": {
     "domain": "desktop/app.go",
     "owner": "App.CurrentTaskSessionID",
@@ -5823,6 +5837,20 @@
       ]
     }
   },
+  "RepairCredentials": {
+    "domain": "desktop/credential_diagnostics_app.go",
+    "owner": "App.RepairCredentials",
+    "sources": [
+      "desktop/credential_diagnostics_app.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.RepairCredentials",
+      "inputs": [
+        "dryRun"
+      ]
+    }
+  },
   "ReplayPendingPromptIdentitiesForTab": {
     "domain": "desktop/decision_runtime_api.go",
     "owner": "App.ReplayPendingPromptIdentitiesForTab",
@@ -6482,6 +6510,20 @@
       "inputs": [
         "tabID",
         "path"
+      ]
+    }
+  },
+  "RetryAuthenticationForTab": {
+    "domain": "desktop/authentication_app.go",
+    "owner": "App.RetryAuthenticationForTab",
+    "sources": [
+      "desktop/authentication_app.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.RetryAuthenticationForTab",
+      "inputs": [
+        "tabID"
       ]
     }
   },

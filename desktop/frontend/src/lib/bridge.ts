@@ -82,6 +82,7 @@ import type {
   BotSettingsView,
   CapabilitiesView,
   CapabilityDiagnosticsReport,
+  CredentialDiagnosticReport,
   RuntimeDoctorReport,
   CheckpointMeta,
   CommandInfo,
@@ -502,6 +503,9 @@ export interface AppBindings extends SessionLifecycleBindings, ForkTargetsBindin
   MCPMarketplaceResolve(registryName: string): Promise<MCPMarketplaceEntry>;
   SkillsSettings(): Promise<SkillsSettingsView>;
   CapabilityDiagnostics(includeSessionRuntime: boolean): Promise<CapabilityDiagnosticsReport>;
+  CredentialDiagnostics(probe: boolean): Promise<CredentialDiagnosticReport>;
+  RepairCredentials(dryRun: boolean): Promise<CredentialDiagnosticReport>;
+  RetryAuthenticationForTab(tabId: string): Promise<NonNullable<TabMeta["authentication"]>>;
   RuntimeDoctor(): Promise<RuntimeDoctorReport>;
   Plugins(): Promise<PluginView[]>;
   PlanPluginInstall(source: string, options: PluginInstallOptions): Promise<string>;
@@ -1341,6 +1345,13 @@ function mockExternalOpenerIconDataURL(color: string, label: string): string {
   return `data:image/svg+xml,${encodeURIComponent(svg)}`;
 }
 function makeMockApp(): AppBindings {
+  const credentialDiagnostics = (actions: string[] = []): CredentialDiagnosticReport => ({
+    home: "/mock/.reasonix",
+    credentialPath: "/mock/.reasonix/.env",
+    pendingTransactions: 0,
+    checks: [],
+    actions,
+  });
   const scenario = mockScenario();
   // Both bridge families publish into the same catalog, as ListTabs does in
   // the desktop backend. A remote event is not a second source of tab state.
@@ -3771,6 +3782,15 @@ function makeMockApp(): AppBindings {
         ],
       };
       return JSON.parse(JSON.stringify(report)) as CapabilityDiagnosticsReport;
+    },
+    async CredentialDiagnostics(_probe: boolean) {
+      return credentialDiagnostics();
+    },
+    async RepairCredentials(dryRun: boolean) {
+      return credentialDiagnostics([dryRun ? "would repair credential access" : "repaired credential access"]);
+    },
+    async RetryAuthenticationForTab(_tabId: string) {
+      return { status: "ready" };
     },
     async Plugins() {
       return capPlugins.map((p) => ({ ...p }));

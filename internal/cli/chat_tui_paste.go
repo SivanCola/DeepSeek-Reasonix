@@ -325,6 +325,15 @@ func (m chatTUI) applyComposerPasteCount(msg tea.PasteMsg, terminal bool, count 
 	if terminal {
 		m.terminalPasteSeq++
 	}
+	// Credential input owns all paste delivery, including native clipboard
+	// completions. Never let a secret fall through into the hidden composer.
+	if m.setup != nil {
+		if !m.setup.saving && !strings.ContainsAny(msg.Content, "\r\n") {
+			m.setup.invalidateTest()
+			m.setup.key += strings.Repeat(msg.Content, count)
+		}
+		return m, nil
+	}
 	var cmds []tea.Cmd
 	for range count {
 		cmds = append(cmds, m.applyComposerPasteOnce(msg)...)

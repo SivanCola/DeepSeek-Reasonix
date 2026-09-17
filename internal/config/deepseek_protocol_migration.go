@@ -123,7 +123,11 @@ func UpgradeDeepSeekProviderProtocolLocked(path, name string) (bool, error) {
 	return editLegacyDeepSeekProtocolFileLocked(path, name, false)
 }
 
-func editLegacyDeepSeekProtocolFileLocked(path, target string, automatic bool) (bool, error) {
+func (c *Config) UpgradeDeepSeekProviderProtocolLocked(path, name string) (bool, error) {
+	return editLegacyDeepSeekProtocolFileLocked(path, name, false, c.publishModelConfigBytes)
+}
+
+func editLegacyDeepSeekProtocolFileLocked(path, target string, automatic bool, publisher ...func(string, []byte, os.FileMode) error) (bool, error) {
 	resolved, exists, err := statConfigPath(path)
 	if err != nil || !exists {
 		return false, err
@@ -142,7 +146,11 @@ func editLegacyDeepSeekProtocolFileLocked(path, target string, automatic bool) (
 	if err != nil || !changed {
 		return changed, err
 	}
-	if err := fileutil.AtomicWriteFile(resolved, fileencoding.Encode(next, encoding), info.Mode().Perm()); err != nil {
+	write := fileutil.AtomicWriteFileStrict
+	if len(publisher) > 0 {
+		write = publisher[0]
+	}
+	if err := write(resolved, fileencoding.Encode(next, encoding), info.Mode().Perm()); err != nil {
 		return false, err
 	}
 	return true, nil

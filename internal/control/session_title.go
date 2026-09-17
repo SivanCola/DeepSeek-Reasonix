@@ -31,12 +31,17 @@ func (c *Controller) GenerateSessionTitle(ctx context.Context, transcript string
 	if c == nil {
 		return "", fmt.Errorf("session title: controller unavailable")
 	}
+	if err := c.authentication.admissionError(); err != nil {
+		return "", err
+	}
 	c.mu.Lock()
 	resolver := c.providerResolver
 	ref := strings.TrimSpace(c.selection.ref)
 	sink := c.sink
 	c.mu.Unlock()
-	return generateSessionTitle(ctx, resolver, ref, sink, transcript)
+	title, err := generateSessionTitle(ctx, resolver, ref, sink, transcript)
+	c.authentication.recordFailure(err, ref)
+	return title, err
 }
 
 // GenerateSessionTitleForModel uses this controller only as a provider host.
@@ -55,7 +60,12 @@ func (c *Controller) GenerateSessionTitleForModel(ctx context.Context, modelRef,
 	if modelRef == "" {
 		modelRef = fallbackRef
 	}
-	return generateSessionTitle(ctx, resolver, modelRef, sink, transcript)
+	if err := c.authentication.admissionErrorForModel(modelRef); err != nil {
+		return "", err
+	}
+	title, err := generateSessionTitle(ctx, resolver, modelRef, sink, transcript)
+	c.authentication.recordFailure(err, modelRef)
+	return title, err
 }
 
 func generateSessionTitle(ctx context.Context, resolver provider.Resolver, ref string, sink event.Sink, transcript string) (string, error) {

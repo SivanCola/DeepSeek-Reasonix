@@ -1189,8 +1189,8 @@ func chatREPL(args []string, version string) int {
 	}
 	reclaimCLIRecoveryBranches(ctrl.SessionDir())
 
-	// Surface a missing-key warning inside the TUI banner so the first message
-	// failing is at least pre-announced; the user can still enter chat.
+	// Keep local recovery available when authentication is incomplete. The
+	// controller gate ensures input cannot become a model turn until configured.
 	// resolveModelForCLI transparently falls through a keyless default to the
 	// next configured provider (issue #6996). Validating the final ref is a
 	// no-op for that configured fallback and preserves the warning when every
@@ -1292,6 +1292,11 @@ func chatREPL(args []string, version string) int {
 	}
 	if effortOverride == nil {
 		m.refreshEffortStatus()
+	}
+	if authentication, ok := m.ctrl.(interface {
+		AuthenticationState() control.AuthenticationState
+	}); ok && !authentication.AuthenticationState().Ready() {
+		m.openConnectionSetup()
 	}
 
 	if m.nativeScrollback {

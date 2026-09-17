@@ -46,7 +46,7 @@ import { resolveComposerContentSizing } from "../lib/composerSizing";
 import { useToast } from "../lib/toast";
 import { readStatusLabel, turnPhaseStatusLabel } from "../lib/readStatus";
 import { fullAccessProjectConfirmationKey } from "../lib/fullAccessConfirmation";
-import { normalizeToolApprovalMode, type CollaborationMode, type CommandInfo, type ComposerInsertRequest, type ContextInfo, type DirEntry, type EffortInfo, type GoalLifecycleView, type GoalRuntime, type HistoryMessage, type Mode, type PromptHistoryEntry, type SessionMeta, type SessionReference, type SlashArgItem, type SlashArgsResult, type ToolApprovalMode, type BalanceInfo, type WireReadStatus } from "../lib/types";
+import { normalizeToolApprovalMode, type CollaborationMode, type CommandInfo, type ComposerInsertRequest, type ContextInfo, type DirEntry, type EffortInfo, type GoalLifecycleView, type GoalRuntime, type HistoryMessage, type Mode, type PromptHistoryEntry, type SessionMeta, type SessionReference, type SlashArgItem, type SlashArgsResult, type TabMeta, type ToolApprovalMode, type BalanceInfo, type WireReadStatus } from "../lib/types";
 import { ComposerPinnedFilesShelf } from "./ComposerPinnedFilesShelf";
 import type { ComposerWorkspaceContext } from "./ComposerWorkspaceContextBar";
 import {
@@ -64,6 +64,7 @@ const ModelSwitcher = lazy(() => import("./ModelSwitcher").then((module) => ({ d
 const ComposerWorkspaceContextBar = lazy(() => import("./ComposerWorkspaceContextBar"));
 import { Tooltip } from "./Tooltip";
 const RecoveryWaitBanner = lazy(() => import("./RecoveryWaitBanner").then((module) => ({ default: module.RecoveryWaitBanner })));
+const AuthenticationRecoveryActions = lazy(() => import("./AuthenticationRecoveryActions").then((module) => ({ default: module.AuthenticationRecoveryActions })));
 import { ComposerContextCard } from "./ComposerContextCard";
 import { Markdown } from "./Markdown";
 import { CodeViewer } from "./CodeViewer";
@@ -547,6 +548,7 @@ export function Composer({
   disabled,
   submitDisabled = false,
   submitDisabledReason,
+  authentication,
   readOnly = false,
   decisionPending = false,
   ready,
@@ -638,6 +640,7 @@ export function Composer({
   disabled?: boolean;
   submitDisabled?: boolean;
   submitDisabledReason?: string;
+  authentication?: TabMeta["authentication"];
   readOnly?: boolean;
   decisionPending?: boolean;
   // ready/cwd/running/workspaceScopeKey re-trigger the command fetch: Commands() returns only
@@ -4624,6 +4627,12 @@ export function Composer({
                 </button>
               </Tooltip>
               {submitUnavailableHint && <span className="composer-toolbar-send__hint">{submitUnavailableHint}</span>}
+              {authentication && authentication.status !== "ready" && <Suspense fallback={null}>
+                <AuthenticationRecoveryActions
+                  authentication={authentication}
+                  tabId={tabId}
+                />
+              </Suspense>}
             </div>
           </div>
         </div>

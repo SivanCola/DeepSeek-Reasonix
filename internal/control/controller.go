@@ -103,10 +103,11 @@ var errNoSessionPath = errors.New("session has content but no session path; conv
 type Controller struct {
 	runtimeState controllerRuntimeState
 	controllerPromptRouting
-	runner       agent.Runner
-	executor     *agent.Agent
-	guardianSess *guardian.Session // nil when guardian is disabled
-	guardianPath string            // persisted guardian session file ("" when disabled)
+	authentication authenticationGate
+	runner         agent.Runner
+	executor       *agent.Agent
+	guardianSess   *guardian.Session // nil when guardian is disabled
+	guardianPath   string            // persisted guardian session file ("" when disabled)
 	// taskBudget is the configured spend gate, as passed at construction.
 	taskBudget agent.TaskBudget
 	// goalTokenBudget bounds an unattended Goal loop; 0 leaves it unbounded.
@@ -536,7 +537,10 @@ type externalFolderToolRefs interface {
 type Options struct {
 	Runner   agent.Runner
 	Executor *agent.Agent
-	Guardian *guardian.Session
+	// Authentication is the frozen runtime credential snapshot's initial
+	// admission state. An empty value remains Ready for source compatibility.
+	Authentication AuthenticationState
+	Guardian       *guardian.Session
 	// RecoveryHeadless is decoded for source compatibility and ignored. Auto
 	// Guard cannot be re-enabled through Controller options.
 	RecoveryHeadless bool
@@ -776,6 +780,7 @@ func New(opts Options) *Controller {
 	}
 	sessionRuntime, sessionBinding := bindInitialSessionRuntime(opts)
 	c := &Controller{
+		authentication:                    newAuthenticationGate(opts.Authentication, opts.ModelRef),
 		taskBudget:                        opts.TaskBudget,
 		goalTokenBudget:                   opts.GoalTokenBudget,
 		goalTokenLimit:                    opts.GoalTokenBudget,
@@ -2039,6 +2044,9 @@ func (c *Controller) runReady(ctx context.Context, input string) (err error) {
 // stdout rendering and exit status. readOnly selects the preview-safe runner
 // used by `reasonix subagent try`.
 func (c *Controller) RunSubagentProfile(ctx context.Context, name, task string, readOnly bool) (string, error) {
+	if err := c.authentication.admissionError(); err != nil {
+		return "", err
+	}
 	name = strings.TrimSpace(name)
 	task = strings.TrimSpace(task)
 	if name == "" {
@@ -2072,6 +2080,7 @@ func (c *Controller) RunSubagentProfile(ctx context.Context, name, task string, 
 	ctx = agent.WithReasoningLanguagePreference(ctx, c.reasoningLanguage)
 	ctx = agent.WithSubagentDepth(ctx, 0)
 	answer, err := runner(ctx, sk, task, skill.SubagentRunOptions{HostInitiated: true})
+	c.authentication.recordFailure(err, c.ModelRef())
 	if err != nil {
 		return "", err
 	}
@@ -2963,6 +2972,9 @@ func (c *Controller) GoalStatus() string {
 // Compact runs one compaction pass on the executor's session on demand.
 // instructions is optional `/compact <focus>` guidance steering what to keep.
 func (c *Controller) Compact(ctx context.Context, instructions string) error {
+	if err := c.authentication.admissionError(); err != nil {
+		return err
+	}
 	if c.executor == nil {
 		return nil
 	}
@@ -2975,7 +2987,9 @@ func (c *Controller) Compact(ctx context.Context, instructions string) error {
 		return err
 	}
 	defer c.endRotation()
-	return c.executor.CompactNow(ctx, instructions)
+	err := c.executor.CompactNow(ctx, instructions)
+	c.authentication.recordFailure(err, c.ModelRef())
+	return err
 }
 
 // maybeSessionStart fires the SessionStart hook exactly once per session, lazily
@@ -3305,6 +3319,9 @@ func (c *Controller) SummarizeUpTo(ctx context.Context, turn int) error {
 }
 
 func (c *Controller) summarizeAt(ctx context.Context, turn int, from bool) error {
+	if err := c.authentication.admissionError(); err != nil {
+		return err
+	}
 	if c.executor == nil {
 		return c.rewindFail(fmt.Errorf("checkpoints unavailable"))
 	}
@@ -3328,6 +3345,7 @@ func (c *Controller) summarizeAt(ctx context.Context, turn int, from bool) error
 	} else {
 		err = c.executor.SummarizeUpTo(ctx, boundary)
 	}
+	c.authentication.recordFailure(err, c.ModelRef())
 	if err != nil {
 		return c.rewindFail(err)
 	}

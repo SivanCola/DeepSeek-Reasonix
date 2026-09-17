@@ -2138,6 +2138,12 @@ func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 		m.ProjectColor = projectColor(tab.WorkspaceRoot)
 	}
 	if tab.Ctrl != nil {
+		if auth, ok := tab.Ctrl.(interface {
+			AuthenticationState() control.AuthenticationState
+		}); ok {
+			state := auth.AuthenticationState()
+			m.Authentication = &state
+		}
 		status := tab.Ctrl.RuntimeStatus()
 		if reader, ok := tab.Ctrl.(control.RuntimeStateReader); ok {
 			m.GoalView = reader.RuntimeStateSnapshot().Goal

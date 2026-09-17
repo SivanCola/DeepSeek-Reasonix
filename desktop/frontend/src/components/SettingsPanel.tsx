@@ -96,7 +96,7 @@ import { StatusBarItemsEditor } from "./StatusBarItemsEditor";
 import { DesktopCloseBehaviorHint } from "./DesktopCloseBehaviorHint";
 export type SettingsInitialFocus =
   | { target: "bot-allowlist"; connectionId?: string; requestId?: number }
-  | { target: "model-access"; requestId?: number; onboarding?: boolean }
+  | { target: "model-access"; requestId?: number; onboarding?: boolean; providerName?: string; sourceTabId?: string }
   | { target: "model-stats"; requestId: number };
 type DesktopPlatform = "darwin" | "windows" | "linux";
 
@@ -425,7 +425,7 @@ export function SettingsPanel({
             ) : (
               <>
                 {tab === "general" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><GeneralSection s={s} busy={busy} apply={apply} agentRunning={agentRunning} /></SettingsPageShell>}
-                {(tab === "models" || tab === "providers" || tab === "model-stats") && s && <SettingsPageShell key="model-pages" s={s} tab={tab} busy={busy} apply={apply}><ModelsSection onOpenProviders={() => selectTab("providers")} s={s} busy={busy} apply={apply} backgroundApply={backgroundApply} onboarding={initialFocus?.target === "model-access" && initialFocus.onboarding} onOnboardingComplete={onClose} subtab={tab === "providers" ? "access" : tab === "model-stats" ? "stats" : "usage"} /></SettingsPageShell>}
+                {(tab === "models" || tab === "providers" || tab === "model-stats") && s && <SettingsPageShell key="model-pages" s={s} tab={tab} busy={busy} apply={apply}><ModelsSection onOpenProviders={() => selectTab("providers")} s={s} busy={busy} apply={apply} backgroundApply={backgroundApply} onboarding={initialFocus?.target === "model-access" && initialFocus.onboarding} focusProvider={initialFocus?.target === "model-access" ? initialFocus.providerName : undefined} focusRequestId={initialFocus?.target === "model-access" ? initialFocus.requestId : undefined} onOnboardingComplete={onClose} subtab={tab === "providers" ? "access" : tab === "model-stats" ? "stats" : "usage"} /></SettingsPageShell>}
                 {tab === "bots" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><BotsSection s={s} busy={busy} apply={apply} initialFocus={initialFocus} /></SettingsPageShell>}
                 {tab === "mcp" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><Suspense fallback={lazySettingsPageFallback}><MCPServersSettingsPage /></Suspense></SettingsPageShell>}
                 {tab === "remote" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><Suspense fallback={lazySettingsPageFallback}><RemoteHostsPage /></Suspense></SettingsPageShell>}
@@ -581,6 +581,8 @@ type SectionProps = {
 type ModelsSectionProps = SectionProps & {
   onOpenProviders?: () => void;
   onboarding?: boolean;
+  focusProvider?: string;
+  focusRequestId?: number;
   onOnboardingComplete?: () => void;
   backgroundApply: (fn: () => Promise<void>) => Promise<void>;
   subtab: "usage" | "access" | "stats";
@@ -4101,7 +4103,7 @@ function botDraftWithDerivedGatewayState(draft: BotSettingsView): BotSettingsVie
   };
 }
 
-export function ModelsSection({ s, busy, apply, backgroundApply, subtab, onboarding, onOnboardingComplete, onOpenProviders }: ModelsSectionProps) {
+export function ModelsSection({ s, busy, apply, backgroundApply, subtab, onboarding, focusProvider, focusRequestId, onOnboardingComplete, onOpenProviders }: ModelsSectionProps) {
   const t = useT();
   const autoRefreshKeyRef = useRef("");
   const autoRefreshGenerationRef = useRef(0);
@@ -4550,7 +4552,7 @@ export function ModelsSection({ s, busy, apply, backgroundApply, subtab, onboard
         </div>
       ) : null}
       <div className="model-access-page" hidden={subtab !== "access"}>
-        <ProvidersSection s={s} busy={busy} apply={apply} onboarding={onboarding} onOnboardingComplete={onOnboardingComplete} />
+        <ProvidersSection s={s} busy={busy} apply={apply} onboarding={onboarding} focusProvider={focusProvider} focusRequestId={focusRequestId} onOnboardingComplete={onOnboardingComplete} />
       </div>
       {subtab === "stats" && (
         <Suspense fallback={<div className="empty">{t("settings.loading")}</div>}>
@@ -4740,12 +4742,22 @@ function proxyModeLabel(mode: ProxyMode, t: ReturnType<typeof useT>): string {
   }
 }
 
-export function ProvidersSection({ s, busy, apply, onboarding, onOnboardingComplete }: SectionProps & { onboarding?: boolean; onOnboardingComplete?: () => void }) {
+export function ProvidersSection({ s, busy, apply, onboarding, focusProvider, focusRequestId, onOnboardingComplete }: SectionProps & { onboarding?: boolean; focusProvider?: string; focusRequestId?: number; onOnboardingComplete?: () => void }) {
   const t = useT();
   const existingConnection = s.providers.find(p => p.added);
   const [editing, setEditing] = useState<string | null>(() => onboarding ? existingConnection?.name ?? null : null);
   const [adding, setAdding] = useState<AddProviderMode>(() => onboarding && !existingConnection ? "official" : null);
   const [revealedProvider, setRevealedProvider] = useState<string | null>(() => onboarding ? existingConnection?.name ?? null : null);
+  useEffect(() => {
+    if (!focusProvider) return;
+    if (s.providers.some((provider) => provider.name === focusProvider)) {
+      setRevealedProvider(focusProvider);
+      setEditing(focusProvider);
+    } else {
+      setRevealedProvider(null);
+      setEditing(null);
+    }
+  }, [focusProvider, focusRequestId, s.providers]);
   const readyConnection = s.providers.find(p => p.added && providerIsConfigured(p) && p.models.length > 0);
   const startUsing = async () => {
     if (!readyConnection) return;

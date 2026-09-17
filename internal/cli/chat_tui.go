@@ -327,6 +327,7 @@ type chatTUI struct {
 	// quickPick owns searchable single-choice overlays such as /model and
 	// /provider. It never invokes a raw-mode prompt inside Bubble Tea.
 	quickPick *quickPicker
+	setup     *connectionSetup
 	copyPick  *copyPicker
 	lastEsc   time.Time
 
@@ -1395,6 +1396,9 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.quickPick != nil {
 			return m.handleQuickPickerKey(msg)
 		}
+		if m.setup != nil {
+			return m.handleConnectionSetupKey(msg)
+		}
 		// The MCP manager is modal while open: keys navigate it.
 		if m.mcp != nil {
 			return m.handleMCPManagerKey(msg)
@@ -1959,12 +1963,19 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// p.Send (unbuffered), and the receiver may read them out of order,
 			// garbling the streamed text (words appear reordered).
 		}
+
 		// A /reload queued behind this switch runs now that it settled. On a
 		// failed switch the old controller still serves, so the reload simply
 		// retries against it.
 		if c := m.drainQueuedRuntimeReload(); c != nil {
 			cmds = append(cmds, c)
 		}
+
+	case connectionCredentialSavedMsg:
+		return m, m.handleConnectionCredentialSaved(msg)
+	case connectionCredentialTestedMsg:
+		m.handleConnectionCredentialTested(msg)
+		return m, nil
 
 	case promptResolvedMsg:
 		switch {
@@ -2234,6 +2245,7 @@ func (m chatTUI) bottomRows() int {
 		m.renderMCPImport(),
 		m.renderResumePicker(),
 		m.renderQuickPicker(),
+		m.renderConnectionSetup(),
 		m.renderCopyPicker(),
 		m.renderCompletion(),
 	} {
@@ -2275,7 +2287,7 @@ func (m chatTUI) bottomRows() int {
 // reserve rows for a composer that cannot receive input, leaving a confusing
 // blank/bordered area at the bottom of the TUI.
 func (m chatTUI) hideComposer() bool {
-	if m.mcp != nil || m.clearConfirm != nil || m.mcpImport != nil || m.skillPick != nil || m.resumePick != nil || m.quickPick != nil || m.copyPick != nil || m.rewind != nil || m.pendingApproval != nil {
+	if m.mcp != nil || m.clearConfirm != nil || m.mcpImport != nil || m.skillPick != nil || m.resumePick != nil || m.quickPick != nil || m.setup != nil || m.copyPick != nil || m.rewind != nil || m.pendingApproval != nil {
 		return true
 	}
 	return (m.chooser != nil && !m.chooser.typing) || (m.elicit != nil && !m.elicit.typing)
@@ -3382,6 +3394,10 @@ func (m chatTUI) View() tea.View {
 		parts = append(parts, card)
 		rowsAboveBox += strings.Count(card, "\n") + 1
 	}
+	if card := m.renderConnectionSetup(); card != "" {
+		parts = append(parts, card)
+		rowsAboveBox += strings.Count(card, "\n") + 1
+	}
 	if card := m.renderCopyPicker(); card != "" {
 		parts = append(parts, card)
 		rowsAboveBox += strings.Count(card, "\n") + 1
@@ -4292,6 +4308,9 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		if m.pendingModelSwitch != nil {
 			return m.pendingModelSwitch
 		}
+	case "/setup":
+		m.echoLocalCommand(input)
+		m.openConnectionSetup()
 	case "/skill", "/skills":
 		m.echoLocalCommand(input)
 		m.runSkillSubcommand(input)

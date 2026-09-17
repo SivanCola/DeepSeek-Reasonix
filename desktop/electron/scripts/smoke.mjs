@@ -82,6 +82,7 @@ const shellPid = app.process().pid;
 let exitCode = 1;
 try {
   const page = await app.firstWindow({ timeout: 60_000 });
+  await page.waitForURL("reasonix://app/index.html", { timeout: 60_000 });
   await page.waitForFunction(() => Boolean(window.reasonixDesktop), null, { timeout: 30_000 });
   const contract = await page.evaluate(() => ({
     digest: window.reasonixDesktop.contract.digest,

@@ -3055,6 +3055,32 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/credential_diagnostics_app.go",
+      "name": "CredentialDiagnostics",
+      "owner": "App.CredentialDiagnostics",
+      "params": [
+        {
+          "kind": "boolean"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "config.CredentialDiagnosticReport"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "probe"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.CredentialDiagnostics"
+      },
+      "sources": [
+        "desktop/credential_diagnostics_app.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/app.go",
       "name": "CurrentTaskSessionID",
       "owner": "App.CurrentTaskSessionID",
@@ -10902,6 +10928,32 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/credential_diagnostics_app.go",
+      "name": "RepairCredentials",
+      "owner": "App.RepairCredentials",
+      "params": [
+        {
+          "kind": "boolean"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "config.CredentialDiagnosticReport"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "dryRun"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.RepairCredentials"
+      },
+      "sources": [
+        "desktop/credential_diagnostics_app.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/decision_runtime_api.go",
       "name": "ReplayPendingPromptIdentitiesForTab",
       "owner": "App.ReplayPendingPromptIdentitiesForTab",
@@ -12161,6 +12213,32 @@
       },
       "sources": [
         "desktop/transcript_api.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/authentication_app.go",
+      "name": "RetryAuthenticationForTab",
+      "owner": "App.RetryAuthenticationForTab",
+      "params": [
+        {
+          "kind": "string"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "control.AuthenticationState"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.RetryAuthenticationForTab"
+      },
+      "sources": [
+        "desktop/authentication_app.go"
       ]
     },
     {
@@ -19987,6 +20065,77 @@
         }
       ]
     },
+    "config.CredentialDiagnosticCheck": {
+      "fields": [
+        {
+          "name": "id",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "status",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "path",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "message",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
+    "config.CredentialDiagnosticReport": {
+      "fields": [
+        {
+          "name": "home",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "credentialPath",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "checks",
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "config.CredentialDiagnosticCheck"
+            },
+            "kind": "array"
+          }
+        },
+        {
+          "name": "pendingTransactions",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "actions",
+          "type": {
+            "elem": {
+              "kind": "string"
+            },
+            "kind": "array"
+          }
+        }
+      ]
+    },
     "config.ProviderCatalog": {
       "fields": [
         {
@@ -20070,6 +20219,58 @@
         },
         {
           "name": "responsesMode",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
+    "control.AuthenticationState": {
+      "fields": [
+        {
+          "name": "status",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "providerName",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "modelRef",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "keyEnv",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "httpStatus",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "code",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "message",
           "optional": true,
           "type": {
             "kind": "string"
@@ -36657,6 +36858,17 @@
           "optional": true,
           "type": {
             "kind": "string"
+          }
+        },
+        {
+          "name": "authentication",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "control.AuthenticationState"
+            },
+            "kind": "nullable"
           }
         },
         {

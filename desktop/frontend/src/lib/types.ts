@@ -612,6 +612,15 @@ export interface TabMeta extends RemoteTabMetaFields {
   versionState?: "active" | "pending" | "resolved" | "trashed" | string;
   parentVersionId?: string;
   startupErr?: string;
+  authentication?: {
+    status: "ready" | "missing_credential" | "authentication_rejected" | "credential_store_unavailable" | string;
+    providerName?: string;
+    modelRef?: string;
+    keyEnv?: string;
+    httpStatus?: number;
+    code?: string;
+    message?: string;
+  };
   active: boolean;
   cwd: string;
 }
@@ -1726,6 +1735,14 @@ export interface CapabilityDiagnosticsReport {
     }>;
   };
   issues: CapabilityIssue[];
+}
+
+export interface CredentialDiagnosticReport {
+  home: string;
+  credentialPath: string;
+  pendingTransactions: number;
+  checks: Array<{ id: string; status: "passed" | "failed" | "unknown" | "not_checked" | string; path?: string; message?: string }>;
+  actions: string[];
 }
 
 export interface CapabilityAssetReport {

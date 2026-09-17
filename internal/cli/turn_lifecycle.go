@@ -3,6 +3,7 @@ package cli
 import (
 	"time"
 
+	"reasonix/internal/control"
 	"reasonix/internal/event"
 
 	tea "charm.land/bubbletea/v2"
@@ -35,6 +36,20 @@ func (m *chatTUI) startControllerTurnWithQueue(displayed, restore, queued string
 	if m.takeover != nil && m.takeover.Reclaiming() {
 		m.notice("the remote side is taking this session back; new input is disabled")
 		return nil
+	}
+	if auth, ok := m.ctrl.(interface {
+		AuthenticationState() control.AuthenticationState
+	}); ok {
+		state := auth.AuthenticationState()
+		if !state.Ready() {
+			err := &control.AuthenticationError{State: state}
+			m.notice(err.Error())
+			if m.input.Value() == "" {
+				m.input.SetValue(restore)
+				m.growInputToFit()
+			}
+			return nil
+		}
 	}
 	// The composer can read idle while the controller already runs a
 	// dispatched queued follow-up (TurnStarted not yet ingested): queue rather
