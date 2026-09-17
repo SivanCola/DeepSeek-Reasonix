@@ -9,6 +9,7 @@ import type { RemoteSessionApi } from "../lib/useRemoteSession";
 import type { Translator } from "../lib/i18n";
 import type { ForkBlockReason } from "../lib/forkTargets";
 import type { SessionAvailability } from "../lib/sessionAvailability";
+import { orderedLocalSubmissions } from "../lib/localSubmissionState";
 
 const RemoteSessionSurface = lazy(() => import("../components/RemoteSessionSurface").then((module) => ({ default: module.RemoteSessionSurface })));
 const SidebarImConnectionDetail = lazy(() => import("./SidebarImConnectionDetail").then((module) => ({ default: module.SidebarImConnectionDetail })));
@@ -83,7 +84,8 @@ export function ChatPaneRegion(props: ChatPaneRegionProps) {
     return <Suspense fallback={null}><RemoteSessionSurface tab={props.remote.tab} session={props.remote.session}
       surfaceCommitToken={transcript.surfaceCommitToken} onSurfacePaintReady={commands.onSurfacePaintReady} /></Suspense>;
   }
-  const recoveringEmpty = !transitioning && transcript.availability.kind !== "ready" && transcript.items.length === 0
+  const localSubmissions = orderedLocalSubmissions(state);
+  const recoveringEmpty = !transitioning && transcript.availability.kind !== "ready" && transcript.items.length === 0 && localSubmissions.length === 0
     && !state.live?.text && !state.live?.reasoning;
   return (
     <>
@@ -114,6 +116,9 @@ export function ChatPaneRegion(props: ChatPaneRegionProps) {
             >
               {recoveringEmpty ? <SessionRecoveryPlaceholder availability={transcript.availability} /> : <Transcript
                 items={transcript.items}
+                localSubmissions={localSubmissions}
+                localSubmissionSendRevision={state.localSubmissionSendRevision}
+                visibleSubmissionHandoffs={state.visibleSubmissionHandoffs}
                 live={transitioning ? undefined : state.live}
                 liveStore={transcript.liveStore}
                 tabId={transcript.tabId}

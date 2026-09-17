@@ -618,6 +618,21 @@ jobs:
             --pnpm-version "$(pnpm --version)"
       - name: Install browser runtimes
         run: PLAYWRIGHT_BROWSERS_PATH=.pw-browsers pnpm --dir frontend exec playwright install --with-deps chromium
+      - name: Install isolated native input driver
+        if: matrix.group == 'transcript'
+        run: sudo apt-get update && sudo apt-get install -y xdotool
+      - name: Test submission handoff in Chromium
+        if: matrix.group == 'transcript'
+        timeout-minutes: 4
+        env:
+          REASONIX_HANDOFF_EVIDENCE: ${{ runner.temp }}/desktop-browser/transcript/submission-chromium
+        run: pnpm --dir frontend test:submission-browser
+      - name: Test submission handoff with native Electron input
+        if: matrix.group == 'transcript'
+        timeout-minutes: 4
+        env:
+          REASONIX_HANDOFF_EVIDENCE: ${{ runner.temp }}/desktop-browser/transcript/submission-electron
+        run: xvfb-run -a pnpm --dir frontend test:submission-electron --native-input
       - name: Test desktop browser group
         env:
           BROWSER_GROUP: ${{ matrix.group }}

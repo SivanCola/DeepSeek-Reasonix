@@ -624,10 +624,10 @@ await act(async () => {
   await flushPromises();
 });
 eq(controller?.activeTabId, "tab-c", "switching to a cached running tab still updates the active tab");
-ok(controller?.state.items.some((item) => item.kind === "user" && item.text === "streaming C") ?? false, "cached running tab keeps its optimistic transcript");
-const tabCUser = controller?.state.items.find((item) => item.kind === "user" && item.text === "streaming C");
-eq(tabCUser?.kind === "user" && tabCUser.submissionId, tabCSubmissionId, "the backend receives the same opaque correlation stored on the optimistic user");
-ok(Boolean(tabCSubmissionId) && tabCSubmissionId !== tabCUser?.id, "opaque submission correlation is distinct from the render item id");
+const tabCUser = Object.values(controller?.state.localSubmissions ?? {}).find((submission) => submission.text === "streaming C");
+ok(Boolean(tabCUser), "cached running tab keeps its optimistic transcript");
+eq(tabCUser?.submissionId, tabCSubmissionId, "the backend receives the same opaque correlation stored on the local submission");
+ok(Boolean(tabCSubmissionId) && tabCSubmissionId !== tabCUser?.localId, "opaque submission correlation is distinct from the presentation item id");
 ok(historyCalls.includes("tab-c"), "a running tab with no history page of its own still hydrates one");
 await act(async () => {
   submitTabCGate.resolve();

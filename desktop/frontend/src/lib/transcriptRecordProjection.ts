@@ -49,6 +49,17 @@ export function convertRecord(
   consumed: Set<string>,
   priorMatches?: Map<number, string>,
 ): RecordConversion {
+  const converted = convertRecordBody(rec, view, consumed, priorMatches);
+  if (rec.message.turnId) converted.items = converted.items.map(item => ({ ...item, turnId: rec.message.turnId }));
+  return converted;
+}
+
+function convertRecordBody(
+  rec: TranscriptRecord,
+  view: { records: TranscriptRecord[]; indexOf: Map<string, number>; toolResultOwners: Map<string, string> },
+  consumed: Set<string>,
+  priorMatches?: Map<number, string>,
+): RecordConversion {
   const items: Item[] = [];
   const claims: string[] = [];
   const unresolvedIds: string[] = [];

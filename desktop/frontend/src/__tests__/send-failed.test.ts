@@ -52,20 +52,20 @@ eq(acceptsRuntimeEventEpoch(undefined, "e1"), true, "first runtime epoch can est
 eq(acceptsRuntimeEventEpoch("e2", undefined), true, "legacy events remain compatible");
 
 const sent = reducer({ ...initialState }, { type: "user", text: "hello", seq: 0, submissionId: "send-0" });
-eq(sent.items.length, 1, "submit appends the user bubble immediately");
-eq(sent.items[0].kind === "user" && sent.items[0].text, "hello", "bubble carries the submitted text");
+eq(sent.items.length, 0, "submit keeps the optimistic bubble out of durable transcript items");
+eq(sent.localSubmissions["send-0"]?.text, "hello", "local bubble carries the submitted text");
 eq(sent.running, true, "submit marks the turn running");
 eq(sent.pendingUser, "hello", "submit tracks the optimistic bubble");
 
 const hiddenSubmit = reducer({ ...initialState }, { type: "user", text: "display prompt", submitText: "hidden context\ndisplay prompt", seq: 0, submissionId: "hidden-0" });
 eq(
-  hiddenSubmit.items[0].kind === "user" && hiddenSubmit.items[0].submitText,
+  hiddenSubmit.localSubmissions["hidden-0"]?.submitText,
   "hidden context\ndisplay prompt",
   "optimistic user bubble preserves submit-only context",
 );
 
 const confirmed = reducer(sent, { type: "event", e: { kind: "turn_done", submissionId: "send-0" } as WireEvent });
-eq(confirmed.items.filter((it) => it.kind === "user").length, 1, "matching TurnDone confirms without duplicating");
+eq(confirmed.localSubmissions["send-0"]?.status, "accepted", "matching TurnDone confirms the local bubble without duplicating");
 eq(confirmed.pendingUser, undefined, "matching submission id clears the pending marker");
 
 const memoryCitationMessage = {
@@ -74,7 +74,8 @@ const memoryCitationMessage = {
 } as WireEvent;
 const started = reducer(sent, { type: "event", e: { kind: "turn_started" } as WireEvent });
 const citationOnlyFinal = reducer(started, { type: "event", e: memoryCitationMessage });
-eq(citationOnlyFinal.items.length, 1, "memory citations alone do not leave an empty assistant bubble");
+eq(citationOnlyFinal.items.length, 0, "memory citations alone do not add durable transcript rows");
+eq(citationOnlyFinal.localSubmissionOrder.length, 1, "memory citations leave the local user echo visible");
 eq(citationOnlyFinal.items.some((it) => it.kind === "assistant"), false, "memory citations alone stay hidden from the transcript");
 const textThenCitationFinal = reducer(reducer(started, { type: "event", e: { kind: "text", text: "done" } as WireEvent }), { type: "event", e: memoryCitationMessage });
 const citedAssistant = textThenCitationFinal.items.find((it) => it.kind === "assistant");
@@ -82,8 +83,8 @@ eq(citedAssistant?.kind === "assistant" && citedAssistant.text, "done", "memory 
 eq(citedAssistant?.kind === "assistant" && citedAssistant.memoryCitations?.length, 1, "memory citations attach to real assistant content");
 
 const failedState = reducer(sent, { type: "send_failed", submissionId: "send-0", error: "Send failed: bridge unavailable" });
-const failedBubble = failedState.items.find((it) => it.kind === "user");
-eq(failedBubble?.kind === "user" && failedBubble.failed, true, "send_failed marks the bubble failed");
+const failedBubble = failedState.localSubmissions["send-0"];
+eq(failedBubble?.status, "failed", "send_failed marks the bubble failed");
 const notice = failedState.items[failedState.items.length - 1];
 eq(notice.kind, "notice", "send_failed appends a notice");
 eq(notice.kind === "notice" && notice.level, "warn", "the notice is a warning");
@@ -104,7 +105,7 @@ const rejectedCollision = reducer(collidingSubmit, {
   submissionId: "send-collision",
   error: "Send failed: turn already running",
 });
-eq(rejectedCollision.items.some((item) => item.kind === "user" && item.failed), true, "rejected admission marks the exact optimistic bubble failed");
+eq(rejectedCollision.localSubmissions["send-collision"]?.status, "failed", "rejected admission marks the exact optimistic bubble failed");
 eq(rejectedCollision.running, true, "rejected admission stays conservatively running until reconciliation");
 eq(rejectedCollision.pendingPrompt, true, "rejected admission restores the visible Ask gate");
 eq(rejectedCollision.ask?.id, "ask-existing", "rejected admission preserves the pending Ask");
@@ -262,12 +263,7 @@ eq(mcpReady, beforeMcpReady, "mcp_surface_ready is accepted as a deliberate no-o
 const pendingMcpReady = reducer(sent, { type: "event", e: { kind: "mcp_surface_ready" } as WireEvent });
 eq(pendingMcpReady, sent, "mcp_surface_ready does not confirm a pending submit");
 const failedAfterMcpReady = reducer(pendingMcpReady, { type: "send_failed", submissionId: "send-0", error: "Send failed: bridge unavailable" });
-const failedAfterMcpReadyBubble = failedAfterMcpReady.items.find((it) => it.kind === "user");
-eq(
-  failedAfterMcpReadyBubble?.kind === "user" && failedAfterMcpReadyBubble.failed,
-  true,
-  "send_failed still marks a pending submit after mcp readiness",
-);
+eq(failedAfterMcpReady.localSubmissions["send-0"]?.status, "failed", "send_failed still marks a pending submit after mcp readiness");
 
 const here = dirname(fileURLToPath(import.meta.url));
 const appSource = readFileSync(resolve(here, "../AppRuntime.tsx"), "utf8");

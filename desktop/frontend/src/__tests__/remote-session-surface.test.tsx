@@ -1,3 +1,4 @@
+import { verifyRemoteSubmissionLifecycle, verifyRemoteSubmissionTabIsolation } from "./helpers/remoteSubmissionLifecycle";
 import React, { act } from "react";
 import { RemoteNavigationHarness } from "./helpers/RemoteNavigationHarness";
 import { JSDOM } from "jsdom";
@@ -55,6 +56,7 @@ Object.defineProperty(elementProto, "detachEvent", { configurable: true, value: 
 const tape: string[] = [];
 let failApproval = false;
 let failOpen = false;
+let submitError: Error | undefined;
 let failHydration = true;
 let statusGoalStatus: "stopped" | "complete" = "stopped";
 let statusQualityFloor: "standard" | "delivery" = "standard";
@@ -151,6 +153,7 @@ const desktopStub = installDesktopHostStub(({ main: { App: {
   async ReplayRemoteTabPrompts(tabId: string) { tape.push(`replay-prompts:${tabId}`); return replayedPrompts; },
   async SubmitRemoteTab(tabId: string, text: string) {
     tape.push(`submit:${tabId}:${text}`);
+    if (submitError) throw submitError;
   },
   async CancelRemoteTab(tabId: string) {
     tape.push(`cancel:${tabId}`);
@@ -582,7 +585,8 @@ await act(async () => {
 blockAnswer = false;
 ok(probe?.transcript.ask?.id === "ask-next", "an answered ask cannot clear the next prompt");
 await act(async () => { await probe?.submit("run tests"); await flush(); });
-ok(Boolean(probe?.transcript.items.some((item) => item.kind === "user" && item.text === "run tests")), "submit adds the optimistic user bubble through the shared reducer");
+ok(Boolean(Object.values(probe?.transcript.localSubmissions ?? {}).some((submission) => submission.text === "run tests")), "submit adds the optimistic user bubble through the shared reducer");
+await verifyRemoteSubmissionLifecycle(() => probe, error => { submitError = error; }, tape, flush, ok);
 await act(async () => { await probe?.runManagementCommand("/context"); await flush(); });
 ok(tape.includes("submit:tab-remote-2:/context") && tape.includes("status:tab-remote-2"),
   "management commands dispatch without conversational admission and refresh status");
@@ -651,6 +655,7 @@ ok(tape.some((entry) => entry.startsWith("fork-create:tab-remote-2:turn-3:")),
   "remote forking creates the child through the create-only endpoint");
 ok(!tape.some((entry) => entry.startsWith("fork:tab-remote-2")),
   "remote forking never reaches the route that switches the parent session");
+await verifyRemoteSubmissionTabIsolation(() => probe, tabId => probeRoot.render(<LocaleProvider><HookProbe tabId={tabId} /></LocaleProvider>), flush, ok);
 await act(async () => {
   probeRoot.render(<LocaleProvider><HookProbe tabId="tab-pending-model" /></LocaleProvider>);
   await Promise.resolve();
