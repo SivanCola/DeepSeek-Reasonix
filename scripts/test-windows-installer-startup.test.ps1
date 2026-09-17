@@ -43,6 +43,7 @@ function Get-ItemProperty {
   return [pscustomobject]@{ DisplayVersion = $script:version.Substring(1); InstallLocation = $script:installRoot }
 }
 function Assert-IsolatedEnvironment([string]$HomePath) {
+  $HomePath = [IO.Path]::GetFullPath($HomePath)
   Assert-Equal $env:REASONIX_HOME $HomePath
   Assert-Equal $env:REASONIX_STATE_HOME $HomePath
   Assert-Equal $env:REASONIX_CACHE_HOME (Join-Path $HomePath 'cache')
@@ -247,7 +248,7 @@ try {
 
   # Nested scopes restore the outer isolated home, then the original caller.
   New-TestCase
-  $outerHome = Join-Path $script:testRoot 'outer-home'
+  $outerHome = Join-Path $script:testRoot 'unused\..\outer-home'
   $outerEnvironment = Enter-WindowsAcceptanceEnvironment -DataHome $outerHome
   try {
     $innerEnvironment = Enter-WindowsAcceptanceEnvironment -DataHome (Join-Path $script:testRoot 'inner-home')
