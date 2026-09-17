@@ -1326,8 +1326,7 @@ jobs:
     needs: [changes, desktop-prepare]
     if: ${{ !cancelled() && needs.desktop-prepare.result == 'success' && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.packaging != 'false') }}
     runs-on: windows-latest
-    # Packaging measured 13m55s; the overhead benchmark and its workspace
-    # install add about six more. Bound hangs, not duration.
+    # Bound packaging hangs; diagnostic measurement has its own workflow.
     timeout-minutes: 45
     defaults:
       run:
@@ -1424,28 +1423,6 @@ jobs:
             !${{ runner.temp }}/reasonix-installer-acceptance/**/cache/**
           if-no-files-found: ignore
           retention-days: 7
-
-      # The benchmark records evidence but asserts no product threshold.
-      # Keep its five-minute measurement on pushes, outside PR qualification.
-      - name: Install the Electron workspace
-        if: github.event_name != 'pull_request'
-        run: pnpm install --frozen-lockfile
-
-      - name: Measure Electron diagnostic overhead
-        if: github.event_name != 'pull_request'
-        timeout-minutes: 10
-        run: node electron/scripts/performance-benchmark.mjs
-
-      - name: Upload diagnostic benchmark evidence
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: diagnostic-overhead-windows
-          if-no-files-found: ignore
-          retention-days: 7
-          path: |
-            desktop/electron/artifacts/performance/overhead.json
-            desktop/electron/artifacts/performance/diagnostic-report.png
 
   ci-metrics:
     needs: [desktop, desktop-macos, desktop-windows, desktop-windows-go, desktop-windows-package]

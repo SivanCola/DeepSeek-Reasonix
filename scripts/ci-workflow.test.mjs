@@ -40,8 +40,16 @@ test("packaging changes run native installer acceptance before merge", () => {
   assert.match(job(ci, "desktop-prepare"), /REASONIX_COMMIT: \$\{\{ github.sha \}\}/,
     "prepared frontend must budget the full source identity used by native packaging");
   const body = job(ci, "desktop-windows-package");
-  for (const name of ["Install the Electron workspace", "Measure Electron diagnostic overhead"])
-    assert.match(body.split(`      - name: ${name}\n`)[1], /^        if: github.event_name != 'pull_request'\n/);
+  assert.doesNotMatch(ci, /performance-benchmark\.mjs/);
+  const diagnostic = workflow("diagnostic-overhead");
+  assert.match(diagnostic, /schedule:/);
+  assert.match(diagnostic, /workflow_dispatch:/);
+  assert.match(diagnostic, /desktop\/electron\/\*\*/);
+  assert.match(diagnostic, /desktop\/frontend\/\*\*/);
+  assert.match(diagnostic, /run: pnpm install --frozen-lockfile/);
+  assert.match(diagnostic, /run: node electron\/scripts\/performance-benchmark\.mjs/);
+  assert.match(diagnostic, /if-no-files-found: error/);
+  assert.doesNotMatch(diagnostic, /continue-on-error/);
   for (const event of ["pull_request", "push"]) {
     for (const packaging of ["true", "false", ""]) {
       const context = { github: { event_name: event }, needs: {
