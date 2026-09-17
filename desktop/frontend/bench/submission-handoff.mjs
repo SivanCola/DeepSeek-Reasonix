@@ -85,7 +85,14 @@ try {
     assert.equal(sample.ids.includes("m:sent-0"), false);
     if (round === 0) {
       report.actions.push("reader-wheel", "offscreen-submit", "offscreen-record");
-      if (nativeInput) report.nativeInput = await verifyNativeReaderInput(page);
+      if (nativeInput) {
+        report.nativeInput = {};
+        try { await verifyNativeReaderInput(page, report.nativeInput); }
+        catch (error) {
+          await page.screenshot({ path: path.join(evidence, "native-input-failure.png") });
+          throw error;
+        }
+      }
       else {
         await page.locator(".chat-flow-scroll").hover();
         await page.mouse.wheel(0, -300);

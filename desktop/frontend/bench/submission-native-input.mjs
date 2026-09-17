@@ -3,7 +3,8 @@ import { execFileSync } from "node:child_process";
 
 // XTest input targets only the disposable Electron window in an isolated Xvfb
 // display. It must never run against the developer's active desktop session.
-export async function verifyNativeReaderInput(page) {
+export async function verifyNativeReaderInput(page, evidence = {}) {
+  evidence.status = "running";
   assert.equal(process.platform, "linux");
   assert.ok(process.env.DISPLAY, "native input requires an isolated Xvfb display");
   const xdo = (...args) => execFileSync("xdotool", args.map(String), { encoding: "utf8" }).trim();
@@ -18,6 +19,10 @@ export async function verifyNativeReaderInput(page) {
     window.nativeSamples = [];
     window.nativeSampling = true;
     window.nativePhase = "position";
+    window.nativePointerEvents = [];
+    for (const type of ["pointerdown", "pointerup", "pointermove"]) el.addEventListener(type, event => {
+      window.nativePointerEvents.push({ type, x: event.clientX, y: event.clientY, buttons: event.buttons, target: event.target === el });
+    });
     const sample = () => {
       const box = el.getBoundingClientRect();
       const rows = [...el.querySelectorAll("[data-chat-kind]")];
@@ -40,6 +45,7 @@ export async function verifyNativeReaderInput(page) {
     await page.waitForFunction(before => document.querySelector(".chat-flow-scroll").scrollTop < before - 50, beforeWheel);
     await frame();
     const afterWheel = await top();
+    evidence.wheel = { before: beforeWheel, after: afterWheel };
     await scroll.evaluate(el => el.focus());
     const beforeKeyboard = await top();
     await page.evaluate(() => { window.nativePhase = "keyboard"; });
@@ -47,6 +53,7 @@ export async function verifyNativeReaderInput(page) {
     await page.waitForFunction(before => document.querySelector(".chat-flow-scroll").scrollTop < before - 50, beforeKeyboard);
     await frame();
     const afterKeyboard = await top();
+    evidence.keyboard = { before: beforeKeyboard, after: afterKeyboard };
     await page.evaluate(() => { window.nativePhase = "position"; });
     xdo("key", "--clearmodifiers", "End");
     await page.waitForFunction(() => { const el = document.querySelector(".chat-flow-scroll"); return el.scrollHeight - el.clientHeight - el.scrollTop <= 1; });
@@ -56,6 +63,7 @@ export async function verifyNativeReaderInput(page) {
       return { x: box.right - gutter / 2, y: box.bottom - gutter - thumb / 2, to: box.top + box.height / 2, gutter, top: el.scrollTop };
     });
     assert.ok(track.gutter > 0, "native scrollbar must be exposed");
+    evidence.track = track;
     await page.evaluate(() => { window.nativePhase = "scrollbar"; });
     xdo("mousemove", "--window", windowId, Math.round(track.x), Math.round(track.y));
     xdo("mousedown", 1);
@@ -76,8 +84,15 @@ export async function verifyNativeReaderInput(page) {
       sample.phase !== "position" && sample.phase === samples[index].phase ? sample.top - samples[index].top : 0));
     assert.equal(blankFrames, 0, "native input must not expose blank transcript frames");
     assert.ok(extent.max - extent.final <= Math.max(96, samples.at(-1).viewport * 0.5), "native input must not collapse the scroll range");
-    return { status: "passed", method: "X11 XTest through xdotool", wheel: { before: beforeWheel, after: afterWheel },
+    return Object.assign(evidence, { status: "passed", method: "X11 XTest through xdotool", wheel: { before: beforeWheel, after: afterWheel },
       keyboard: { before: beforeKeyboard, after: afterKeyboard }, scrollbar: { before: track.top, after: await top(), gutter: track.gutter },
-      extent, blankFrames, reverseDisplacement, samples };
-  } finally { await page.evaluate(() => { window.nativeSampling = false; }); }
+      extent, blankFrames, reverseDisplacement, samples });
+  } finally {
+    Object.assign(evidence, await page.evaluate(() => {
+      window.nativeSampling = false;
+      return { samples: window.nativeSamples, pointerEvents: window.nativePointerEvents, screen: {
+        innerWidth, innerHeight, outerWidth, outerHeight, devicePixelRatio, screenX, screenY,
+      } };
+    }));
+  }
 }
