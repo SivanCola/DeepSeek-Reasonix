@@ -46,4 +46,3 @@ export async function readCanonicalHistoryWindow(tabId: string, req: HistoryWind
     digest: page.generation ?? "",
   };
 }
-

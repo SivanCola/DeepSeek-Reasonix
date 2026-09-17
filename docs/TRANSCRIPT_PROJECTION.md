@@ -58,6 +58,10 @@ a different snapshot owner clears echoes and handoffs and advances the session
 generation. Remote callbacks read the state owned by their tab, never another
 tab's last rendered state.
 
+History window and body I/O load on demand. Their routing identity is captured
+before the deferred import, and Store generation checks still discard stale
+completions. This keeps startup bytes within the existing bundle budget.
+
 `bench/submission-handoff.mjs` exercises the real follower, bounded Store, reducer,
 Composer, and Transcript using 1,000 deterministic turns and 20 paging round trips.
 Run it with `--electron` for the isolated Electron host. Its JSON evidence includes

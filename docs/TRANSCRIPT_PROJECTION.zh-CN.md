@@ -39,6 +39,9 @@ RPC 接受、失败和未知结果属于本地提交，运行态另由请求归�
 同一正式会话 ID 的恢复快照保留未结算回显；快照所属会话改变时清理回显与交接映射，
 并推进会话 generation。远程回调始终读取所属标签的状态，不能沿用上一个标签的渲染状态。
 
+历史窗口和正文读取按需加载，在异步模块加载前捕获路由身份，Store 的 generation
+检查继续丢弃失效结果。首屏代码保持在原有包体预算内。
+
 `bench/submission-handoff.mjs` 用 1,000 轮确定性历史和 20 次往返分页，验证真实
 follower、有界 Store、reducer、Composer 与 Transcript；增加 `--electron` 可在
 隔离的 Electron 宿主执行。JSON 记录节点连续性、浏览器原生选择、阅读位置偏移、
