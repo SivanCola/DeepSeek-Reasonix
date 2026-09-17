@@ -90,7 +90,7 @@ func uriToPathForOS(uri, goos string) (string, error) {
 	if goos == "windows" {
 		return strings.ReplaceAll(p, "/", `\`), nil
 	}
-	return filepath.FromSlash(p), nil
+	return p, nil
 }
 
 // locate finds symbol on the 1-based line of content and returns the LSP position
