@@ -117,7 +117,7 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
     }
     if (m.role === "user") {
       if (m.content.trim() === "") continue;
-      items.push({ kind: "user", id: m.messageId ? `m:${m.messageId}` : recordItemId, messageId: m.messageId, submissionId: m.submissionId, text: m.content, submitText: m.submitText, createdAt: m.createdAt, checkpointTurn: m.checkpointTurn, historyTurn: m.historyTurn });
+      items.push({ kind: "user", id: m.messageId ? `m:${m.messageId}` : recordItemId, messageId: m.messageId, submissionId: m.submissionId, turnId: m.turnId, text: m.content, submitText: m.submitText, createdAt: m.createdAt, checkpointTurn: m.checkpointTurn, historyTurn: m.historyTurn });
       seq++;
       continue;
     }
@@ -135,6 +135,7 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
         serverSearch: m.serverSearch,
       });
       for (const item of built) {
+        item.turnId = m.turnId;
         if (item.kind === "assistant") { item.id = messageItemId ?? `${idPrefix}${seq}`; item.streaming = Boolean(m.pending); }
         items.push(item);
         seq++;

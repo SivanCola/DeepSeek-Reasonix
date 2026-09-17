@@ -611,6 +611,9 @@ jobs:
             --pnpm-version "$(pnpm --version)"
       - name: Install browser runtimes
         run: PLAYWRIGHT_BROWSERS_PATH=.pw-browsers pnpm --dir frontend exec playwright install --with-deps chromium
+      - name: Install isolated native input driver
+        if: matrix.group == 'transcript'
+        run: sudo apt-get update && sudo apt-get install -y xdotool
       - name: Test desktop browser group
         env:
           BROWSER_GROUP: ${{ matrix.group }}
@@ -626,6 +629,9 @@ jobs:
               pnpm --dir frontend test:motion-browser
               ;;
             transcript)
+              REASONIX_HANDOFF_EVIDENCE="$evidence/submission-chromium" pnpm --dir frontend test:submission-browser
+              xvfb-run -a env REASONIX_HANDOFF_EVIDENCE="$evidence/submission-electron" \
+                pnpm --dir frontend test:submission-electron --native-input
               xvfb-run -a env PLAYWRIGHT_BROWSERS_PATH=.pw-browsers REASONIX_TRANSCRIPT_NATIVE_THUMB=1 \
                 REASONIX_TRANSCRIPT_MODE=native-scrollbar REASONIX_LAYOUT_ARTIFACTS="$evidence/native-scrollbar" \
                 pnpm --dir frontend test:transcript-browser

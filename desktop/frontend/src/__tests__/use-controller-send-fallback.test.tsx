@@ -178,7 +178,7 @@ await act(async () => {
 
 eq(controller?.activeTabId, "tab-send", "send fallback activates the backend-selected tab");
 eq(controller?.state.backgroundJobs, 2, "send fallback reconciles backend runtime metadata");
-ok(controller?.state.items.some((item) => item.kind === "user" && item.text === "hello from fallback") ?? false, "send fallback keeps the optimistic user turn");
+ok(Object.values(controller?.state.localSubmissions ?? {}).some((submission) => submission.text === "hello from fallback"), "send fallback keeps the optimistic user turn");
 eq(submitCalls, 1, "send fallback submits to the activated tab");
 
 await act(async () => {
@@ -242,7 +242,7 @@ await act(async () => {
   await flushPromises();
   await flushPromises();
 });
-eq(controller?.state.items.some((item) => item.kind === "user" && item.text === "continue while prompt is pending" && item.failed), true, "colliding submit marks its optimistic bubble failed");
+eq(Object.values(controller?.state.localSubmissions ?? {}).some((submission) => submission.text === "continue while prompt is pending" && submission.status === "failed"), true, "colliding submit marks its optimistic bubble failed");
 eq(controller?.state.ask?.id, "ask-retry", "colliding submit preserves the pending Ask");
 eq(controller?.state.running, true, "active backend snapshot keeps the composer blocked after rejection");
 eq(controller?.state.pendingPrompt, true, "active backend snapshot restores the prompt gate after rejection");

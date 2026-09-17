@@ -1,6 +1,7 @@
 // useController is the frontend's state machine over the agent event stream. It keeps
 // per-tab output, tool state, and approvals while the user switches tabs; components
 // render the active tab's state.
+import { resetTurnTiming, confirmPendingUser, installTranscriptRecords, startLocalSubmission, submissionBindingCurrent } from "./submissionReducer";
 import { runtimeStatusSnapshotIsStale } from "./runtimeStatusFreshness";
 import { useRuntimeSession } from "./useRuntimeState";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -21,6 +22,15 @@ import { mergeRateBand, type AggregatedRateBand } from "./costRateBand";
 import { requestSessionCancel, type CancelOutcome } from "./inboxCancel";
 import { answerPromptForActiveTurn, normalizeTurnSubmit, resolveActiveTurnId, resolvePromptForTab } from "./inboxSubmit";
 import { findTabAfterSubmitFailure, reduceManagementConfirmation, reduceSubmitFailure } from "./turnSubmissionFailure";
+import {
+  checkpointLocalSubmission,
+  settleLocalSubmissions,
+  updateLocalSubmission,
+  canonicalUserConfirmations,
+  isUnknownSubmissionError,
+  type CanonicalUserConfirmation,
+  type LocalSubmission,
+} from "./localSubmissionState";
 import { formatContextMaintenanceNotice, isNewMaintenanceOperation, rememberMaintenanceOperation } from "./contextMaintenanceTypes";
 import { formatGuardianAssessmentNotice } from "./guardianEvents";
 import { normalizeCompletionSummary } from "./completionSummary";
@@ -306,7 +316,7 @@ type ModelSwitchQueueState = {
 };
 
 export type TurnPhaseName = "working" | "checking" | "verifying" | "reviewing" | string;
-export type Item =
+export type Item = { turnId?: string } & (
   | { kind: "user"; id: string; messageId?: string; submissionId?: string; submissionState?: "sending" | "confirmed" | "failed" | "unknown"; text: string; submitText?: string; failed?: boolean; createdAt?: number; checkpointTurn?: number; historyTurn?: number }
   | { kind: "assistant"; id: string; text: string; reasoning: string; streaming: boolean; turnFinal?: boolean; samplingCount?: number; toolCount?: number; wasStreamed?: true; reasoningComplete?: boolean; reasoningDurationMs?: number; workDurationMs?: number; turnDurationMs?: number; turnUsage?: TurnUsage; tokensPerSecond?: number; createdAt?: number; memoryCitations?: MemoryCitation[]; searchSources?: SearchSource[] }
   | { kind: "phase"; id: string; text: string }
@@ -358,7 +368,7 @@ export type Item =
       surfaceId: string;
       generation?: number;
       card: WireExtensionCard;
-    };
+    });
 
 type ToolItem = Extract<Item, { kind: "tool" }>;
 export type ExtensionItem = Extract<Item, { kind: "extension" }>;
@@ -424,11 +434,19 @@ export interface State extends ReadStatusHost, ForkTurnState {
   /** Active sample overlay while the reader owns an older contiguous window. */
   offscreenItems?: Item[];
   transcriptProtocol?: 1 | 2;
+  /** Authoritative snapshot owner; reconnects retain it, rebinding replaces it. */
+  transcriptSessionId?: string;
   transcriptRuntime?: import("../generated/desktopContract.generated").Runtime;
   transcriptConnection?: "syncing" | "connected" | "disconnected";
   transcriptConnectionError?: string;
   transcriptItemOrder?: Record<string, number>;
   items: Item[];
+  /** Browser-owned prompt echoes. Durable transcript rows never live here. */
+  localSubmissions: Record<string, LocalSubmission>;
+  visibleSubmissionHandoffs: Record<string, { submissionId: string }>;
+  localSubmissionOrder: string[];
+  /** Advances only for an explicit user send, never for history reconciliation. */
+  localSubmissionSendRevision: number;
   /** Exact backend-owned turn targeted by Stop/Ask. */
   activeTurnId?: string;
   running: boolean;
@@ -597,6 +615,10 @@ type NavigationSourceSnapshot = {
 };
 export const initialState: State = {
   items: [],
+  localSubmissions: {},
+  visibleSubmissionHandoffs: {},
+  localSubmissionOrder: [],
+  localSubmissionSendRevision: 0,
   running: false,
   turnActive: false,
   pendingPrompt: false,
@@ -798,7 +820,8 @@ export { isBatchedReadOnlyTool } from "./searchTranscript";
 export type Action =
   | { type: "transcript_connection"; status: "syncing" | "connected" | "disconnected"; error?: string }
   | { type: "transcript_v2_snapshot"; snapshot: TranscriptSnapshot; projection: import("./transcriptStore").TranscriptProjection; remote?: boolean }
-  | { type: "transcript_records"; projection: import("./transcriptStore").AppendEntriesResult }
+  | { type: "transcript_records"; projection: import("./transcriptStore").AppendEntriesResult; confirmedUsers: readonly CanonicalUserConfirmation[] }
+  | { type: "submission_verified"; submissionId: string; messageId: string }
   | { type: "transcript_runtime"; runtime: import("../generated/desktopContract.generated").Runtime }
   | { type: "event"; e: WireEvent; remote?: boolean }
   | { type: "stream_batch"; segments: StreamSegment[] }
@@ -966,32 +989,6 @@ function endPromptWaitIfIdle(s: State, now = Date.now()): State {
   return endPromptWait(s, now);
 }
 
-function resetTurnTiming(now = Date.now()): Pick<State, "turnStartAt" | "turnDoneAt" | "turnWaitAccumMs" | "promptWaitStartedAt" | "turnTokens" | "turnTotalTokens" | "turnUsage" | "turnOutputTokens" | "turnOutputChars" | "turnOutputCharsAtUsage" | "turnOutputEstimated" | "turnModelActiveAt" | "turnModelActiveMs" | "turnCost" | "turnRateBand" | "turnArgChars" | "pendingRequestModelMs"> {
-  return {
-    turnStartAt: now,
-    turnDoneAt: 0,
-    turnWaitAccumMs: 0,
-    promptWaitStartedAt: undefined,
-    turnTokens: 0,
-    turnTotalTokens: 0,
-    turnUsage: undefined,
-    turnOutputTokens: 0,
-    turnOutputChars: 0,
-    turnOutputCharsAtUsage: 0,
-    turnOutputEstimated: false,
-    turnModelActiveAt: undefined,
-    turnModelActiveMs: 0, pendingRequestModelMs: undefined,
-    turnCost: 0,
-    turnRateBand: undefined,
-    turnArgChars: 0,
-  };
-}
-
-function confirmPendingUser(s: State, submissionId: string | undefined): State {
-  if (!submissionId || s.pendingSubmissionId !== submissionId) return s;
-  return { ...s, pendingUser: undefined, pendingSubmissionId: undefined,
-    items: s.items.map(item => item.kind === "user" && item.submissionId === submissionId ? { ...item, submissionState: "confirmed", failed: false } : item) };
-}
 
 function beginTurnModelActivity(s: State, now = Date.now()): State {
   return s.turnModelActiveAt && s.turnModelActiveAt > 0
@@ -1288,13 +1285,26 @@ function applyEvent(s: State, e: WireEvent, preserveToolPayloads = false): State
   if (e.kind === "user_message") {
 	if (e.source && e.source !== "executor") return s;
     if (!e.messageId) return s;
+    if (s.transcriptProtocol === 2) {
+      const local = e.submissionId ? s.localSubmissions[e.submissionId] : undefined;
+      if (local?.messageId && local.messageId !== e.messageId) {
+        recordFrontendDiagnostic("transcript", "submission.identity-conflict", {
+          submissionId: e.submissionId, boundMessageId: local.messageId, incomingMessageId: e.messageId,
+        });
+        return s;
+      }
+      return settleLocalSubmissions(updateLocalSubmission(s, e.submissionId, { messageId: e.messageId, turnId: e.turnId ?? local?.turnId,
+        status: local?.status === "failed" ? "failed" : "accepted" }), s.items);
+    }
     const id = `m:${e.messageId}`;
     const incoming: Item = { kind: "user", id, messageId: e.messageId, submissionId: e.submissionId, text: e.text ?? "" };
     const existing = matchingSnapshotItem(s.items, incoming);
     if (existing) {
-      return { ...s, items: s.items.map((item) => item === existing ? { ...existing, messageId: e.messageId } : item) };
+      const next = { ...s, items: s.items.map((item) => item === existing ? { ...existing, ...incoming, id } : item) };
+      return settleLocalSubmissions(next, next.items, canonicalUserConfirmations([incoming]));
     }
-    return { ...s, items: [...s.items, { kind: "user", id, messageId: e.messageId, submissionId: e.submissionId, text: e.text ?? "" }] };
+    const items = [...s.items, incoming];
+    return settleLocalSubmissions({ ...s, items }, items, canonicalUserConfirmations([incoming]));
   }
   if (e.kind === "mcp_surface_ready") {
     // Background readiness remains a no-op unless the sink explicitly
@@ -1761,6 +1771,7 @@ function applyEvent(s: State, e: WireEvent, preserveToolPayloads = false): State
     }
     case "turn_done": {
       if (e.turnId && s.activeTurnId && e.turnId !== s.activeTurnId) return s;
+      s = checkpointLocalSubmission(s, e.submissionId, e.checkpointTurn);
       s = { ...s, readStatuses: undefined, readStatusClosed: true };
       const now = Date.now();
       s = snapshotCompletedTurnTelemetry(s, now);
@@ -1898,7 +1909,17 @@ function applyEvent(s: State, e: WireEvent, preserveToolPayloads = false): State
 }
 
 export function reducer(s: State, a: Action): State {
+  const next = reduceState(s, a);
+  return next.items !== s.items ? settleLocalSubmissions(next, next.items) : next;
+}
+
+function reduceState(s: State, a: Action): State {
   switch (a.type) {
+    case "submission_verified": {
+      const local = s.localSubmissions[a.submissionId];
+      if (!local || local.messageId !== a.messageId) return s;
+      return settleLocalSubmissions(s, s.items, [{ messageId: a.messageId, submissionId: a.submissionId }]);
+    }
     case "transcript_connection": return s.transcriptConnection === a.status && s.transcriptConnectionError === a.error
       ? s : { ...s, transcriptConnection: a.status, transcriptConnectionError: a.error };
     case "transcript_runtime": {
@@ -1922,61 +1943,12 @@ export function reducer(s: State, a: Action): State {
       return { ...next, transcriptProtocol: 2, historyHasOlder: a.projection.hasOlder, historyHasNewer: a.projection.hasNewer,
         historyRevision: a.projection.revision, historyDigest: a.projection.digest };
     }
-    case "transcript_records": {
-      const updates = new Map(a.projection.items.map(item => {
-        const mounted = matchingSnapshotItem(s.items, item);
-        return [mounted?.id ?? item.id, mounted ? { ...item, id: mounted.id } : item];
-      }));
-      const removed = new Set(a.projection.removeIds);
-      const present = new Set(s.items.map(item => item.id));
-      const items = s.items.filter(item => !removed.has(item.id)).map(item => {
-        const update = updates.get(item.id);
-        if (item.kind === "tool" && update?.kind === "tool" && update.resultMissing && item.status === "running") {
-          return { ...update, status: "running" as const, execution: item.execution, startedAt: item.startedAt };
-        }
-        if (item.kind === "assistant" && update?.kind === "assistant" && item.turnFinal && !update.turnFinal) {
-          return { ...update, turnFinal: true, turnDurationMs: item.turnDurationMs, turnUsage: item.turnUsage,
-            samplingCount: item.samplingCount, toolCount: item.toolCount };
-        }
-        return update ?? item;
-      });
-      items.push(...Array.from(updates.values()).filter(item => !present.has(item.id)));
-      return { ...s, items, historyHasOlder: a.projection.hasOlder, historyHasNewer: a.projection.hasNewer };
-    }
+    case "transcript_records": return installTranscriptRecords(s, a);
     case "transcript_snapshot": return transcriptSnapshotState(s, a.snapshot, historyMessagesToItems, (state, event) => applyEvent(state, event, a.remote), promptEventClock());
     case "transcript_page": return transcriptPageState(s, a.snapshot, historyMessagesToItems);
-    case "user": {
-      const seq = a.seq !== undefined ? a.seq : s.seq;
-      const userItemId = `u${seq}`;
-      return {
-        ...s,
-        completionSummary: undefined,
-        seq: seq + 1,
-        items: [...s.items.map(item => item.kind==="notice" && item.action==="recover_context" ? {...item,action:undefined} : item), { kind: "user", id: userItemId, submissionId: a.submissionId, submissionState: "sending", text: a.text, submitText: a.submitText, createdAt: Date.now() }],
-        running: true,
-        pendingPrompt: false,
-        cancelRequested: false,
-        cancellable: true,
-        ...resetTurnTiming(),
-        turnLifecycleObservedAt: promptEventClock(),
-        // New turn epoch: forget the previous prompt anchor so a genuinely new
-        // prompt re-anchors freshly instead of inheriting a stale id/time.
-        promptArrivedAt: undefined,
-        promptArrivedId: undefined,
-        pendingUser: a.text,
-        pendingSubmissionId: a.submissionId,
-        activeTurnId: s.turnActive ? s.activeTurnId : undefined,
-        currentAssistant: undefined,
-        assistantSegmentOrdinal: 0,
-        live: undefined,
-        streamAttemptJournal: undefined,
-        streamInterruptNoticeShown: undefined,
-        deliveryRecoveryActive: Boolean(a.deliveryRecovery),
-        discardTurn: false,
-      };
-    }
+    case "user": return startLocalSubmission(s, a, promptEventClock());
     case "unsend": {
-      const cleared = endPromptWait({
+      const cleared = endPromptWait(updateLocalSubmission({
         ...s,
         pendingUser: undefined,
         pendingSubmissionId: undefined,
@@ -1992,7 +1964,7 @@ export function reducer(s: State, a: Action): State {
         promptArrivedId: undefined,
         live: undefined,
         turnLifecycleObservedAt: promptEventClock(),
-      });
+      }, s.pendingSubmissionId, { status: "unknown" }));
       return cleared;
     }
     case "cancel_requested": {
@@ -2013,14 +1985,21 @@ export function reducer(s: State, a: Action): State {
     case "send_confirmed": return confirmPendingUser(s, a.submissionId);
     case "management_confirmed": return reduceManagementConfirmation(s, a.submissionId, promptEventClock());
     case "turn_admitted":
-      return s.pendingSubmissionId === a.submissionId && a.turnId
-        ? { ...s, activeTurnId: a.turnId }
+      return s.localSubmissions[a.submissionId] && a.turnId
+        ? updateLocalSubmission(s.pendingSubmissionId === a.submissionId ? { ...s, activeTurnId: a.turnId } : s, a.submissionId,
+          { turnId: a.turnId, status: s.localSubmissions[a.submissionId].status === "failed" ? "failed" : "accepted" })
         : s;
     case "turn_submit_rejected":
     case "send_failed": return reduceSubmitFailure(s, a.submissionId, a.error, a.type === "turn_submit_rejected", promptEventClock());
-    case "turn_submit_unknown":
-      return s.pendingSubmissionId !== a.submissionId ? s : { ...s, transcriptConnection: "disconnected", transcriptConnectionError: a.error,
-        items: s.items.map(item => item.kind === "user" && item.submissionId === a.submissionId ? { ...item, submissionState: "unknown" } : item) };
+    case "turn_submit_unknown": {
+      const local = s.localSubmissions[a.submissionId];
+      if (!local || local.settled || local.status === "failed") return s;
+      const ownsRequest = s.pendingSubmissionId === a.submissionId;
+      const ownsTurn = !s.pendingSubmissionId && s.activeTurnId && local.turnId === s.activeTurnId;
+      return updateLocalSubmission(ownsRequest || ownsTurn ? {
+        ...s, transcriptConnection: "disconnected", transcriptConnectionError: a.error,
+      } : s, a.submissionId, { status: "unknown" });
+    }
     case "turn_interrupted": {
       return withRemoteTurnInterrupted(s);
     }
@@ -2301,7 +2280,10 @@ export function reducer(s: State, a: Action): State {
       // the id-anchored bookkeeping.
       return {
         ...s,
-        items: s.items.map((item) => item.kind === "user" && item.submissionId ? { ...item, submissionId: undefined } : item),
+        localSubmissions: Object.fromEntries(Object.entries(s.localSubmissions).map(([submissionId, submission]) => [
+          submissionId,
+          { ...submission, status: submission.status === "sending" ? "unknown" as const : submission.status, settled: true },
+        ])),
         promptEpoch: s.promptEpoch + 1,
         pendingSubmissionId: undefined,
         resolvedPromptId: undefined,
@@ -2317,9 +2299,13 @@ export function reducer(s: State, a: Action): State {
     case "event": {
       if (s.transcriptProtocol === 2 && s.historyHasNewer) {
         const next = reducer({ ...s, historyHasNewer: false, items: s.offscreenItems ?? [] }, a);
-        return { ...next, items: s.items, historyHasNewer: true, offscreenItems: next.items.slice(-96) };
+        return settleLocalSubmissions({ ...next, items: s.items, visibleSubmissionHandoffs: s.visibleSubmissionHandoffs, historyHasNewer: true, offscreenItems: next.items.slice(-96) }, s.items);
       }
       let next = applyEvent(s, a.e, a.remote);
+      if (a.e.turnId && next.items !== s.items) {
+        const prior = new Set(s.items);
+        next = { ...next, items: next.items.map(item => prior.has(item) || item.turnId ? item : { ...item, turnId: a.e.turnId }) };
+      }
       if (a.e.messageId && a.e.tool?.id && next.items !== s.items) {
         const toolId = a.e.tool.id;
         const prior = s.items.find((item) => item.kind === "tool" && item.id === toolId);
@@ -3551,8 +3537,8 @@ export function useController() {
 
 
   const rejectTurnSubmission = useCallback((tabId: string, submissionId: string, error: unknown) => {
-    if (statesRef.current.get(tabId)?.pendingSubmissionId !== submissionId) return;
-    if (/timeout|timed out|network|connection|socket|channel.*closed|fetch failed|failed to fetch|\beof\b/i.test(errorMessage(error))) {
+    if (!statesRef.current.get(tabId)?.localSubmissions[submissionId]) return;
+    if (isUnknownSubmissionError(error)) {
       dispatchTo(tabId, { type: "turn_submit_unknown", submissionId, error: `${t("chat.submissionUnknown")}: ${errorMessage(error)}` });
       void reconcileRuntimeAfterRejectedMutation(tabId);
       return;
@@ -3594,6 +3580,7 @@ export function useController() {
     }
     const seq = currentState.seq;
     const submissionId = createTurnSubmissionId(tabId, currentState.sessionGen, seq, runtimeEpochByTabRef.current.get(tabId) ?? runtime?.epoch);
+    const submissionCurrent = () => submissionBindingCurrent(statesRef.current.get(tabId), currentState);
     const promptEpoch = currentState.promptEpoch;
     const { display, submit } = normalizeTurnSubmit(displayText, submitText);
     const original = originalText?.trim() ?? "";
@@ -3624,6 +3611,7 @@ export function useController() {
         : app.SubmitToTabWithID(tabId, submit, submissionId);
       if (initialGoal) {
         const drained = await submitPromise;
+        if (!submissionCurrent()) return;
         dispatchTo(tabId, { type: "send_confirmed", submissionId });
         const ids = Array.isArray(drained) ? drained : [];
         if (ids.length) dispatchTo(tabId, { type: "approval_drained", ids, epoch: promptEpoch });
@@ -3631,16 +3619,17 @@ export function useController() {
       }
       void submitPromise.then(
         (receipt) => {
+          if (!submissionCurrent()) return;
           if (receipt && typeof receipt === "object" && "disposition" in receipt && receipt.disposition === "management_handled") return void dispatchTo(tabId, { type: "management_confirmed", submissionId });
           if (receipt && typeof receipt === "object" && "turnId" in receipt && typeof receipt.turnId === "string") {
             dispatchTo(tabId, { type: "turn_admitted", turnId: receipt.turnId, submissionId });
           }
           dispatchTo(tabId, { type: "send_confirmed", submissionId });
         },
-        (error) => rejectTurnSubmission(tabId, submissionId, error),
+        (error) => { if (submissionCurrent()) rejectTurnSubmission(tabId, submissionId, error); },
       );
     } catch (error) {
-      rejectTurnSubmission(tabId, submissionId, error);
+      if (submissionCurrent()) rejectTurnSubmission(tabId, submissionId, error);
       throw error;
     }
   }, [bumpCancelHydrateSeq, dispatchTo, rejectTurnSubmission, startTranscriptFollow]);
@@ -3654,17 +3643,18 @@ export function useController() {
     }
     const seq = currentState.seq;
     const submissionId = createTurnSubmissionId(tabId, currentState.sessionGen, seq, runtimeEpochByTabRef.current.get(tabId) ?? runtime?.epoch);
+    const current = () => submissionBindingCurrent(statesRef.current.get(tabId), currentState);
     const display = displayText.trim();
     const submit = submitText.trim();
     dispatchTo(tabId, { type: "user", text: displayText, submitText: display !== submit ? submit : undefined, seq, submissionId, deliveryRecovery: true });
     invalidateCache();
     try {
       void app.SubmitDeliveryRecoveryToTabWithID(tabId, display, submit, submissionId).then(
-        () => dispatchTo(tabId, { type: "send_confirmed", submissionId }),
-        (error) => rejectTurnSubmission(tabId, submissionId, error),
+        () => { if (current()) dispatchTo(tabId, { type: "send_confirmed", submissionId }); },
+        (error) => { if (current()) rejectTurnSubmission(tabId, submissionId, error); },
       );
     } catch (error) {
-      rejectTurnSubmission(tabId, submissionId, error);
+      if (current()) rejectTurnSubmission(tabId, submissionId, error);
       throw error;
     }
   }, [dispatchTo, rejectTurnSubmission]);
@@ -3689,13 +3679,14 @@ export function useController() {
   const runShellForTab = useCallback(async (tabId: string, command: string) => {
     if (!tabId) throw new Error(t("composer.workspaceStarting"));
     const currentState = getOrCreateState(statesRef.current, tabId);
+    const current = () => submissionBindingCurrent(statesRef.current.get(tabId), currentState);
     const submissionId = createTurnSubmissionId(tabId, currentState.sessionGen, currentState.seq, runtimeEpochByTabRef.current.get(tabId) ?? currentState.meta?.runtime?.epoch);
     dispatchTo(tabId, { type: "user", text: `!${command}`, seq: currentState.seq, submissionId });
     try {
       await app.RunShellForTab(tabId, command);
-      dispatchTo(tabId, { type: "send_confirmed", submissionId });
+      if (current()) dispatchTo(tabId, { type: "send_confirmed", submissionId });
     } catch (error) {
-      dispatchTo(tabId, { type: "send_failed", submissionId, error: `Command failed: ${error instanceof Error ? error.message : String(error)}` });
+      if (current()) dispatchTo(tabId, { type: isUnknownSubmissionError(error) ? "turn_submit_unknown" : "send_failed", submissionId, error: `Command failed: ${error instanceof Error ? error.message : String(error)}` });
       throw error;
     }
   }, [dispatchTo]);

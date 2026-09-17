@@ -687,9 +687,9 @@ eq(sameMeta(meta({ collaborationMode: "normal" }), meta({ collaborationMode: "pl
   s = reducer(s, { type: "event", e: { kind: "turn_started" } });
   s = reducer(s, { type: "event", e: { kind: "notice", level: "info", text: "runtime notice" } });
   s = reducer(s, { type: "event", e: { kind: "turn_done", checkpointTurn: 0, submissionId: "meta-submission" } });
-  const user = s.items.find((item) => item.kind === "user");
+  const user = s.localSubmissions["meta-submission"];
   const notice = s.items.find((item) => item.kind === "notice" && item.text === "runtime notice");
-  eq(user?.kind === "user" && user.checkpointTurn, 0, "turn_done stamps the exact user with checkpoint turn zero");
+  eq(user?.checkpointTurn, 0, "turn_done stamps the exact local submission with checkpoint turn zero");
   eq(Boolean(notice), true, "turn_done checkpoint assignment preserves runtime notices");
 }
 

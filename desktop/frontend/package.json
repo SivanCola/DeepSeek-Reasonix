@@ -34,6 +34,8 @@
     "test:transcript-browser": "PLAYWRIGHT_BROWSERS_PATH=.pw-browsers CHAT_BROWSER=chromium node bench/chat-transcript.mjs",
     "test:transcript-reader-browser": "PLAYWRIGHT_BROWSERS_PATH=.pw-browsers CHAT_BROWSER=chromium node bench/chat-transcript.mjs",
     "test:transcript-electron": "node bench/transcript-layout.mjs --electron",
+    "test:submission-browser": "node bench/submission-handoff.mjs",
+    "test:submission-electron": "node bench/submission-handoff.mjs --electron",
     "test:dock-electron": "node bench/dock-file-navigation.mjs --electron",
     "pretest": "pnpm test:terminal && pnpm test:task-monitor && pnpm test:composer && tsx src/__tests__/context-center-contract.test.ts && tsx src/__tests__/provider-model-cache.test.ts && tsx src/__tests__/format-tokens.test.ts && pnpm test:usage-stats && pnpm test:settings-responsive && pnpm test:composer-menu-viewport && pnpm test:diagnostics && pnpm test:transcript",
     "test:composer-menu-viewport": "tsx src/__tests__/composer-menu-viewport.test.ts && tsx src/__tests__/anchored-popover-scroll.test.tsx && tsx src/__tests__/anchored-overlay-lifecycle.test.tsx && tsx src/__tests__/virtual-menu-identity.test.tsx",

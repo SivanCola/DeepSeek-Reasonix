@@ -10,6 +10,7 @@ import { projectSessionAvailability } from "../lib/sessionAvailability";
 import type { RemoteSessionApi } from "../lib/useRemoteSession";
 export { hydrateRemoteTelemetry, loadRemoteStatusSnapshot } from "../lib/remoteTelemetry";
 import type { TabMeta, WireApproval, WireAsk } from "../lib/types";
+import { orderedLocalSubmissions } from "../lib/localSubmissionState";
 
 /**
  * RemoteSessionSurface renders the active remote tab's content area with
@@ -25,7 +26,8 @@ export function RemoteSessionSurface({ tab, session, surfaceCommitToken, onSurfa
   const navigateRemote = useRemoteNavigationCommand();
   const availability = projectSessionAvailability({ remote: session });
   const ready = availability.kind === "ready";
-  const hasContent = session.transcript.items.length > 0 || Boolean(session.transcript.live?.text || session.transcript.live?.reasoning);
+  const localSubmissions = orderedLocalSubmissions(session.transcript);
+  const hasContent = session.transcript.items.length > 0 || localSubmissions.length > 0 || Boolean(session.transcript.live?.text || session.transcript.live?.reasoning);
   const approval = session.transcript.approval as WireApproval | undefined;
   const ask = session.transcript.ask as WireAsk | undefined;
   const extensionForm = session.transcript.extensionForm;
@@ -62,6 +64,9 @@ export function RemoteSessionSurface({ tab, session, surfaceCommitToken, onSurfa
     <div className="remote-surface remote-surface--ready">
       {!ready && !hasContent ? <SessionRecoveryPlaceholder availability={availability} /> : <Transcript
         items={session.transcript.items}
+        localSubmissions={localSubmissions}
+        localSubmissionSendRevision={session.transcript.localSubmissionSendRevision}
+        visibleSubmissionHandoffs={session.transcript.visibleSubmissionHandoffs}
         live={session.transcript.live}
         liveStore={session.liveStore}
         tabId={tab.id}

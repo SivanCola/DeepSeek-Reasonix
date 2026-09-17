@@ -603,7 +603,7 @@ const verifyModernSuffix = async (label: string) => {
       sessionId: modernEpoch, seq: 2, messageId: `${modernEpoch}-assistant`, text: "suffix" });
     await flushPromises();
   });
-  eq(controller?.state.items.filter((item) => item.kind === "user").length, 1, `${label} accepts one user after its snapshot`);
+  eq(controller?.state.items.filter(item => item.kind === "user").length + (controller?.state.localSubmissionOrder.length ?? 0), 0, `${label} backend identity event cannot fabricate a durable row or local echo`);
   eq(controller?.state.live?.text, "suffix", `${label} accepts the ordered live suffix`);
 };
 await verifyModernSuffix("startup");

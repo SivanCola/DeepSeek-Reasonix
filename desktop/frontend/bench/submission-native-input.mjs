@@ -1,0 +1,76 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+
+// XTest input targets only the disposable Electron window in an isolated Xvfb
+// display. It must never run against the developer's active desktop session.
+export async function verifyNativeReaderInput(page) {
+  assert.equal(process.platform, "linux");
+  assert.ok(process.env.DISPLAY, "native input requires an isolated Xvfb display");
+  const xdo = (...args) => execFileSync("xdotool", args.map(String), { encoding: "utf8" }).trim();
+  const windows = xdo("search", "--onlyvisible", "--name", "^Reasonix Handoff Native$").split("\n");
+  assert.equal(windows.length, 1, "exactly one disposable native window is required");
+  const windowId = windows[0];
+  xdo("windowfocus", "--sync", windowId);
+  const frame = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const scroll = page.locator(".chat-flow-scroll");
+  await scroll.evaluate(el => {
+    el.focus();
+    window.nativeSamples = [];
+    window.nativeSampling = true;
+    const sample = () => {
+      const box = el.getBoundingClientRect();
+      const rows = [...el.querySelectorAll("[data-chat-kind]")];
+      const visible = rows.some(row => { const rect = row.getBoundingClientRect(); return rect.height > 0 && rect.bottom > box.top && rect.top < box.bottom; });
+      window.nativeSamples.push({ top: el.scrollTop, height: el.scrollHeight, viewport: el.clientHeight, blank: !visible });
+      if (window.nativeSampling) requestAnimationFrame(sample);
+    };
+    sample();
+  });
+  const top = () => scroll.evaluate(el => el.scrollTop);
+  try {
+    xdo("key", "--clearmodifiers", "End");
+    await page.waitForFunction(() => { const el = document.querySelector(".chat-flow-scroll"); return el.scrollHeight - el.clientHeight - el.scrollTop <= 1; });
+    const box = await scroll.boundingBox();
+    assert.ok(box);
+    xdo("mousemove", "--window", windowId, Math.round(box.x + box.width / 2), Math.round(box.y + box.height / 2));
+    const beforeWheel = await top();
+    xdo("click", "--repeat", 4, "--delay", 50, 4);
+    await page.waitForFunction(before => document.querySelector(".chat-flow-scroll").scrollTop < before - 50, beforeWheel);
+    await frame();
+    const afterWheel = await top();
+    await scroll.evaluate(el => el.focus());
+    const beforeKeyboard = await top();
+    xdo("key", "--clearmodifiers", "Page_Up");
+    await page.waitForFunction(before => document.querySelector(".chat-flow-scroll").scrollTop < before - 50, beforeKeyboard);
+    await frame();
+    const afterKeyboard = await top();
+    xdo("key", "--clearmodifiers", "End");
+    await page.waitForFunction(() => { const el = document.querySelector(".chat-flow-scroll"); return el.scrollHeight - el.clientHeight - el.scrollTop <= 1; });
+    const track = await scroll.evaluate(el => {
+      const box = el.getBoundingClientRect(), gutter = el.offsetWidth - el.clientWidth;
+      const thumb = Math.max(gutter, (box.height - 2 * gutter) * el.clientHeight / el.scrollHeight);
+      return { x: box.right - gutter / 2, y: box.bottom - gutter - thumb / 2, to: box.top + box.height / 2, gutter, top: el.scrollTop };
+    });
+    assert.ok(track.gutter > 0, "native scrollbar must be exposed");
+    xdo("mousemove", "--window", windowId, Math.round(track.x), Math.round(track.y));
+    xdo("mousedown", 1);
+    try {
+      for (let step = 1; step <= 12; step++) {
+        xdo("mousemove", "--window", windowId, Math.round(track.x), Math.round(track.y + (track.to - track.y) * step / 12));
+        await frame();
+      }
+    } finally { xdo("mouseup", 1); }
+    await page.waitForFunction(before => document.querySelector(".chat-flow-scroll").scrollTop < before - 100, track.top);
+    await frame();
+    assert.equal(await scroll.getAttribute("data-scroll-mode"), "reader");
+    const samples = await page.evaluate(() => { window.nativeSampling = false; return window.nativeSamples; });
+    const heights = samples.map(sample => sample.height);
+    const extent = { initial: heights[0], min: Math.min(...heights), max: Math.max(...heights), final: heights.at(-1) };
+    const blankFrames = samples.filter(sample => sample.blank).length;
+    assert.equal(blankFrames, 0, "native input must not expose blank transcript frames");
+    assert.ok(extent.max - extent.final <= Math.max(96, samples.at(-1).viewport * 0.5), "native input must not collapse the scroll range");
+    return { status: "passed", method: "X11 XTest through xdotool", wheel: { before: beforeWheel, after: afterWheel },
+      keyboard: { before: beforeKeyboard, after: afterKeyboard }, scrollbar: { before: track.top, after: await top(), gutter: track.gutter },
+      extent, blankFrames, samples };
+  } finally { await page.evaluate(() => { window.nativeSampling = false; }); }
+}
