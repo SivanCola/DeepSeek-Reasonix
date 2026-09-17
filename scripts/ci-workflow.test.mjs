@@ -143,7 +143,7 @@ test("Windows full runs use the partitioned suite without a duplicate module swe
     }
   }
   assert.match(body, /run: node scripts\/windows-go-tests\.mjs full/);
-  assert.match(job(ci, "windows-isolated"), /group: \[agent, boot\]/);
+  assert.match(job(ci, "windows-isolated"), /group: \[agent, boot, serve, session, worktree\]/);
   assert.match(job(ci, "windows-control"), /run: node scripts\/windows-go-tests\.mjs control/);
 });
 
