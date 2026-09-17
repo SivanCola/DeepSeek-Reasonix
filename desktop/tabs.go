@@ -54,6 +54,17 @@ const displayPersistRetryLimit = 4
 
 var errNoDesktopChatModel = errors.New("no desktop chat model is available; add a chat-capable provider in Settings > Model > Access")
 
+func resolveDraftCreateModelStrict(cfg *config.Config, model string) (string, error) {
+	if providerext.PluginRefOwner(model) != "" {
+		return model, nil
+	}
+	resolved, ok := cfg.ResolveModel(model)
+	if !ok {
+		return "", fmt.Errorf("%w: %q", boot.ErrUnknownModel, model)
+	}
+	return resolved.Name + "/" + resolved.Model, nil
+}
+
 type pendingDisplayWrite struct {
 	dir         string
 	sessionPath string
@@ -69,32 +80,34 @@ type pendingDisplayWrite struct {
 // memory, permissions) scoped to a workspace root, so multiple projects and
 // topics can be active concurrently without interfering.
 type WorkspaceTab struct {
-	ID                  string                   // stable random id
-	Scope               string                   // "project" | "global"
-	WorkspaceRoot       string                   // project root dir (empty for global)
-	SessionWorkspace    desktopTabWorkspace      // stable Workspace registry identity
-	SharedHostKey       string                   // opaque key for the shared plugin host (set by buildTabController)
-	TopicID             string                   // topic within the project
-	TopicTitle          string                   // display title
-	topicTitleSource    string                   // auto or manual; controls localization at API boundaries
-	SessionPath         string                   // exact .jsonl file this tab continues
-	SessionID           string                   // immutable v3 identity; empty for legacy/read-only tabs
-	SessionGeneration   uint64                   // bumps on session rotation (clear/new); frontend hydrate identity
-	ReadOnly            bool                     // true for external channel transcripts opened for browsing
-	Takeover            struct{ Spectator bool } // handoff state grouped by its cross-runtime lifetime
-	Ctrl                control.SessionAPI       // nil while booting / on error
-	Label               string                   // model label (for the tab badge)
-	Ready               bool                     // true once boot.Build completes
-	StartupErr          string                   // build error, surfaced to the frontend
-	StartupErrLeaseHeld bool                     // true when StartupErr can be retried after a session lease releases
-	modelApplication    tabModelApplicationState // guarded by App.mu; never persisted
-	runtimeID           string                   // process-local SessionRuntime registry identity
-	sessionLease        *agent.SessionLease
-	sessionLeaseMu      sync.Mutex
-	sessionLeaseKey     atomic.Pointer[string] // lock-free mirror; updated with sessionLease under sessionLeaseMu
-	sink                *tabEventSink          // routes events with this tab's ID
-	buildCancel         context.CancelFunc     // cancels in-flight boot for tabs removed before Ready
-	buildGeneration     uint64                 // identifies the current in-flight build
+	ID                       string              // stable random id
+	Scope                    string              // "project" | "global"
+	WorkspaceRoot            string              // project root dir (empty for global)
+	SessionWorkspace         desktopTabWorkspace // stable Workspace registry identity
+	SharedHostKey            string              // opaque key for the shared plugin host (set by buildTabController)
+	TopicID                  string              // topic within the project
+	TopicTitle               string              // display title
+	topicTitleSource         string              // auto or manual; controls localization at API boundaries
+	SessionPath              string              // exact .jsonl file this tab continues
+	SessionID                string              // immutable v3 identity; empty for legacy/read-only tabs
+	PendingCreateOperationID string              // durable create reservation used before the first turn
+	draftAdmission           *draftAdmissionProfile
+	SessionGeneration        uint64                   // bumps on session rotation (clear/new); frontend hydrate identity
+	ReadOnly                 bool                     // true for external channel transcripts opened for browsing
+	Takeover                 struct{ Spectator bool } // handoff state grouped by its cross-runtime lifetime
+	Ctrl                     control.SessionAPI       // nil while booting / on error
+	Label                    string                   // model label (for the tab badge)
+	Ready                    bool                     // true once boot.Build completes
+	StartupErr               string                   // build error, surfaced to the frontend
+	StartupErrLeaseHeld      bool                     // true when StartupErr can be retried after a session lease releases
+	modelApplication         tabModelApplicationState // guarded by App.mu; never persisted
+	runtimeID                string                   // process-local SessionRuntime registry identity
+	sessionLease             *agent.SessionLease
+	sessionLeaseMu           sync.Mutex
+	sessionLeaseKey          atomic.Pointer[string] // lock-free mirror; updated with sessionLease under sessionLeaseMu
+	sink                     *tabEventSink          // routes events with this tab's ID
+	buildCancel              context.CancelFunc     // cancels in-flight boot for tabs removed before Ready
+	buildGeneration          uint64                 // identifies the current in-flight build
 	// buildDone is closed exactly once when the build that owns buildDoneGen
 	// terminates (success, failure, or superseded abandon). Topic-activation
 	// completions wait on it to learn that the controller build finished
@@ -3027,10 +3040,6 @@ func (a *App) closeTabRuntime(tabID string, allowDetach bool) error {
 		a.mu.Unlock()
 		return fmt.Errorf("tab %q not found", tabID)
 	}
-	if len(a.tabs) <= 1 && !a.hasRemoteTabSurface() {
-		a.mu.Unlock()
-		return fmt.Errorf("cannot close the last tab")
-	}
 	a.mu.Unlock()
 
 	// Snapshot while the tab binding is still present, but outside a.mu because
@@ -3058,10 +3067,6 @@ func (a *App) closeTabRuntime(tabID string, allowDetach bool) error {
 			return fmt.Errorf("tab %q not found", tabID)
 		}
 		return fmt.Errorf("tab %q changed while closing", tabID)
-	}
-	if len(a.tabs) <= 1 && !a.hasRemoteTabSurface() {
-		a.mu.Unlock()
-		return fmt.Errorf("cannot close the last tab")
 	}
 	if !allowDetach && tab.hasActiveRuntimeWork() {
 		a.mu.Unlock()
@@ -3541,6 +3546,7 @@ func (a *App) buildTabControllerWithContextCore(tab *WorkspaceTab, loadedSession
 	tabSessionID := tab.SessionID
 	tabModel := tab.model
 	tabSink := tab.sink
+	tabCreateOperationID := tab.PendingCreateOperationID
 	a.mu.RUnlock()
 
 	root := tabWorkspaceRoot
@@ -3603,7 +3609,7 @@ func (a *App) buildTabControllerWithContextCore(tab *WorkspaceTab, loadedSession
 	// The v3 event projection owns model selection. desktop-tabs.json only
 	// remembers which immutable session to open, so stale UI state cannot select
 	// a different provider when the process restarts.
-	if strings.TrimSpace(tabSessionID) != "" {
+	if strings.TrimSpace(tabSessionID) != "" && strings.TrimSpace(tabCreateOperationID) == "" {
 		service := a.desktopSessionService(sessionDir)
 		ref := session.SessionRef{HostID: service.HostID(), SessionID: strings.TrimSpace(tabSessionID)}
 		if view, openErr := service.OpenSession(buildCtx, ref); openErr == nil && strings.TrimSpace(view.Recent.ModelRef) != "" {
@@ -3636,7 +3642,14 @@ func (a *App) buildTabControllerWithContextCore(tab *WorkspaceTab, loadedSession
 	}
 	config.NormalizeLegacyMimoCustomProvidersForRefs(cfg, model)
 	requestedModel := model
-	if providerext.PluginRefOwner(model) == "" {
+	if strings.TrimSpace(tabCreateOperationID) != "" {
+		resolved, resolveErr := resolveDraftCreateModelStrict(cfg, model)
+		if resolveErr != nil {
+			a.recordTabStartupFailure(tab, buildGeneration, appCtx, resolveErr)
+			return
+		}
+		model = resolved
+	} else if providerext.PluginRefOwner(model) == "" {
 		// Plugin refs skip the config fallback: rerouting an unavailable
 		// extension model onto a config provider would silently change the
 		// session; boot's unknown-model error is the honest failure.
@@ -3671,6 +3684,7 @@ func (a *App) buildTabControllerWithContextCore(tab *WorkspaceTab, loadedSession
 	buildTokenMode := currentTabTokenMode(tab)
 	buildMode := tab.mode
 	buildToolApprovalMode := tab.toolApprovalMode
+	buildDisabledMCP := cloneServerViewMap(tab.disabledMCP)
 	buildGoal := tab.goal
 	buildSink := tab.sink
 	a.saveTabsLocked()
@@ -3728,6 +3742,11 @@ func (a *App) buildTabControllerWithContextCore(tab *WorkspaceTab, loadedSession
 	}
 	a.bindControllerDisplayRecorder(ctrl)
 	configureControllerRuntime(ctrl, nil, buildRuntime)
+	if strings.HasPrefix(tabCreateOperationID, "draft-op-") {
+		for name := range buildDisabledMCP {
+			ctrl.UnregisterMCPServerTools(name)
+		}
+	}
 
 	acquiredLeaseKey := ""
 	restoredRuntime := buildRuntime
@@ -3913,6 +3932,14 @@ func (a *App) buildTabControllerWithContextCore(tab *WorkspaceTab, loadedSession
 	// Lifecycle admission protects only the compare-and-publish boundary. Slow
 	// config, history, lease, and extension work above remains cancellable and
 	// cannot prevent shutdown from acquiring the write side.
+	releaseDraftPublication, draftPublicationErr := a.lockDraftRuntimePublication(tabCreateOperationID)
+	if draftPublicationErr != nil {
+		registration.rollback()
+		a.abandonSupersededBuild(tab, ctrl, rootKey, acquiredLeaseKey)
+		a.recordTabStartupFailure(tab, buildGeneration, appCtx, draftPublicationErr)
+		return
+	}
+	defer releaseDraftPublication()
 	releasePublication, extensionsCurrent := a.lockTabControllerPublication(extensionGen, tabScope, tabWorkspaceRoot)
 	if !extensionsCurrent {
 		registration.rollback()

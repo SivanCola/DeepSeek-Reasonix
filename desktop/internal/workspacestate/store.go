@@ -317,6 +317,19 @@ func (s *Store) AbortCreate(ctx context.Context, sessionID string) error {
 	})
 }
 
+// AbortCreateIfOperation removes only the caller's reservation. A late cleanup
+// from an older draft operation must never erase a newer operation's claim.
+func (s *Store) AbortCreateIfOperation(ctx context.Context, sessionID, operationID string) error {
+	sessionID, operationID = strings.TrimSpace(sessionID), strings.TrimSpace(operationID)
+	return s.mutate(ctx, func(state *State) error {
+		pending, ok := state.PendingCreates[sessionID]
+		if ok && pending.OperationID == operationID {
+			delete(state.PendingCreates, sessionID)
+		}
+		return nil
+	})
+}
+
 func (s *Store) MoveSession(ctx context.Context, workspaceID, sessionID, beforeSessionID string) error {
 	return s.moveSession(ctx, workspaceID, sessionID, beforeSessionID, nil)
 }

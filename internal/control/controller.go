@@ -5028,6 +5028,10 @@ func (c *Controller) Close() {
 	c.close(true, closeJobsWithGrace)
 }
 
+// Closed is signalled after teardown has released all Controller-owned stores.
+// Close itself only requests teardown when a turn is still finalizing.
+func (c *Controller) Closed() <-chan struct{} { return c.closeFinalized }
+
 // CloseAfterDestroy releases controller resources after the caller has already
 // begun session-specific job teardown. It avoids a second synchronous job grace
 // wait while still cancelling the manager root and reaping temporary artifacts

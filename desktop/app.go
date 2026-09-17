@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"reasonix/desktop/internal/browserops"
+	"reasonix/desktop/internal/draftstate"
 	"reasonix/desktop/internal/instanceidentity"
 	"reasonix/desktop/internal/workspacestate"
 	"reasonix/internal/agent"
@@ -205,6 +206,7 @@ type App struct {
 	sessionServicesMu sync.Mutex
 	sessionServices   map[string]*session.Service
 	desktopSessions   desktopSessionState
+	desktopDrafts     *draftstate.Store
 
 	// tabsRestored is closed when restoreOrBuildTabs has finished populating
 	// a.tabs from desktop-tabs.json (or built the first-launch tab). Startup
@@ -467,6 +469,7 @@ func NewApp() *App {
 		sessionServices:        map[string]*session.Service{},
 		aiSessionTitleInFlight: map[string]aiSessionTitleOperation{},
 		desktopSessions:        newDesktopSessionState(),
+		desktopDrafts:          draftstate.New(config.DesktopDraftStatePath()),
 		catalogReconcileJobs:   map[string]*desktopCatalogReconcileJob{},
 		detachedSessions:       map[string]*WorkspaceTab{},
 		mediaTokens:            newMediaTokenStore(),
@@ -531,6 +534,7 @@ func (a *App) startup(ctx context.Context) {
 	a.tabsRestored = make(chan struct{})
 	a.mu.Unlock()
 	go a.restoreOrBuildTabs()
+	a.goSafe("reconcileDraftSubmissions", a.reconcileDraftSubmissionOperations)
 	a.registerHistoryIndexEvents()
 	a.startSessionCatalog()
 	a.goSafe("refreshBotRuntime", a.refreshBotRuntime)
@@ -781,6 +785,7 @@ func (a *App) restoreOrBuildTabs() {
 			}
 			tab.SessionPath = strings.TrimSpace(entry.SessionPath)
 			tab.SessionID = strings.TrimSpace(entry.SessionID)
+			tab.PendingCreateOperationID = strings.TrimSpace(entry.CreateOperationID)
 			tab.ReadOnly = entry.ReadOnly
 			restoreTabPinnedContext(tab, entry.PinnedFiles)
 			tab.Takeover.Spectator = entry.TakeoverSpectator
@@ -810,16 +815,9 @@ func (a *App) restoreOrBuildTabs() {
 		return
 	}
 
-	// First launch: create a default Global tab.
-	tab := a.createTabEntry("global", globalTabWorkspaceRoot(), "")
-	tab.sink = &tabEventSink{tabID: tab.ID, app: a, ctx: ctx}
-	tab.TopicTitle = "Global"
-	a.mu.Lock()
-	a.tabs[tab.ID] = tab
-	a.tabOrder = append(a.tabOrder, tab.ID)
-	a.activeTabID = tab.ID
-	a.mu.Unlock()
-	a.startTabControllerBuild(tab)
+	// First launch intentionally has no runtime. The renderer opens a persisted
+	// Global draft after this restore gate closes; the first execution creates
+	// the canonical Session and Controller.
 }
 
 func (a *App) createTabEntry(scope, workspaceRoot, topicID string) *WorkspaceTab {
@@ -6673,38 +6671,21 @@ func (a *App) RevokePermissionGrantForTab(tabID, scope, target string, expectedR
 
 // CommandInfo describes one available slash command for the composer's "/" menu.
 type CommandInfo struct {
-	Name        string `json:"name"` // without the leading slash
-	Description string `json:"description"`
-	Hint        string `json:"hint,omitempty"`  // argument hint, if any
-	Kind        string `json:"kind"`            // "builtin" | "custom" | "mcp" | "skill" | "subagent"
-	Group       string `json:"group,omitempty"` // menu group; older frontends can ignore it
-	Plugin      string `json:"plugin,omitempty"`
-	Color       string `json:"color,omitempty"`
+	Name          string `json:"name"` // without the leading slash
+	Description   string `json:"description"`
+	Hint          string `json:"hint,omitempty"`  // argument hint, if any
+	Kind          string `json:"kind"`            // "builtin" | "custom" | "mcp" | "skill" | "subagent"
+	Group         string `json:"group,omitempty"` // menu group; older frontends can ignore it
+	Plugin        string `json:"plugin,omitempty"`
+	Color         string `json:"color,omitempty"`
+	DraftBehavior string `json:"draftBehavior,omitempty"` // submit | setting | direct | unavailable
 }
 
 // Commands lists the slash commands available this session — built-in actions,
 // custom commands (.reasonix/commands), and MCP prompts — for the composer's "/"
 // autocomplete menu.
 func (a *App) Commands() []CommandInfo {
-	out := []CommandInfo{
-		{Name: "new", Description: i18n.M.CmdNew, Kind: "builtin", Group: "actions"},
-		{Name: "clear", Description: i18n.M.CmdClear, Kind: "builtin", Group: "actions"},
-		{Name: "compact", Description: i18n.M.CmdCompact, Kind: "builtin", Group: "actions"},
-		{Name: "model", Description: i18n.M.CmdModel, Kind: "builtin", Group: "actions"},
-		{Name: "provider", Description: i18n.M.CmdProvider, Kind: "builtin", Group: "management"},
-		{Name: "effort", Description: i18n.M.CmdEffort, Kind: "builtin", Group: "actions"},
-		{Name: "memory", Description: i18n.M.CmdMemory, Kind: "builtin", Group: "management"},
-		{Name: "migrate", Description: i18n.M.CmdMigrate, Kind: "builtin", Group: "management"},
-		{Name: "goal", Description: i18n.M.CmdGoal, Kind: "builtin", Group: "actions"},
-		{Name: "remember", Description: i18n.M.CmdRemember, Kind: "builtin", Group: "management"},
-		{Name: "mcp", Description: i18n.M.CmdMcp, Kind: "builtin", Group: "integrations"},
-		{Name: "hooks", Description: i18n.M.CmdHooks, Kind: "builtin", Group: "management"},
-		{Name: "plugins", Description: i18n.M.CmdPlugins, Kind: "builtin", Group: "integrations"},
-		{Name: "theme", Description: i18n.M.CmdTheme, Kind: "builtin", Group: "management"},
-		{Name: "skill", Description: i18n.M.CmdSkill, Kind: "builtin", Group: "skills"},
-		{Name: "reload-cmd", Description: i18n.M.CmdReloadCmd, Kind: "builtin", Group: "management"},
-		{Name: "reload", Description: i18n.M.CmdReload, Kind: "builtin", Group: "management"},
-	}
+	out := builtinCommandInfos()
 	a.mu.RLock()
 	ctrl := a.activeCtrlLocked()
 	a.mu.RUnlock()
@@ -6741,6 +6722,28 @@ func (a *App) Commands() []CommandInfo {
 		}
 	}
 	return resolveDocsCommand(out)
+}
+
+func builtinCommandInfos() []CommandInfo {
+	return []CommandInfo{
+		{Name: "new", Description: i18n.M.CmdNew, Kind: "builtin", Group: "actions", DraftBehavior: "unavailable"},
+		{Name: "clear", Description: i18n.M.CmdClear, Kind: "builtin", Group: "actions", DraftBehavior: "unavailable"},
+		{Name: "compact", Description: i18n.M.CmdCompact, Kind: "builtin", Group: "actions", DraftBehavior: "unavailable"},
+		{Name: "model", Description: i18n.M.CmdModel, Kind: "builtin", Group: "actions", DraftBehavior: "setting"},
+		{Name: "provider", Description: i18n.M.CmdProvider, Kind: "builtin", Group: "management", DraftBehavior: "unavailable"},
+		{Name: "effort", Description: i18n.M.CmdEffort, Kind: "builtin", Group: "actions", DraftBehavior: "setting"},
+		{Name: "memory", Description: i18n.M.CmdMemory, Kind: "builtin", Group: "management", DraftBehavior: "unavailable"},
+		{Name: "migrate", Description: i18n.M.CmdMigrate, Kind: "builtin", Group: "management", DraftBehavior: "unavailable"},
+		{Name: "goal", Description: i18n.M.CmdGoal, Kind: "builtin", Group: "actions"},
+		{Name: "remember", Description: i18n.M.CmdRemember, Kind: "builtin", Group: "management", DraftBehavior: "unavailable"},
+		{Name: "mcp", Description: i18n.M.CmdMcp, Kind: "builtin", Group: "integrations", DraftBehavior: "unavailable"},
+		{Name: "hooks", Description: i18n.M.CmdHooks, Kind: "builtin", Group: "management", DraftBehavior: "unavailable"},
+		{Name: "plugins", Description: i18n.M.CmdPlugins, Kind: "builtin", Group: "integrations", DraftBehavior: "unavailable"},
+		{Name: "theme", Description: i18n.M.CmdTheme, Kind: "builtin", Group: "management", DraftBehavior: "direct"},
+		{Name: "skill", Description: i18n.M.CmdSkill, Kind: "builtin", Group: "skills", DraftBehavior: "unavailable"},
+		{Name: "reload-cmd", Description: i18n.M.CmdReloadCmd, Kind: "builtin", Group: "management", DraftBehavior: "unavailable"},
+		{Name: "reload", Description: i18n.M.CmdReload, Kind: "builtin", Group: "management", DraftBehavior: "unavailable"},
+	}
 }
 
 func docsBuiltinCommand(name string) CommandInfo {
@@ -10042,14 +10045,18 @@ func (a *App) ListDirForTab(tabID, rel string) []DirEntry {
 	if !ok {
 		return []DirEntry{}
 	}
+	base, err := workspaceBaseFromRoot(root)
+	if err != nil {
+		return []DirEntry{}
+	}
+	return listDirForWorkspaceTarget(base, ctrl, rel)
+}
+
+func listDirForWorkspaceTarget(base string, ctrl control.SessionAPI, rel string) []DirEntry {
 	if browser := externalFolderRefBrowserFromController(ctrl); browser != nil {
 		if entries, handled := browser.ListExternalFolderRefDir(rel); handled {
 			return externalFolderDirEntries(entries)
 		}
-	}
-	base, err := workspaceBaseFromRoot(root)
-	if err != nil {
-		return []DirEntry{}
 	}
 	dir := base
 	if rel != "" {
@@ -10099,6 +10106,10 @@ func (a *App) SearchFileRefsForTab(tabID, query string) []DirEntry {
 	if err != nil {
 		return []DirEntry{}
 	}
+	return searchFileRefsForWorkspaceTarget(base, ctrl, query)
+}
+
+func searchFileRefsForWorkspaceTarget(base string, ctrl control.SessionAPI, query string) []DirEntry {
 	results := fileref.Search(base, query, fileRefSearchLimit)
 	out := make([]DirEntry, 0, len(results))
 	for _, r := range results {

@@ -38166,3 +38166,148 @@ html[data-dock-launcher="full"] .app:not(.app--creation) .layout:not(.layout--wo
   color: var(--fg-faint);
   cursor: default;
 }
+
+.main--draft {
+  min-height: 0;
+  overflow: auto;
+}
+.session-draft-surface {
+  width: min(760px, calc(100% - 40px));
+  margin: 0 auto;
+  padding: clamp(28px, 8vh, 88px) 0 140px;
+}
+.session-draft-surface__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.session-draft-surface__heading h1 {
+  margin: 5px 0 3px;
+  color: var(--fg);
+  font-size: 22px;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+.session-draft-surface__heading p {
+  max-width: min(620px, 75vw);
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+.session-draft-surface__eyebrow {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 650;
+}
+.session-draft-surface__status {
+  min-height: 18px;
+  margin-top: 14px;
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+.session-draft-surface__status--error,
+.session-draft-surface__status--conflict,
+.session-draft-surface__error {
+  color: var(--danger);
+}
+.project-tree__draft-badge {
+  flex: none;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border-soft));
+  border-radius: 5px;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  cursor: pointer;
+}
+.project-tree__draft-badge:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.project-tree__draft-badge--dirty,
+.project-tree__draft-badge--saving {
+  border-color: color-mix(in srgb, var(--warning, #d69a32) 48%, var(--border-soft));
+  color: var(--warning, #d69a32);
+}
+.project-tree__draft-badge--error,
+.project-tree__draft-badge--conflict {
+  border-color: color-mix(in srgb, var(--danger) 48%, var(--border-soft));
+  color: var(--danger);
+}
+.session-draft-surface__conflict {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+.session-draft-surface__conflict span {
+  flex: 1;
+}
+.session-draft-surface__conflict button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+}
+.session-draft-surface__error {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+.session-draft-surface__error button {
+  margin-left: 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.session-draft-surface__mcp {
+  margin-top: 16px;
+  border-top: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border-soft);
+}
+.session-draft-surface__mcp summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  color: var(--fg-dim);
+  font-size: 12px;
+  cursor: pointer;
+}
+.session-draft-surface__mcp summary span {
+  margin-left: auto;
+  color: var(--fg-faint);
+}
+.session-draft-surface__mcp-list {
+  display: grid;
+  padding: 0 0 8px 21px;
+}
+.session-draft-surface__mcp-list label {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  color: var(--fg);
+  font-size: 12px;
+}
+.session-draft-surface__mcp-list small {
+  color: var(--fg-faint);
+  font-size: 11px;
+}

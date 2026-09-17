@@ -26,6 +26,8 @@ export function buildSidebarRegionProps(input: {
   geometry: ReturnType<typeof useShellGeometry>;
   projectTree: {
     activeTab: TabMeta | undefined;
+    activeScope?: string;
+    activeWorkspaceRoot?: string;
     imTopicSources: Record<string, SidebarImTopicSource>;
     refreshSignal: number;
     searchExpanded: boolean;
@@ -33,6 +35,8 @@ export function buildSidebarRegionProps(input: {
     showShortcutBadges: boolean;
     shortcutPlatform: SidebarRegionProps["projectTree"]["shortcutPlatform"];
     onVisibleTopicsChange: SidebarRegionProps["projectTree"]["onVisibleTopicsChange"];
+    draftSummaries: SidebarRegionProps["projectTree"]["draftSummaries"];
+    onOpenDraft: SidebarRegionProps["projectTree"]["onOpenDraft"];
   };
   topics: ProjectTopicCommands;
   commands: {
@@ -63,7 +67,8 @@ export function buildSidebarRegionProps(input: {
       onReset: () => geometry.setExpandedSidebarWidth(defaultSidebarWidth()),
     },
     projectTree: {
-      activeScope: input.projectTree.activeTab?.scope, activeWorkspaceRoot: input.projectTree.activeTab?.workspaceRoot,
+      activeScope: input.projectTree.activeScope ?? input.projectTree.activeTab?.scope,
+      activeWorkspaceRoot: input.projectTree.activeWorkspaceRoot ?? input.projectTree.activeTab?.workspaceRoot,
       activeTopicId: input.projectTree.activeTab?.topicId, activeSessionPath: sessionIdentityRoute(input.projectTree.activeTab),
       activeRemote: input.projectTree.activeTab?.remote, imTopicSources: input.projectTree.imTopicSources, onOpenTopic: commands.onOpenTopic,
       onCreateTopic: topics.onCreateTopic, onCreateIsolatedWorktree: topics.onCreateIsolatedWorktree,
@@ -72,6 +77,8 @@ export function buildSidebarRegionProps(input: {
       searchExpanded: input.projectTree.searchExpanded, searchFocusSignal: input.projectTree.searchFocusSignal,
       showShortcutBadges: input.projectTree.showShortcutBadges, shortcutPlatform: input.projectTree.shortcutPlatform,
       onVisibleTopicsChange: input.projectTree.onVisibleTopicsChange,
+      draftSummaries: input.projectTree.draftSummaries,
+      onOpenDraft: input.projectTree.onOpenDraft,
     },
   };
 }

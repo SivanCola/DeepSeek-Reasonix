@@ -1180,6 +1180,7 @@ export interface CommandInfo {
   group?: "actions" | "management" | "subagents" | "skills" | "integrations";
   plugin?: string;
   color?: string;
+  draftBehavior?: "submit" | "setting" | "direct" | "unavailable";
 }
 
 export interface DirEntry {

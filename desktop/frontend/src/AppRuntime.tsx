@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRuntimeStateSync } from "./lib/useRuntimeState";
 import { useCommittedCommand } from "./lib/useCommittedCommand";
 import { openExternal } from "./lib/bridge";
@@ -20,8 +20,23 @@ import { useAppRuntimeAdapter } from "./app-runtime/useAppRuntimeAdapter";
 import { useAppShellStores } from "./app-runtime/useAppShellStores";
 import { useAppSessionComposition } from "./app-runtime/useAppSessionComposition";
 import { useAppNavigationComposition } from "./app-runtime/useAppNavigationComposition";
+import { useSessionDraftSurface } from "./app-runtime/useSessionDraftSurface";
 import { useRetiredProjectTreeUiMigration } from "./app-runtime/useLocalUiLifecycles";
-import { AppRuntimeView } from "./app-shell/AppRuntimeView";
+import logoSymbol from "./assets/logo-symbol.svg";
+
+const AppRuntimeView = lazy(() => import("./app-shell/AppRuntimeView").then((module) => ({ default: module.AppRuntimeView })));
+
+function AppRuntimeViewFallback() {
+  return (
+    <div className="boot-shell" role="status" aria-label="Reasonix is starting">
+      <div className="boot-shell__card">
+        <div className="boot-shell__mark" aria-hidden="true"><img src={logoSymbol} alt="" draggable={false} /></div>
+        <div className="boot-shell__name">Reasonix</div>
+        <div className="boot-shell__dots" aria-hidden="true"><span /><span /><span /></div>
+      </div>
+    </div>
+  );
+}
 
 // Hold reasoning UI until the authoritative desktop startup settings arrive;
 // this prevents a hidden preference from flashing content during first paint.
@@ -98,6 +113,28 @@ export function AppRuntime() {
   const refreshComposerFileRefs = useCommittedCommand(() => setFileRefRefreshKey((value) => value + 1));
   const composerFileRefRefreshKey = `${dockRefreshKey}:${fileRefRefreshKey}`;
   const [projectRevision, setProjectRevision] = useState(0);
+  const acceptedDraftSessionRef = useRef<((ref: import("./lib/sessionRef").SessionRef) => Promise<void>) | null>(null);
+  const openAcceptedDraftSession = useCommittedCommand(async (ref: import("./lib/sessionRef").SessionRef) => {
+    await acceptedDraftSessionRef.current?.(ref);
+  });
+  const markDraftChanged = useCommittedCommand(() => setProjectRevision((value) => value + 1));
+  const drafts = useSessionDraftSurface({
+    onAccepted: openAcceptedDraftSession,
+    onChanged: markDraftChanged,
+    claimNavigationIntent: runtime.navigation.noteNavigationIntent,
+    isNavigationIntentCurrent: runtime.navigation.isNavigationIntentCurrent,
+  });
+  useEffect(() => { void drafts.initializeEmptySurface(); }, [drafts.initializeEmptySurface]);
+  const hadFormalSurfaceRef = useRef(false);
+  useEffect(() => {
+    if (tabMetas.length > 0) {
+      hadFormalSurfaceRef.current = true;
+      return;
+    }
+    if (!hadFormalSurfaceRef.current) return;
+    hadFormalSurfaceRef.current = false;
+    void drafts.open("global", "");
+  }, [drafts.open, tabMetas.length]);
 
   const session = useAppSessionComposition({
     runtime,
@@ -138,9 +175,12 @@ export function AppRuntime() {
       setSidebarImDetailConnectionId, setTasksOpen,
     },
     session,
+    draft: drafts,
   });
+  acceptedDraftSessionRef.current = navigation.navigationCommands.openCanonicalSession;
 
   return (
+    <Suspense fallback={<AppRuntimeViewFallback />}>
     <AppRuntimeView
       core={{
         state, activeTab, activeTabId, liveStore, remoteSurfaceActive, remoteSession, remoteComposerReady,
@@ -150,6 +190,7 @@ export function AppRuntime() {
       session={session}
       navigation={navigation}
       runtime={runtime}
+      draft={drafts}
       local={{
         tasksOpen, setTasksOpen,
         sidebarImDetailConnectionId, setSidebarImDetailConnectionId,
@@ -158,5 +199,6 @@ export function AppRuntime() {
         terminalContentVisible, terminalFitEnabled, prefetchTerminalPanel,
       }}
     />
+    </Suspense>
   );
 }

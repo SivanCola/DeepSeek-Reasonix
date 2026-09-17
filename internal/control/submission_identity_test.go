@@ -4,11 +4,52 @@ import (
 	"context"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"reasonix/internal/event"
 	"reasonix/internal/session"
 )
+
+func TestShellSubmissionIsDurableBeforeCommandDispatchAndDeduplicated(t *testing.T) {
+	var ctrl *Controller
+	var dispatches atomic.Int32
+	var admitted atomic.Bool
+	done := make(chan struct{}, 1)
+	verified := make(chan bool, 1)
+	req := SubmissionRequest{ID: "shell-once", Action: "shell", Input: "echo fixture", Display: "echo fixture"}
+	sink := event.FuncSink(func(ev event.Event) {
+		if ev.Kind == event.TurnStarted {
+			receipt, found := ctrl.sessionEventStore().Submission(req.ID)
+			snapshot := ctrl.sessionEventStore().Snapshot()
+			admitted.Store(found && MatchesSubmissionReceipt(req, receipt) && snapshot.DurableSequence >= snapshot.EventSequence)
+		}
+		if ev.Kind == event.ToolDispatch {
+			dispatches.Add(1)
+			verified <- admitted.Load()
+		}
+		if ev.Kind == event.TurnDone {
+			select {
+			case done <- struct{}{}:
+			default:
+			}
+		}
+	})
+	ctrl = newOwnedTestController(t, Options{SessionPath: filepath.Join(t.TempDir(), "shell.jsonl"), Sink: sink})
+	defer ctrl.Close()
+	first, err := ctrl.SubmitIdentified(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !<-verified {
+		t.Fatal("shell command dispatched before durable receipt")
+	}
+	<-done
+	second, err := ctrl.SubmitIdentified(req)
+	if err != nil || second != first || dispatches.Load() != 1 {
+		t.Fatalf("duplicate shell: %v %+v dispatches=%d", err, second, dispatches.Load())
+	}
+}
 
 func TestSubmissionIdentityDurableAndConflicting(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")

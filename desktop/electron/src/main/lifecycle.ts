@@ -17,6 +17,8 @@ export interface LifecycleApp {
 export interface QuitSequencerDeps {
   service: LifecycleService;
   app: LifecycleApp;
+  flushRenderer?: () => Promise<void>;
+  resumeRenderer?: () => Promise<void>;
   onCloseAllowed(): void;
   cleanup?: Array<{ name: string; run(): void }>;
   schedule?: (run: () => void, milliseconds: number) => void;
@@ -73,23 +75,46 @@ export class QuitSequencer {
   private async ask(): Promise<void> {
     let prevent = false;
     try {
+      await this.deps.flushRenderer?.();
+    } catch (error) {
+      this.deps.log.warn(`exit ${this.attempt}: draft flush failed; quit cancelled: ${errorText(error)}`);
+      this.phase = "idle";
+      this.approved = false;
+      this.attempt = "";
+      return;
+    }
+    try {
       prevent = await this.deps.service.beforeClose("quit");
     } catch (error) {
       this.deps.log.warn(`beforeClose(quit) failed, quitting anyway: ${errorText(error)}`);
     }
     this.phase = "idle";
-    if (prevent && !this.approved) { this.deps.log.info(`exit ${this.attempt}: cancelled`); this.attempt = ""; return; }
+    if (prevent && !this.approved) {
+      this.deps.log.info(`exit ${this.attempt}: cancelled`);
+      this.attempt = "";
+      await this.resumeRenderer();
+      return;
+    }
     this.approved = true;
     this.deps.app.quit();
   }
 
   private async finish(): Promise<void> {
     try {
+      await this.deps.flushRenderer?.();
+    } catch (error) {
+      this.deps.log.warn(`exit ${this.attempt}: draft flush failed; shutdown cancelled: ${errorText(error)}`);
+      this.phase = "idle";
+      this.approved = false;
+      return;
+    }
+    try {
       await this.deps.service.shutdown();
     } catch (error) {
       this.deps.log.warn(`exit ${this.attempt}: shutdown failed: ${errorText(error)}`);
       this.phase = "idle";
       this.approved = false;
+      await this.resumeRenderer();
       return;
     }
     for (const step of [{ name: "close permission", run: () => this.deps.onCloseAllowed() }, ...(this.deps.cleanup ?? [])]) {
@@ -109,5 +134,13 @@ export class QuitSequencer {
     } catch (error) {
       this.deps.log.error(`relaunch failed: ${errorText(error)}`);
     } finally { this.deps.app.quit(); }
+  }
+
+  private async resumeRenderer(): Promise<void> {
+    try {
+      await this.deps.resumeRenderer?.();
+    } catch (error) {
+      this.deps.log.warn(`exit ${this.attempt}: could not resume draft editing: ${errorText(error)}`);
+    }
   }
 }
