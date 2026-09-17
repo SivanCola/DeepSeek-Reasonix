@@ -4081,8 +4081,7 @@ func TestAppendUniquePathsDeduplicatesSymlinkEquivalentRoots(t *testing.T) {
 }
 
 func TestRuntimeForbidReadRootsAddsGlobalCredentialFileExceptOnWindows(t *testing.T) {
-	home := isolateConfigHome(t)
-	t.Setenv("REASONIX_HOME", filepath.Join(home, "reasonix-home"))
+	t.Setenv("REASONIX_HOME", filepath.Join(isolateConfigHome(t), "reasonix-home"))
 	configured := filepath.Join(t.TempDir(), "configured-secret")
 	projectEnv := filepath.Join(t.TempDir(), ".env")
 	for _, path := range []string{configured, projectEnv} {
@@ -4090,14 +4089,12 @@ func TestRuntimeForbidReadRootsAddsGlobalCredentialFileExceptOnWindows(t *testin
 			t.Fatal(err)
 		}
 	}
-
 	cfg := config.Default()
 	cfg.Sandbox.ForbidRead = []string{configured}
 	withoutCredentials := RuntimeForbidReadRoots(cfg, ".")
 	if !reflect.DeepEqual(withoutCredentials, []string{configured}) {
 		t.Fatalf("roots without global credentials = %v", withoutCredentials)
 	}
-
 	credentialPath := config.UserCredentialsPath()
 	if err := os.MkdirAll(filepath.Dir(credentialPath), 0o700); err != nil {
 		t.Fatal(err)
@@ -4113,11 +4110,8 @@ func TestRuntimeForbidReadRootsAddsGlobalCredentialFileExceptOnWindows(t *testin
 		t.Fatalf("project .env was unexpectedly added to runtime forbid roots: %v", got)
 	}
 	windowsRoots := runtimeForbidReadRootsForGOOS(cfg, ".", "windows")
-	if pathListContains(windowsRoots, credentialPath) {
-		t.Fatalf("Windows runtime forbid roots include the global credential file: %v", windowsRoots)
-	}
-	if !pathListContains(windowsRoots, configured) {
-		t.Fatalf("Windows runtime forbid roots dropped the configured path: %v", windowsRoots)
+	if !reflect.DeepEqual(windowsRoots, []string{configured}) {
+		t.Fatalf("Windows runtime forbid roots = %v", windowsRoots)
 	}
 }
 
@@ -4126,7 +4120,6 @@ func TestRuntimeForbidReadRootsFiltersUnconfiguredStoredCredential(t *testing.T)
 	t.Setenv("REASONIX_HOME", filepath.Join(home, "reasonix-home"))
 	const staleKey = "REASONIX_TEST_UNCONFIGURED_STORED_CREDENTIAL"
 	t.Setenv(staleKey, "opaque-stale-value")
-
 	credentialPath := config.UserCredentialsPath()
 	if err := os.MkdirAll(filepath.Dir(credentialPath), 0o700); err != nil {
 		t.Fatal(err)

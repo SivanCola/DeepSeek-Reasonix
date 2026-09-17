@@ -2393,11 +2393,9 @@ func runtimeForbidReadRootsForGOOS(cfg *config.Config, root, goos string) []stri
 	}
 	secrets.RegisterCredentialEnvKeys(cfg.CredentialEnvNames())
 	base := cfg.ForbidReadRootsForRoot(root)
-	// Harness's WRITE_RESTRICTED Windows token constrains writes only. Hiding
-	// the credential file by denying the caller's own SID also denies the host
-	// settings process and can strand that deny after a crash. Keep filtering
-	// credential values from child environments, but do not mutate the user's
-	// credential-file ACL on Windows.
+	// WRITE_RESTRICTED constrains writes only. Keep filtering credential values
+	// on Windows without denying the caller SID, which would also lock out the
+	// host settings process and could survive a crash.
 	if goos == "windows" {
 		return append([]string(nil), base...)
 	}
