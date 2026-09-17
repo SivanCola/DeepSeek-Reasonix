@@ -38,7 +38,14 @@ export async function verifyNativeReaderInput(page, evidence = {}) {
     await page.waitForFunction(() => { const el = document.querySelector(".chat-flow-scroll"); return el.scrollHeight - el.clientHeight - el.scrollTop <= 1; });
     const box = await scroll.boundingBox();
     assert.ok(box);
-    xdo("mousemove", "--window", windowId, Math.round(box.x + box.width / 2), Math.round(box.y + box.height / 2));
+    const center = { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) };
+    xdo("mousemove", "--window", windowId, center.x, center.y);
+    await page.waitForFunction(() => window.nativePointerEvents.some(event => event.type === "pointermove"));
+    const observed = await page.evaluate(() => window.nativePointerEvents.filter(event => event.type === "pointermove").at(-1));
+    // Window-manager borders can offset X11 window-relative and DOM client
+    // coordinates. Measure that transform with a harmless move over content.
+    const offset = { x: center.x - observed.x, y: center.y - observed.y };
+    evidence.coordinateOffset = offset;
     const beforeWheel = await top();
     await page.evaluate(() => { window.nativePhase = "wheel"; });
     xdo("click", "--repeat", 4, "--delay", 50, 4);
@@ -58,18 +65,20 @@ export async function verifyNativeReaderInput(page, evidence = {}) {
     xdo("key", "--clearmodifiers", "End");
     await page.waitForFunction(() => { const el = document.querySelector(".chat-flow-scroll"); return el.scrollHeight - el.clientHeight - el.scrollTop <= 1; });
     const track = await scroll.evaluate(el => {
-      const box = el.getBoundingClientRect(), gutter = el.offsetWidth - el.clientWidth;
+      const box = el.getBoundingClientRect();
+      // clientLeft includes the reserved left gutter with stable both-edges.
+      const gutter = el.offsetWidth - el.clientWidth - el.clientLeft - parseFloat(getComputedStyle(el).borderRightWidth);
       const thumb = Math.max(gutter, (box.height - 2 * gutter) * el.clientHeight / el.scrollHeight);
       return { x: box.right - gutter / 2, y: box.bottom - gutter - thumb / 2, to: box.top + box.height / 2, gutter, top: el.scrollTop };
     });
     assert.ok(track.gutter > 0, "native scrollbar must be exposed");
     evidence.track = track;
     await page.evaluate(() => { window.nativePhase = "scrollbar"; });
-    xdo("mousemove", "--window", windowId, Math.round(track.x), Math.round(track.y));
+    xdo("mousemove", "--window", windowId, Math.round(track.x + offset.x), Math.round(track.y + offset.y));
     xdo("mousedown", 1);
     try {
       for (let step = 1; step <= 12; step++) {
-        xdo("mousemove", "--window", windowId, Math.round(track.x), Math.round(track.y + (track.to - track.y) * step / 12));
+        xdo("mousemove", "--window", windowId, Math.round(track.x + offset.x), Math.round(track.y + (track.to - track.y) * step / 12 + offset.y));
         await frame();
       }
     } finally { xdo("mouseup", 1); }
