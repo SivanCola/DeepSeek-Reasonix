@@ -34,6 +34,27 @@ function installLocalStorage(seed: Record<string, string> = {}): Storage {
 }
 
 {
+  const storage = installLocalStorage({ [WORKBENCH_SORT_KEY]: "updated" });
+  const interruptedStorage = {
+    get length() { return storage.length; },
+    clear: () => storage.clear(),
+    getItem: (key: string) => storage.getItem(key),
+    key: (index: number) => storage.key(index),
+    removeItem: (key: string) => storage.removeItem(key),
+    setItem: (key: string, value: string) => {
+      if (key === WORKBENCH_SORT_CREATED_DEFAULT_MIGRATION_KEY) throw new Error("interrupted migration");
+      storage.setItem(key, value);
+    },
+  } satisfies Storage;
+  globalThis.localStorage = interruptedStorage;
+  assert.equal(loadWorkbenchSortMode(), "created", "an interrupted migration still uses creation time");
+  assert.equal(storage.getItem(WORKBENCH_SORT_CREATED_DEFAULT_MIGRATION_KEY), null, "an interrupted migration remains retryable");
+  globalThis.localStorage = storage;
+  assert.equal(loadWorkbenchSortMode(), "created", "the next launch completes an interrupted migration");
+  assert.equal(storage.getItem(WORKBENCH_SORT_CREATED_DEFAULT_MIGRATION_KEY), "1");
+}
+
+{
   installLocalStorage({
     [WORKBENCH_SORT_CREATED_DEFAULT_MIGRATION_KEY]: "1",
     [WORKBENCH_SORT_KEY]: "created",
