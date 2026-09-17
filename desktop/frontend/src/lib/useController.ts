@@ -139,7 +139,7 @@ export {
   quietTranscriptNoticeKey,
   readinessMissingIds,
 } from "./controllerNotices";
-export type ToolStatus = "running" | "done" | "error" | "stopped";
+export type ToolStatus = "running" | "done" | "error" | "stopped" | "unknown";
 // Reserved ToolProgress channel names for sub-agent progress previews (the Go
 // tracker emits these; ordinary tool progress must never use them).
 export const SUBAGENT_PROGRESS_STATUS = "reasonix.subagent.status";
@@ -340,7 +340,7 @@ export type Item = { turnId?: string } & (
       resolvedName?: string;
       capabilityId?: string; subagentOutcome?: import("./subagentOutcome").SubagentOutcome;
       status: ToolStatus;
-      resultMissing?: boolean;
+      resultMissing?: boolean; contentState?: "unloaded" | "loading" | "ready" | "failed";
       output?: string; searchSources?: SearchSource[]; searchSourcesStatus?: "available" | "not_provided"; searchSummary?: string; // display-only provider search results; replay data stays in output/serverSearch
       error?: string;
       truncated?: boolean;

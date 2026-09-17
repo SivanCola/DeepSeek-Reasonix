@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 10;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:1d7695fb92507f041b5893177af9a4e60b1589e67ff00ad954b61febdaeacb2c";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:5432a9eb9a3c100817b81abf97ebf0eab005a1147ac1731f73220f7ba2be9be2";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -37,6 +37,7 @@ export const DESKTOP_COMMANDS = [
   "AnswerQuestion",
   "AnswerQuestionForTab",
   "AnswerRemoteTab",
+  "AppendSessionExportPage",
   "ApplyModelSettings",
   "ApplySessionLifecycle",
   "ApplyUpdateRequest",
@@ -54,6 +55,7 @@ export const DESKTOP_COMMANDS = [
   "BackgroundRuntimes",
   "Balance",
   "BalanceForTab",
+  "BeginSessionExportForTarget",
   "BotRuntimeStatus",
   "Cancel",
   "CancelJob",
@@ -61,6 +63,7 @@ export const DESKTOP_COMMANDS = [
   "CancelJobsForTab",
   "CancelRemoteTab",
   "CancelRemoteTabJobs",
+  "CancelSessionExport",
   "CancelSessionForTab",
   "CancelShellInstall",
   "CancelTab",
@@ -160,6 +163,7 @@ export const DESKTOP_COMMANDS = [
   "FetchProviderModelCatalogDraft",
   "FetchProviderModels",
   "FinalizeWorktreeMerge",
+  "FinishSessionExport",
   "Forget",
   "ForgetForTab",
   "ForgetRemoteTab",
@@ -345,6 +349,7 @@ export const DESKTOP_COMMANDS = [
   "ReadReferenceFileForTab",
   "ReadReferenceFileSourceForTab",
   "ReadRemoteFile",
+  "ReadSessionExportChunk",
   "ReadSessionHistory",
   "RebuildHistoryIndex",
   "RebuildSessionCatalog",
@@ -3666,6 +3671,33 @@ export interface SessionCreationResult {
   projectionPending?: boolean;
 }
 
+export interface SessionExportChunk {
+  data: string;
+  nextOffset: number;
+  done: boolean;
+}
+
+export interface SessionExportHandle {
+  exportId: string;
+  snapshot: ExportSnapshot;
+  format: string;
+}
+
+export interface SessionExportPage {
+  index: number;
+  offset: number;
+  data: string;
+  done: boolean;
+  width: number;
+  height: number;
+}
+
+export interface SessionExportResult {
+  paths: string[];
+  records: number;
+  pages: number;
+}
+
 export interface SessionHistoryContentChunk {
   data: string;
   nextOffset: number;
@@ -4646,6 +4678,17 @@ export interface ToolExecution {
   durationMs?: number;
 }
 
+export interface ExportSnapshot {
+  readIncomplete?: boolean;
+  session: SessionRef;
+  storageGeneration: string;
+  snapshotSequence: number;
+  acceptedThrough: number;
+  durableThrough: number;
+  capturedAt: string;
+  title: string;
+}
+
 export interface HistoryWindowPage {
   messages: PersistentMessage[];
   status: string;
@@ -4707,6 +4750,7 @@ export interface MessageLocation {
 }
 
 export interface PersistentMessage {
+  toolObservations?: Record<string, ToolObservation>;
   submissionId?: string;
   samplingCount?: number | null;
   toolCount?: number | null;
@@ -4768,6 +4812,13 @@ export interface SessionOpenView {
 export interface SessionRef {
   hostId: string;
   sessionId: string;
+}
+
+export interface ToolObservation {
+  state: string;
+  messageId?: string;
+  version?: number;
+  contentRef?: Ref | null;
 }
 
 export interface Ref {
@@ -5220,6 +5271,7 @@ export interface GeneratedDesktopCommands {
   AnswerQuestion(arg0: string, arg1: QuestionAnswer[]): Promise<void>;
   AnswerQuestionForTab(arg0: string, arg1: string, arg2: QuestionAnswer[]): Promise<void>;
   AnswerRemoteTab(arg0: string, arg1: string, arg2: RemoteAskAnswer[]): Promise<void>;
+  AppendSessionExportPage(arg0: string, arg1: SessionExportPage): Promise<void>;
   ApplyModelSettings(arg0: ModelSettingsChange): Promise<ModelSettingsResult>;
   ApplySessionLifecycle(arg0: SessionLifecycleRequest): Promise<SessionLifecycleResult>;
   ApplyUpdateRequest(arg0: string, arg1: string, arg2: string): Promise<void>;
@@ -5237,6 +5289,7 @@ export interface GeneratedDesktopCommands {
   BackgroundRuntimes(): Promise<BackgroundRuntimeView[]>;
   Balance(): Promise<BalanceInfo>;
   BalanceForTab(arg0: string): Promise<BalanceInfo>;
+  BeginSessionExportForTarget(arg0: SessionSelector, arg1: string, arg2: string, arg3: string, arg4: string): Promise<SessionExportHandle>;
   BotRuntimeStatus(): Promise<BotRuntimeStatusView>;
   Cancel(): Promise<void>;
   CancelJob(arg0: string): Promise<boolean>;
@@ -5244,6 +5297,7 @@ export interface GeneratedDesktopCommands {
   CancelJobsForTab(arg0: string, arg1: string[]): Promise<JobCancelBatchView>;
   CancelRemoteTab(arg0: string): Promise<void>;
   CancelRemoteTabJobs(arg0: string, arg1: string[]): Promise<void>;
+  CancelSessionExport(arg0: string): Promise<void>;
   CancelSessionForTab(arg0: string): Promise<CancelReceipt>;
   CancelShellInstall(): Promise<void>;
   CancelTab(arg0: string): Promise<void>;
@@ -5343,6 +5397,7 @@ export interface GeneratedDesktopCommands {
   FetchProviderModelCatalogDraft(arg0: ProviderView, arg1: string): Promise<ProviderModelCapabilityView[]>;
   FetchProviderModels(arg0: ProviderView): Promise<string[]>;
   FinalizeWorktreeMerge(arg0: CleanupRequest): Promise<CleanupResult>;
+  FinishSessionExport(arg0: string): Promise<SessionExportResult>;
   Forget(arg0: string): Promise<void>;
   ForgetForTab(arg0: string, arg1: string): Promise<void>;
   ForgetRemoteTab(arg0: string, arg1: string): Promise<void>;
@@ -5528,6 +5583,7 @@ export interface GeneratedDesktopCommands {
   ReadReferenceFileForTab(arg0: string, arg1: string): Promise<FilePreview>;
   ReadReferenceFileSourceForTab(arg0: string, arg1: string): Promise<FilePreview>;
   ReadRemoteFile(arg0: string, arg1: string): Promise<RemoteFilePreview>;
+  ReadSessionExportChunk(arg0: string, arg1: number): Promise<SessionExportChunk>;
   ReadSessionHistory(arg0: SessionRef, arg1: string, arg2: number): Promise<HistoryPage>;
   RebuildHistoryIndex(): Promise<void>;
   RebuildSessionCatalog(): Promise<void>;

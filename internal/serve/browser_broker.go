@@ -243,7 +243,7 @@ func (s *Server) capabilities() []string {
 		if _, ok := s.ctl().(*control.Controller); ok {
 			caps = append(caps, servecontract.SubmissionIdentityV1)
 		}
-		caps = append(caps, capabilitySessionIdentityV1, capabilitySessionOwnershipV1, capabilitySessionContentV1, capabilitySessionReadV2, capabilityHistoryWindowV1, capabilityGoalLifecycleV2, capabilityForkTargetsV1, servecontract.TranscriptV2)
+		caps = append(caps, capabilitySessionIdentityV1, capabilitySessionOwnershipV1, capabilitySessionContentV1, capabilitySessionReadV2, capabilityHistoryWindowV1, capabilityGoalLifecycleV2, capabilityForkTargetsV1, servecontract.TranscriptV2, servecontract.SessionExportV1)
 	}
 	if s.buildOptions.BrowserExecutor != nil {
 		caps = append(caps, capabilityBrowser)

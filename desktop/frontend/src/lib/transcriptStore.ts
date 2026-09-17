@@ -8,12 +8,11 @@ import { TranscriptMarkdownCache, type ParsedMarkdownValue } from "./transcriptM
 export type { ParsedMarkdownValue } from "./transcriptMarkdownCache";
 import type { Item, State } from "./useController";
 import { resolveTranscriptEntryAlias, TranscriptContentResolverRegistry } from "./transcriptContentResolver";
-import { convertRecord, entryToRecord, itemIdForToolCall, type RecordConversion, type TranscriptRecord } from "./transcriptRecordProjection";
+import { convertRecord, entryToRecord, type RecordConversion, type TranscriptRecord } from "./transcriptRecordProjection";
 import { readTranscriptContent } from "./transcriptContentRead";
 import { appendLivePageEntries, type TranscriptWindowPage } from "./transcriptLiveWindow";
 import { RESOURCE_BUDGETS } from "./resourceBudgets";
 import { bindTranscriptSession, boundSessionKey, detachTranscriptTab, type TranscriptTabBinding } from "./transcriptSessionBinding";
-import { fileDiffFromWire } from "./tools";
 import type {
   HistoryEntry,
   HistorySlice,
@@ -256,6 +255,11 @@ export class TranscriptStore {
     }
     session.itemsCache = items;
     return items;
+  }
+
+  exportObservation(tabId: string, sessionPath: string) {
+    const session = this.sessions.get(this.sessionKeyFor(tabId, sessionPath));
+    return session ? { capturedAt: new Date().toISOString(), tabId, sessionPath, generation: session.generation, appliedSequence: session.revision, hasOlder: session.hasOlder, hasNewer: session.hasNewer, residentRecords: session.records.length } : { capturedAt: new Date().toISOString(), tabId, sessionPath, unavailable: "No resident transcript binding" };
   }
 
   private projectionOf(session: SessionTranscript): TranscriptProjection {
@@ -888,49 +892,13 @@ export class TranscriptStore {
   /** Detached legacy tool reads use the exact call reference, not a field-only
    * cache key shared by several calls. Full bodies belong to the drawer. */
   async requestToolContent(tabId: string, item: Extract<Item, { kind: "tool" }>, value: Record<string, unknown>): Promise<string | undefined> {
-    const session = [...this.sessions.values()].find(session => session.tabId === tabId &&
+    const source = [...this.sessions.values()].find(session => session.tabId === tabId &&
       [...session.contributions.values()].some(items => items.some(candidate => candidate.id === item.id)));
-    if (!session) return undefined;
-    const entryId = [...session.contributions].find(([, items]) => items.some(candidate => candidate.id === item.id))?.[0];
-    const record = entryId && session.byId.get(entryId);
-    if (!record) return undefined;
-    let calls = record.message.toolCalls ?? [];
-    let callIndex = calls.findIndex((call, index) => itemIdForToolCall(call.id, `he:${record.entryId}:tc${index}`) === item.id);
-    let call = calls[callIndex];
-    const resultId = session.matchTables.get(record.entryId)?.get(callIndex);
-    let result = resultId ? session.byId.get(resultId) : record.message.role === "tool" ? record : undefined;
-    if (record.refs.some(ref => ref.field === "canonicalMessage")) {
-      await this.requestFullContent(tabId, record.entryId, "content");
-      calls = record.message.toolCalls ?? [];
-      callIndex = calls.findIndex((candidate, index) => itemIdForToolCall(candidate.id, `he:${record.entryId}:tc${index}`) === item.id);
-      call = calls[callIndex];
-      result = resultId ? session.byId.get(resultId) : record.message.role === "tool" ? record : undefined;
-    }
-    if (result?.refs.some(ref => ref.field === "canonicalMessage")) {
-      await this.requestFullContent(tabId, result.entryId, "content");
-    }
-    const generation = session.generation;
-    const refs = [
-      ...record.refs.filter(ref => call && ref.toolCallId === call.id && (ref.field === "toolArguments" || ref.field === "toolDiff")),
-      ...(result?.refs.filter(ref => ref.field === "content" || ref.field === "toolResultError") ?? []),
-    ];
-    if (refs.some(ref => ref.field === "toolArguments" || ref.field === "toolDiff") && !call?.id && calls.filter(call => !call.id).length > 1) throw new Error("Ambiguous legacy tool reference");
-    const full: Record<string, unknown> = { ...value, execution: result?.message.execution ?? value.execution };
-    for (const ref of refs) {
-      let data = "";
-      for (let index = 0; index < Math.max(1, ref.chunks); index++) {
-        const chunk = await this.backend.HistoryContentForTab(tabId, ref, index);
-        if (this.sessions.get(session.key) !== session || generation !== session.generation || chunk.stale) throw new Error("Tool reference expired; retry");
-        data += chunk.data ?? "";
-        if (chunk.done) break;
-      }
-      if (new TextEncoder().encode(data).byteLength !== ref.size) throw new Error("Incomplete tool content");
-      if (ref.field === "toolArguments") full.args = data;
-      else if (ref.field === "content") full.output = data;
-      else if (ref.field === "toolResultError") full.error = data;
-      else full.diff = call ? fileDiffFromWire({ ...call, diff: data }) ?? data : data;
-    }
-    return JSON.stringify(full, null, 2);
+    if (!source) return undefined;
+    const generation = source.generation;
+    const { readTranscriptToolContent } = await import("./transcriptToolContent");
+    if (this.sessions.get(source.key) !== source || source.generation !== generation) throw new Error("Tool reference expired; retry");
+    return readTranscriptToolContent({ sessions: this.sessions, backend: this.backend, requestFullContent: (tab, id, field) => this.requestFullContent(tab, id, field) }, tabId, item, value);
   }
 
   async requestFullContent(tabId: string, entryId: string, field: string): Promise<string | undefined> {

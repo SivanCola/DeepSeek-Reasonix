@@ -1,3 +1,4 @@
+import { noteSessionObservation } from "./sessionObservationDiagnostics";
 import { app } from "./bridge";
 import { entriesFor, registerTranscriptContentRecovery } from "./canonicalTranscriptBackend";
 import { TranscriptFollowClient } from "./transcriptFollowClient";
@@ -34,6 +35,7 @@ export class TranscriptSessionFollowerRuntime {
 
   async start(): Promise<void> {
     this.generation++;
+    noteSessionObservation(this.path, { action: "subscribe", tabId: this.tabId, generation: this.generation, sequence: this.coverage });
     this.recoveryScheduled = false;
     this.coverage = 0;
     this.confirmationReads.clear();
@@ -63,11 +65,11 @@ export class TranscriptSessionFollowerRuntime {
         }
         this.scheduleConfirmationRecovery();
       },
-      connection: (status, error) => this.dispatch({ type: "transcript_connection", status, error }),
+      connection: (status, error) => { noteSessionObservation(this.path, { action: "connection", tabId: this.tabId, generation: this.generation, sequence: this.coverage, status }); this.dispatch({ type: "transcript_connection", status, error }); },
     });
   }
 
-  stop(): void { this.generation++; this.confirmationReads.clear(); this.submissionCoverage.clear(); this.releaseContentRecovery?.(); this.releaseContentRecovery = undefined; this.client.stop(); }
+  stop(): void { noteSessionObservation(this.path, { action: "unsubscribe", tabId: this.tabId, generation: this.generation, sequence: this.coverage }); this.generation++; this.confirmationReads.clear(); this.submissionCoverage.clear(); this.releaseContentRecovery?.(); this.releaseContentRecovery = undefined; this.client.stop(); }
 
   private observeSubmissions(): void {
     const pending = new Set(this.state()?.localSubmissionOrder ?? []);
@@ -187,6 +189,7 @@ export class TranscriptSessionFollowerRuntime {
     this.dispatch({ type: "transcript_v2_snapshot", snapshot: combined, projection, remote: this.remote });
     this.dispatch({ type: "transcript_runtime", runtime: snapshot.runtime });
     this.coverage = snapshot.coveredThroughSeq;
+    noteSessionObservation(this.path, { action: "snapshot_installed", tabId: this.tabId, generation: this.generation, sequence: this.coverage, status: snapshot.runtime.status });
     this.scheduleConfirmationRecovery();
   }
 }

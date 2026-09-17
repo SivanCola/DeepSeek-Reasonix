@@ -527,6 +527,7 @@ export function useAppSessionComposition(input: AppSessionCompositionInput) {
   const sessionHasContent = exportItems.length > 0 || Boolean(exportLive?.text || exportLive?.reasoning);
 
   const sessionExportCommands = useSessionExportCommands({
+    selector: activeTab?.session?.sessionId ? { ref: activeTab.session } : activeTab?.sessionPath ? { sessionPath: activeTab.sessionPath } : { topicId: activeTab?.topicId },
     tabId: activeTabId,
     remote: remoteSurfaceActive,
     sessionTitle,

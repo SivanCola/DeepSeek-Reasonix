@@ -727,21 +727,6 @@ func (s *Server) cancel(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) cancelSession(w http.ResponseWriter, _ *http.Request) {
-	ctrl := s.ctl()
-	receipt := control.CancelReceipt{SessionRef: ctrl.SessionPath(), HeadID: agent.BranchID(ctrl.SessionPath()), Accepted: true}
-	if cancellable, ok := ctrl.(interface{ CancelSession() control.CancelReceipt }); ok {
-		receipt = cancellable.CancelSession()
-	} else {
-		status := ctrl.RuntimeStatus()
-		receipt.AlreadyIdle = !status.Running && !status.PendingPrompt
-		ctrl.Cancel()
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(receipt)
-}
-
 func (s *Server) approve(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		ID                 string `json:"id"`

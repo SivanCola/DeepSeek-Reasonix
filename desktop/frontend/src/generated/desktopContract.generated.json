@@ -906,6 +906,33 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/session_export.go",
+      "name": "AppendSessionExportPage",
+      "owner": "App.AppendSessionExportPage",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "object",
+          "ref": "main.SessionExportPage"
+        }
+      ],
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "id",
+          "page"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.AppendSessionExportPage"
+      },
+      "sources": [
+        "desktop/session_export.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/model_settings_api.go",
       "name": "ApplyModelSettings",
       "owner": "App.ApplyModelSettings",
@@ -1368,6 +1395,49 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/session_export.go",
+      "name": "BeginSessionExportForTarget",
+      "owner": "App.BeginSessionExportForTarget",
+      "params": [
+        {
+          "kind": "object",
+          "ref": "main.SessionSelector"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.SessionExportHandle"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "selector",
+          "tabID",
+          "format",
+          "title",
+          "observation"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.BeginSessionExportForTarget"
+      },
+      "sources": [
+        "desktop/session_export.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/bot_runtime_app.go",
       "name": "BotRuntimeStatus",
       "owner": "App.BotRuntimeStatus",
@@ -1536,6 +1606,28 @@
       },
       "sources": [
         "desktop/remote_tab_commands.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/session_export.go",
+      "name": "CancelSessionExport",
+      "owner": "App.CancelSessionExport",
+      "params": [
+        {
+          "kind": "string"
+        }
+      ],
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "id"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.CancelSessionExport"
+      },
+      "sources": [
+        "desktop/session_export.go"
       ]
     },
     {
@@ -4207,6 +4299,32 @@
       },
       "sources": [
         "desktop/delivery_worktree.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/session_export.go",
+      "name": "FinishSessionExport",
+      "owner": "App.FinishSessionExport",
+      "params": [
+        {
+          "kind": "string"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.SessionExportResult"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "id"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.FinishSessionExport"
+      },
+      "sources": [
+        "desktop/session_export.go"
       ]
     },
     {
@@ -9088,6 +9206,36 @@
       },
       "sources": [
         "desktop/remote_app.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/session_export.go",
+      "name": "ReadSessionExportChunk",
+      "owner": "App.ReadSessionExportChunk",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "integer"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.SessionExportChunk"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "id",
+          "offset"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.ReadSessionExportChunk"
+      },
+      "sources": [
+        "desktop/session_export.go"
       ]
     },
     {
@@ -34680,6 +34828,116 @@
         }
       ]
     },
+    "main.SessionExportChunk": {
+      "fields": [
+        {
+          "name": "data",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "nextOffset",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "done",
+          "type": {
+            "kind": "boolean"
+          }
+        }
+      ]
+    },
+    "main.SessionExportHandle": {
+      "fields": [
+        {
+          "name": "exportId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "snapshot",
+          "type": {
+            "kind": "object",
+            "ref": "session.ExportSnapshot"
+          }
+        },
+        {
+          "name": "format",
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
+    "main.SessionExportPage": {
+      "fields": [
+        {
+          "name": "index",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "offset",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "data",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "done",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "width",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "height",
+          "type": {
+            "kind": "integer"
+          }
+        }
+      ]
+    },
+    "main.SessionExportResult": {
+      "fields": [
+        {
+          "name": "paths",
+          "type": {
+            "elem": {
+              "kind": "string"
+            },
+            "kind": "array"
+          }
+        },
+        {
+          "name": "records",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "pages",
+          "type": {
+            "kind": "integer"
+          }
+        }
+      ]
+    },
     "main.SessionHistoryContentChunk": {
       "fields": [
         {
@@ -39842,6 +40100,60 @@
         }
       ]
     },
+    "session.ExportSnapshot": {
+      "fields": [
+        {
+          "name": "readIncomplete",
+          "optional": true,
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "session",
+          "type": {
+            "kind": "object",
+            "ref": "session.SessionRef"
+          }
+        },
+        {
+          "name": "storageGeneration",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "snapshotSequence",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "acceptedThrough",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "durableThrough",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "capturedAt",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "title",
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
     "session.HistoryWindowPage": {
       "fields": [
         {
@@ -40165,6 +40477,20 @@
     },
     "session.PersistentMessage": {
       "fields": [
+        {
+          "name": "toolObservations",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "session.ToolObservation"
+            },
+            "key": {
+              "kind": "string"
+            },
+            "kind": "map"
+          }
+        },
         {
           "name": "submissionId",
           "optional": true,
@@ -40492,6 +40818,41 @@
           "name": "sessionId",
           "type": {
             "kind": "string"
+          }
+        }
+      ]
+    },
+    "session.ToolObservation": {
+      "fields": [
+        {
+          "name": "state",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "messageId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "version",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "contentRef",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "sessioncontent.Ref"
+            },
+            "kind": "nullable"
           }
         }
       ]

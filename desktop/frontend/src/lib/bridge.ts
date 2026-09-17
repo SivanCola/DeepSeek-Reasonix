@@ -1,3 +1,5 @@
+import { hostEvents } from "./hostEvents";
+import { makeMockSessionExportBindings, type SessionExportBindings } from "./sessionExportBridge";
 import { makeMockSessionLifecycleBindings, type SessionLifecycleBindings } from "./sessionLifecycleBindings";
 import { makeMockModelSettingsBindings, type ModelSettingsBindings } from "./modelSettingsBridge";
 import { mockProviderTemplate, mockPreset, mockBundlePreset, mockKimiAPIModels, mockLongCatModels, mockTokenRhythmModels, mockTokenRhythmModelOverrides, mockMiMoV25Models, mockMiniMaxModels, mockGLMAPIModels, mockGLMCodingModels, mockGLMAnthropicModels, mockQwenAPIModels, mockQwenPlanModels, mockQwenPlanVisionModels, mockStepFunModels, mockOpenCodeGoModels, mockNovitaModels, mockGMIModels, mockVercelModels, mockOllamaCloudModels } from "./mockProviderTemplates";
@@ -233,7 +235,7 @@ interface DesktopWindowState {
 }
 // AppBindings is the hand-written React-to-Go contract. _CheckGeneratedBindings
 // catches generated methods missing here; update this interface and typecheck.
-export interface AppBindings extends SessionLifecycleBindings, ForkTargetsBindings, ToolRecoveryBindings, ModelSettingsBindings, SessionCatalogBindings, ProjectTreeOrganizationBindings, HistoryCatalogBindings, TaskCatalogBindings, BlankProjectBindings, QualityFloorBindings, SessionTitleBindings, ScrollDiagnosticBindings, RemoteProjectBindings, MCPAppBindings, PinnedContextBindings, FollowupBindings, TranscriptProtocolBindings, SessionReaderBindings {
+export interface AppBindings extends SessionExportBindings, SessionLifecycleBindings, ForkTargetsBindings, ToolRecoveryBindings, ModelSettingsBindings, SessionCatalogBindings, ProjectTreeOrganizationBindings, HistoryCatalogBindings, TaskCatalogBindings, BlankProjectBindings, QualityFloorBindings, SessionTitleBindings, ScrollDiagnosticBindings, RemoteProjectBindings, MCPAppBindings, PinnedContextBindings, FollowupBindings, TranscriptProtocolBindings, SessionReaderBindings {
   GetSessionActivityBaseline(selector: SessionSelector): Promise<import("../generated/desktopContract.generated").SessionActivityBaseline>;
   GetWorkspaceSnapshot(): Promise<WorkspaceSnapshot>;
   CreateSession(workspaceId: string): Promise<SessionRef>;
@@ -863,10 +865,6 @@ export type _CheckGenToApp = AssertNever<Exclude<DesktopCommandName, keyof AppBi
 // Must match desktop/app.go's eventChannel constant.
 const EVENT_CHANNEL = "agent:event";
 
-function hostEvents(name: string, cb: (...args: unknown[]) => void): (() => void) | null {
-  const host = desktopHost();
-  return host.kind === "none" ? null : host.events.on(name, cb);
-}
 
 let mockSingleton: AppBindings | null = null;
 function getMock(): AppBindings {
@@ -3333,6 +3331,7 @@ function makeMockApp(): AppBindings {
           return out;
         },
         ...makeMockSessionReaderBindings(),
+        ...makeMockSessionExportBindings(),
     async ListSessions() {
       return sessions.map((s) => ({ ...s }));
     },

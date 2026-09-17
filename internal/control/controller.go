@@ -101,7 +101,8 @@ var errNoSessionPath = errors.New("session has content but no session path; conv
 // Controller drives one chat session. Construct with New; drive with the command
 // methods; observe through the Sink passed in Options.
 type Controller struct {
-	runtimeState controllerRuntimeState
+	lifecycleDiagnostics lifecycleDiagnosticBuffer
+	runtimeState         controllerRuntimeState
 	controllerPromptRouting
 	authentication authenticationGate
 	runner         agent.Runner
@@ -5025,6 +5026,7 @@ func (c *Controller) ReleaseResources() {
 // Close stops plugin subprocesses and releases resources. A session that ever
 // started fires SessionEnd so a teardown hook runs.
 func (c *Controller) Close() {
+	c.recordLifecycle("close", "controller_close", "", 0, "")
 	c.close(true, closeJobsWithGrace)
 }
 

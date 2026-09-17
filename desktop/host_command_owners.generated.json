@@ -465,6 +465,21 @@
       ]
     }
   },
+  "AppendSessionExportPage": {
+    "domain": "desktop/session_export.go",
+    "owner": "App.AppendSessionExportPage",
+    "sources": [
+      "desktop/session_export.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.AppendSessionExportPage",
+      "inputs": [
+        "id",
+        "page"
+      ]
+    }
+  },
   "ApplyModelSettings": {
     "domain": "desktop/model_settings_api.go",
     "owner": "App.ApplyModelSettings",
@@ -714,6 +729,24 @@
       ]
     }
   },
+  "BeginSessionExportForTarget": {
+    "domain": "desktop/session_export.go",
+    "owner": "App.BeginSessionExportForTarget",
+    "sources": [
+      "desktop/session_export.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.BeginSessionExportForTarget",
+      "inputs": [
+        "selector",
+        "tabID",
+        "format",
+        "title",
+        "observation"
+      ]
+    }
+  },
   "BotRuntimeStatus": {
     "domain": "desktop/bot_runtime_app.go",
     "owner": "App.BotRuntimeStatus",
@@ -808,6 +841,20 @@
       "inputs": [
         "tabID",
         "jobIDs"
+      ]
+    }
+  },
+  "CancelSessionExport": {
+    "domain": "desktop/session_export.go",
+    "owner": "App.CancelSessionExport",
+    "sources": [
+      "desktop/session_export.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.CancelSessionExport",
+      "inputs": [
+        "id"
       ]
     }
   },
@@ -2234,6 +2281,20 @@
       "resolver": "App.FinalizeWorktreeMerge",
       "inputs": [
         "request"
+      ]
+    }
+  },
+  "FinishSessionExport": {
+    "domain": "desktop/session_export.go",
+    "owner": "App.FinishSessionExport",
+    "sources": [
+      "desktop/session_export.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.FinishSessionExport",
+      "inputs": [
+        "id"
       ]
     }
   },
@@ -4834,6 +4895,21 @@
       "inputs": [
         "hostID",
         "path"
+      ]
+    }
+  },
+  "ReadSessionExportChunk": {
+    "domain": "desktop/session_export.go",
+    "owner": "App.ReadSessionExportChunk",
+    "sources": [
+      "desktop/session_export.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.ReadSessionExportChunk",
+      "inputs": [
+        "id",
+        "offset"
       ]
     }
   },

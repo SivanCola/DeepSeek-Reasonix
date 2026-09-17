@@ -1,3 +1,4 @@
+import { historyToolStatus } from "./historyToolStatus";
 import { asArray } from "./array";
 import { canonicalMessage } from "./canonicalTranscriptBackend";
 import { historicalResultNotice } from "./completionResultState";
@@ -136,7 +137,7 @@ function convertRecordBody(
         claims.push(resultEntryId);
         consumed.add(resultEntryId);
       }
-      const archived = Boolean(toolCall.argumentsArchived || result?.toolResultArchived);
+      const archived = Boolean(toolCall.argumentsArchived || result?.toolResultArchived || (!result && toolCall.resultObservation?.contentRef));
       const output = result?.toolResultArchived ? undefined : result?.content ?? "";
       const error = result?.toolResultError || (output ? historyToolError(output) : undefined);
       const fileDiff = fileDiffFromWire(toolCall);
@@ -144,7 +145,7 @@ function convertRecordBody(
         kind: "tool", id: itemIdForToolCall(toolCall.id, `he:${rec.entryId}:tc${callIndex}`), name: toolCall.name,
         args: toolCall.arguments ?? "", readOnly: typeof toolCall.resolvedReadOnly === "boolean" ? toolCall.resolvedReadOnly : isReadOnlyTool(toolCall.name),
         resolvedName: toolCall.resolvedName, capabilityId: toolCall.capabilityId,
-        status: result ? (error ? "error" : "done") : "stopped", resultMissing: !result || undefined, output, error, dataArchived: archived || undefined,
+        status: historyToolStatus(result, toolCall, error), contentState: !result || archived ? "unloaded" : "ready", resultMissing: !result && !toolCall.resultObservation?.messageId || undefined, output, error, dataArchived: archived || undefined,
         subject: toolCall.subject, summary: summarizeFileDiff(fileDiff) || toolCall.summary, fileDiff,
         isShell: toolCall.name === "bash" || (toolCall.id || "").startsWith("shell-"), execution: result?.execution,
         presentedFiles: result?.presentedFiles,
@@ -172,7 +173,7 @@ export function applyResolvedField(rec: TranscriptRecord, ref: HistoryContentRef
     case "canonicalMessage": {
       const bytes = Uint8Array.from(data, character => character.charCodeAt(0));
       const decoded = canonicalMessage(
-        { messageId: rec.entryId, submissionId: message.submissionId, position: rec.turn, version: 1, role: message.role, eventSequence: 0, visibleTurn: rec.turn, turnFinal: message.turnFinal, turnDurationMs: message.turnDurationMs, samplingCount: message.samplingCount, toolCount: message.toolCount },
+        { messageId: rec.entryId, submissionId: message.submissionId, position: rec.turn, version: 1, role: message.role, eventSequence: 0, visibleTurn: rec.turn, turnFinal: message.turnFinal, toolObservations: Object.fromEntries((message.toolCalls ?? []).flatMap(call => call.resultObservation ? [[call.id, call.resultObservation]] : [])), turnDurationMs: message.turnDurationMs, samplingCount: message.samplingCount, toolCount: message.toolCount },
         JSON.parse(new TextDecoder().decode(bytes)),
       );
       rec.message = { ...message, ...decoded };

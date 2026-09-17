@@ -1,3 +1,4 @@
+import { historyToolStatus } from "./historyToolStatus";
 // historyItems converts durable HistoryMessage rows (and legacy HistoryPage
 // payloads) into transcript Items for the single-shot hydration path. The
 // windowed counterpart lives in transcriptStore; both projections must agree
@@ -166,7 +167,8 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
           readOnly: typeof tc.resolvedReadOnly === "boolean" ? tc.resolvedReadOnly : isReadOnlyTool(tc.name),
           resolvedName: tc.resolvedName,
           capabilityId: tc.capabilityId,
-          status: result ? (error ? "error" : "done") : tc.pending ? "running" : "stopped",
+          status: historyToolStatus(result, tc, error),
+          contentState: result && !result.toolResultArchived ? "ready" : "unloaded",
           output,
           error,
           dataArchived: archived || undefined,

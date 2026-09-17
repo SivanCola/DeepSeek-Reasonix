@@ -15,6 +15,7 @@ function asWireObject(value: unknown): Record<string, unknown> {
 
 export function canonicalMessage(message: PersistentMessage, body: unknown): HistoryMessage {
   const raw = asWireObject(body);
+  if (raw.role === "notice") return { role: "notice", messageId: String(raw.id ?? message.messageId), content: String(raw.content ?? ""), detail: typeof raw.detail === "string" ? raw.detail : undefined, code: typeof raw.code === "string" ? raw.code : undefined, level: raw.level === "warn" ? "warn" : "info" };
   const decisionReceipt = asWireObject(raw.decision_receipt);
   if (Object.keys(decisionReceipt).length > 0) {
     return { role: "notice", messageId: String(raw.id ?? message.messageId), content: "", code: "decision_receipt", level: "info", decisionReceipt: decisionReceipt as unknown as HistoryMessage["decisionReceipt"] };
@@ -32,6 +33,7 @@ export function canonicalMessage(message: PersistentMessage, body: unknown): His
     return { role: "notice", messageId: String(raw.id ?? message.messageId), content: "", code: "protocol_recovery", level: "info", pending: true, protocolRecovery: { id: protocolRecovery.id } };
   }
   const toolCalls = (Array.isArray(raw.tool_calls) ? raw.tool_calls as Record<string, unknown>[] : []).map(call => ({
+    resultObservation: message.toolObservations?.[String(call.id ?? "")],
     id: String(call.id ?? ""), name: String(call.name ?? ""), arguments: String(call.arguments ?? ""),
     resolvedName: typeof call.resolved_name === "string" ? call.resolved_name : undefined,
     capabilityId: typeof call.capability_id === "string" ? call.capability_id : undefined,

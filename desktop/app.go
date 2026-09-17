@@ -109,10 +109,12 @@ type PromptHistoryResult struct {
 // flow the other way: each tab's controller emits to a tabEventSink that
 // forwards events tagged with tabId to the webview via runtime.EventsEmit.
 type App struct {
-	ctx          context.Context
-	host         nativeHost
-	workspaceHub *workspaceChangeHub
-	topicState   *topicStateManager
+	sessionExportMu sync.Mutex
+	sessionExports  map[string]*sessionExportJob
+	ctx             context.Context
+	host            nativeHost
+	workspaceHub    *workspaceChangeHub
+	topicState      *topicStateManager
 	// topicTitleMutationMu keeps the authoritative title commit and its Tab /
 	// session-sidecar publication in the same order for manual and automatic
 	// renames. It is never held by generic topic-state reads or other metadata.
@@ -896,6 +898,7 @@ func (a *App) shutdown(context.Context) {
 	// Freeze publication, then cancel off-barrier history, catalog, and plugin
 	// work so normal quit never waits for background I/O.
 	a.shuttingDown.Store(true)
+	a.cancelSessionExports()
 	a.cancelAllTabBuilds()
 	a.stopSessionCatalog(250 * time.Millisecond)
 	completeDesktopShutdown(a.lifecycle.tracker, a.shutdownBody)
@@ -10821,15 +10824,6 @@ type committedExportFile struct {
 }
 
 const exportTempCreateAttempts = 100
-
-func numberedExportPath(path string, partIndex, partCount int) string {
-	if partCount <= 1 {
-		return path
-	}
-	ext := filepath.Ext(path)
-	stem := strings.TrimSuffix(path, ext)
-	return fmt.Sprintf("%s-%d-of-%d%s", stem, partIndex+1, partCount, ext)
-}
 
 func saveExclusiveExportPayloads(targets []string, payloadCount int, payloadAt func(int) ([]byte, error)) error {
 	if len(targets) == 0 || len(targets) != payloadCount || payloadAt == nil {

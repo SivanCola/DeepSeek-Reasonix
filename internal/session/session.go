@@ -632,6 +632,17 @@ func (s *Session) Flush(ctx context.Context) (DurableReceipt, error) {
 	return s.binding.Flush(ctx)
 }
 
+// FlushThrough waits only for the captured accepted prefix.
+func (s *Session) FlushThrough(ctx context.Context, through uint64) (DurableReceipt, error) {
+	if s == nil || s.binding == nil {
+		return DurableReceipt{}, ErrReadOnly
+	}
+	if through > s.EventSequence() {
+		return DurableReceipt{}, fmt.Errorf("session: watermark exceeds accepted sequence")
+	}
+	return s.binding.FlushThrough(ctx, through)
+}
+
 // Read exposes the durable prefix through a paged read. Events accepted but not
 // yet checkpointed are visible through AcceptedPage instead.
 func (s *Session) Read(ctx context.Context, offset uint64, limit int) (EventPage, error) {

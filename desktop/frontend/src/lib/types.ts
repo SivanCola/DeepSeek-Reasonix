@@ -1,3 +1,5 @@
+import type { HistoryToolCall } from "./historyToolTypes";
+export type { HistoryToolCall } from "./historyToolTypes";
 export type { ProjectNode } from "./projectNodeTypes";
 import type { TranscriptTurnMetadata } from "./transcriptProtocol";
 import type { ConnectionAuthentication } from "./authenticationTypes";
@@ -854,26 +856,6 @@ export interface HistoryMessage extends TranscriptTurnMetadata {
   protocolRecovery?: { id: string };
   diagnostic?: { kind: string; status?: number; traceId?: string; providerId?: string; providerDisplayName?: string; protocol?: string; requestPath?: string };
   serverSearch?: HistoryServerSearch[];
-}
-
-export interface HistoryToolCall {
-	partial?: boolean;
-	pending?: boolean;
-	parentId?: string;
-	argChars?: number;
-	startedAt?: number;
-  id: string;
-  name: string;
-  arguments: string;
-  resolvedName?: string;
-  capabilityId?: string;
-  resolvedReadOnly?: boolean;
-  subject?: string;
-  summary?: string;
-  diff?: string;
-  added?: number;
-  removed?: number;
-  argumentsArchived?: boolean;
 }
 
 export interface HistoryPage {

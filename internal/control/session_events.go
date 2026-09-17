@@ -413,7 +413,7 @@ func (c *Controller) appendSessionEventLocked(ctx context.Context, e event.Event
 			e.TurnID = projection.TurnID
 		}
 	}
-	events, err := c.v3EventsFor(e, projection)
+	events, err := c.sessionEventsFor(e, projection)
 	if err != nil || len(events) == 0 {
 		return err
 	}
@@ -430,6 +430,13 @@ func (c *Controller) appendSessionEventLocked(ctx context.Context, e event.Event
 	}
 	c.noteCommittedMessagesLocked(events)
 	return nil
+}
+
+func (c *Controller) sessionEventsFor(e event.Event, projection session.Projection) ([]session.Event, error) {
+	if e.Kind == event.Notice {
+		return mcpDisplayNoticeEvents(e)
+	}
+	return c.v3EventsFor(e, projection)
 }
 
 func (c *Controller) v3EventsFor(e event.Event, projection session.Projection) ([]session.Event, error) {
