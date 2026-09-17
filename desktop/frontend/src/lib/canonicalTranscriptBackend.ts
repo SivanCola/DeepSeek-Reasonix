@@ -1,6 +1,4 @@
-import type { HistoryWindowPage, PersistentMessage } from "../generated/desktopContract.generated";
-import { asArray } from "./array";
-import { app } from "./bridge";
+import type { PersistentMessage } from "../generated/desktopContract.generated";
 import { HistoryPreparingError } from "./historyPreparation";
 import { canonicalUserDisplay } from "./canonicalUserDisplay";
 import type { HistoryContentChunk, HistoryContentRef, HistoryEntry, HistoryMessage, HistorySlice, HistorySliceRequest, HistoryWindowPageView, HistoryWindowRequestView, MemoryCitation } from "./types";
@@ -124,48 +122,10 @@ export function entriesFor(messages: PersistentMessage[], snapshotSequence: numb
   });
 }
 
-function unsupportedWindow(): HistoryWindowPageView {
-  return {
-    entries: [], status: "unsupported", olderCursor: "", newerCursor: "",
-    hasOlder: false, hasNewer: false, totalTurns: 0, startTurn: 0, endTurn: 0,
-    revision: 0, revisionKnown: false, digest: "",
-  };
-}
-
 export async function canonicalHistoryWindow(tabId: string, req: HistoryWindowRequestView): Promise<HistoryWindowPageView> {
   const remote = identityFor(tabId) === "remote";
-  let page: HistoryWindowPage;
-  if (remote) {
-    if (typeof app.RemoteSessionHistoryWindowForTab !== "function") {
-      return unsupportedWindow();
-    }
-    page = await app.RemoteSessionHistoryWindowForTab(tabId, req);
-  } else {
-    if (typeof app.SessionHistoryWindowForTab !== "function") {
-      return unsupportedWindow();
-    }
-    page = await app.SessionHistoryWindowForTab(tabId, req);
-  }
-  const status = (page.status || "ready") as HistoryWindowPageView["status"];
-  if (status === "unsupported") {
-    return unsupportedWindow();
-  }
-  const entries = entriesFor(asArray<PersistentMessage>(page.messages), page.snapshotSequence);
-  const turns = entries.map(entry => entry.turn).filter(turn => turn > 0);
-  return {
-    entries,
-    status,
-    olderCursor: page.olderCursor ?? "",
-    newerCursor: page.newerCursor ?? "",
-    hasOlder: Boolean(page.hasOlder),
-    hasNewer: Boolean(page.hasNewer),
-    totalTurns: page.totalTurns ?? (turns.length > 0 ? Math.max(...turns) : 0),
-    startTurn: turns.length > 0 ? Math.min(...turns) : 0,
-    endTurn: turns.length > 0 ? Math.max(...turns) : 0,
-    revision: page.snapshotSequence ?? 0,
-    revisionKnown: (page.snapshotSequence ?? 0) > 0,
-    digest: page.generation ?? "",
-  };
+  const { readCanonicalHistoryWindow } = await import("./canonicalHistoryWindow");
+  return readCanonicalHistoryWindow(tabId, req, remote);
 }
 
 function staleSlice(): HistorySlice {

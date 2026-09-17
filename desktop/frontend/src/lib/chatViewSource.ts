@@ -144,6 +144,9 @@ export class ChatSource implements ChatViewSource {
   }
   private project(input: ChatInput) {
     for (const local of input.localSubmissions ?? []) if (local.messageId) this.displayMessageBySubmission.set(local.submissionId, local.messageId);
+    for (const [messageId, handoff] of Object.entries(input.visibleSubmissionHandoffs ?? {})) {
+      this.displayMessageBySubmission.set(handoff.submissionId, messageId);
+    }
     const order: string[] = [];
     const present = new Set<string>();
     const groups: Array<{ key: string; turn?: number; user?: Extract<Item, { kind: "user" }>; items: Item[] }> = [];

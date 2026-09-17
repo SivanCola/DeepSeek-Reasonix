@@ -12,6 +12,21 @@ const sent = () => reducer({ ...initialState, transcriptProtocol: 2 }, { type: "
 const event = (messageId = "durable") => ({ type: "event" as const, e: { kind: "user_message" as const, source: "executor" as const, submissionId: "send", messageId } });
 const input = { running: true, hydrating: false, hasOlder: false, loadingOlder: false };
 
+test("a batched bound handoff reserves its displayed key before a conflicting canonical row", () => {
+  const source = new ChatSource("batched-conflict");
+  let state = sent();
+  source.update({ ...input, items: [], localSubmissions: orderedLocalSubmissions(state) });
+  const original = source.getOrderSnapshot().find(key => source.getNodeSnapshot(key)?.kind === "user");
+  state = reducer(state, event("bound"));
+  state = reducer(state, { type: "transcript_records", confirmedUsers: [],
+    projection: projection([user("conflict", "send"), user("bound", "send")]) });
+  source.update({ ...input, items: state.items, localSubmissions: orderedLocalSubmissions(state), visibleSubmissionHandoffs: state.visibleSubmissionHandoffs });
+  const rows = source.getOrderSnapshot().map(key => source.getNodeSnapshot(key)).filter(node => node?.kind === "user");
+  assert.equal(rows.find(node => node?.item.messageId === "bound")?.key, original);
+  assert.equal(rows.find(node => node?.item.messageId === "conflict")?.key, "m:conflict");
+  source.dispose();
+});
+
 test("offscreen formal confirmation retires an echo without changing the reader page", () => {
   const old = user("old");
   const state = { ...sent(), items: [old], historyHasNewer: true };
