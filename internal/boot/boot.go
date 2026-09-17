@@ -2371,21 +2371,36 @@ func appendUniquePaths(base []string, extra ...string) []string {
 }
 
 // RuntimeForbidReadRoots returns the configured deny roots plus Reasonix's
-// global credential FILE when it exists. It also registers the corresponding
+// global credential file when the host can enforce that read boundary without
+// changing the caller's own ACL. It always registers the corresponding
 // credential environment names for subprocess filtering. Runtime tool
 // assemblers outside Build must use this helper instead of reading the config
 // roots directly.
 //
 // Provider and bot credentials are loaded into the parent process from this
-// file, so readers, shell commands, and MCP servers must not be able to recover
-// them even when the optional broad sensitive-file denylist is off. Project
-// .env files retain their existing behavior.
+// file. macOS/Linux also hide the file from readers, shell commands, and MCP
+// servers when the optional broad sensitive-file denylist is off. Windows only
+// filters the values from child environments: WRITE_RESTRICTED does not confine
+// reads, and denying the caller SID would also lock out the host. Project .env
+// files retain their existing behavior.
 func RuntimeForbidReadRoots(cfg *config.Config, root string) []string {
+	return runtimeForbidReadRootsForGOOS(cfg, root, runtime.GOOS)
+}
+
+func runtimeForbidReadRootsForGOOS(cfg *config.Config, root, goos string) []string {
 	if cfg == nil {
 		return nil
 	}
 	secrets.RegisterCredentialEnvKeys(cfg.CredentialEnvNames())
 	base := cfg.ForbidReadRootsForRoot(root)
+	// Harness's WRITE_RESTRICTED Windows token constrains writes only. Hiding
+	// the credential file by denying the caller's own SID also denies the host
+	// settings process and can strand that deny after a crash. Keep filtering
+	// credential values from child environments, but do not mutate the user's
+	// credential-file ACL on Windows.
+	if goos == "windows" {
+		return append([]string(nil), base...)
+	}
 	credentialPath := strings.TrimSpace(config.UserCredentialsPath())
 	if credentialPath == "" {
 		return append([]string(nil), base...)

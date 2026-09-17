@@ -4080,7 +4080,7 @@ func TestAppendUniquePathsDeduplicatesSymlinkEquivalentRoots(t *testing.T) {
 	}
 }
 
-func TestRuntimeForbidReadRootsAddsOnlyGlobalCredentialFile(t *testing.T) {
+func TestRuntimeForbidReadRootsAddsGlobalCredentialFileExceptOnWindows(t *testing.T) {
 	home := isolateConfigHome(t)
 	t.Setenv("REASONIX_HOME", filepath.Join(home, "reasonix-home"))
 	configured := filepath.Join(t.TempDir(), "configured-secret")
@@ -4105,12 +4105,19 @@ func TestRuntimeForbidReadRootsAddsOnlyGlobalCredentialFile(t *testing.T) {
 	if err := os.WriteFile(credentialPath, []byte("PROVIDER_KEY=secret"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got := RuntimeForbidReadRoots(cfg, ".")
+	got := runtimeForbidReadRootsForGOOS(cfg, ".", "darwin")
 	if !pathListContains(got, credentialPath) || !pathListContains(got, configured) {
 		t.Fatalf("runtime forbid roots = %v", got)
 	}
 	if pathListContains(got, projectEnv) {
 		t.Fatalf("project .env was unexpectedly added to runtime forbid roots: %v", got)
+	}
+	windowsRoots := runtimeForbidReadRootsForGOOS(cfg, ".", "windows")
+	if pathListContains(windowsRoots, credentialPath) {
+		t.Fatalf("Windows runtime forbid roots include the global credential file: %v", windowsRoots)
+	}
+	if !pathListContains(windowsRoots, configured) {
+		t.Fatalf("Windows runtime forbid roots dropped the configured path: %v", windowsRoots)
 	}
 }
 
@@ -4128,7 +4135,7 @@ func TestRuntimeForbidReadRootsFiltersUnconfiguredStoredCredential(t *testing.T)
 		t.Fatal(err)
 	}
 
-	_ = RuntimeForbidReadRoots(config.Default(), ".")
+	_ = runtimeForbidReadRootsForGOOS(config.Default(), ".", "windows")
 	joined := strings.Join(secrets.ProcessEnv(), "\n")
 	if strings.Contains(joined, staleKey+"=") || strings.Contains(joined, "opaque-stale-value") {
 		t.Fatalf("unconfigured stored credential survived in subprocess env")
