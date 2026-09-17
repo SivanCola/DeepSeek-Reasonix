@@ -4,7 +4,7 @@ $ErrorActionPreference = 'Stop'
 if ($env:OS -ne 'Windows_NT') { throw 'Run these tests on Windows.' }
 . (Join-Path $PSScriptRoot 'test-windows-installer-startup.ps1') -InstallerPath unused -ExpectedVersion v1.2.3
 
-$script:testRoot = Join-Path $env:TEMP ('reasonix-installer-tests-' + [guid]::NewGuid().ToString('N'))
+$script:testRoot = [IO.Path]::GetFullPath((Join-Path $env:TEMP ('reasonix-installer-tests-' + [guid]::NewGuid().ToString('N'))))
 $null = [IO.Directory]::CreateDirectory($script:testRoot)
 $script:occupiedPath = ''
 $script:running = $false
