@@ -92,32 +92,9 @@ func ActivateVersion(req ActivationRequest) error {
 }
 
 func activateVersion(req ActivationRequest, acquireLock func(context.Context, string) (func(), error)) error {
-	if req.WindowsRootEntries != nil && (len(req.RootMembers) != 0 || len(req.RequiredRootNames) != 0) {
-		return fmt.Errorf("installlayout: Windows root entries and explicit root members are mutually exclusive")
-	}
-	installRoot, err := cleanInstallRoot(req.InstallRoot)
+	installRoot, required, err := validateActivationRequest(req)
 	if err != nil {
 		return err
-	}
-	if err := ValidateVersionName(req.Version); err != nil {
-		return err
-	}
-	required := req.RequiredNames
-	if len(required) == 0 {
-		required = AllowedVersionMembers()
-	}
-	if err := validateMembers(req.Members, required, true); err != nil {
-		return err
-	}
-	if len(req.RootMembers) > 0 {
-		if len(req.RequiredRootNames) == 0 {
-			return fmt.Errorf("installlayout: root member whitelist is required")
-		}
-		if err := validateMembers(req.RootMembers, req.RequiredRootNames, false); err != nil {
-			return fmt.Errorf("installlayout: root entries: %w", err)
-		}
-	} else if len(req.RequiredRootNames) > 0 {
-		return fmt.Errorf("installlayout: root member whitelist provided without root members")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -128,16 +105,8 @@ func activateVersion(req ActivationRequest, acquireLock func(context.Context, st
 	}
 	defer unlock()
 
-	if req.WindowsRootEntries != nil {
-		// Inspect only after acquiring the same lock that protects publication.
-		// A concurrent activation must not make the preserve decision stale.
-		req.RootMembers, req.RequiredRootNames, err = windowsRootMembers(installRoot, *req.WindowsRootEntries)
-		if err != nil {
-			return err
-		}
-		if err := validateMembers(req.RootMembers, req.RequiredRootNames, false); err != nil {
-			return fmt.Errorf("installlayout: Windows root entries: %w", err)
-		}
+	if err := resolveWindowsRootEntries(&req, installRoot); err != nil {
+		return err
 	}
 
 	versionsRoot := filepath.Join(installRoot, VersionsDirName)
@@ -249,6 +218,55 @@ func activateVersion(req ActivationRequest, acquireLock func(context.Context, st
 	if versionBackup != "" {
 		_ = removeAllRetry(versionBackup)
 	}
+	return nil
+}
+
+func validateActivationRequest(req ActivationRequest) (string, []string, error) {
+	if req.WindowsRootEntries != nil && (len(req.RootMembers) != 0 || len(req.RequiredRootNames) != 0) {
+		return "", nil, fmt.Errorf("installlayout: Windows root entries and explicit root members are mutually exclusive")
+	}
+	installRoot, err := cleanInstallRoot(req.InstallRoot)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := ValidateVersionName(req.Version); err != nil {
+		return "", nil, err
+	}
+	required := req.RequiredNames
+	if len(required) == 0 {
+		required = AllowedVersionMembers()
+	}
+	if err := validateMembers(req.Members, required, true); err != nil {
+		return "", nil, err
+	}
+	if len(req.RootMembers) > 0 {
+		if len(req.RequiredRootNames) == 0 {
+			return "", nil, fmt.Errorf("installlayout: root member whitelist is required")
+		}
+		if err := validateMembers(req.RootMembers, req.RequiredRootNames, false); err != nil {
+			return "", nil, fmt.Errorf("installlayout: root entries: %w", err)
+		}
+	} else if len(req.RequiredRootNames) > 0 {
+		return "", nil, fmt.Errorf("installlayout: root member whitelist provided without root members")
+	}
+	return installRoot, required, nil
+}
+
+func resolveWindowsRootEntries(req *ActivationRequest, installRoot string) error {
+	if req.WindowsRootEntries == nil {
+		return nil
+	}
+	// Inspect only after acquiring the same lock that protects publication.
+	// A concurrent activation must not make the preserve decision stale.
+	rootMembers, requiredRootNames, err := windowsRootMembers(installRoot, *req.WindowsRootEntries)
+	if err != nil {
+		return err
+	}
+	if err := validateMembers(rootMembers, requiredRootNames, false); err != nil {
+		return fmt.Errorf("installlayout: Windows root entries: %w", err)
+	}
+	req.RootMembers = rootMembers
+	req.RequiredRootNames = requiredRootNames
 	return nil
 }
 
