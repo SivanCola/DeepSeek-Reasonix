@@ -83,11 +83,12 @@ func TestRepairLegacyCredentialDenyPreservesUnattributedAndLiveACL(t *testing.T)
 			if err := denyAppContainerSIDsWithInheritance(path, []string{userSID}, "RX", false); err != nil {
 				t.Fatal(err)
 			}
-			if source == "live marker" {
+			switch source {
+			case "live marker":
 				marker := writeStaleCredentialMarker(t, path)
 				liveResidueMarkers.Store(marker, struct{}{})
 				t.Cleanup(func() { liveResidueMarkers.Delete(marker) })
-			} else if source == "wrong path" {
+			case "wrong path":
 				writeStaleCredentialMarker(t, path+"-other")
 			}
 			before, err := windowsPathDACLSDDL(path)

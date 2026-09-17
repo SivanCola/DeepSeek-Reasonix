@@ -25,6 +25,51 @@ func TestCredentialAccessRepairsLegacyCredentialDeny(t *testing.T) {
 	}
 }
 
+func TestCredentialAccessRepairsLegacyDenyThroughLinkedHome(t *testing.T) {
+	t.Setenv("TEMP", t.TempDir())
+	realHome := t.TempDir()
+	linkedHome := filepath.Join(t.TempDir(), "reasonix-home")
+	if err := os.Symlink(realHome, linkedHome); err != nil {
+		t.Skipf("directory symlinks unavailable: %v", err)
+	}
+	t.Setenv("REASONIX_HOME", linkedHome)
+	path := UserCredentialsPath()
+	if err := os.WriteFile(path, []byte("EXISTING_KEY=old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	realPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if user == nil || user.User.Sid == nil {
+		t.Fatal("current process token has no user SID")
+	}
+	trustee := "*" + user.User.Sid.String()
+	if output, err := exec.Command("icacls", realPath, "/deny", trustee+":(RX)").CombinedOutput(); err != nil {
+		t.Fatalf("install legacy credential deny ACL: %v: %s", err, strings.TrimSpace(string(output)))
+	}
+	t.Cleanup(func() {
+		_ = exec.Command("icacls", realPath, "/remove:d", trustee, "/C").Run()
+	})
+	markerDir := filepath.Join(os.TempDir(), "windows-sandbox-denylocks")
+	if err := os.MkdirAll(markerDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(markerDir, strconv.Itoa(os.Getpid())+"-credential-linked-home-test.txt")
+	if err := os.WriteFile(marker, []byte("deny\t"+realPath+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	file, ok := readDotEnvFile(path)
+	if !ok || file.Values["EXISTING_KEY"] != "old" {
+		t.Fatal("credential load through linked home failed to repair legacy deny")
+	}
+}
+
 func testCredentialAccessRepairsLegacyDeny(t *testing.T, operation string) {
 	t.Helper()
 	t.Setenv("TEMP", t.TempDir())

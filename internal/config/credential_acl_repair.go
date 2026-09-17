@@ -3,6 +3,7 @@ package config
 import (
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"reasonix/internal/sandbox"
@@ -19,7 +20,14 @@ func readCredentialFile(path string) ([]byte, error) {
 	if path == "" || credentials == "" || !samePath(path, credentials) {
 		return nil, err
 	}
-	if repairErr := sandbox.RepairLegacyCredentialDeny(path); repairErr != nil {
+	// RuntimeForbidReadRoots resolved links before older Windows builds recorded
+	// the deny marker. Resolve only on the denied path so the ordinary read stays
+	// lock-free and avoids an extra filesystem round trip.
+	repairPath := path
+	if real, evalErr := filepath.EvalSymlinks(path); evalErr == nil {
+		repairPath = real
+	}
+	if repairErr := sandbox.RepairLegacyCredentialDeny(repairPath); repairErr != nil {
 		slog.Warn("config: legacy credential ACL repair failed", "path", path, "err", repairErr)
 		return nil, repairErr
 	}
