@@ -1221,8 +1221,6 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "24"
-          cache: pnpm
-          cache-dependency-path: desktop/pnpm-lock.yaml
 
       # Same Defender hazard as the Electron leg: exclusions keep Go test
       # binaries from crashing mid-syscall and freshly written files readable.
