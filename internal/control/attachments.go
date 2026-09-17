@@ -274,10 +274,6 @@ func SaveClipboardImageInRoot(root string) (string, error) {
 	}
 }
 
-func saveWindowsClipboardImage() (string, error) {
-	return saveWindowsClipboardImageTo(func(raw []byte) (string, error) { return SaveImageBytes("", raw) })
-}
-
 func saveWindowsClipboardImageTo(save func([]byte) (string, error)) (string, error) {
 	// Windows PowerShell 5.1 (preinstalled) reaches the GUI clipboard; pwsh (Core)
 	// lacks Get-Clipboard -Format Image, so invoke powershell.exe. The PNG is
@@ -620,10 +616,6 @@ func ensureAttachmentRootIn(base string) error {
 	return nil
 }
 
-func saveDarwinClipboardImage() (string, error) {
-	return saveDarwinClipboardImageWith(saveDarwinClipboardClass)
-}
-
 func saveDarwinClipboardImageTo(save func([]byte) (string, error)) (string, error) {
 	for _, class := range []string{"PNGf", "JPEG"} {
 		rel, err := saveDarwinClipboardClassTo(class, save)
@@ -648,10 +640,6 @@ func saveDarwinClipboardImageWith(readClass func(string) (string, error)) (strin
 		}
 	}
 	return "", ErrNoClipboardImage
-}
-
-func saveDarwinClipboardClass(class string) (string, error) {
-	return saveDarwinClipboardClassTo(class, func(raw []byte) (string, error) { return SaveImageBytes("", raw) })
 }
 
 func saveDarwinClipboardClassTo(class string, save func([]byte) (string, error)) (string, error) {
