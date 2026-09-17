@@ -1,7 +1,7 @@
 import type { ProjectNode } from "./types";
 
 export const PROJECT_TREE_WINDOW_INITIAL = 5;
-export const PROJECT_TREE_WINDOW_STEP = 10;
+export const PROJECT_TREE_WINDOW_STEP = 5;
 export const PROJECT_TREE_SEARCH_PAGE = 50;
 export const PROJECT_TREE_BACKEND_PAGE_MAX = 200;
 
@@ -33,6 +33,17 @@ export function forgetProjectTreeWindowLimits(projectKeys: ReadonlySet<string>):
     const separator = key.indexOf("\u001f");
     const projectKey = separator >= 0 ? key.slice(0, separator) : key;
     if (!projectKeys.has(projectKey)) runtimeWindowLimits.delete(key);
+  }
+}
+
+export function resetProjectTreeRuntimeWindowLimits(projectKey?: string): void {
+  if (!projectKey) {
+    runtimeWindowLimits.clear();
+    return;
+  }
+  const prefix = `${projectKey}\u001f`;
+  for (const key of runtimeWindowLimits.keys()) {
+    if (key.startsWith(prefix)) runtimeWindowLimits.delete(key);
   }
 }
 
@@ -120,6 +131,25 @@ export function projectTreeKnownGroupIDs(
     .filter(Boolean))].sort();
 }
 
+export function projectTreeListNeedsInitialization(state: ProjectTreeListPageState | undefined): boolean {
+  return !state?.initialized && !state?.loading;
+}
+
+export function projectTreeProjectsNeedingInitialLoad(
+  projects: readonly ProjectNode[],
+  expandedKeys: ReadonlySet<string>,
+  query: string,
+  pageStates: Readonly<Record<string, ProjectTreeListPageState>>,
+  folderKey: (project: ProjectNode) => string,
+): ProjectNode[] {
+  return projects.filter((project) => (
+    !project.remote
+    && (project.kind === "project" || project.kind === "global_folder")
+    && expandedKeys.has(folderKey(project))
+    && projectTreeListNeedsInitialization(pageStates[projectTreeListKey(project.key, "", query)])
+  ));
+}
+
 export async function reloadProjectTreeTopicLists(
   project: ProjectNode,
   query: string,
@@ -130,14 +160,33 @@ export async function reloadProjectTreeTopicLists(
   await Promise.all(groupIDs.map((groupID) => load(project, groupID)));
 }
 
+export type ProjectTreeWindowProjection = {
+  rows: ProjectNode[];
+  hasHiddenLoadedRows: boolean;
+};
+
+export function projectTreeWindowProjection(
+  rows: ProjectNode[],
+  limit: number,
+  isActive: (node: ProjectNode) => boolean,
+): ProjectTreeWindowProjection {
+  if (rows.length <= limit) return { rows, hasHiddenLoadedRows: false };
+  const visible = rows.slice(0, limit);
+  const active = rows.find((row) => isActive(row));
+  const projected = !active || visible.some((row) => row.key === active.key)
+    ? visible
+    : [...visible, active];
+  const visibleKeys = new Set(projected.map((row) => row.key));
+  return {
+    rows: projected,
+    hasHiddenLoadedRows: rows.some((row) => !visibleKeys.has(row.key)),
+  };
+}
+
 export function projectTreeWindowRows(
   rows: ProjectNode[],
   limit: number,
   isActive: (node: ProjectNode) => boolean,
 ): ProjectNode[] {
-  if (rows.length <= limit) return rows;
-  const visible = rows.slice(0, limit);
-  const active = rows.find((row) => isActive(row));
-  if (!active || visible.some((row) => row.key === active.key)) return visible;
-  return [...visible, active];
+  return projectTreeWindowProjection(rows, limit, isActive).rows;
 }

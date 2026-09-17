@@ -8,10 +8,13 @@ import {
   loadProjectTreePageWindow,
   projectTreeListKey,
   projectTreeKnownGroupIDs,
+  projectTreeProjectsNeedingInitialLoad,
   projectTreeRuntimeWindowLimits,
+  projectTreeWindowProjection,
   projectTreeWindowRows,
   reloadProjectTreeTopicLists,
   rememberProjectTreeWindowLimit,
+  resetProjectTreeRuntimeWindowLimits,
 } from "../lib/projectTreeWindow";
 import type { ProjectNode } from "../lib/types";
 
@@ -41,13 +44,18 @@ assert.deepEqual(
     PROJECT_TREE_WINDOW_INITIAL + PROJECT_TREE_WINDOW_STEP,
     PROJECT_TREE_WINDOW_INITIAL + PROJECT_TREE_WINDOW_STEP * 2,
   ].map((limit) => projectTreeWindowRows(many, limit, () => false).length),
-  [5, 15, 25],
+  [5, 10, 15],
 );
 
-const activeOutside = projectTreeWindowRows(many, 5, (node) => node.topicId === "topic-30");
-assert.equal(activeOutside.length, 6);
-assert.equal(activeOutside[activeOutside.length - 1]?.topicId, "topic-30");
-assert.equal(new Set(activeOutside.map((node) => node.key)).size, activeOutside.length);
+const activeOutside = projectTreeWindowProjection(many, 5, (node) => node.topicId === "topic-30");
+assert.equal(activeOutside.rows.length, 6);
+assert.equal(activeOutside.rows[activeOutside.rows.length - 1]?.topicId, "topic-30");
+assert.equal(new Set(activeOutside.rows.map((node) => node.key)).size, activeOutside.rows.length);
+assert.equal(activeOutside.hasHiddenLoadedRows, true);
+
+const activeOnlyOverflow = projectTreeWindowProjection(topics(6), 5, (node) => node.topicId === "topic-6");
+assert.equal(activeOnlyOverflow.rows.length, 6);
+assert.equal(activeOnlyOverflow.hasHiddenLoadedRows, false, "an active fallback row alone does not imply hidden loaded rows");
 
 const activeInside = projectTreeWindowRows(many, 5, (node) => node.topicId === "topic-3");
 assert.equal(activeInside.length, 5);
@@ -64,6 +72,30 @@ const knownGroupStates = {
   [projectTreeListKey("other", "ignored")]: { loading: false, initialized: true },
 };
 assert.deepEqual(projectTreeKnownGroupIDs(knownGroupStates, "project"), ["bugs", "feature"]);
+
+const cachedProjects = [
+  { key: "project-a", kind: "project", label: "A", children: [] },
+  { key: "project-b", kind: "project", label: "B", children: [] },
+] satisfies ProjectNode[];
+const cachedPageStates = {
+  [projectTreeListKey("project-a")]: { loading: false, initialized: true, itemKeys: ["a-1", "a-2"] },
+  [projectTreeListKey("project-b")]: { loading: false, initialized: true, itemKeys: ["b-1", "b-2"] },
+};
+const scheduledLoads: string[] = [];
+const scheduleInitialLoads = (expandedKeys: ReadonlySet<string>, pageStates = cachedPageStates) => {
+  for (const project of projectTreeProjectsNeedingInitialLoad(cachedProjects, expandedKeys, "", pageStates, (item) => item.key)) {
+    scheduledLoads.push(project.key);
+  }
+};
+scheduleInitialLoads(new Set(["project-b"]));
+assert.deepEqual(scheduledLoads, [], "collapsing one project does not reload an initialized sibling");
+scheduleInitialLoads(new Set(["project-a", "project-b"]));
+assert.deepEqual(scheduledLoads, [], "reopening one project or restoring all projects reuses initialized pages");
+scheduleInitialLoads(new Set(["project-a", "project-b"]), {
+  ...cachedPageStates,
+  [projectTreeListKey("project-a")]: { ...cachedPageStates[projectTreeListKey("project-a")], initialized: false },
+});
+assert.deepEqual(scheduledLoads, ["project-a"], "only an explicitly invalidated expanded project requests its first page");
 
 const reloadCalls: string[] = [];
 const reloadProject = { key: "project", kind: "project", label: "Project", children: [] } satisfies ProjectNode;
@@ -116,8 +148,16 @@ assert.equal(restored.nextCursor, "205");
 assert.equal(restored.revision, 2);
 
 const rememberedKey = projectTreeListKey("remembered-project", "feature");
-rememberProjectTreeWindowLimit(rememberedKey, 25);
-assert.equal(projectTreeRuntimeWindowLimits()[rememberedKey], 25, "expanded quota survives a component remount");
+const siblingKey = projectTreeListKey("sibling-project", "feature");
+rememberProjectTreeWindowLimit(rememberedKey, 15);
+rememberProjectTreeWindowLimit(siblingKey, 10);
+assert.equal(projectTreeRuntimeWindowLimits()[rememberedKey], 15, "expanded quota survives a component remount");
+resetProjectTreeRuntimeWindowLimits("remembered-project");
+assert.equal(projectTreeRuntimeWindowLimits()[rememberedKey], undefined, "collapsing one project resets all of its window quotas");
+assert.equal(projectTreeRuntimeWindowLimits()[siblingKey], 10, "collapsing one project preserves sibling quotas");
+resetProjectTreeRuntimeWindowLimits();
+assert.deepEqual(projectTreeRuntimeWindowLimits(), {}, "collapsing the whole tree resets every window quota");
+rememberProjectTreeWindowLimit(rememberedKey, 15);
 forgetProjectTreeWindowLimits(new Set(["other-project"]));
 assert.equal(projectTreeRuntimeWindowLimits()[rememberedKey], undefined, "deleted projects release runtime quota state");
 

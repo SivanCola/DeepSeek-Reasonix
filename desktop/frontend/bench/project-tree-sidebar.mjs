@@ -52,8 +52,22 @@ try {
   assert.equal(await page.locator('.project-tree__topic-main').count(), 5, 'project starts with five rendered sessions');
   await page.getByRole('button', { name: 'Show more in reasonix', exact: true }).click();
   await page.waitForFunction(() => document.querySelectorAll('.project-tree__topic-main').length === 9);
-  await page.getByRole('button', { name: 'Show less in reasonix', exact: true }).click();
+  assert.equal(await page.getByRole('button', { name: 'Show more in reasonix', exact: true }).count(), 0, 'the disclosure disappears at the final page');
+  const projectFolder = page.locator('.project-tree__folder--project .project-tree__folder-main').first();
+  await projectFolder.click();
+  await page.waitForFunction(() => document.querySelector('.project-tree__folder--project .project-tree__folder-main')?.getAttribute('aria-expanded') === 'false');
+  await projectFolder.click();
   await page.waitForFunction(() => document.querySelectorAll('.project-tree__topic-main').length === 5);
+  assert.equal(await page.getByRole('button', { name: 'Show more in reasonix', exact: true }).count(), 1, 'reopening a project restores the compact window over loaded rows');
+  await page.getByRole('button', { name: 'Show more in reasonix', exact: true }).click();
+  await page.waitForFunction(() => document.querySelectorAll('.project-tree__topic-main').length === 9);
+  await page.getByRole('button', { name: 'Collapse all', exact: true }).click();
+  await page.waitForFunction(() => [...document.querySelectorAll('.project-tree__folder-main')].every((element) => element.getAttribute('aria-expanded') === 'false'));
+  await page.getByRole('button', { name: 'Restore previous groups', exact: true }).click();
+  await page.waitForFunction(() => document.querySelectorAll('.project-tree__topic-main').length === 5);
+  assert.equal(await page.getByRole('button', { name: 'Show more in reasonix', exact: true }).count(), 1, 'restoring after collapse all resets the compact window over loaded rows');
+  await page.getByRole('button', { name: 'Show more in reasonix', exact: true }).click();
+  await page.waitForFunction(() => document.querySelectorAll('.project-tree__topic-main').length === 9);
   await selectSession(page, "bench:small-6t");
   await page.waitForFunction(() => document.querySelector('.transcript')?.textContent?.includes('ASYNC LAYOUT EXPANSION COMPLETE'));
   assert.ok((await page.locator('.topicbar h1').textContent()).includes('bench:small-6t'));
@@ -66,7 +80,7 @@ try {
   await page.locator('.settings-page--general').waitFor();
   assert.equal(await page.getByText('Desktop style', { exact: true }).count(), 0);
   assert.deepEqual(errors, []);
-  console.log('PASS workbench ProjectTree 5/10 window, compact labels, session navigation, archived recovery and settings');
+  console.log('PASS workbench ProjectTree 5-row disclosure, project and global compact reset, session navigation, archived recovery and settings');
 } finally {
   await browser?.close();
   await preview.close();
