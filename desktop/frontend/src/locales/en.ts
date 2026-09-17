@@ -1549,7 +1549,7 @@ export const en = {
   "projectTree.sessionError.runtimeNotReady": "This session is still loading. Try again shortly.",
   "projectTree.sessionError.remoteDisconnected": "The remote session is disconnected.",
   "projectTree.sessionError.titleConflict": "The session title changed while AI rename was running. Try again.",
-  "projectTree.sessionError.targetChanged": "This session moved or changed state. Try again.",
+  "projectTree.sessionError.targetChanged": "This session moved or changed state. Refresh and try again.",
   "projectTree.sessionError.archived": "Restore this session before using this action.",
   "projectTree.sessionError.operationBusy": "This session is already performing that operation.",
   "projectTree.sessionError.providerUnavailable": "This session's model is unavailable. Check its model or extension settings.",

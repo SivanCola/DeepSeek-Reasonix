@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -143,6 +145,54 @@ func lifecycleFixture(t *testing.T) (*App, session.SessionRef) {
 		t.Fatal(err)
 	}
 	return a, ref
+}
+
+func addLifecycleFixtureSession(t *testing.T, a *App, id string) session.SessionRef {
+	t.Helper()
+	service := a.desktopSessionService("")
+	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: id, CWD: globalWorkspaceRoot(), Origin: session.SessionOriginNew})
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendSessionTestMessage(t, runtime, "user", provider.Message{ID: "user-" + id, Role: provider.RoleUser, Content: "retained " + id})
+	ref := runtime.Ref()
+	if err := service.Close(t.Context(), ref); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.workspaceRegistry().AttachSession(t.Context(), "", workspacestate.GlobalWorkspaceID, ref.SessionID, ""); err != nil {
+		t.Fatal(err)
+	}
+	return ref
+}
+
+func rewriteLifecycleRegistry(t *testing.T, store *workspacestate.Store, change func(*workspacestate.State)) {
+	t.Helper()
+	state, err := store.Load(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	change(&state)
+	state.Generation++
+	state.Initialized = true
+	body, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.Path(), append(body, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func beginLifecycleCommandForTest(t *testing.T, store *workspacestate.Store, req SessionLifecycleRequest) {
+	t.Helper()
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(body)
+	if err := store.BeginCommand(t.Context(), "command-"+req.OperationID, hex.EncodeToString(sum[:]), body, req.ExpectedGeneration); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func lifecycleRequest(t *testing.T, a *App, ref session.SessionRef, id, action string) SessionLifecycleRequest {
@@ -327,6 +377,224 @@ func TestLifecycleCommandReceiptDoesNotReplayAfterRestore(t *testing.T) {
 	}
 }
 
+func TestLifecycleCommandPersistsTerminalConflict(t *testing.T) {
+	a, ref := lifecycleFixture(t)
+	store := a.workspaceRegistry()
+	if err := a.ArchiveCanonicalSession(ref); err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.Load(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := SessionLifecycleRequest{
+		OperationID:        "terminal-conflict",
+		Action:             "purge",
+		Targets:            []SessionLifecycleTarget{{Ref: &ref}},
+		ExpectedGeneration: state.Generation,
+	}
+	beginLifecycleCommandForTest(t, store, req)
+	if err := store.RestoreSession(t.Context(), ref.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ArchiveSession(t.Context(), ref.SessionID); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := a.ApplySessionLifecycle(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Committed || len(first.Items) != 1 || first.Items[0].ErrorCode != "state_conflict" || first.Items[0].Retryable {
+		t.Fatalf("terminal conflict result = %+v", first)
+	}
+	state, err = store.Load(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.PendingOperations["command-terminal-conflict"].Phase != "committed" {
+		t.Fatalf("terminal failure was not finalized: %+v", state.PendingOperations["command-terminal-conflict"])
+	}
+
+	second, err := a.ApplySessionLifecycle(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstBody, _ := json.Marshal(first)
+	secondBody, _ := json.Marshal(second)
+	if string(firstBody) != string(secondBody) {
+		t.Fatalf("terminal retry changed result: first=%s second=%s", firstBody, secondBody)
+	}
+	history, err := a.desktopSessionService("").Query().History(t.Context(), ref)
+	if err != nil || len(history) == 0 {
+		t.Fatalf("terminal conflict changed history: messages=%d err=%v", len(history), err)
+	}
+}
+
+func TestLifecycleCommandRetriesOnlyRetryableTargets(t *testing.T) {
+	a, succeededRef := lifecycleFixture(t)
+	conflictRef := addLifecycleFixtureSession(t, a, "lifecycle-conflict")
+	missingRef := session.SessionRef{HostID: localDesktopHostID, SessionID: "lifecycle-missing"}
+	store := a.workspaceRegistry()
+	for _, ref := range []session.SessionRef{succeededRef, conflictRef} {
+		if err := a.ArchiveCanonicalSession(ref); err != nil {
+			t.Fatal(err)
+		}
+	}
+	state, err := store.Load(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := SessionLifecycleRequest{
+		OperationID: "mixed-retry",
+		Action:      "purge",
+		Targets: []SessionLifecycleTarget{
+			{Ref: &succeededRef},
+			{Ref: &conflictRef},
+			{Ref: &missingRef},
+		},
+		ExpectedGeneration: state.Generation,
+	}
+	beginLifecycleCommandForTest(t, store, req)
+	if err := store.RestoreSession(t.Context(), conflictRef.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ArchiveSession(t.Context(), conflictRef.SessionID); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := a.ApplySessionLifecycle(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Committed || len(first.Items) != 3 || !first.Items[0].Committed || first.Items[1].ErrorCode != "state_conflict" || first.Items[1].Retryable || !first.Items[2].Retryable {
+		t.Fatalf("mixed first result = %+v", first)
+	}
+	state, err = store.Load(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.PendingOperations["command-mixed-retry"].Phase == "committed" {
+		t.Fatal("retryable mixed command finalized early")
+	}
+	// Make rerunning the successful child observable: without the saved child
+	// result, the deleted identity no longer has a purge operation to resume.
+	rewriteLifecycleRegistry(t, store, func(state *workspacestate.State) {
+		delete(state.PendingOperations, "purge-"+succeededRef.SessionID)
+	})
+
+	second, err := a.ApplySessionLifecycle(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !second.Items[0].Committed || second.Items[1].ErrorCode != "state_conflict" || !second.Items[2].Retryable {
+		t.Fatalf("mixed retry result = %+v", second)
+	}
+	state, err = store.Load(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, recreated := state.PendingOperations["purge-"+succeededRef.SessionID]; recreated {
+		t.Fatal("successful target was executed again")
+	}
+}
+
+func TestLegacyPreparedPurgeCannotDeleteRestoredSession(t *testing.T) {
+	a, ref := lifecycleFixture(t)
+	store := a.workspaceRegistry()
+	if err := a.ArchiveCanonicalSession(ref); err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.Load(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := state.SessionStates[ref.SessionID]
+	legacy := workspacestate.Operation{
+		ID:                 "purge-" + ref.SessionID,
+		Kind:               "purge",
+		Phase:              "prepared",
+		Lifecycle:          workspacestate.Deleted,
+		SessionIDs:         []string{ref.SessionID},
+		ExpectedGeneration: status.Generation,
+	}
+	rewriteLifecycleRegistry(t, store, func(state *workspacestate.State) {
+		state.PendingOperations[legacy.ID] = legacy
+	})
+
+	restored, err := a.ApplySessionLifecycle(lifecycleRequest(t, a, ref, "restore-legacy-prepared", "restore"))
+	if err != nil || !restored.Committed {
+		t.Fatalf("restore legacy prepared: %+v %v", restored, err)
+	}
+	if err := a.resumeCanonicalPurge(t.Context(), ref, legacy); !errors.Is(err, workspacestate.ErrMutationConflict) {
+		t.Fatalf("obsolete purge replay = %v, want conflict", err)
+	}
+	state, err = store.Load(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.SessionStates[ref.SessionID].Lifecycle != workspacestate.Active {
+		t.Fatalf("obsolete purge changed lifecycle: %+v", state.SessionStates[ref.SessionID])
+	}
+	if _, exists := state.PendingOperations[legacy.ID]; exists {
+		t.Fatal("restore left obsolete prepared purge")
+	}
+	history, err := a.desktopSessionService("").Query().History(t.Context(), ref)
+	if err != nil || len(history) == 0 {
+		t.Fatalf("restored history lost: messages=%d err=%v", len(history), err)
+	}
+	if err := a.ArchiveCanonicalSession(ref); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.PurgeCanonicalSession(ref); err != nil {
+		t.Fatalf("new explicit purge after restore: %v", err)
+	}
+}
+
+func TestStartupRecoveryCleansStalePreparedWithoutDeletingContent(t *testing.T) {
+	a, ref := lifecycleFixture(t)
+	store := a.workspaceRegistry()
+	if err := a.ArchiveCanonicalSession(ref); err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.Load(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := workspacestate.Operation{
+		ID:                 "purge-" + ref.SessionID,
+		Kind:               "purge",
+		Phase:              "prepared",
+		Lifecycle:          workspacestate.Deleted,
+		SessionIDs:         []string{ref.SessionID},
+		ExpectedGeneration: state.SessionStates[ref.SessionID].Generation,
+	}
+	if err := store.RestoreSession(t.Context(), ref.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	rewriteLifecycleRegistry(t, store, func(state *workspacestate.State) {
+		state.PendingOperations[legacy.ID] = legacy
+	})
+
+	if err := a.recoverDesktopSessionOperations(t.Context()); !errors.Is(err, workspacestate.ErrMutationConflict) {
+		t.Fatalf("stale startup recovery = %v, want recorded conflict", err)
+	}
+	state, err = store.Load(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := state.PendingOperations[legacy.ID]; exists {
+		t.Fatal("startup recovery left stale prepared purge")
+	}
+	if state.SessionStates[ref.SessionID].Lifecycle != workspacestate.Active {
+		t.Fatalf("startup recovery changed lifecycle: %+v", state.SessionStates[ref.SessionID])
+	}
+	history, err := a.desktopSessionService("").Query().History(t.Context(), ref)
+	if err != nil || len(history) == 0 {
+		t.Fatalf("startup recovery deleted content: messages=%d err=%v", len(history), err)
+	}
+}
+
 func TestPurgeInterruptedTombstoneRemainsActionableAndResumes(t *testing.T) {
 	a, ref := lifecycleFixture(t)
 	ctx := t.Context()
@@ -334,10 +602,11 @@ func TestPurgeInterruptedTombstoneRemainsActionableAndResumes(t *testing.T) {
 	if err := a.ArchiveCanonicalSession(ref); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.BeginPurge(ctx, ref.SessionID); err != nil {
+	state, err := store.Load(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.AdvancePurge(ctx, ref.SessionID, "tombstoned"); err != nil {
+	if err := store.BeginPurge(ctx, ref.SessionID, state.Generation); err != nil {
 		t.Fatal(err)
 	}
 	page, err := a.ListTrashEntries("", "", 50)
@@ -358,7 +627,7 @@ func TestPurgeInterruptedTombstoneRemainsActionableAndResumes(t *testing.T) {
 	if err != nil || len(page.Items) != 0 {
 		t.Fatalf("purge not completed: %+v %v", page, err)
 	}
-	state, _ := store.Load(ctx)
+	state, _ = store.Load(ctx)
 	if state.SessionStates[ref.SessionID].Lifecycle != workspacestate.Deleted {
 		t.Fatal("tombstone lost")
 	}

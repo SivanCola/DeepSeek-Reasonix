@@ -205,6 +205,13 @@ jobs:
         timeout-minutes: 3
         run: go test -timeout=2m -run '^TestBashSharesSessionTempAcrossCalls$' ./internal/tool/builtin
 
+      # The PR smoke selector omits session; exercise native rename, writer-lock
+      # release, and interrupted purge recovery before accepting lifecycle fixes.
+      - name: test (Windows purge recovery)
+        if: env.RUN_STEPS == 'true' && runner.os == 'Windows' && github.event_name == 'pull_request'
+        timeout-minutes: 5
+        run: go test -timeout=3m -run '^TestPurge' ./internal/session
+
       # Serve and taskmonitor are outside the general Windows PR smoke list.
       # Cover runtime identities and snapshot publication before mainline push.
       - name: test (Windows runtime status and task snapshots)

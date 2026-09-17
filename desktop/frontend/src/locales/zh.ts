@@ -1550,7 +1550,7 @@ export const zh: Record<DictKey, string> = {
   "projectTree.sessionError.runtimeNotReady": "会话正在加载，请稍后重试。",
   "projectTree.sessionError.remoteDisconnected": "远程会话连接已断开。",
   "projectTree.sessionError.titleConflict": "会话标题刚刚被修改，请重试。",
-  "projectTree.sessionError.targetChanged": "会话位置或状态已变化，请重试。",
+  "projectTree.sessionError.targetChanged": "会话位置或状态已变化，请刷新后重试。",
   "projectTree.sessionError.archived": "会话已归档，请先恢复。",
   "projectTree.sessionError.operationBusy": "该会话正在执行相同操作。",
   "projectTree.sessionError.providerUnavailable": "当前模型不可用，请检查模型或扩展配置。",

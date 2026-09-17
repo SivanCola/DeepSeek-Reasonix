@@ -262,9 +262,7 @@ type App struct {
 	// them mutually exclusive. Read holders must never acquire runtimeRebuildMu,
 	// or a queued writer would deadlock the pair.
 	runtimeAdmissionMu sync.RWMutex
-	// runtimeMutationBeforeLockHook is test-only. Set it before starting concurrent
-	// calls and never mutate it afterward.
-	runtimeMutationBeforeLockHook func(string)
+	appLifecycleTestHooks
 	// modelSwitchTimingHook is test-only. Production diagnostics use the same
 	// sanitized timing record through debug logging.
 	modelSwitchTimingHook func(modelSwitchTiming)
