@@ -95,6 +95,11 @@ func (a *App) commitCanonicalSessionBinding(tab *WorkspaceTab, ctrl control.Sess
 		return err
 	}
 	topicID, topicTitle := canonicalSessionTopicIdentity(state, ref.SessionID)
+	// Presentation supplies migration defaults; the session log owns titles
+	// after a manual or AI rename, including an explicitly cleared title.
+	if info, err := a.desktopSessionService("").Query().Stat(a.bootContext(), ref); err == nil && info.MetadataStatus == session.MetadataReady && (info.TitleSequence > 0 || info.Title != "") {
+		topicTitle = info.Title
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if tab.removed || a.tabs[tab.ID] != tab || tab.Ctrl != ctrl || (navigation != 0 && a.desktopSessions.navigationSeq.Load() != navigation) {

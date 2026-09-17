@@ -52,11 +52,12 @@ const (
 // resolves to its latest session. RequestID is optional — the backend
 // generates one when empty.
 type TopicActivationRequest struct {
-	Scope         string `json:"scope"`
-	WorkspaceRoot string `json:"workspaceRoot"`
-	TopicID       string `json:"topicId"`
-	SessionPath   string `json:"sessionPath"`
-	RequestID     string `json:"requestId"`
+	Selector      *SessionSelector `json:"selector,omitempty"`
+	Scope         string           `json:"scope"`
+	WorkspaceRoot string           `json:"workspaceRoot"`
+	TopicID       string           `json:"topicId"`
+	SessionPath   string           `json:"sessionPath"`
+	RequestID     string           `json:"requestId"`
 }
 
 // TopicActivationTicket is returned synchronously by StartTopicActivation. The
@@ -162,13 +163,29 @@ func (a *App) finishTopicActivation(gen uint64, requestID string) {
 // the same generation, so interleaved legacy and ticketed calls resolve
 // deterministically to the last call.
 func (a *App) StartTopicActivation(req TopicActivationRequest) (TopicActivationTicket, error) {
+	// Claim intent before source adoption can block. A later request must not
+	// be displaced by this request finishing its I/O last.
+	intent := a.desktopSessions.navigationSeq.Add(1)
+	if req.Selector != nil {
+		target, err := a.resolveSessionMutationTarget(*req.Selector)
+		if err != nil {
+			return TopicActivationTicket{}, err
+		}
+		req.Scope, req.WorkspaceRoot, req.TopicID, req.SessionPath = target.Scope, target.WorkspaceRoot, target.TopicID, target.SessionPath
+		if target.SessionRef.SessionID != "" {
+			req.SessionPath = sessionRoute(target.SessionRef.SessionID)
+		}
+	}
 	a.singleSurfaceMu.Lock()
 	defer a.singleSurfaceMu.Unlock()
+	if a.desktopSessions.navigationSeq.Load() != intent {
+		return TopicActivationTicket{}, errSessionNavigationSuperseded
+	}
 
 	var meta TabMeta
 	var err error
 	if strings.TrimSpace(req.SessionPath) != "" {
-		meta, err = a.openTopicSession(req.Scope, req.WorkspaceRoot, req.TopicID, req.SessionPath)
+		meta, err = a.openTopicSessionWithNavigation(req.Scope, req.WorkspaceRoot, req.TopicID, req.SessionPath, intent)
 	} else if strings.TrimSpace(req.Scope) == "project" {
 		meta, err = a.openProjectTab(req.WorkspaceRoot, req.TopicID)
 	} else {

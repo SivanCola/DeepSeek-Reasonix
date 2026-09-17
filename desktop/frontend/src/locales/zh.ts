@@ -1492,6 +1492,7 @@ export const zh: Record<DictKey, string> = {
   "projectTree.repairDeferred": "历史记录稍后重试",
   "projectTree.repairBlocked": "{count} 条历史需要修复",
   "projectTree.recovered": "已恢复",
+  "projectTree.forkedFrom": "分叉自 {source}",
   "projectTree.recoveryOnly": "可恢复",
   "projectTree.rebuildCatalog": "重建索引",
   "projectTree.loadMore": "加载更多",

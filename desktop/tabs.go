@@ -2232,7 +2232,10 @@ func (a *App) openProjectTab(workspaceRoot, topicID string) (TabMeta, error) {
 		workspaceRoot = abs
 	}
 
-	sessionPath, _ := a.findTopicSessionForTarget("project", workspaceRoot, topicID)
+	sessionPath, err := a.resolveTopicOpenPath("project", workspaceRoot, topicID)
+	if err != nil {
+		return TabMeta{}, err
+	}
 	return a.openTopicTabWithActivation("project", workspaceRoot, topicID, sessionPath, true)
 }
 
@@ -2248,7 +2251,10 @@ func (a *App) openProjectTabInactive(workspaceRoot, topicID string) (TabMeta, er
 		workspaceRoot = abs
 	}
 
-	sessionPath, _ := a.findTopicSessionForTarget("project", workspaceRoot, topicID)
+	sessionPath, err := a.resolveTopicOpenPath("project", workspaceRoot, topicID)
+	if err != nil {
+		return TabMeta{}, err
+	}
 	return a.openTopicTabWithActivation("project", workspaceRoot, topicID, sessionPath, false)
 }
 
@@ -2258,7 +2264,10 @@ func (a *App) openGlobalTabInactive(topicID string) (TabMeta, error) {
 		return TabMeta{}, fmt.Errorf("create global workspace: %w", err)
 	}
 
-	sessionPath, _ := a.findTopicSessionForTarget("global", "", topicID)
+	sessionPath, err := a.resolveTopicOpenPath("global", "", topicID)
+	if err != nil {
+		return TabMeta{}, err
+	}
 	return a.openTopicTabWithActivation("global", "", topicID, sessionPath, false)
 }
 
@@ -2294,7 +2303,7 @@ func (a *App) openTopicTabWithActivation(scope, workspaceRoot, topicID, sessionP
 	}
 
 	for _, tab := range a.tabs {
-		if tabMatchesTopicTarget(tab, scope, workspaceRoot, topicID) {
+		if targetKey == "" && tabMatchesTopicTarget(tab, scope, workspaceRoot, topicID) {
 			if activate {
 				a.activeTabID = tab.ID
 			}
@@ -2315,7 +2324,7 @@ func (a *App) openTopicTabWithActivation(scope, workspaceRoot, topicID, sessionP
 		}
 	}
 	source := a.liveRuntimeTabMatchingLocked(nil, sessionPath)
-	if source == nil {
+	if source == nil && targetKey == "" {
 		source = a.liveRuntimeTabMatchingTopicLocked(nil, scope, workspaceRoot, topicID)
 	}
 	if source != nil && a.tabs[source.ID] == source {
@@ -2388,7 +2397,10 @@ func (a *App) openGlobalTab(topicID string) (TabMeta, error) {
 		return TabMeta{}, fmt.Errorf("create global workspace: %w", err)
 	}
 
-	sessionPath, _ := a.findTopicSessionForTarget("global", "", topicID)
+	sessionPath, err := a.resolveTopicOpenPath("global", "", topicID)
+	if err != nil {
+		return TabMeta{}, err
+	}
 	return a.openTopicTabWithActivation("global", "", topicID, sessionPath, true)
 }
 
@@ -2400,8 +2412,24 @@ func (a *App) OpenTopicSession(scope, workspaceRoot, topicID, sessionPath string
 }
 
 func (a *App) openTopicSession(scope, workspaceRoot, topicID, sessionPath string) (TabMeta, error) {
+	return a.openTopicSessionWithNavigation(scope, workspaceRoot, topicID, sessionPath, a.desktopSessions.navigationSeq.Add(1))
+}
+
+func (a *App) openTopicSessionWithNavigation(scope, workspaceRoot, topicID, sessionPath string, navigation uint64) (TabMeta, error) {
+	if a.desktopSessions.navigationSeq.Load() != navigation {
+		return TabMeta{}, errSessionNavigationSuperseded
+	}
+	if source, err := parseSessionSourceRoute(sessionPath); err != nil {
+		return TabMeta{}, err
+	} else if source != nil {
+		target, err := a.resolveSessionMutationTarget(SessionSelector{Source: source})
+		if err != nil {
+			return TabMeta{}, err
+		}
+		sessionPath = sessionRoute(target.SessionRef.SessionID)
+	}
 	if id, ok := parseSessionRoute(sessionPath); ok {
-		if _, err := a.OpenSession(session.SessionRef{HostID: localDesktopHostID, SessionID: id}); err != nil {
+		if _, err := a.openSessionWithNavigation(session.SessionRef{HostID: localDesktopHostID, SessionID: id}, navigation); err != nil {
 			return TabMeta{}, err
 		}
 		a.mu.RLock()
@@ -2443,13 +2471,17 @@ func (a *App) openTopicSession(scope, workspaceRoot, topicID, sessionPath string
 // activations supersede each other the same way. The synchronous return
 // contract — TabMeta after the prune — is unchanged.
 func (a *App) ActivateTopic(scope, workspaceRoot, topicID, sessionPath string) (TabMeta, error) {
+	navigation := a.desktopSessions.navigationSeq.Add(1)
 	a.singleSurfaceMu.Lock()
 	defer a.singleSurfaceMu.Unlock()
+	if a.desktopSessions.navigationSeq.Load() != navigation {
+		return TabMeta{}, errSessionNavigationSuperseded
+	}
 
 	var meta TabMeta
 	var err error
 	if strings.TrimSpace(sessionPath) != "" {
-		meta, err = a.openTopicSession(scope, workspaceRoot, topicID, sessionPath)
+		meta, err = a.openTopicSessionWithNavigation(scope, workspaceRoot, topicID, sessionPath, navigation)
 	} else if strings.TrimSpace(scope) == "project" {
 		meta, err = a.openProjectTab(workspaceRoot, topicID)
 	} else {
@@ -2474,8 +2506,12 @@ func (a *App) EnsureBlankSurface(scope, workspaceRoot string) (TabMeta, error) {
 }
 
 func (a *App) ensureBlankSurface(scope, workspaceRoot string) (TabMeta, error) {
+	navigation := a.desktopSessions.navigationSeq.Add(1)
 	a.singleSurfaceMu.Lock()
 	defer a.singleSurfaceMu.Unlock()
+	if a.desktopSessions.navigationSeq.Load() != navigation {
+		return TabMeta{}, errSessionNavigationSuperseded
+	}
 
 	meta, err := a.ensureBlankTab(scope, workspaceRoot)
 	if err != nil {
@@ -2687,66 +2723,6 @@ func (a *App) startCreatedSessionTab(created *WorkspaceTab, actualRoot string) (
 	}
 	a.emitProjectTreeChangedForSessionDirs(desktopSessionDir(actualRoot))
 	return enrichTabMeta(meta), nil
-}
-
-// alignReusableBlankTabModel makes a reused empty session obey the same
-// provider/model default as a newly-created session. Ready runtimes use the
-// normal failure-atomic model switch. A tab that is still starting has no
-// controller to swap, so invalidate its startup generation, update the empty
-// session's model metadata, and restart the build from the intended provider.
-func (a *App) alignReusableBlankTabModel(tab *WorkspaceTab, model string) error {
-	model = strings.TrimSpace(model)
-	if tab == nil || model == "" {
-		return nil
-	}
-
-	a.mu.RLock()
-	if tab.removed || a.tabs[tab.ID] != tab {
-		a.mu.RUnlock()
-		return fmt.Errorf("blank session changed while applying the default model; retry")
-	}
-	currentModel := strings.TrimSpace(tab.model)
-	ctrl := tab.Ctrl
-	a.mu.RUnlock()
-
-	if ctrl != nil {
-		if currentModel != model {
-			if err := a.SetModelForTab(tab.ID, model); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-
-	// A startup build may already have read the old sidecar model. Fence and
-	// cancel that generation before publishing the corrected tab model. The
-	// legacy source remains read-only; the selected model is committed as a
-	// session/config event when the replacement publishes its v3 identity.
-	a.mu.Lock()
-	if tab.removed || a.tabs[tab.ID] != tab {
-		a.mu.Unlock()
-		return fmt.Errorf("blank session changed while applying the default model; retry")
-	}
-	if tab.Ctrl != nil {
-		a.mu.Unlock()
-		return a.alignReusableBlankTabModel(tab, model)
-	}
-	a.supersedeTabBuildLocked(tab)
-	tab.model = model
-	tab.Label = model
-	tab.Ready = false
-	clearTabStartupError(tab)
-	a.saveTabsLocked()
-	a.mu.Unlock()
-	a.buildTabController(tab)
-	a.mu.RLock()
-	ready := tab.Ctrl != nil && tab.SessionID != ""
-	startupErr := tab.StartupErr
-	a.mu.RUnlock()
-	if !ready {
-		return fmt.Errorf("create session runtime: %s", startupErr)
-	}
-	return nil
 }
 
 // blankTabMatchesTargetLocked returns true if tab is a reusable blank tab

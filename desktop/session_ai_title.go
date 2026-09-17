@@ -44,7 +44,7 @@ func (a *App) AIRenameSession(topicID string) (string, error) {
 // AIRenameSessionTarget generates and commits a title for one explicit durable
 // target without selecting it or constructing a conversation controller.
 func (a *App) AIRenameSessionTarget(selector SessionSelector) (SessionMutationResult, error) {
-	target, err := a.resolveSessionTarget(selector)
+	target, err := a.resolveSessionMutationTarget(selector)
 	if err != nil {
 		return SessionMutationResult{}, err
 	}
@@ -156,16 +156,6 @@ func (a *App) aiRenameLegacySession(ctx context.Context, target SessionTarget) (
 func (a *App) aiRenameCanonicalSession(operationCtx context.Context, target SessionTarget) (string, error) {
 	service := a.desktopSessionService("")
 	ref := target.SessionRef
-	var topicRoot string
-	var hasTopic bool
-	if target.TopicID != "" && !target.SharedTopic {
-		topicRoot = topicTitleRoot(target.Scope, target.WorkspaceRoot)
-		hasTopic = true
-	}
-	expectedTopicTitle := ""
-	if hasTopic {
-		expectedTopicTitle = loadTopicTitle(topicRoot, target.TopicID)
-	}
 	ctx, cancel := context.WithTimeout(operationCtx, 30*time.Second)
 	defer cancel()
 	snapshot, err := service.Query().Snapshot(ctx, ref)
@@ -199,26 +189,18 @@ func (a *App) aiRenameCanonicalSession(operationCtx context.Context, target Sess
 	if a.sessionTargetRuntimeRebound(target) {
 		return "", newSessionOperationError("target_changed", "The session moved or changed state. Try again.")
 	}
-	// The legacy sidebar still owns a topic label. Serialize its projection
-	// with manual/automatic topic renames, as well as guarding the session title.
+	// Serialize against manual writes; the session title sequence is the
+	// authority even if another branch is created during provider generation.
 	a.sessionRemovalMu.Lock()
 	defer a.sessionRemovalMu.Unlock()
 	a.topicTitleMutationMu.Lock()
 	defer a.topicTitleMutationMu.Unlock()
-	if hasTopic && loadTopicTitle(topicRoot, target.TopicID) != expectedTopicTitle {
-		return "", newSessionOperationError(sessionOperationTitleConflict, "The session title changed while AI rename was running. Try again.")
-	}
 	if err := a.workspaceRegistry().WithSessionUnchanged(ctx, ref.SessionID, target.WorkspaceID, target.LifecycleGeneration, func() error {
 		return service.SetTitleIfSequence(ctx, ref, snapshot.Projection.TitleSequence, title)
 	}); err != nil {
 		return "", sessionOperationConflict(err)
 	}
-	if hasTopic {
-		if err := setTopicTitle(topicRoot, target.TopicID, title); err != nil {
-			return "", fmt.Errorf("AI rename session: update topic title: %w", err)
-		}
-		a.updateOpenTopicTitle(target.TopicID, title, topicTitleSourceManual)
-	}
+	a.updateCanonicalSessionTitle(ref, title)
 	a.invalidatePromptHistoryCache()
 	a.emitProjectTreeChanged()
 	return title, nil

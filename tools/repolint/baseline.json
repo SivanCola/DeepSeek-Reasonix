@@ -3,14 +3,14 @@
     "banner": 13,
     "commented-code": 0,
     "complexity": 1858,
-    "essay": 1928,
-    "file-size": 99623,
+    "essay": 1927,
+    "file-size": 99378,
     "function-size": 8053,
     "layering": 1,
     "marker": 0,
     "narrative": 63,
     "struct-state": 105,
-    "test-file-size": 64140
+    "test-file-size": 64094
   },
   "files": {
     "cmd/e2ebench/main.go": {
@@ -25,7 +25,7 @@
     "desktop/app.go": {
       "complexity": 56,
       "essay": 60,
-      "file-size": 11182,
+      "file-size": 11108,
       "function-size": 368,
       "struct-state": 11
     },
@@ -108,7 +108,7 @@
       "file-size": 1089
     },
     "desktop/frontend/src/components/ProjectTree.tsx": {
-      "file-size": 1341
+      "file-size": 1315
     },
     "desktop/frontend/src/components/RichComposerInput.tsx": {
       "file-size": 141
@@ -135,7 +135,7 @@
       "file-size": 177
     },
     "desktop/frontend/src/lib/bridge.ts": {
-      "file-size": 5022
+      "file-size": 5028
     },
     "desktop/frontend/src/lib/crash.ts": {
       "file-size": 98
@@ -144,10 +144,10 @@
       "file-size": 239
     },
     "desktop/frontend/src/lib/types.ts": {
-      "file-size": 1581
+      "file-size": 1582
     },
     "desktop/frontend/src/lib/useController.ts": {
-      "file-size": 4093
+      "file-size": 4096
     },
     "desktop/heartbeat.go": {
       "essay": 7
@@ -231,9 +231,6 @@
       "file-size": 511,
       "function-size": 19
     },
-    "desktop/session_workspace_api.go": {
-      "file-size": 126
-    },
     "desktop/sessions.go": {
       "essay": 4,
       "file-size": 363
@@ -263,13 +260,13 @@
     },
     "desktop/tabs.go": {
       "complexity": 48,
-      "essay": 67,
-      "file-size": 7235,
+      "essay": 66,
+      "file-size": 7206,
       "function-size": 360,
       "struct-state": 24
     },
     "desktop/tabs_order_test.go": {
-      "test-file-size": 56
+      "test-file-size": 10
     },
     "desktop/tabs_topic_test.go": {
       "essay": 1,

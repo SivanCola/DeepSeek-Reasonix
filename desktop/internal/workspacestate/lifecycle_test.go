@@ -310,7 +310,7 @@ func TestV2UpgradePreservesV1EvidenceAndUnknownFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.Version != 2 || state.SessionStates["old"].Lifecycle != Archived {
+	if state.Version != SchemaVersion || state.SessionStates["old"].Lifecycle != Archived {
 		t.Fatalf("upgrade: %+v", state)
 	}
 	unchanged, _ := os.ReadFile(path)

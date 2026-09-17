@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -41,6 +42,7 @@ func resolveProjectTopicGroupFilter(req *ProjectTopicPageRequest) error {
 	}
 	groups = normalizeGroups(groups)
 	req.GroupFilter = filter
+	req.groupAll = append([]desktopGroup(nil), groups...)
 
 	if filter == "group" {
 		groupID := strings.TrimSpace(req.GroupID)
@@ -51,7 +53,11 @@ func resolveProjectTopicGroupFilter(req *ProjectTopicPageRequest) error {
 			if group.ID != groupID {
 				continue
 			}
-			req.groupIncludeJSON, req.groupInclude = topicIDFilter(group.TopicIDs)
+			selected := group
+			req.groupSelected = &selected
+			if !groupHasSessionRules(group) {
+				req.groupIncludeJSON, req.groupInclude = topicIDFilter(group.TopicIDs)
+			}
 			req.groupCursorBind = projectTopicCursorBinding(*req, filter, groupID, revision)
 			return nil
 		}
@@ -62,7 +68,9 @@ func resolveProjectTopicGroupFilter(req *ProjectTopicPageRequest) error {
 	for _, group := range groups {
 		allGrouped = append(allGrouped, group.TopicIDs...)
 	}
-	req.groupExcludeJSON, req.groupExclude = topicIDFilter(allGrouped)
+	if !groupsHaveSessionRules(groups) {
+		req.groupExcludeJSON, req.groupExclude = topicIDFilter(allGrouped)
+	}
 	req.groupCursorBind = projectTopicCursorBinding(*req, filter, "", revision)
 	return nil
 }
@@ -115,4 +123,72 @@ func projectTopicRequestAllows(req ProjectTopicPageRequest, topicID string, pinn
 		return !excluded
 	}
 	return true
+}
+
+func groupHasSessionRules(group desktopGroup) bool {
+	return len(group.SessionKeys) > 0 || len(group.ExcludedSessionKeys) > 0
+}
+
+func groupsHaveSessionRules(groups []desktopGroup) bool {
+	return slices.ContainsFunc(groups, groupHasSessionRules)
+}
+
+func projectNodeSessionKey(node ProjectNode) string {
+	if node.Session != nil && strings.TrimSpace(node.Session.SessionID) != "" {
+		hostID := strings.TrimSpace(node.Session.HostID)
+		if hostID == "" {
+			hostID = localDesktopHostID
+		}
+		return "ref\x00" + hostID + "\x00" + strings.TrimSpace(node.Session.SessionID)
+	}
+	if node.Source != nil && node.Source.SourceKey != "" {
+		host := node.Source.HostID
+		if host == "" {
+			host = localDesktopHostID
+		}
+		return "source\x00" + host + "\x00" + node.Source.SourceKey
+	}
+	if path := strings.TrimSpace(node.SessionPath); path != "" {
+		return "path\x00" + path
+	}
+	return "topic\x00" + firstNonEmpty(strings.TrimSpace(node.TopicID), strings.TrimSpace(node.Key))
+}
+
+func desktopGroupContainsNode(group desktopGroup, node ProjectNode) bool {
+	key := projectNodeSessionKey(node)
+	for _, excluded := range group.ExcludedSessionKeys {
+		if strings.TrimSpace(excluded) == key {
+			return false
+		}
+	}
+	for _, explicit := range group.SessionKeys {
+		if strings.TrimSpace(explicit) == key {
+			return true
+		}
+	}
+	for _, topicID := range group.TopicIDs {
+		if strings.TrimSpace(topicID) != "" && strings.TrimSpace(topicID) == strings.TrimSpace(node.TopicID) {
+			return true
+		}
+	}
+	return false
+}
+
+func projectNodeRequestAllows(req ProjectTopicPageRequest, node ProjectNode) bool {
+	if req.ExcludePinned && node.Pinned {
+		return false
+	}
+	switch req.GroupFilter {
+	case "group":
+		return req.groupSelected != nil && desktopGroupContainsNode(*req.groupSelected, node)
+	case "ungrouped":
+		for _, group := range req.groupAll {
+			if desktopGroupContainsNode(group, node) {
+				return false
+			}
+		}
+		return true
+	default:
+		return true
+	}
 }

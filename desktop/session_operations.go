@@ -15,13 +15,14 @@ import (
 // persistent session operation. Versions are strings at the RPC boundary so
 // JavaScript never truncates durable 64-bit sequence identities.
 type SessionMutationResult struct {
-	TargetKey           string `json:"targetKey"`
-	OperationID         string `json:"operationId"`
-	Committed           bool   `json:"committed"`
-	Title               string `json:"title,omitempty"`
-	TitleVersion        string `json:"titleVersion,omitempty"`
-	LifecycleGeneration uint64 `json:"lifecycleGeneration"`
-	ProjectionPending   bool   `json:"projectionPending,omitempty"`
+	TargetKey           string   `json:"targetKey"`
+	OperationID         string   `json:"operationId"`
+	Committed           bool     `json:"committed"`
+	Title               string   `json:"title,omitempty"`
+	TitleVersion        string   `json:"titleVersion,omitempty"`
+	LifecycleGeneration uint64   `json:"lifecycleGeneration"`
+	ProjectionPending   bool     `json:"projectionPending,omitempty"`
+	IdentityAliases     []string `json:"identityAliases,omitempty"`
 }
 
 // SessionCreationResult reports a durable child created from an explicit
@@ -92,7 +93,7 @@ func sessionOperationErrorForTarget(err error, targetKey, operationID string) er
 // RenameSessionTarget performs a manual persistent rename without opening or
 // selecting the target session.
 func (a *App) RenameSessionTarget(selector SessionSelector, title string) (SessionMutationResult, error) {
-	target, err := a.resolveSessionTarget(selector)
+	target, err := a.resolveSessionMutationTarget(selector)
 	if err != nil {
 		return SessionMutationResult{}, err
 	}
@@ -168,7 +169,7 @@ func titleSequenceVersion(sequence uint64) string {
 // ArchiveSessionTarget archives one explicit durable target. It does not select
 // the target or create a conversation controller.
 func (a *App) ArchiveSessionTarget(selector SessionSelector) (SessionMutationResult, error) {
-	target, err := a.resolveSessionTarget(selector)
+	target, err := a.resolveSessionMutationTarget(selector)
 	if err != nil {
 		return SessionMutationResult{}, err
 	}
@@ -189,7 +190,19 @@ func (a *App) ArchiveSessionTarget(selector SessionSelector) (SessionMutationRes
 		TargetKey: key, OperationID: operationID, Committed: true,
 		LifecycleGeneration: archived.LifecycleGeneration,
 		ProjectionPending:   archived.LifecycleGeneration == 0,
+		IdentityAliases:     a.sessionTargetIdentityAliases(target),
 	}, nil
+}
+
+func (a *App) sessionTargetIdentityAliases(target SessionTarget) []string {
+	aliases := []string{projectNodeSessionKey(ProjectNode{SessionPath: target.SessionPath})}
+	if target.SessionRef.SessionID != "" {
+		aliases = append(aliases, projectNodeSessionKey(ProjectNode{Session: &target.SessionRef}))
+		if state, err := a.workspaceRegistry().Load(a.bootContext()); err == nil {
+			aliases = append(aliases, sourceAliases(state, desktopWorkspaceID(target.Scope, target.WorkspaceRoot), target.SessionRef.SessionID)...)
+		}
+	}
+	return aliases
 }
 
 // RestoreSessionTarget restores one explicit archived target. Canonical
@@ -260,7 +273,7 @@ func (a *App) RestoreSessionTarget(selector SessionSelector) (SessionMutationRes
 // A legacy source is first adopted through the existing migration journal so
 // the move operates on a durable canonical identity rather than a path alias.
 func (a *App) MoveSessionTarget(selector SessionSelector, workspaceID, beforeSessionID string) (SessionMutationResult, error) {
-	target, err := a.resolveSessionTarget(selector)
+	target, err := a.resolveSessionMutationTarget(selector)
 	if err != nil {
 		return SessionMutationResult{}, err
 	}

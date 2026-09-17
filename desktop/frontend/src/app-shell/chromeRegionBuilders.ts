@@ -9,6 +9,7 @@ import type { useShellGeometry } from "../app-runtime/useShellGeometry";
 import type { useAppShellStores } from "../app-runtime/useAppShellStores";
 import type { SessionStatusBannersProps } from "./SessionStatusBanners";
 import type { SidebarRegionProps } from "./SidebarRegion";
+import { sessionIdentityRoute } from "../lib/sessionIdentity";
 
 type BannerCommands = ReturnType<typeof useSessionBannerCommands>;
 type ShellStores = ReturnType<typeof useAppShellStores>;
@@ -63,7 +64,7 @@ export function buildSidebarRegionProps(input: {
     },
     projectTree: {
       activeScope: input.projectTree.activeTab?.scope, activeWorkspaceRoot: input.projectTree.activeTab?.workspaceRoot,
-      activeTopicId: input.projectTree.activeTab?.topicId, activeSessionPath: input.projectTree.activeTab?.sessionPath,
+      activeTopicId: input.projectTree.activeTab?.topicId, activeSessionPath: sessionIdentityRoute(input.projectTree.activeTab),
       activeRemote: input.projectTree.activeTab?.remote, imTopicSources: input.projectTree.imTopicSources, onOpenTopic: commands.onOpenTopic,
       onCreateTopic: topics.onCreateTopic, onCreateIsolatedWorktree: topics.onCreateIsolatedWorktree,
       onTopicsChanged: topics.refreshProjectsAndTabs, onRenameTopic: topics.renameTopic, refreshSignal: input.projectTree.refreshSignal,

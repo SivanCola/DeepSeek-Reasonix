@@ -77,11 +77,38 @@ func TestAIRenameCanonicalSessionUsesDurableHistoryInsteadOfEmptyLegacyFile(t *t
 				t.Fatalf("canonical rename wrote legacy title: %+v, %v", meta, err)
 			}
 			if identity == "topic" {
-				if got := loadTopicTitle("", key); got != title || app.tabs["test"].TopicTitle != title {
+				if got := loadTopicTitle("", key); got == title || app.tabs["test"].TopicTitle != title {
 					t.Fatalf("sidebar title = %q, runtime title = %q", got, app.tabs["test"].TopicTitle)
 				}
 			}
 		})
+	}
+}
+
+func TestAIRenameDoesNotRenameSiblingCreatedDuringGeneration(t *testing.T) {
+	app, _, runtime, prov, _ := newCanonicalTitleFixture(t)
+	appendSessionTestMessage(t, runtime, "user", provider.Message{ID: "user", Role: provider.RoleUser, Content: "rename only A"})
+	prov.started, prov.chunks = make(chan struct{}), make(chan provider.Chunk, 2)
+	done := make(chan error, 1)
+	go func() { _, err := app.AIRenameSession(sessionRoute(runtime.Ref().SessionID)); done <- err }()
+	select {
+	case <-prov.started:
+	case err := <-done:
+		t.Fatalf("early result: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("provider did not start")
+	}
+	app.mu.Lock()
+	app.tabs["sibling"] = &WorkspaceTab{ID: "sibling", Scope: "global", TopicID: "topic-canonical", TopicTitle: "B unchanged", SessionID: "sibling"}
+	app.mu.Unlock()
+	prov.chunks <- provider.Chunk{Type: provider.ChunkText, Text: "A changed"}
+	prov.chunks <- provider.Chunk{Type: provider.ChunkDone}
+	close(prov.chunks)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if app.tabs["sibling"].TopicTitle != "B unchanged" {
+		t.Fatal("late AI rename changed sibling title")
 	}
 }
 
@@ -501,7 +528,7 @@ func TestDelayedTitleCallbackProjectsCurrentCanonicalTitle(t *testing.T) {
 	}
 }
 
-func TestSessionVersionNoteDoesNotReplaceTopicTitle(t *testing.T) {
+func TestIndependentSessionTitleOverridesSharedTopicTitle(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := t.TempDir()
 	topicID := "metadata-title"
@@ -528,11 +555,11 @@ func TestSessionVersionNoteDoesNotReplaceTopicTitle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(page.Items) != 1 || page.Items[0].Label != "Original topic" {
-		t.Fatalf("version note replaced topic title: %+v", page.Items)
+	if len(page.Items) != 1 || page.Items[0].Label != "AI session title" {
+		t.Fatalf("independent session title was not projected: %+v", page.Items)
 	}
 	if meta, ok, err := agent.LoadBranchMeta(path); err != nil || !ok || meta.CustomTitle != "AI session title" {
-		t.Fatalf("version note was not preserved: meta=%+v ok=%v err=%v", meta, ok, err)
+		t.Fatalf("independent session title was not preserved: meta=%+v ok=%v err=%v", meta, ok, err)
 	}
 }
 

@@ -349,6 +349,12 @@ func commitOperation(state *State, id string, visiting map[string]bool) error {
 				return ErrWorkspaceNotFound
 			}
 			workspace.SessionIDs = insertBefore(workspace.SessionIDs, sessionID, "")
+			// Source adoption replaces the imported source slot below. Publishing
+			// a canonical default first would incorrectly override that choice.
+			if op.Mapping == nil {
+				attachOrganizationSession(&workspace, sessionID, "")
+				mirrorOrganizationOrder(&workspace)
+			}
 			workspace.UpdatedAt = time.Now().UTC()
 			state.Workspaces[workspace.ID] = workspace
 			owner = workspace.ID
@@ -560,6 +566,7 @@ func (s *Store) RecordSource(ctx context.Context, mapping SourceMapping, present
 			return nil
 		}
 		state.SourceMappings[mapping.SourceKey] = mapping
+		adoptOrganizationSource(state, mapping)
 		if _, exists := state.Presentation[mapping.SessionID]; !exists {
 			state.Presentation[mapping.SessionID] = presentation
 		}
@@ -734,6 +741,7 @@ func commitSourceMapping(state *State, mapping *SourceMapping) error {
 			return ErrMutationConflict
 		}
 		state.SourceMappings[mapping.SourceKey] = mapping
+		adoptOrganizationSource(state, mapping)
 	}
 	return nil
 }

@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	SchemaVersion     = 2
+	SchemaVersion     = 3
 	GlobalWorkspaceID = "global"
 )
 
@@ -30,23 +30,26 @@ var (
 )
 
 type Workspace struct {
-	ID         string    `json:"id"`
-	Root       string    `json:"root"`
-	Title      string    `json:"title"`
-	SessionIDs []string  `json:"sessionIds"`
-	Visible    bool      `json:"visible"`
-	CreatedAt  time.Time `json:"createdAt"`
-	UpdatedAt  time.Time `json:"updatedAt"`
-	extra      map[string]json.RawMessage
+	Organization *Organization `json:"organization,omitempty"`
+	ID           string        `json:"id"`
+	Root         string        `json:"root"`
+	Title        string        `json:"title"`
+	SessionIDs   []string      `json:"sessionIds"`
+	Visible      bool          `json:"visible"`
+	CreatedAt    time.Time     `json:"createdAt"`
+	UpdatedAt    time.Time     `json:"updatedAt"`
+	extra        map[string]json.RawMessage
 }
 
 type PendingCreate struct {
-	OperationID   string    `json:"operationId"`
-	WorkspaceID   string    `json:"workspaceId"`
-	SessionID     string    `json:"sessionId"`
-	CreatedAt     time.Time `json:"createdAt"`
-	ArchiveSource string    `json:"archiveSource,omitempty"`
-	extra         map[string]json.RawMessage
+	ParentSessionID string        `json:"parentSessionId,omitempty"`
+	Presentation    *Presentation `json:"presentation,omitempty"`
+	OperationID     string        `json:"operationId"`
+	WorkspaceID     string        `json:"workspaceId"`
+	SessionID       string        `json:"sessionId"`
+	CreatedAt       time.Time     `json:"createdAt"`
+	ArchiveSource   string        `json:"archiveSource,omitempty"`
+	extra           map[string]json.RawMessage
 }
 
 type State struct {
@@ -253,6 +256,14 @@ func (s *Store) attachSession(
 			}
 		}
 		workspace.SessionIDs = insertBefore(workspace.SessionIDs, sessionID, beforeSessionID)
+		if sourceSessionID == "" {
+			sourceSessionID = state.PendingCreates[sessionID].ParentSessionID
+		}
+		attachOrganizationSession(&workspace, sessionID, sourceSessionID)
+		mirrorOrganizationOrder(&workspace)
+		if pending, ok := state.PendingCreates[sessionID]; ok && pending.Presentation != nil {
+			state.Presentation[sessionID] = *pending.Presentation
+		}
 		workspace.UpdatedAt = time.Now().UTC()
 		state.Workspaces[workspaceID] = workspace
 		delete(state.PendingCreates, sessionID)
@@ -283,6 +294,8 @@ func (s *Store) CommitRotation(ctx context.Context, operationID, workspaceID, se
 			return ErrMutationConflict
 		} else if !attached {
 			workspace.SessionIDs = insertBefore(workspace.SessionIDs, sessionID, beforeSessionID)
+			attachOrganizationSession(&workspace, sessionID, "")
+			mirrorOrganizationOrder(&workspace)
 			workspace.UpdatedAt = time.Now().UTC()
 			state.Workspaces[workspaceID] = workspace
 		}
@@ -331,6 +344,16 @@ func (s *Store) moveSession(ctx context.Context, workspaceID, sessionID, beforeS
 			return ErrMutationConflict
 		}
 		workspace.SessionIDs = insertBefore(remove(workspace.SessionIDs, sessionID), sessionID, beforeSessionID)
+		if o := workspace.Organization; o != nil {
+			key, before := SessionKey(sessionID), ""
+			if beforeSessionID != "" {
+				before = SessionKey(beforeSessionID)
+			}
+			o.Order = insertBefore(remove(o.Order, key), key, before)
+			o.ManualOrderEnabled = true
+			o.Revision++
+			mirrorOrganizationOrder(&workspace)
+		}
 		workspace.UpdatedAt = time.Now().UTC()
 		state.Workspaces[workspace.ID] = workspace
 		status.Generation++
@@ -401,7 +424,7 @@ func (s *Store) mutate(ctx context.Context, change func(*State) error) error {
 		var header struct {
 			Version int `json:"version"`
 		}
-		upgrading = json.Unmarshal(body, &header) == nil && header.Version == 1
+		upgrading = json.Unmarshal(body, &header) == nil && header.Version < SchemaVersion
 	}
 	if s.beforeUpgrade != nil {
 		body, readErr := os.ReadFile(s.path)
@@ -418,6 +441,9 @@ func (s *Store) mutate(ctx context.Context, change func(*State) error) error {
 		}
 	}
 	if err := backupV1(s.path); err != nil {
+		return err
+	}
+	if err := backupV2(s.path); err != nil {
 		return err
 	}
 	state, err := load(s.path)
@@ -463,7 +489,7 @@ func load(path string) (State, error) {
 	if err := json.Unmarshal(body, &state); err != nil {
 		return State{}, fmt.Errorf("decode workspace state: %w", err)
 	}
-	if state.Version != 1 && state.Version != SchemaVersion {
+	if state.Version != 1 && state.Version != 2 && state.Version != SchemaVersion {
 		return State{}, fmt.Errorf("%w: %d", ErrUnsupportedVersion, state.Version)
 	}
 	if state.Version == 1 {
@@ -484,6 +510,7 @@ func load(path string) (State, error) {
 			}
 		}
 	}
+	state.Version = SchemaVersion
 	normalize(&state)
 	if err := validate(state); err != nil {
 		return State{}, err
@@ -657,7 +684,7 @@ func (w *Workspace) UnmarshalJSON(body []byte) error {
 	if err := json.Unmarshal(body, &fields); err != nil {
 		return err
 	}
-	for _, key := range []string{"id", "root", "title", "sessionIds", "visible", "createdAt", "updatedAt"} {
+	for _, key := range []string{"id", "root", "title", "sessionIds", "visible", "createdAt", "updatedAt", "organization"} {
 		delete(fields, key)
 	}
 	*w = Workspace(decoded)

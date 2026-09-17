@@ -1,17 +1,31 @@
 package workspacestate
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"testing"
 
 	previous "reasonix/desktop/internal/workspacestate/testdata/v2previous"
 )
 
-func TestPurgePreviousV2ReaderAndUnrelatedWrite(t *testing.T) {
+func TestPurgeV2UpgradeRejectsPreviousWriterWithoutLosingEvidence(t *testing.T) {
 	for _, phase := range []string{"prepared", "tombstoned", "content_removed", "committed"} {
 		t.Run(phase, func(t *testing.T) {
 			store, expected := seedArchivedProcessState(t)
+			legacy, err := store.Load(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			legacy.Version = 2
+			legacyBody, err := json.Marshal(legacy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(store.Path(), legacyBody, 0o600); err != nil {
+				t.Fatal(err)
+			}
 			old := previous.NewStore(store.Path())
 			// Produce a real legacy prepare using the previous implementation.
 			if err := old.BeginPurge(t.Context(), "victim", expected); err != nil {
@@ -50,11 +64,24 @@ func TestPurgePreviousV2ReaderAndUnrelatedWrite(t *testing.T) {
 				t.Fatal(err)
 			}
 			want, _ := json.Marshal(state.PendingOperations["purge-victim"])
-			read, err := old.Load(t.Context())
-			if err != nil || read.PendingOperations["purge-victim"].Phase != phase {
-				t.Fatalf("previous reader phase=%s err=%v", phase, err)
+			if state.PendingOperations["purge-victim"].Phase != phase {
+				t.Fatalf("upgraded reader lost purge phase %s", phase)
 			}
-			if err := old.RenameWorkspace(t.Context(), GlobalWorkspaceID, "Unrelated title"); err != nil {
+			before, err := os.ReadFile(store.Path())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := old.Load(t.Context()); !errors.Is(err, previous.ErrUnsupportedVersion) {
+				t.Fatalf("previous reader must reject v3: %v", err)
+			}
+			if err := old.RenameWorkspace(t.Context(), GlobalWorkspaceID, "Old writer"); !errors.Is(err, previous.ErrUnsupportedVersion) {
+				t.Fatalf("previous writer must reject v3: %v", err)
+			}
+			after, err := os.ReadFile(store.Path())
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatal("rejected previous writer modified v3 registry")
+			}
+			if err := store.RenameWorkspace(t.Context(), GlobalWorkspaceID, "Unrelated title"); err != nil {
 				t.Fatal(err)
 			}
 			state, err = store.Load(t.Context())
@@ -63,7 +90,7 @@ func TestPurgePreviousV2ReaderAndUnrelatedWrite(t *testing.T) {
 			}
 			got, _ := json.Marshal(state.PendingOperations["purge-victim"])
 			if string(got) != string(want) || string(state.extra["futureRoot"]) != `{"keep":true}` {
-				t.Fatalf("previous writer dropped evidence: %s => %s", want, got)
+				t.Fatalf("upgraded writer dropped evidence: %s => %s", want, got)
 			}
 			if phase == "committed" {
 				before, _ := os.ReadFile(store.Path())
