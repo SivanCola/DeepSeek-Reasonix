@@ -7,7 +7,7 @@ export async function verifyNativeReaderInput(page, evidence = {}) {
   evidence.status = "running";
   assert.equal(process.platform, "linux");
   assert.ok(process.env.DISPLAY, "native input requires an isolated Xvfb display");
-  const xdo = (...args) => execFileSync("xdotool", args.map(String), { encoding: "utf8" }).trim();
+  const xdo = (...args) => execFileSync("xdotool", args.map(String), { encoding: "utf8", timeout: 10_000 }).trim();
   const windows = xdo("search", "--onlyvisible", "--name", "^Reasonix Handoff Native$").split("\n");
   assert.equal(windows.length, 1, "exactly one disposable native window is required");
   const windowId = windows[0];
@@ -79,7 +79,9 @@ export async function verifyNativeReaderInput(page, evidence = {}) {
     try {
       for (let step = 1; step <= 12; step++) {
         xdo("mousemove", "--window", windowId, Math.round(track.x + offset.x), Math.round(track.y + (track.to - track.y) * step / 12 + offset.y));
-        await frame();
+        // Do not await renderer frames inside a native pointer transaction:
+        // the scrollbar's modal drag loop may defer JS until mouse release.
+        xdo("sleep", "0.03");
       }
     } finally { xdo("mouseup", 1); }
     await page.waitForFunction(before => document.querySelector(".chat-flow-scroll").scrollTop < before - 100, track.top);
