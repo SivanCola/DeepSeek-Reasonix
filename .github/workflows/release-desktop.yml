@@ -675,11 +675,18 @@ jobs:
         env:
           CERTUM_KEY_ID: ${{ secrets.CERTUM_KEY_ID }}
         run: |
+          # Read the immutable candidate's declared layout, never infer it from
+          # files that happen to survive in the archive. Older candidates
+          # predate this declaration and use the historical dual-entry layout.
+          $portableLayout = "legacy-dual"
+          if (Test-Path -LiteralPath "desktop/packaging/windows-portable-layout.txt") {
+            $portableLayout = (Get-Content -LiteralPath "desktop/packaging/windows-portable-layout.txt" -Raw).Trim()
+          }
           ./release-control/scripts/verify-windows-authenticode.ps1 `
             -PayloadDirectory signed-payload `
             -InstallerPath "dist/Reasonix-windows-${{ matrix.arch }}-installer.exe" `
             -PortableArchivePath "dist/Reasonix-windows-${{ matrix.arch }}.zip" `
-            -ExpectedThumbprint $env:CERTUM_KEY_ID -RequireTrusted
+            -ExpectedThumbprint $env:CERTUM_KEY_ID -RequireTrusted -PortableLayout $portableLayout
       - name: Refresh signed package size report
         env:
           REASONIX_COMMIT: ${{ needs.resolve.outputs.sha }}

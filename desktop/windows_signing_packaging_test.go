@@ -163,11 +163,12 @@ func TestWindowsReleaseSignsPayloadBeforeRepackaging(t *testing.T) {
 		"$signature.SignerCertificate",
 		"$signature.Status -ne \"Valid\"",
 		"Expand-Archive",
-		`Get-ChildItem -LiteralPath $extractRoot -Recurse -File -Filter "*.exe"`,
+		`Get-ChildItem -LiteralPath $extractRoot -Recurse -File`,
 		`$activeDir.Replace("\", "/") -ne "versions/$activeVersion"`,
 		`Portable = (Join-Path $activeDir "reasonix-desktop.exe")`,
 		`Portable = "Reasonix.exe"; Payload = "reasonix-launcher.exe"`,
-		"6 release unit + $appExeCount Electron app tree",
+		`Compare-Object $expectedPE $actualPE`,
+		`[ValidateSet("canonical", "legacy-dual")]`,
 		"Get-FileHash -Algorithm SHA256",
 	} {
 		if !strings.Contains(verifier, want) {

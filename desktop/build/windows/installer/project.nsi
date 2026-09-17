@@ -235,7 +235,7 @@ ShowInstDetails show # This will always show the installation details.
     WriteRegStr HKCU "${UNINST_KEY}" "DisplayName" "${INFO_PRODUCTNAME}"
     WriteRegStr HKCU "${UNINST_KEY}" "DisplayVersion" "${INFO_PRODUCTVERSION}"
     !if /FileExists "${REASONIX_LAUNCHER}"
-    WriteRegStr HKCU "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\${REASONIX_LAUNCHER}"
+    WriteRegStr HKCU "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\${REASONIX_PORTABLE_ENTRY}"
     !else
     WriteRegStr HKCU "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\${PRODUCT_EXECUTABLE}"
     !endif
@@ -598,10 +598,14 @@ reasonix_layout_activated:
     ; Keep both target and icon on the stable launcher. Pointing IconLocation at
     ; versions\vX\reasonix-desktop.exe leaves a blank shortcut as soon as version
     ; retention removes that directory after a later update.
-    CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${REASONIX_LAUNCHER}" "" "$INSTDIR\${REASONIX_LAUNCHER}" 0
-    CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${REASONIX_LAUNCHER}" "" "$INSTDIR\${REASONIX_LAUNCHER}" 0
+    ; Preserve user arguments, icons and working directories on existing links;
+    ; the owned-link repair below migrates their targets without replacing them.
+    IfFileExists "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" +2 0
+    CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${REASONIX_PORTABLE_ENTRY}" "" "$INSTDIR\${REASONIX_PORTABLE_ENTRY}" 0
+    IfFileExists "$DESKTOP\${INFO_PRODUCTNAME}.lnk" +2 0
+    CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${REASONIX_PORTABLE_ENTRY}" "" "$INSTDIR\${REASONIX_PORTABLE_ENTRY}" 0
     ; Stamp the exact paths created in this shell context before the user can pin them.
-    nsExec::ExecToLog /OEM '"$INSTDIR\${REASONIX_LAUNCHER}" --repair-shortcuts "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$DESKTOP\${INFO_PRODUCTNAME}.lnk"'
+    nsExec::ExecToLog /OEM '"$INSTDIR\${REASONIX_PORTABLE_ENTRY}" --repair-shortcuts "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$DESKTOP\${INFO_PRODUCTNAME}.lnk"'
     Pop $0
     ${If} $0 != "0"
         DetailPrint "Warning: shortcut identity repair failed ($0); the next normal launch will retry."
