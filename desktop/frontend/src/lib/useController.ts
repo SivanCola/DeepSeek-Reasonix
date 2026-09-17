@@ -2766,7 +2766,7 @@ export function useController() {
       if (!skipHistory && snapshotLoaded !== true) {
         const error = t("history.failedLoadHistory");
         dispatchTo(tabId, { type: "hydrate_error", reason, error });
-        dispatchTo(tabId, { type: "local_notice", level: "warn", text: error, preserveRuntime: true });
+        // SessionRecoveryBanner owns recovery; chat notices survive successful snapshots.
         return;
       }
       dispatchTo(tabId, { type: "hydrate_done" });

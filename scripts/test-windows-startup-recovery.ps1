@@ -76,6 +76,9 @@ function Assert-VisibleContentAndCapture($process, [string]$text, [string]$outpu
     if (-not $found) { Start-Sleep -Milliseconds 250 }
   }
   if ($null -eq $root) { throw 'The packaged shell did not expose a native window for upgrade evidence.' }
+  @(Get-UpgradeUIDescendants $root | Select-Object -First 5000 | ForEach-Object {
+    @{name=$_.Current.Name; id=$_.Current.AutomationId; offscreen=$_.Current.IsOffscreen}
+  }) | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath ($outputPath + '.uia.json') -Encoding utf8
   $bounds = $root.Current.BoundingRectangle
   if ($bounds.Width -le 0 -or $bounds.Height -le 0) { throw 'The packaged shell window has invalid bounds.' }
   $bitmap = [Drawing.Bitmap]::new([int]$bounds.Width, [int]$bounds.Height)

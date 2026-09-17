@@ -822,7 +822,7 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 | `primary.lock` |  | desktop/lifecycle_diagnostics.go:106 | keep-business (保留业务实现) | format unchanged; read by both shells |
 | `remote-provider-trust.json` |  | desktop/remote_legacy_cleanup.go:31 | keep-business (保留业务实现) | format unchanged; read by both shells |
 | `session-migration-v5.json` |  | desktop/session_v5_migration.go:48 | keep-business (保留业务实现) | format unchanged; read by both shells |
-| `snapshot.sqlite` |  | desktop/session_source_compatibility.go:346 | keep-business (保留业务实现) | format unchanged; read by both shells |
+| `snapshot.sqlite` |  | desktop/session_source_compatibility.go:367 | keep-business (保留业务实现) | format unchanged; read by both shells |
 
 ## Shell-specific Go files
 

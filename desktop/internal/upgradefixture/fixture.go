@@ -98,6 +98,17 @@ func createFixture(ctx context.Context, home, reportPath string) error {
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		return err
 	}
+	// Model an existing installation without credentials or a live provider.
+	// Otherwise first-run onboarding opens settings instead of the restored tab.
+	cfg := config.Default()
+	cfg.DefaultModel = "upgrade-fixture/offline"
+	cfg.Desktop.ProviderAccess = []string{"upgrade-fixture"}
+	cfg.Providers = []config.ProviderEntry{{
+		Name: "upgrade-fixture", Kind: "openai", BaseURL: "http://127.0.0.1:1/v1", Model: "offline",
+	}}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		return err
+	}
 	legacyPath := filepath.Join(config.SessionDir(), fixtureSessionID+".jsonl")
 	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o700); err != nil {
 		return err
@@ -278,7 +289,7 @@ func verifyMigratedSession(ctx context.Context, report fixtureReport, reportPath
 	}
 	mappings := 0
 	for _, mapping := range state.SourceMappings {
-		if mapping.Path == report.LegacyPath {
+		if agent.CanonicalSessionPath(mapping.Path) == agent.CanonicalSessionPath(report.LegacyPath) {
 			mappings++
 			report.SessionID = mapping.SessionID
 		}
@@ -354,14 +365,10 @@ func verifyBackups(ctx context.Context, report fixtureReport) error {
 	if !markers["global"] || !markers["project"] {
 		return fmt.Errorf("topic backup markers=%v", markers)
 	}
-	registryBackups, err := filepath.Glob(filepath.Join(backupRoot, "workspace-state-v1.json-*.bak"))
-	if err != nil {
-		return fmt.Errorf("list metadata registry backups: %w", err)
-	}
-	if len(registryBackups) != 1 {
-		return fmt.Errorf("metadata registry backups=%d, want 1", len(registryBackups))
-	}
-	backupBody, err := os.ReadFile(registryBackups[0])
+	// Startup may snapshot the newer registry too. Bind acceptance to the
+	// immutable original instead of assuming no later snapshot can exist.
+	backupPath := filepath.Join(backupRoot, "workspace-state-v1.json-"+report.RegistrySHA256+".bak")
+	backupBody, err := os.ReadFile(backupPath)
 	if err != nil {
 		return err
 	}

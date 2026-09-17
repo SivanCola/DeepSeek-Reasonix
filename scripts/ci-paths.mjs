@@ -13,10 +13,11 @@ const ROOT_TOOLING = /^(?:Makefile|\.golangci[^/]*)$/;
 const FRONTEND = /^desktop\/frontend\//;
 const DESKTOP_MANIFEST = /^(?:desktop\/(?:package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|\.npmrc)|desktop\/frontend\/(?:package\.json|pnpm-lock\.yaml|vite\.config\.[cm]?[jt]s|tsconfig[^/]*\.json))$/;
 const ELECTRON = /^(?:desktop\/electron\/|desktop\/(?:package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$)/;
-const PACKAGING = /^(?:desktop\/(?:packaging\/|build\/)|scripts\/(?:desktop-build|package-windows-desktop|install-nsis)\b)/;
+const PACKAGING = /^(?:desktop\/(?:packaging\/|build\/)|scripts\/(?:desktop-build|package-windows-desktop|install-nsis|check-windows-uninstaller)\b)/;
 const DESKTOP_GO = /^(?:desktop\/(?:[^/]+\.go|go\.(?:mod|sum)|cmd\/|internal\/)|internal\/|cmd\/|go\.(?:mod|sum)$)/;
 const SDK = /^(?:sdk\/|internal\/extension\/)/;
-const CI_CONTROL = /^(?:\.github\/workflows\/(?:ci|app-memory)\.yml|scripts\/ci-paths(?:\.test)?\.mjs)$/;
+const CI_CONTROL = /^(?:\.github\/workflows\/ci\.yml|scripts\/ci-paths(?:\.test)?\.mjs)$/;
+const MEMORY_CONTROL = /^(?:\.github\/workflows\/app-memory\.yml|scripts\/ci-paths(?:\.test)?\.mjs)$/;
 const MEMORY_FULL = /^(?:desktop\/frontend\/(?:bench\/app-(?:memory|browser|page-actions)[^/]*|src\/(?:App(?:Runtime)?\.tsx|app-runtime\/.*|app-shell\/.*|components\/Transcript(?:Cards)?\.tsx|lib\/(?:useController[^/]*|subscriptionScope|useNavigationSurface|navigationSurfaceTransition|keyedResource|fileResource|useWorkspaceChangesResource|mcpServerLifecycle|fileNavigationLifetime|bridge(?:BenchFixtures|HistoryFixtures)?)\.[^/]+))|\.github\/workflows\/app-memory\.yml|scripts\/ci-paths(?:\.test)?\.mjs)$/;
 
 const FLAG_NAMES = ["code", "desktop", "desktop_go", "frontend", "browser", "memory", "memory_full", "electron", "native", "packaging", "site", "sdk", "notes_only"];
@@ -61,9 +62,15 @@ export function classifyPaths(input, { full = false } = {}) {
     // exercise every gate it can change, and without them such a PR skips site
     // and no-ops sdk while the aggregates trivially accept those skips.
     if (CI_CONTROL.test(path)) {
-      for (const flag of ["desktop_go", "frontend", "browser", "memory", "memory_full", "electron", "native", "packaging", "site", "sdk"]) {
+      for (const flag of ["desktop_go", "frontend", "browser", "electron", "native", "packaging", "site", "sdk"]) {
         flags[flag] = true;
         setReason(reasons, flag, path, "CI routing contract");
+      }
+    }
+    if (MEMORY_CONTROL.test(path)) {
+      for (const flag of ["memory", "memory_full"]) {
+        flags[flag] = true;
+        setReason(reasons, flag, path, "memory workflow or shared routing contract");
       }
     }
     if (!ROOT_UNRELATED.test(path) && !ROOT_DOC.test(path)) {

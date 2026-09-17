@@ -6111,7 +6111,7 @@
     {
       "kind": "persistence",
       "name": "snapshot.sqlite",
-      "location": "desktop/session_source_compatibility.go:346",
+      "location": "desktop/session_source_compatibility.go:367",
       "class": "keep-business",
       "owner": "format unchanged; read by both shells"
     },

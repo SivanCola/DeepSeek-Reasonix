@@ -303,6 +303,11 @@ ShowInstDetails show # This will always show the installation details.
 !macroend
 
 Function .onInit
+   !ifdef ARG_REASONIX_UNINSTALLER_ONLY
+   ; This compiler artifact exists only to extract the shared uninstaller.
+   ; It is never an installable or publishable product.
+   Quit
+   !endif
    !insertmacro reasonix.checkArchitecture
 
    ; The helper passes /REASONIXUPDATE=1 and a final /D=<current directory>.
@@ -482,6 +487,11 @@ reasonix_unlock_ok:
 FunctionEnd
 
 
+!ifdef ARG_REASONIX_UNINSTALLER_ONLY
+Section
+    WriteUninstaller "$INSTDIR\uninstall.exe"
+SectionEnd
+!else
 Section
     !insertmacro reasonix.setShellContext
 
@@ -623,6 +633,7 @@ reasonix_layout_activated:
 
 reasonix_section_done:
 SectionEnd
+!endif
 
 Section "uninstall"
     !insertmacro reasonix.setShellContext
