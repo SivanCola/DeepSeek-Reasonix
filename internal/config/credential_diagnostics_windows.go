@@ -116,7 +116,7 @@ func credentialPlatformRepair(path string, expected os.FileInfo, verify func() e
 	rollback := func(cause error) ([]string, error) {
 		err := errors.Join(windows.SetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION, nil, nil, dacl, nil), setAttributes(basic.FileAttributes))
 		if err != nil {
-			return nil, fmt.Errorf("repair failed: %v; rollback failed: %w", cause, err)
+			return nil, errors.Join(fmt.Errorf("repair failed: %w", cause), fmt.Errorf("rollback failed: %w", err))
 		}
 		return nil, fmt.Errorf("repair failed: %w; changed attributes were restored", cause)
 	}

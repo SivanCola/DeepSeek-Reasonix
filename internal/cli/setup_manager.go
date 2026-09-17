@@ -951,11 +951,7 @@ func commitProviderSetupSession(s *providerSetupSession, configPath string) (boo
 	if !providerSetupFileSnapshotEqual(before, current) {
 		return false, &providerSetupConflictError{field: "configuration file"}
 	}
-	if config.IsUserConfigPath(configPath) {
-		err = fresh.SaveModelSettingsTo(configPath, baseline)
-	} else {
-		err = fresh.SaveTo(configPath)
-	}
+	err = fresh.SaveModelSettingsTo(configPath, baseline)
 	if err != nil {
 		return false, err
 	}

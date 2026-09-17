@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 10;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:951ffc4338cb0e89a3e7179fd800aec57f8f606579c8abbdc54815806203821b";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:1d7695fb92507f041b5893177af9a4e60b1589e67ff00ad954b61febdaeacb2c";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -4062,6 +4062,7 @@ export interface TabMeta {
   parentVersionId?: string;
   startupErr?: string;
   authentication?: AuthenticationState | null;
+  modelSettingsPending?: boolean;
   active: boolean;
   cwd: string;
 }

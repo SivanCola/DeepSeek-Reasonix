@@ -1,8 +1,6 @@
 package config
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -36,11 +34,24 @@ func connectionCredentialRequestDigest(req ConnectionCredentialRequest) (string,
 	if err != nil {
 		return "", err
 	}
-	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:]), nil
+	return ModelSettingsRequestDigest(raw)
 }
 
 func ConfigFileRevision(path string) string { return fileContentRevision(path) }
+
+func connectionCredentialReceiptResult(receipt ModelSettingsReceipt, digest string) (ConnectionCredentialResult, error) {
+	if !strings.HasPrefix(receipt.RequestDigest, "hmac-v1:") {
+		return ConnectionCredentialResult{}, fmt.Errorf("unknown_result: legacy receipt content cannot be verified; reload current settings")
+	}
+	if receipt.RequestDigest != digest {
+		return ConnectionCredentialResult{}, fmt.Errorf("request_conflict: request ID was already used for a different connection edit")
+	}
+	revision := receipt.ResultRevision
+	if revision == "" {
+		revision = receipt.AfterRevision
+	}
+	return ConnectionCredentialResult{Persisted: true, Revision: revision}, nil
+}
 
 // ProviderEditPath follows the source selected by the runtime merge, including
 // project entries that replace built-in defaults but not user-owned entries.
@@ -77,14 +88,7 @@ func CommitConnectionCredential(req ConnectionCredentialRequest) (ConnectionCred
 		return result, err
 	}
 	if receipt, ok := LookupModelSettingsReceipt(strings.TrimSpace(req.RequestID)); ok {
-		if receipt.RequestDigest != digest {
-			return result, fmt.Errorf("request_conflict: request ID was already used for a different connection edit")
-		}
-		revision := receipt.ResultRevision
-		if revision == "" {
-			revision = receipt.AfterRevision
-		}
-		return ConnectionCredentialResult{Persisted: true, Revision: revision}, nil
+		return connectionCredentialReceiptResult(receipt, digest)
 	}
 	unlock, err := LockConfigFileEdits(path)
 	if err != nil {
@@ -100,14 +104,7 @@ func CommitConnectionCredential(req ConnectionCredentialRequest) (ConnectionCred
 		return result, err
 	}
 	if receipt, ok := LookupModelSettingsReceipt(strings.TrimSpace(req.RequestID)); ok {
-		if receipt.RequestDigest != digest {
-			return result, fmt.Errorf("request_conflict: request ID was already used for a different connection edit")
-		}
-		revision := receipt.ResultRevision
-		if revision == "" {
-			revision = receipt.AfterRevision
-		}
-		return ConnectionCredentialResult{Persisted: true, Revision: revision}, nil
+		return connectionCredentialReceiptResult(receipt, digest)
 	}
 	if req.ExpectedRevision != "" && fileContentRevision(path) != req.ExpectedRevision {
 		return result, fmt.Errorf("model settings changed; reload before saving")
@@ -145,11 +142,7 @@ func CommitConnectionCredential(req ConnectionCredentialRequest) (ConnectionCred
 	if len(seen) == 0 {
 		return result, fmt.Errorf("at least one provider is required")
 	}
-	if IsUserConfigPath(path) {
-		err = cfg.SaveModelSettingsTo(path, baseline)
-	} else {
-		err = cfg.SaveTo(path)
-	}
+	err = cfg.SaveModelSettingsTo(path, baseline)
 	if err != nil {
 		return result, err
 	}

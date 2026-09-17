@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"reasonix/internal/config"
+	"reasonix/internal/control"
 )
 
 // topic_activation.go implements the two-phase topic activation used by the
@@ -373,6 +374,8 @@ type TabMetaRefreshEvent struct {
 // image-input computation so a model switch invalidates it without
 // invalidating the (root-scoped) git branch or fallback setting.
 type tabMetaExtras struct {
+	controller            control.SessionAPI
+	modelSettingsPending  bool
 	workspaceRoot         string
 	model                 string
 	gitBranch             string
@@ -466,12 +469,15 @@ func (a *App) refreshTabMetaExtras(tab *WorkspaceTab) {
 		}
 	}
 
+	pending, _ := modelSettingsNeedApply(ctrl)
 	a.mu.Lock()
 	if a.tabs[tab.ID] != tab || tab.Ctrl != ctrl || tab.model != snapshotModel || tab.WorkspaceRoot != snapshotRoot {
 		a.mu.Unlock()
 		return
 	}
 	tab.metaExtras.Store(&tabMetaExtras{
+		controller:            ctrl,
+		modelSettingsPending:  pending,
 		workspaceRoot:         root,
 		model:                 model,
 		gitBranch:             gitBranch,

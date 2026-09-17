@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -80,10 +81,11 @@ func (e *AuthenticationError) Error() string {
 }
 
 type authenticationGate struct {
-	mu         sync.RWMutex
-	state      AuthenticationState
-	primary    string
-	rejections map[string]AuthenticationState
+	mu              sync.RWMutex
+	state           AuthenticationState
+	primary         string
+	rejections      map[string]AuthenticationState
+	initialForModel func(string) AuthenticationState
 }
 
 func newAuthenticationGate(initial AuthenticationState, primary string) authenticationGate {
@@ -107,8 +109,13 @@ func (g *authenticationGate) admissionError() error {
 func (g *authenticationGate) admissionErrorForModel(ref string) error {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	if ref == g.primary && !g.state.Ready() {
+	if !g.state.Ready() && (ref == g.primary || (g.state.Status != AuthenticationRejected && sameAuthenticationConnection(ref, g.primary))) {
 		return &AuthenticationError{State: g.state}
+	}
+	if g.initialForModel != nil {
+		if state := g.initialForModel(ref); !state.Ready() {
+			return &AuthenticationError{State: state}
+		}
 	}
 	for failedRef, state := range g.rejections {
 		if ref == failedRef || (state.HTTPStatus == 401 && sameAuthenticationConnection(ref, failedRef)) {
@@ -129,6 +136,13 @@ func (g *authenticationGate) recordFailure(err error, modelRef string) {
 	if !errors.As(err, &authErr) || authErr == nil {
 		return
 	}
+	if authErr.ModelRef != "" {
+		modelRef = authErr.ModelRef
+	} else if name, _, _ := strings.Cut(modelRef, "/"); authErr.Provider != "" && authErr.Provider != name {
+		// Legacy/custom runners may return an unscoped error from a child.
+		// Never attribute that child's failure to the parent's selected model.
+		modelRef = authErr.Provider + "/"
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	state := AuthenticationState{Status: AuthenticationRejected, ProviderName: authErr.Provider, ModelRef: modelRef, KeyEnv: authErr.KeyEnv, HTTPStatus: authErr.Status, Code: "authentication_rejected"}
@@ -138,6 +152,14 @@ func (g *authenticationGate) recordFailure(err error, modelRef string) {
 	if modelRef == g.primary || (authErr.Status == 401 && sameAuthenticationConnection(modelRef, g.primary)) {
 		g.state = state
 	}
+}
+
+func (g *authenticationGate) BeforeModelRequest(ref string) error {
+	return g.admissionErrorForModel(ref)
+}
+func (g *authenticationGate) ModelRequestFailed(ref string, err error) { g.recordFailure(err, ref) }
+func (c *Controller) withAuthentication(ctx context.Context) context.Context {
+	return provider.WithRequestGate(ctx, &c.authentication)
 }
 
 func (c *Controller) AuthenticationState() AuthenticationState {

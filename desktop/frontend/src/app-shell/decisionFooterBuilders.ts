@@ -1,4 +1,5 @@
 import type { Todo } from "../lib/tools";
+import { modelSettingsAllowSubmission } from "../lib/authenticationTypes";
 import type { RewindUndoState } from "../lib/rewindTypes";
 import type { WorkspaceConflictView } from "../lib/types";
 import type { DecisionSurfaceKind as MockDecisionSurfaceKind } from "../lib/decisionSurfaceMock";
@@ -250,7 +251,7 @@ export type ComposerSurfaceInput = {
     submitDisabledReason?: string;
   };
   base: ComposerBase;
-  tab: { readOnly?: boolean; sessionPath?: string; workspaceRoot?: string; authentication?: ComposerProps["authentication"]; remote?: { hostId: string; workspace: string } } | undefined;
+  tab: { readOnly?: boolean; sessionPath?: string; workspaceRoot?: string; authentication?: ComposerProps["authentication"]; modelSettingsPending?: boolean; remote?: { hostId: string; workspace: string } } | undefined;
   tabId: string | undefined;
   profile: ReturnType<typeof useComposerProfileProjection>;
   router: { handleSend: ComposerProps["onSend"]; handleSteer: ComposerProps["onSteer"] };
@@ -312,7 +313,7 @@ export function buildComposerSurface(input: ComposerSurfaceInput): DecisionFoote
       selectedTextRequest: inserts.selectedTextRequest,
       readOnly: Boolean(input.tab?.readOnly),
       disabled: view.runtimeTransitioning || view.rewindCommitting || view.messageActionPending || view.decisionActive,
-      submitDisabled: view.remote ? !remoteComposer.ready || !remoteComposer.profileReady : !view.controllerReady || (input.tab?.authentication?.status ?? "ready") !== "ready",
+      submitDisabled: view.remote ? !remoteComposer.ready || !remoteComposer.profileReady : !modelSettingsAllowSubmission(view.controllerReady, input.tab),
       submitDisabledReason: view.submitDisabledReason,
       authentication: view.remote ? undefined : input.tab?.authentication,
       decisionPending: view.rewindCommitting || view.messageActionPending || view.decisionActive,

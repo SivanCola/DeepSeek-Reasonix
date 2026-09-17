@@ -89,6 +89,10 @@ const surfaceInput = {
   guidanceQueuePreviewItems: undefined,
 } as unknown as ComposerSurfaceInput;
 assert.equal(buildComposerSurface(surfaceInput).props.workspaceContext, baseContext, "empty sessions expose workspace selection");
+const missingTab = { authentication: { status: "missing_credential", providerName: "relay" } };
+assert.equal(buildComposerSurface({ ...surfaceInput, tab: missingTab }).props.submitDisabled, true, "missing credentials block unchanged settings");
+assert.equal(buildComposerSurface({ ...surfaceInput, tab: { ...missingTab, modelSettingsPending: true } }).props.submitDisabled, false, "saved settings can reach backend apply-before-admission");
+assert.equal(buildComposerSurface({ ...surfaceInput, tab: { ...missingTab, modelSettingsPending: true }, view: { ...surfaceInput.view, controllerReady: false } }).props.submitDisabled, true, "pending settings never bypass controller readiness");
 assert.equal(buildComposerSurface({ ...surfaceInput, view: { ...surfaceInput.view, hero: false } }).props.workspaceContext, undefined, "established sessions use the compact follow-up composer");
 
 const rootElement = document.getElementById("root");

@@ -21,21 +21,31 @@ func (m *chatTUI) startTurn(sent, displayed, restore string) tea.Cmd {
 // keeps reference-expanded model input separate from the text shown/restored by
 // the frontend.
 func (m *chatTUI) startTurnWithRaw(sent, displayed, restore, raw string) tea.Cmd {
-	return m.startControllerTurnWithQueue(displayed, restore, raw, func() { m.ctrl.SendWithRaw(sent, raw) })
+	return m.startControllerTurnWithQueue(displayed, restore, raw, func(ctrl control.SessionAPI) { ctrl.SendWithRaw(sent, raw) })
 }
 
 // startControllerTurn owns the TUI-side turn setup for controller entry points.
 // Most prompts use SendWithRaw; slash-invoked skills use SubmitDisplay so the
 // controller can choose inline vs isolated subagent execution from the live
 // skill's RunAs metadata without the TUI reimplementing that policy.
-func (m *chatTUI) startControllerTurn(displayed, restore string, start func()) tea.Cmd {
+func (m *chatTUI) startControllerTurn(displayed, restore string, start func(control.SessionAPI)) tea.Cmd {
 	return m.startControllerTurnWithQueue(displayed, restore, displayed, start)
 }
 
-func (m *chatTUI) startControllerTurnWithQueue(displayed, restore, queued string, start func()) tea.Cmd {
+func (m *chatTUI) startControllerTurnWithQueue(displayed, restore, queued string, start func(control.SessionAPI)) tea.Cmd {
+	return m.prepareControllerTurn(controllerTurnIntent{displayed, restore, queued, start}, false)
+}
+
+func (m *chatTUI) prepareControllerTurn(intent controllerTurnIntent, settingsChecked bool) tea.Cmd {
+	displayed, restore, queued, start := intent.displayed, intent.restore, intent.queued, intent.start
 	if m.takeover != nil && m.takeover.Reclaiming() {
 		m.notice("the remote side is taking this session back; new input is disabled")
 		return nil
+	}
+	if !settingsChecked && m.ctrl != nil && !m.ctrl.Running() {
+		if cmd, checking := m.checkTurnModelSettings(intent); checking {
+			return cmd
+		}
 	}
 	if auth, ok := m.ctrl.(interface {
 		AuthenticationState() control.AuthenticationState
@@ -92,7 +102,7 @@ func (m *chatTUI) startControllerTurnWithQueue(displayed, restore, queued string
 	// The controller owns the run goroutine, its context, and cancellation; it
 	// streams events to eventCh and emits TurnDone when the turn settles.
 	m.noteWatchdogRunning()
-	start()
+	start(m.ctrl)
 	return m.startRunningTicks()
 }
 

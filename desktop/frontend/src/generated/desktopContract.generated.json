@@ -36872,6 +36872,13 @@
           }
         },
         {
+          "name": "modelSettingsPending",
+          "optional": true,
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
           "name": "active",
           "type": {
             "kind": "boolean"

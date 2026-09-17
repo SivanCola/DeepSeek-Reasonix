@@ -1,5 +1,44 @@
 # Model connection regression fixes
 
+## Follow-up approval review
+
+The follow-up fixes bind installation approval to imported environment and header
+values with a durable keyed digest, while keeping those values out of the public
+preview. Existing plan IDs require a new preview after upgrading. Plugin CLI JSON
+again includes actions, risk, plan ID, failures and recovery instructions.
+
+Desktop tab metadata now exposes a runtime-bound pending-settings hint. This lets
+a preserved draft reach backend apply-before-admission after a credential save;
+it does not mark the old controller authenticated. CLI submission checks saved
+settings asynchronously before authentication, rebuilds through its existing
+controller replacement path and submits only to the activated controller.
+Failed builds preserve the original controller and draft; stale completions do
+not start another session.
+
+Authentication also guards actual primary, child and auxiliary requests through
+the request context, preserving concrete provider capability interfaces and wire
+requests. Missing credentials cover sibling models; HTTP and streamed rejection
+errors carry the actual request model, so a child's 403 cannot block its parent.
+Project credential edits and shell setup use document deltas, preserving unknown
+and nested fields without promoting project providers into global configuration.
+Windows repair preserves both repair and rollback error chains.
+
+Regression coverage: `TestImportedExecutionInputsInvalidateApproval`,
+`TestPluginDryRunPreservesApprovalPlan`,
+`TestSavedCredentialAllowsAdmissionThroughPendingMetadata`,
+`TestTurnAppliesExternalCredentialSaveBeforeAuthentication`,
+`TestTurnSettingsCompletionCannotStartAnotherSession`,
+`TestMissingCredentialBlocksSiblingModel`,
+`TestSubagentRejectionMustNotBlockPrimary`,
+`TestRequestGateObservesHTTPAndStreamRejectionsWithoutChangingRequest`,
+`TestProjectCredentialEditPreservesUnknownProviderFields`,
+`TestProjectShellSetupPreservesUnknownFields`, and composer workspace/auth tests.
+
+Compatibility: `modelSettingsPending` is optional and defaults to false. Existing
+TOML and credential files remain readable. Legacy unkeyed credential receipts
+return `unknown_result` rather than replaying a write whose content cannot be
+verified; new receipts use the existing durable HMAC protocol.
+
 The following findings were reproduced with disposable Reasonix homes and
 local fixtures. No production credentials or model requests are used.
 

@@ -23,10 +23,13 @@ func (c *Config) SaveModelSettingsTo(path, baseline string) error {
 	if c.editLoadErr != nil {
 		return c.editLoadErr
 	}
-	if err := currentUserConfigEditLockError(); err != nil {
-		return err
+	userConfig := IsUserConfigPath(path)
+	if userConfig {
+		if err := currentUserConfigEditLockError(); err != nil {
+			return err
+		}
 	}
-	resolved, err := resolveConfigAccessPath(path, true)
+	resolved, err := resolveConfigAccessPath(path, userConfig)
 	if err != nil {
 		return err
 	}

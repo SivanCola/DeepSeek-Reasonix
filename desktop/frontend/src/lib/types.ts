@@ -1,5 +1,6 @@
 export type { ProjectNode } from "./projectNodeTypes";
 import type { TranscriptTurnMetadata } from "./transcriptProtocol";
+import type { ConnectionAuthentication } from "./authenticationTypes";
 import type { HistorySwitchPhases } from "./sessionDiagnostics";
 import type { ProviderCatalog } from "./providerCatalogTypes";
 export type { SettingsView } from "./settingsViewTypes";
@@ -612,15 +613,8 @@ export interface TabMeta extends RemoteTabMetaFields {
   versionState?: "active" | "pending" | "resolved" | "trashed" | string;
   parentVersionId?: string;
   startupErr?: string;
-  authentication?: {
-    status: "ready" | "missing_credential" | "authentication_rejected" | "credential_store_unavailable" | string;
-    providerName?: string;
-    modelRef?: string;
-    keyEnv?: string;
-    httpStatus?: number;
-    code?: string;
-    message?: string;
-  };
+  authentication?: ConnectionAuthentication;
+  modelSettingsPending?: boolean;
   active: boolean;
   cwd: string;
 }

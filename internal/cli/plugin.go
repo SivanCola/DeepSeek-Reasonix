@@ -13,6 +13,7 @@ import (
 	"reasonix/internal/hook"
 	"reasonix/internal/installsource"
 	"reasonix/internal/pluginpkg"
+	"reasonix/internal/secrets"
 )
 
 func pluginCommand(args []string) int {
@@ -183,38 +184,57 @@ func runInstallSourceJSON(body map[string]any) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	encoded, err := json.Marshal(struct {
-		OK     bool   `json:"ok"`
-		Status string `json:"status"`
-	}{OK: resp.OK, Status: safeInstallSourceStatus(resp.Status)})
+	encoded, err := redactInstallSourceJSON(out)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	fmt.Println(string(encoded))
+	fmt.Println(encoded)
 	if !resp.OK {
 		return 1
 	}
 	return 0
 }
 
-func safeInstallSourceStatus(status string) string {
-	switch status {
-	case "planned":
-		return "planned"
-	case "done":
-		return "done"
-	case "partial":
-		return "partial"
-	case "failed":
-		return "failed"
-	case "blocked":
-		return "blocked"
-	case "denied":
-		return "denied"
-	default:
-		return "unknown"
+// Preserve the install plan and failure contract while scrubbing every string
+// value. Decode/re-encode keeps quotes and escaping valid after redaction.
+func redactInstallSourceJSON(raw string) (string, error) {
+	var value any
+	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+		return "", err
 	}
+	// planId is an engine-generated approval identity, not free-form output.
+	// Scrubbing its digest would make the preview impossible to approve.
+	var planID string
+	if object, ok := value.(map[string]any); ok {
+		planID, _ = object["planId"].(string)
+	}
+	var redact func(any) any
+	redact = func(v any) any {
+		switch x := v.(type) {
+		case string:
+			return secrets.RedactCredentials(x)
+		case []any:
+			for i := range x {
+				x[i] = redact(x[i])
+			}
+		case map[string]any:
+			for key, item := range x {
+				if secrets.EnvKeySensitive(key) {
+					x[key] = "[REDACTED]"
+				} else {
+					x[key] = redact(item)
+				}
+			}
+		}
+		return v
+	}
+	redacted := redact(value)
+	if object, ok := redacted.(map[string]any); ok && planID != "" {
+		object["planId"] = planID
+	}
+	encoded, err := json.Marshal(redacted)
+	return string(encoded), err
 }
 
 func pluginListCommand() int {

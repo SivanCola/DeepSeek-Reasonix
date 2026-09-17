@@ -230,26 +230,6 @@ type Options struct {
 	deferPublish bool
 }
 
-func authenticationStateForModelEntry(entry *config.ProviderEntry, modelRef string) control.AuthenticationState {
-	if entry == nil || !entry.RequiresAPIKey() || entry.APIKey() != "" {
-		return control.AuthenticationState{Status: control.AuthenticationReady}
-	}
-	status := control.AuthenticationMissingCredential
-	code := "missing_credential"
-	switch config.CredentialStoreRevision() {
-	case "unavailable", "unreadable":
-		status = control.AuthenticationCredentialStoreUnavailable
-		code = "credential_store_unavailable"
-	}
-	return control.AuthenticationState{
-		Status:       status,
-		ProviderName: entry.Name,
-		ModelRef:     modelRef,
-		KeyEnv:       entry.APIKeyEnv,
-		Code:         code,
-	}
-}
-
 func recoveryHeadlessMode(opts Options) bool {
 	return strings.TrimSpace(opts.HeadlessApprovalMode) != ""
 }
@@ -1842,13 +1822,11 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		runner = agent.NewCoordinatorWithPlannerPolicy(plannerProv, plannerSess, pe.Price, plannerTools, plannerOpts, executor, cfg.Agent.Temperature, sink, control.NewPlannerPolicy())
 		label = entry.Model + " + planner " + pe.Model
 	}
-	imageEnabled := modelCapabilities.Resolve(entry).State == config.CapabilitySupported
-	if infoProvider, ok := execProv.(provider.ModelInfoProvider); ok {
-		imageEnabled = infoProvider.ModelInfo().SupportsInput(provider.ModalityImage)
-	}
+	imageEnabled := runtimeImageEnabled(execProv, modelCapabilities.Resolve(entry).State == config.CapabilitySupported)
 	imageSnapshot := config.ModelCapabilitySnapshot(cfg, modelCapabilities)
 	ctrlOpts := control.Options{
 		Authentication:                 authentication,
+		AuthenticationForModel:         authenticationReader(cfg, opts.ProviderResolver),
 		ModelSettingsRevision:          cfg.ModelRuntimeFingerprint(modelRef),
 		ModelSettingsCurrent:           runtimeModelSettingsReader(root, modelName, modelRef, opts.ModelSettings),
 		FrozenImageInput:               &imageEnabled,

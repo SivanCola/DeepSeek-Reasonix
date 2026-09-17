@@ -39,7 +39,7 @@ func (c *Controller) GenerateSessionTitle(ctx context.Context, transcript string
 	ref := strings.TrimSpace(c.selection.ref)
 	sink := c.sink
 	c.mu.Unlock()
-	title, err := generateSessionTitle(ctx, resolver, ref, sink, transcript)
+	title, err := generateSessionTitle(c.withAuthentication(ctx), resolver, ref, sink, transcript)
 	c.authentication.recordFailure(err, ref)
 	return title, err
 }
@@ -63,7 +63,7 @@ func (c *Controller) GenerateSessionTitleForModel(ctx context.Context, modelRef,
 	if err := c.authentication.admissionErrorForModel(modelRef); err != nil {
 		return "", err
 	}
-	title, err := generateSessionTitle(ctx, resolver, modelRef, sink, transcript)
+	title, err := generateSessionTitle(c.withAuthentication(ctx), resolver, modelRef, sink, transcript)
 	c.authentication.recordFailure(err, modelRef)
 	return title, err
 }

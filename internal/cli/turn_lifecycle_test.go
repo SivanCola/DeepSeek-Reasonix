@@ -129,7 +129,7 @@ func TestStartControllerTurnQueuesThroughSessionPort(t *testing.T) {
 	m.pastedBlocks = []pastedBlock{{label: "old paste"}, {label: "next paste"}}
 	started := false
 
-	cmd := m.startControllerTurn("expanded", "old paste", func() { started = true })
+	cmd := m.startControllerTurn("expanded", "old paste", func(control.SessionAPI) { started = true })
 	if cmd != nil || started {
 		t.Fatalf("running controller started a competing turn: cmd=%v started=%v", cmd != nil, started)
 	}
@@ -152,7 +152,7 @@ func TestStartControllerTurnRejectsInputDuringRemoteReclaim(t *testing.T) {
 	m.takeover = takeover
 	started := false
 
-	cmd := m.startControllerTurn("expanded", "draft", func() { started = true })
+	cmd := m.startControllerTurn("expanded", "draft", func(control.SessionAPI) { started = true })
 	if cmd != nil || started {
 		t.Fatalf("remote reclaim started a turn: cmd=%v started=%v", cmd != nil, started)
 	}
@@ -180,7 +180,7 @@ func TestStartControllerTurnRestoresComposerOnQueueFailure(t *testing.T) {
 	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
 
 	started := false
-	cmd := m.startControllerTurn("expanded", "draft", func() { started = true })
+	cmd := m.startControllerTurn("expanded", "draft", func(control.SessionAPI) { started = true })
 	if cmd != nil || started {
 		t.Fatalf("failed queue started a competing turn: cmd=%v started=%v", cmd != nil, started)
 	}
@@ -194,7 +194,7 @@ func TestStartControllerTurnQueueFailurePreservesNextDraft(t *testing.T) {
 	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
 	m.input.SetValue("next draft")
 
-	m.startControllerTurn("expanded", "failed submission", func() {})
+	m.startControllerTurn("expanded", "failed submission", func(control.SessionAPI) {})
 	if got := m.input.Value(); got != "next draft" {
 		t.Fatalf("failed async queue overwrote the next draft with %q", got)
 	}

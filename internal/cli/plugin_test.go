@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"reasonix/internal/pluginpkg"
@@ -53,17 +54,23 @@ func TestPluginInstallReturnsFailureExitForFailedJSON(t *testing.T) {
 	}
 }
 
-func TestSafeInstallSourceStatusRejectsUntrustedOutput(t *testing.T) {
-	for _, test := range []struct {
-		input string
-		want  string
-	}{
-		{input: "done", want: "done"},
-		{input: "planned", want: "planned"},
-		{input: "secret-value", want: "unknown"},
-	} {
-		if got := safeInstallSourceStatus(test.input); got != test.want {
-			t.Fatalf("safeInstallSourceStatus(%q) = %q, want %q", test.input, got, test.want)
-		}
+func TestInstallSourceOutputPreservesPlanAndRedactsSecrets(t *testing.T) {
+	out, err := redactInstallSourceJSON(`{"ok":false,"status":"failed","planId":"approved-plan","actions":[{"name":"demo","risk":"high","error":"Authorization: Bearer secret-credential","env":{"API_KEY":"private-value"}}],"next":["preview again"]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "secret-credential") || strings.Contains(out, "private-value") {
+		t.Fatal("secret leaked")
+	}
+	var result struct {
+		PlanID  string            `json:"planId"`
+		Actions []json.RawMessage `json:"actions"`
+		Next    []string          `json:"next"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.PlanID != "approved-plan" || len(result.Actions) != 1 || len(result.Next) != 1 {
+		t.Fatalf("lost plan metadata: %s", out)
 	}
 }

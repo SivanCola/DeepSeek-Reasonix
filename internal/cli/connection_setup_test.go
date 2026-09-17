@@ -92,7 +92,8 @@ func TestMissingAuthenticationPreservesCLIInputWithoutProviderCall(t *testing.T)
 	m.ctrl = ctrl
 	m.input.SetValue("keep this draft")
 	before := len(m.transcript)
-	if cmd := m.startControllerTurnWithQueue("keep this draft", "keep this draft", "", func() { ctrl.Submit("must not run") }); cmd != nil {
+	cmd := m.startControllerTurnWithQueue("keep this draft", "keep this draft", "", func(control.SessionAPI) { ctrl.Submit("must not run") })
+	if cmd != nil {
 		t.Fatal("missing authentication scheduled a model turn")
 	}
 	if runner.calls != 0 || m.input.Value() != "keep this draft" {

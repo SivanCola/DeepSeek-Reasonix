@@ -251,7 +251,7 @@ func (c *Controller) startTurnLocked(parent context.Context, next queuedTurn) (c
 	if c.turns.runtime != nil && !c.turns.runtime.BeginExecution(c.turns.generation, "turn") {
 		return nil, nil, false
 	}
-	ctx, cancel = context.WithCancel(extension.ContextWithRuntimeOwner(parent, c.runtimeOwner))
+	ctx, cancel = context.WithCancel(extension.ContextWithRuntimeOwner(c.withAuthentication(parent), c.runtimeOwner))
 	c.turns.cancel = cancel
 	c.turns.done = make(chan struct{})
 	c.turns.finishingBound.beginIdle()
