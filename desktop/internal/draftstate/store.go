@@ -164,7 +164,7 @@ func initialize(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer rollbackTransaction(tx)
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS drafts (
 			id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, scope TEXT NOT NULL,
@@ -206,7 +206,7 @@ func migrateV3ToV4(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer rollbackTransaction(tx)
 	for _, query := range []string{
 		`ALTER TABLE operations ADD COLUMN request_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE operations ADD COLUMN source_digest TEXT NOT NULL DEFAULT ''`,
@@ -253,7 +253,7 @@ func migrateV1ToV2(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer rollbackTransaction(tx)
 	if _, err := tx.Exec(`ALTER TABLE operations ADD COLUMN topic_id TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
 	}
@@ -271,7 +271,7 @@ func migrateV2ToV3(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer rollbackTransaction(tx)
 	if _, err := tx.Exec(`PRAGMA user_version = 3`); err != nil {
 		return err
 	}
@@ -431,7 +431,7 @@ func (s *Store) Save(ctx context.Context, draftID string, expected uint64, conte
 		if err != nil {
 			return err
 		}
-		defer tx.Rollback()
+		defer rollbackTransaction(tx)
 		current, err := scanDraft(tx.QueryRowContext(ctx, `SELECT `+draftColumns+` FROM drafts WHERE id = ?`, draftID))
 		if err != nil {
 			return err
@@ -508,7 +508,7 @@ func (s *Store) Discard(ctx context.Context, draftID string, expected uint64) er
 		if err != nil {
 			return err
 		}
-		defer tx.Rollback()
+		defer rollbackTransaction(tx)
 		current, err := scanDraft(tx.QueryRowContext(ctx, `SELECT `+draftColumns+` FROM drafts WHERE id=?`, draftID))
 		if err != nil {
 			return err
@@ -544,7 +544,7 @@ func (s *Store) BeginOperation(ctx context.Context, op Operation) (Operation, bo
 		if err != nil {
 			return err
 		}
-		defer tx.Rollback()
+		defer rollbackTransaction(tx)
 		// Resolve request identity before checking the editable slot: a lost
 		// response may be retried after receipt has converted the draft.
 		if op.RequestID != "" {
@@ -739,7 +739,7 @@ func (s *Store) AcceptAndConvert(ctx context.Context, draftID, operationID strin
 		if err != nil {
 			return err
 		}
-		defer tx.Rollback()
+		defer rollbackTransaction(tx)
 		op, err := scanOperation(tx.QueryRowContext(ctx, `SELECT id,draft_id,workspace_id,draft_revision,session_id,topic_id,submission_id,fingerprint,request_json,phase,error,created_at,updated_at,request_id,source_digest,operation_revision,execution_json FROM operations WHERE id=? AND draft_id=?`, operationID, draftID))
 		if err != nil {
 			return err
@@ -795,7 +795,7 @@ func (s *Store) Convert(ctx context.Context, draftID, operationID string) error 
 		if err != nil {
 			return err
 		}
-		defer tx.Rollback()
+		defer rollbackTransaction(tx)
 		var phase string
 		if err := tx.QueryRowContext(ctx, `SELECT phase FROM operations WHERE id=? AND draft_id=?`, operationID, draftID).Scan(&phase); err != nil {
 			return err

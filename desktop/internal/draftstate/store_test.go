@@ -343,7 +343,6 @@ func TestDispatchClaimWinsOrCancelWinsButNeverBoth(t *testing.T) {
 		{to: "dispatching", from: []string{"starting"}},
 		{to: "cancelled", from: []string{"reserved", "starting", "runtime_failed", "resume_required"}},
 	} {
-		transition := transition
 		go func() {
 			<-start
 			result, claimed, err := store.TransitionOperationPhase(ctx, op.ID, transition.from, transition.to, "")

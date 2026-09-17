@@ -225,14 +225,14 @@ func load(path string) (State, error) {
 		Version int `json:"version"`
 	}
 	if err := json.Unmarshal(body, &header); err != nil {
-		return State{}, fmt.Errorf("%w: %v", ErrCorruptState, err)
+		return State{}, fmt.Errorf("%w: %w", ErrCorruptState, err)
 	}
 	if header.Version != SchemaVersion {
 		return State{}, fmt.Errorf("%w: %d", ErrUnsupportedVersion, header.Version)
 	}
 	var state State
 	if err := json.Unmarshal(body, &state); err != nil {
-		return State{}, fmt.Errorf("%w: %v", ErrCorruptState, err)
+		return State{}, fmt.Errorf("%w: %w", ErrCorruptState, err)
 	}
 	if err := validate(state); err != nil {
 		return State{}, err

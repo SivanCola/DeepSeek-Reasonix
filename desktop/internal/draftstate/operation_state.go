@@ -15,6 +15,10 @@ import (
 
 const operationColumns = `id,draft_id,workspace_id,draft_revision,session_id,topic_id,submission_id,fingerprint,request_json,phase,error,created_at,updated_at,request_id,source_digest,operation_revision,execution_json`
 
+func rollbackTransaction(tx *sql.Tx) {
+	_ = tx.Rollback()
+}
+
 // State reads both sides of the draft-operation binding in one transaction.
 func (s *Store) State(ctx context.Context, id string) (Draft, *Operation, error) {
 	var draft Draft
@@ -24,7 +28,7 @@ func (s *Store) State(ctx context.Context, id string) (Draft, *Operation, error)
 		if err != nil {
 			return err
 		}
-		defer tx.Rollback()
+		defer rollbackTransaction(tx)
 		draft, err = scanDraft(tx.QueryRowContext(ctx, `SELECT `+draftColumns+` FROM drafts WHERE id=?`, id))
 		if err != nil {
 			return err

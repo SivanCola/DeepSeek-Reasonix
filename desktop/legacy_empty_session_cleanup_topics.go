@@ -276,10 +276,6 @@ func topicIndexedInProjectsSnapshot(file desktopProjectFile, scope, workspaceRoo
 	return index >= 0 && containsDesktopString(file.Projects[index].Topics, topicID)
 }
 
-func legacyCleanupTopicSnapshotMatchesCurrent(item legacycleanup.Candidate) bool {
-	return legacyCleanupTopicSnapshotMatchesProjects(item, loadProjectsFile())
-}
-
 func legacyCleanupTopicSnapshotMatchesProjects(item legacycleanup.Candidate, file desktopProjectFile) bool {
 	if item.Topic == nil {
 		return false

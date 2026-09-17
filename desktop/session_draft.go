@@ -1003,12 +1003,11 @@ func (a *App) ensureDraftSessionTab(op draftstate.Operation) (TabMeta, error) {
 	a.tabOrder = append(a.tabOrder, tab.ID)
 	a.saveTabsLocked()
 	a.mu.Unlock()
-	meta, err := a.startCreatedSessionTab(tab, actualRoot)
-	if err != nil {
+	if _, err := a.startCreatedSessionTab(tab, actualRoot); err != nil {
 		return TabMeta{}, err
 	}
 	a.mu.RLock()
-	meta = enrichTabMeta(a.tabMeta(tab, a.activeTabID == tab.ID))
+	meta := enrichTabMeta(a.tabMeta(tab, a.activeTabID == tab.ID))
 	a.mu.RUnlock()
 	return meta, nil
 }
@@ -1330,14 +1329,4 @@ func (a *App) AttachDroppedForTarget(target ComposerTarget, path string) (Droppe
 		return DroppedItem{}, err
 	}
 	return DroppedItem{Kind: "attachment", Path: rel}, nil
-}
-
-func draftContentHasText(content string) bool {
-	var value struct {
-		Text          string `json:"text"`
-		Attachments   []any  `json:"attachments"`
-		WorkspaceRefs []any  `json:"workspaceRefs"`
-		Invocations   []any  `json:"invocations"`
-	}
-	return json.Unmarshal([]byte(content), &value) == nil && (strings.TrimSpace(value.Text) != "" || len(value.Attachments)+len(value.WorkspaceRefs)+len(value.Invocations) > 0)
 }
