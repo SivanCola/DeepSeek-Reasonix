@@ -44,6 +44,11 @@ type fixtureReport struct {
 	LegacySHA256   string `json:"legacySha256"`
 }
 
+type legacyMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
 // Run requires an isolated, disposable home. It never starts the application.
 func Run(mode, home, reportPath, phase string) error {
 	if strings.TrimSpace(home) == "" || strings.TrimSpace(reportPath) == "" {
@@ -97,8 +102,13 @@ func createFixture(ctx context.Context, home, reportPath string) error {
 	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o700); err != nil {
 		return err
 	}
-	legacy := []byte(`{"role":"user","content":"` + fixtureQuestion + `"}` + "\n" +
-		`{"role":"assistant","content":"` + fixtureText + `"}` + "\n")
+	legacy, err := encodeLegacyHistory(
+		legacyMessage{Role: "user", Content: fixtureQuestion},
+		legacyMessage{Role: "assistant", Content: fixtureText},
+	)
+	if err != nil {
+		return err
+	}
 	if err := os.WriteFile(legacyPath, legacy, 0o600); err != nil {
 		return err
 	}
@@ -124,11 +134,27 @@ func createFixture(ctx context.Context, home, reportPath string) error {
 		return err
 	}
 
-	globalRoot, err := json.Marshal(filepath.Join(config.ReasonixHomeDir(), "global-workspace"))
+	registry, err := json.Marshal(map[string]any{
+		"version":      1,
+		"generation":   7,
+		"workspaceIds": []string{"global"},
+		"workspaces": map[string]any{
+			"global": map[string]any{
+				"id":              "global",
+				"root":            filepath.Join(config.ReasonixHomeDir(), "global-workspace"),
+				"title":           "Global",
+				"visible":         true,
+				"sessionIds":      []string{},
+				"futureWorkspace": map[string]any{"preserve": 42},
+			},
+		},
+		"archivedSessionIds": []string{},
+		"pendingCreates":     map[string]any{},
+		"futureRoot":         map[string]any{"preserve": true},
+	})
 	if err != nil {
 		return err
 	}
-	registry := []byte(`{"version":1,"generation":7,"workspaceIds":["global"],"workspaces":{"global":{"id":"global","root":` + string(globalRoot) + `,"title":"Global","visible":true,"sessionIds":[],"futureWorkspace":{"preserve":42}}},"archivedSessionIds":[],"pendingCreates":{},"futureRoot":{"preserve":true}}`)
 	registryPath := config.DesktopWorkspaceStatePath()
 	if err := os.MkdirAll(filepath.Dir(registryPath), 0o700); err != nil {
 		return err
@@ -151,6 +177,17 @@ func createFixture(ctx context.Context, home, reportPath string) error {
 	legacyDigest := sha256.Sum256(legacy)
 	report := fixtureReport{Home: home, RegistryPath: registryPath, RegistrySHA256: hex.EncodeToString(digest[:]), TopicID: fixtureTopicID, VisibleText: fixtureText, ProjectRoot: projectRoot, LegacyPath: legacyPath, LegacySHA256: hex.EncodeToString(legacyDigest[:])}
 	return writeJSON(reportPath, report)
+}
+
+func encodeLegacyHistory(messages ...legacyMessage) ([]byte, error) {
+	var body strings.Builder
+	encoder := json.NewEncoder(&body)
+	for _, message := range messages {
+		if err := encoder.Encode(message); err != nil {
+			return nil, err
+		}
+	}
+	return []byte(body.String()), nil
 }
 
 func createTopicDatabase(ctx context.Context, path, topicID, marker string) error {
