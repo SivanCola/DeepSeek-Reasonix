@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, copyFile, writeFile, mkdir, rm } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -87,10 +88,19 @@ try {
       report.actions.push("reader-wheel", "offscreen-submit", "offscreen-record");
       if (nativeInput) {
         report.nativeInput = {};
+        const saveProgress = () => writeFileSync(path.join(evidence, "native-input-progress.json"), JSON.stringify(report.nativeInput, null, 2));
+        const progress = setInterval(saveProgress, 2000);
+        const deadline = setTimeout(() => {
+          report.nativeInput.timeout = true;
+          saveProgress();
+          app.process().kill("SIGKILL");
+        }, 90_000);
         try { await verifyNativeReaderInput(page, report.nativeInput); }
         catch (error) {
-          await page.screenshot({ path: path.join(evidence, "native-input-failure.png") });
+          await page.screenshot({ path: path.join(evidence, "native-input-failure.png"), timeout: 5000 }).catch(() => {});
           throw error;
+        } finally {
+          clearInterval(progress); clearTimeout(deadline); saveProgress();
         }
       }
       else {

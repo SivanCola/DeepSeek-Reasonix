@@ -73,6 +73,7 @@ export async function verifyNativeReaderInput(page, evidence = {}) {
     });
     assert.ok(track.gutter > 0, "native scrollbar must be exposed");
     evidence.track = track;
+    evidence.phase = "drag-start";
     await page.evaluate(() => { window.nativePhase = "scrollbar"; });
     xdo("mousemove", "--window", windowId, Math.round(track.x + offset.x), Math.round(track.y + offset.y));
     xdo("mousedown", 1);
@@ -84,8 +85,10 @@ export async function verifyNativeReaderInput(page, evidence = {}) {
         xdo("sleep", "0.03");
       }
     } finally { xdo("mouseup", 1); }
+    evidence.phase = "drag-released";
     await page.waitForFunction(before => document.querySelector(".chat-flow-scroll").scrollTop < before - 100, track.top);
     await frame();
+    evidence.phase = "drag-observed";
     assert.equal(await scroll.getAttribute("data-scroll-mode"), "reader");
     const samples = await page.evaluate(() => { window.nativeSampling = false; return window.nativeSamples; });
     const heights = samples.map(sample => sample.height);
