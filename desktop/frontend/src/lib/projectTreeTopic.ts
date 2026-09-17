@@ -6,17 +6,26 @@ import { projectSessionIdentity, projectSessionExcluded, projectSessionKeys, sam
 export type ProjectTreeVariant = "workbench" | "creation";
 export type WorkbenchSortMode = "created" | "updated";
 
-// Shared by workbench and creation; key string kept for existing saved choices.
+// Shared by workbench and creation; key string kept for existing saved choices
+// and for downgrade compatibility.
 export const WORKBENCH_SORT_KEY = "projectTree:workbenchSort";
+export const WORKBENCH_SORT_CREATED_DEFAULT_MIGRATION_KEY = "projectTree:workbenchSort:createdDefault:v1";
 
 export function loadWorkbenchSortMode(): WorkbenchSortMode {
   try {
+    if (localStorage.getItem(WORKBENCH_SORT_CREATED_DEFAULT_MIGRATION_KEY) !== "1") {
+      // This release intentionally resets every existing choice once. Keep the
+      // original preference key so older builds can still read the new value.
+      localStorage.setItem(WORKBENCH_SORT_KEY, "created");
+      localStorage.setItem(WORKBENCH_SORT_CREATED_DEFAULT_MIGRATION_KEY, "1");
+      return "created";
+    }
     const value = localStorage.getItem(WORKBENCH_SORT_KEY);
-    if (value === "created") return "created";
+    if (value === "created" || value === "updated") return value;
   } catch {
     /* localStorage unavailable */
   }
-  return "updated";
+  return "created";
 }
 
 export function isRuntimeSessionNode(node: ProjectNode): boolean {
