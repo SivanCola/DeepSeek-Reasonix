@@ -2437,6 +2437,7 @@ export function useController() {
   const isNavigationIntentCurrent = useCallback((seq: number): boolean => {
     return activeNavigationSeqRef.current === seq;
   }, []);
+  const currentNavigationIntent = useCallback((): number => activeNavigationSeqRef.current, []);
   const requireRegisteredNavigationIntent = useCallback(async (seq: number): Promise<void> => {
     const token = await registeredNavigationIntent(seq);
     if (!token) throw new Error("navigation intent registration failed");
@@ -3353,9 +3354,8 @@ export function useController() {
         addBreadcrumb("tab.hydrate", `ready ignored ${readyTabId}`);
         return;
       }
-      // A ready event can race the initial hydrate. Refresh the tab metadata
-      // first so a stale ready=false snapshot does not keep the composer locked.
-      void syncActiveTabFromBackend(false, true, { preserveCachedHistory: true });
+      // Refresh metadata without turning passive readiness into navigation.
+      void syncActiveTabFromBackend(false, true, { preserveCachedHistory: true, navigationIntentSeq: activeNavigationSeqRef.current });
     });
 
     // A rebuilt controller reissues approval/ask ids from "1" (see sound.ts).
@@ -3419,7 +3419,8 @@ export function useController() {
       }),
     });
 
-    void syncActiveTabFromBackend(false, true);
+    // Passive hydration must not invalidate the concurrent draft-restore probe.
+    void syncActiveTabFromBackend(false, true, { navigationIntentSeq: activeNavigationSeqRef.current });
     // The event subscription is live now, so ask the backend to re-emit any
     // approval/ask prompt that was already blocking a tab before this load —
     // otherwise a session left mid-confirmation shows "waiting" with no modal
@@ -4871,13 +4872,10 @@ export function useController() {
     refreshMeta, pickWorkspace, switchWorkspace, compact, rewind, rewindForTab, rewindForTabDetailed, undoRewindForTab, forkTurnForTab, setModel, setModelForTab, setEffort, setEffortForTab, cancelJob,
     fetchMemory, remember, forget, saveDoc,
     switchTab, switchRemoteTab, openProjectTab, openGlobalTab, openTopicSession, ensureBlankTab, activateTopic, ensureBlankSurface, createIsolatedWorktree, commitSingleSurfaceNavigation, closeTab, reorderTabs,
-    // Invalidate in-flight navigation completions (activateTopic's stale
-    // guard) from outside the hook. The App-level navigation queue must call
-    // this at ENQUEUE time: a queued click does not run — and so does not
-    // advance this epoch — until the running request finishes, which would
-    // let the running stale activation pass the guard and prune the state of
-    // the surface the user just clicked.
+    // The App queue advances this at enqueue time, before an older activation
+    // can finish and prune the surface selected by the newer click.
     noteNavigationIntent: beginActiveNavigation,
+    currentNavigationIntent,
     registeredNavigationIntent,
     isNavigationIntentCurrent,
     reassertVisibleTabAfterStaleNavigation,

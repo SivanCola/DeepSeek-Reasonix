@@ -132,7 +132,7 @@ type DraftEntry = {
 type DraftSurfaceOptions = {
   onAccepted(ref: SessionRef): Promise<void> | void;
   onChanged(): void;
-  claimNavigationIntent?: () => number;
+  claimNavigationIntent?: () => number; currentNavigationIntent?: () => number;
   isNavigationIntentCurrent?: (intent: number) => boolean;
 };
 
@@ -193,7 +193,7 @@ function pruneCleanEntries(entries: Map<string, DraftEntry>, visibleDraftId: str
 }
 
 export function useSessionDraftSurface(options: DraftSurfaceOptions) {
-  const { onAccepted, onChanged, claimNavigationIntent, isNavigationIntentCurrent } = options;
+  const { onAccepted, onChanged, claimNavigationIntent, currentNavigationIntent, isNavigationIntentCurrent } = options;
   const entriesRef = useRef(new Map<string, DraftEntry>());
   const visibleDraftIdRef = useRef<string | null>(null);
   const [surface, setSurface] = useState<SessionDraftSurface | null>(null);
@@ -524,21 +524,21 @@ export function useSessionDraftSurface(options: DraftSurfaceOptions) {
   }, [claimIntent, flushDraft, installDraft, intentCurrent, publish, queueRestoreTarget, refreshSummaries]);
 
   const initializeEmptySurface = useCallback(async () => {
-    const intent = claimIntent();
+    const baselineIntent = currentNavigationIntent?.() ?? localIntent.current;
     const sequence = ++openSequence.current;
     const restored = await app.RestoreSessionDraft();
-    if (sequence !== openSequence.current || !intentCurrent(intent)) return;
+    if (sequence !== openSequence.current || !intentCurrent(baselineIntent)) return;
     if (restored) {
-      await installDraft(restored, sequence, intent);
+      await installDraft(restored, sequence, claimIntent());
       return;
     }
     const tabs = await app.ListTabs();
-    if (sequence !== openSequence.current || !intentCurrent(intent) || tabs.length > 0) return;
-    const draft = await app.OpenSessionDraftForTarget("global", "");
+    if (sequence !== openSequence.current || !intentCurrent(baselineIntent) || tabs.length > 0) return;
+    const intent = claimIntent(), draft = await app.OpenSessionDraftForTarget("global", "");
     if (sequence !== openSequence.current || !intentCurrent(intent)) return;
     await installDraft(draft, sequence, intent);
     await refreshSummaries();
-  }, [claimIntent, installDraft, intentCurrent, refreshSummaries]);
+  }, [claimIntent, currentNavigationIntent, installDraft, intentCurrent, refreshSummaries]);
 
   const dismiss = useCallback(() => {
     ++openSequence.current;

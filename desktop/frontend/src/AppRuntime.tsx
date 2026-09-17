@@ -123,6 +123,7 @@ export function AppRuntime() {
     onAccepted: openAcceptedDraftSession,
     onChanged: markDraftChanged,
     claimNavigationIntent: runtime.navigation.noteNavigationIntent,
+    currentNavigationIntent: runtime.navigation.currentNavigationIntent,
     isNavigationIntentCurrent: runtime.navigation.isNavigationIntentCurrent,
   });
   useEffect(() => { void drafts.initializeEmptySurface(); }, [drafts.initializeEmptySurface]);
