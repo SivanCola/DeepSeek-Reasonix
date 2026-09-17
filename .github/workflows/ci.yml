@@ -264,7 +264,9 @@ jobs:
         if: env.RUN_STEPS == 'true' && runner.os == 'Windows'
         timeout-minutes: 2
         shell: pwsh
-        run: ./scripts/test-windows-installer-startup.test.ps1
+        run: |
+          ./scripts/test-windows-installer-startup.test.ps1
+          ./scripts/test-windows-upgrade-startup.test.ps1
 
       # Only main-v2 pushes save, one job per OS and module, so the cache
       # stays a few pushes deep instead of churning on every pull request.
@@ -1389,11 +1391,13 @@ jobs:
 
       - name: Install and smoke-test Windows installer identity
         shell: pwsh
-        run: >-
-          ../scripts/test-windows-installer-startup.ps1
-          -InstallerPath ../dist/Reasonix-windows-amd64-installer.exe
-          -ExpectedVersion v0.0.0-ci
-          -EvidenceDirectory "$env:RUNNER_TEMP/reasonix-installer-acceptance"
+        run: |
+          go build -o "$env:RUNNER_TEMP/windows-upgrade-fixture.exe" ./cmd/windows-upgrade-fixture
+          ../scripts/test-windows-installer-startup.ps1 `
+            -InstallerPath ../dist/Reasonix-windows-amd64-installer.exe `
+            -ExpectedVersion v0.0.0-ci `
+            -FixtureBuilderPath "$env:RUNNER_TEMP/windows-upgrade-fixture.exe" `
+            -EvidenceDirectory "$env:RUNNER_TEMP/reasonix-installer-acceptance"
 
       - name: Upload Windows installer acceptance evidence
         if: always()

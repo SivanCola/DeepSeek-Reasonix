@@ -22,6 +22,13 @@ test("inventory keeps same-named tests from different packages and rejects missi
   assert.throws(() => inventoryFromJSON(""), /no desktop test inventory/);
 });
 
+test("URI upgrade and preview regressions have exactly one Windows execution owner", () => {
+  for (const name of ["TestWindowsUpgradeFixtureMigratesLegacyAndRestarts", "TestDesktopV1UpgradeBacksUpTopicWALAndRetriesWithoutDuplicateImport",
+    "TestChatFileReferencePreservesRawFilenameCharacters", "TestResolveMarkdownImageSelectsPercentAndSpaceNamesExactly"]) {
+    assert.equal(owners(name).length, 1, name);
+  }
+});
+
 test("CI runs all groups separately and retains the aggregate and native probe", () => {
   const source = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
   const matrixJob = source.match(/\n  desktop-windows-go-group:\n([\s\S]*?)(?=\n  [a-z][a-z0-9-]*:|$)/)?.[1];

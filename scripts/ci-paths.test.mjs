@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 import { changedFiles, classifyPaths } from "./ci-paths.mjs";
 
 test("explicit documentation skips build surfaces", () => {
@@ -116,6 +117,44 @@ test("push and merge-base diffs retain deletions and renames", t => {
 test("invalid diff identities fail instead of producing a skip", () => {
   assert.throws(() => changedFiles({ base: "0".repeat(40), head: "HEAD" }), /non-zero/);
   assert.throws(() => changedFiles({ base: "f".repeat(40), head: "HEAD" }));
+});
+
+test("CLI entry runs from paths with URL-significant characters", t => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "reasonix-ci-entry-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const expectedNames = ["code", "desktop", "desktop_go", "frontend", "browser", "memory", "memory_full", "electron", "native", "packaging", "site", "sdk", "notes_only"];
+  for (const directory of ["ordinary", "with space", "中文", "hash#directory", "literal%20directory"]) {
+    const target = path.join(root, directory, "ci-paths.mjs");
+    mkdirSync(path.dirname(target), { recursive: true });
+    copyFileSync(new URL("./ci-paths.mjs", import.meta.url), target);
+    const output = execFileSync(process.execPath, [target, "--full"], { encoding: "utf8" });
+    const values = Object.fromEntries(output.trim().split("\n").map(line => line.split("=")));
+    assert.deepEqual(Object.keys(values).sort(), [...expectedNames].sort(), directory);
+    for (const name of expectedNames) assert.equal(values[name], name === "notes_only" ? "false" : "true", `${directory}: ${name}`);
+  }
+});
+
+test("CLI writes GitHub output and module import stays side-effect free", t => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "reasonix-ci-output-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const target = path.join(root, "hash#literal%20", "ci-paths.mjs");
+  const outputPath = path.join(root, "GitHub output.txt");
+  mkdirSync(path.dirname(target), { recursive: true });
+  copyFileSync(new URL("./ci-paths.mjs", import.meta.url), target);
+  const stdout = execFileSync(process.execPath, [target, "--full", "--github-output", outputPath], { encoding: "utf8" });
+  assert.equal(stdout, "");
+  const output = readFileSync(outputPath, "utf8");
+  assert.equal(output.trim().split("\n").length, 13);
+  assert.match(output, /^desktop=true$/m);
+  assert.match(output, /^notes_only=false$/m);
+
+  const imported = execFileSync(process.execPath, ["--input-type=module", "--eval", `import(${JSON.stringify(pathToFileURL(target).href)})`], { encoding: "utf8" });
+  assert.equal(imported, "");
+
+  const stdinImported = execFileSync(process.execPath, ["--input-type=module", "-"], {
+    input: `await import(${JSON.stringify(pathToFileURL(target).href)});`, encoding: "utf8",
+  });
+  assert.equal(stdinImported, "");
 });
 
 // site and sdk are in this list because the required aggregates accept a

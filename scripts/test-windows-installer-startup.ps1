@@ -2,6 +2,7 @@
 param(
   [Parameter(Mandatory=$true)][string]$InstallerPath,
   [Parameter(Mandatory=$true)][string]$ExpectedVersion,
+  [string]$FixtureBuilderPath = '',
   [string]$EvidenceDirectory = (Join-Path $env:TEMP ('reasonix-installer-' + [guid]::NewGuid().ToString('N'))),
   [switch]$DisposableEnvironment
 )
@@ -109,7 +110,7 @@ function Assert-UninstalledState {
 }
 
 function Invoke-WindowsInstallerAcceptance {
-  param([string]$InstallerPath, [string]$ExpectedVersion, [string]$EvidenceDirectory, [switch]$DisposableEnvironment)
+  param([string]$InstallerPath, [string]$ExpectedVersion, [string]$FixtureBuilderPath, [string]$EvidenceDirectory, [switch]$DisposableEnvironment)
   $ErrorActionPreference = 'Stop'
   if ($ExpectedVersion -notmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?$') {
     throw "ExpectedVersion is not a canonical Reasonix version: $ExpectedVersion"
@@ -160,11 +161,21 @@ function Invoke-WindowsInstallerAcceptance {
       $repair = 'passed'
     }
 
+    $oldDataUpgrade = 'not requested'
+    if ($FixtureBuilderPath) {
+      & (Join-Path $PSScriptRoot 'test-windows-upgrade-startup.ps1') `
+        -ApplicationPath (Join-Path $install 'Reasonix.exe') -FixtureBuilderPath $FixtureBuilderPath `
+        -ExpectedVersion $ExpectedVersion -EvidenceDirectory (Join-Path $EvidenceDirectory 'old-data-upgrade')
+      if ($LASTEXITCODE -ne 0) { throw "Old-data upgrade acceptance failed with exit code $LASTEXITCODE" }
+      $oldDataUpgrade = 'passed'
+    }
+
     # Failure preserves the fixture/logs for diagnosis. Uninstall only after
     # every tested instance exited normally, never while a failed shell lives.
     $dataSnapshot = @{ $defaultSentinel = $defaultHash }
     $homes = @($env:REASONIX_HOME, (Join-Path $EvidenceDirectory 'fresh-install\home'))
     if ($repair -eq 'passed') { $homes += (Join-Path $EvidenceDirectory 'repaired-install\home') }
+    if ($oldDataUpgrade -eq 'passed') { $homes += (Join-Path $EvidenceDirectory 'old-data-upgrade\home # %20 中文') }
     foreach ($homePath in $homes) {
       New-Item -ItemType Directory -Force -Path $homePath | Out-Null
       [IO.File]::WriteAllText((Join-Path $homePath 'acceptance-retention.txt'), [guid]::NewGuid().ToString('N'))
@@ -186,6 +197,7 @@ function Invoke-WindowsInstallerAcceptance {
       version = $ExpectedVersion
       freshInstall = 'passed'
       repairedInstall = $repair
+      oldDataUpgrade = $oldDataUpgrade
       uninstall = 'passed'
       dataPreserved = 'passed'
       repairFrom = if ($repair -eq 'passed') { $truncatedVersion } else { $null }
@@ -200,5 +212,5 @@ function Invoke-WindowsInstallerAcceptance {
 # process/registry boundaries; it never runs an installation.
 if ($MyInvocation.InvocationName -ne '.') {
   Invoke-WindowsInstallerAcceptance -InstallerPath $InstallerPath -ExpectedVersion $ExpectedVersion `
-    -EvidenceDirectory $EvidenceDirectory -DisposableEnvironment:$DisposableEnvironment
+    -FixtureBuilderPath $FixtureBuilderPath -EvidenceDirectory $EvidenceDirectory -DisposableEnvironment:$DisposableEnvironment
 }

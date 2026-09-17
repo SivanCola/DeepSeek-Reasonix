@@ -111,6 +111,9 @@ func doctorSessionsCommand(args []string) int {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
+		if status.State == sessioncatalog.StateDegraded {
+			return 1
+		}
 		return 0
 	}
 	fmt.Println("Reasonix session catalog")
@@ -133,6 +136,9 @@ func doctorSessionsCommand(args []string) int {
 		status.RecoveryGroups, status.RecoveryBranches, status.RecoveryDiverged, status.CleanupEligible)
 	if status.LastError != "" {
 		fmt.Printf("  note: %s\n", status.LastError)
+	}
+	if status.State == sessioncatalog.StateDegraded {
+		return 1
 	}
 	return 0
 }

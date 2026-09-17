@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, readFileSync, realpathSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 
 const ZERO_SHA = /^0{40}$/;
 const ROOT_DOC = /^[^/]+\.md$/;
@@ -136,7 +137,18 @@ function summary(result) {
   return lines.join("\n") + "\n";
 }
 
-if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+function isMainModule() {
+  // stdin/eval hosts can provide a sentinel or a nonexistent argv[1]. Importing
+  // this module must not require that host argument to name a filesystem entry.
+  if (!process.argv[1] || process.argv[1] === "-") return false;
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) {
   try {
     const args = parseArgs(process.argv.slice(2));
     let files;
