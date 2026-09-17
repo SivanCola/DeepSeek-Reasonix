@@ -52,3 +52,18 @@ func TestPluginInstallReturnsFailureExitForFailedJSON(t *testing.T) {
 		t.Fatalf("duplicate output ok/status = %v/%q, want false/failed\n%s", second.OK, second.Status, secondOut)
 	}
 }
+
+func TestSafeInstallSourceStatusRejectsUntrustedOutput(t *testing.T) {
+	for _, test := range []struct {
+		input string
+		want  string
+	}{
+		{input: "done", want: "done"},
+		{input: "planned", want: "planned"},
+		{input: "secret-value", want: "unknown"},
+	} {
+		if got := safeInstallSourceStatus(test.input); got != test.want {
+			t.Fatalf("safeInstallSourceStatus(%q) = %q, want %q", test.input, got, test.want)
+		}
+	}
+}

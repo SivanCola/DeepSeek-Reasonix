@@ -175,18 +175,46 @@ func runInstallSourceJSON(body map[string]any) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	fmt.Println(out)
 	var resp struct {
-		OK bool `json:"ok"`
+		OK     bool   `json:"ok"`
+		Status string `json:"status"`
 	}
 	if err := json.Unmarshal([]byte(out), &resp); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
+	encoded, err := json.Marshal(struct {
+		OK     bool   `json:"ok"`
+		Status string `json:"status"`
+	}{OK: resp.OK, Status: safeInstallSourceStatus(resp.Status)})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	fmt.Println(string(encoded))
 	if !resp.OK {
 		return 1
 	}
 	return 0
+}
+
+func safeInstallSourceStatus(status string) string {
+	switch status {
+	case "planned":
+		return "planned"
+	case "done":
+		return "done"
+	case "partial":
+		return "partial"
+	case "failed":
+		return "failed"
+	case "blocked":
+		return "blocked"
+	case "denied":
+		return "denied"
+	default:
+		return "unknown"
+	}
 }
 
 func pluginListCommand() int {
