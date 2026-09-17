@@ -4,13 +4,12 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"sort"
-	"strings"
-	"time"
-
 	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/sessioncatalog"
+	"sort"
+	"strings"
+	"time"
 )
 
 // Sidebar reads are bound so a starved connection pool or a slow projection
@@ -23,6 +22,7 @@ func (a *App) catalogReadContext() (context.Context, context.CancelFunc) {
 }
 
 type catalogRuntimeSnapshot struct {
+	tabID            string
 	scope            string
 	workspaceRoot    string
 	topicID          string
@@ -119,9 +119,9 @@ func (a *App) metadataProjectTopics(scope, workspaceRoot string) []ProjectNode {
 	created := loadTopicCreatedAts(titleRoot)
 	topicOverlays, _ := a.catalogRuntimeOverlays()
 	runtimeNodes := a.runtimeOnlyProjectTopics(scope, workspaceRoot)
-	runtimeByTopic := map[string]ProjectNode{}
+	runtimeByTopic := map[string][]ProjectNode{}
 	for _, node := range runtimeNodes {
-		runtimeByTopic[node.TopicID] = node
+		runtimeByTopic[node.TopicID] = append(runtimeByTopic[node.TopicID], node)
 	}
 	out := []ProjectNode{}
 	seen := map[string]bool{}
@@ -151,11 +151,16 @@ func (a *App) metadataProjectTopics(scope, workspaceRoot string) []ProjectNode {
 			TurnsState: string(sessioncatalog.TurnsUnknown), Health: string(sessioncatalog.HealthOK),
 			Children: []ProjectNode{},
 		}
-		if runtimeNode, ok := runtimeByTopic[topicID]; ok {
-			node.Open = runtimeNode.Open
-			node.Running = runtimeNode.Running
-			node.Status = runtimeNode.Status
-			node.Children = runtimeNode.Children
+		if runtimeRows := runtimeByTopic[topicID]; len(runtimeRows) > 0 {
+			for _, runtimeNode := range runtimeRows {
+				runtimeNode.Pinned, runtimeNode.SortOrder = node.Pinned, node.SortOrder
+				runtimeNode.CreatedAt, runtimeNode.ProjectColor = node.CreatedAt, node.ProjectColor
+				if strings.TrimSpace(runtimeNode.Label) == "" {
+					runtimeNode.Label = node.Label
+				}
+				out = append(out, runtimeNode)
+			}
+			continue
 		}
 		out = append(out, node)
 	}
@@ -194,71 +199,48 @@ func (a *App) runtimeOnlyProjectTopicsWithSessions(scope, workspaceRoot string) 
 }
 
 func (a *App) runtimeProjectTopicNodes(scope, workspaceRoot string, snapshots []catalogRuntimeSnapshot, previews bool) ([]ProjectNode, map[string][]string) {
-	byTopic := map[string][]catalogRuntimeSnapshot{}
 	sessionsByTopic := map[string][]string{}
+	out := []ProjectNode{}
+	kind := "topic"
+	if scope != "project" {
+		kind = "global_topic"
+	}
 	for _, snapshot := range snapshots {
 		if snapshot.sessionPath == "" && snapshot.ctrl != nil {
 			snapshot.sessionPath = snapshot.ctrl.SessionPath()
 		}
-		byTopic[snapshot.topicID] = append(byTopic[snapshot.topicID], snapshot)
-		if path := strings.TrimSpace(snapshot.sessionPath); path != "" {
+		path := strings.TrimSpace(snapshot.sessionPath)
+		if path != "" {
 			sessionsByTopic[snapshot.topicID] = append(sessionsByTopic[snapshot.topicID], path)
 		}
-	}
-	topicIDs := make([]string, 0, len(byTopic))
-	for topicID := range byTopic {
-		topicIDs = append(topicIDs, topicID)
-	}
-	sort.Strings(topicIDs)
-	out := []ProjectNode{}
-	for _, topicID := range topicIDs {
-		sessions := byTopic[topicID]
-		sort.Slice(sessions, func(i, j int) bool { return sessions[i].sessionPath < sessions[j].sessionPath })
-		kind := "topic"
-		sessionKind := "session"
-		if scope != "project" {
-			kind = "global_topic"
-			sessionKind = "global_session"
-		}
 		label := defaultTopicTitle
-		if strings.TrimSpace(sessions[0].topicTitle) != "" {
-			label = sessions[0].topicTitle
+		if strings.TrimSpace(snapshot.topicTitle) != "" {
+			label = snapshot.topicTitle
 		}
-		node := ProjectNode{
-			Key: kind + "_" + topicID, Kind: kind, Label: a.localizedTopicTitle(label, sessions[0].topicTitleSource),
-			Root: workspaceRoot, TopicID: topicID, TurnsState: string(sessioncatalog.TurnsUnknown),
-			Health: string(sessioncatalog.HealthOK), Children: []ProjectNode{},
+		if pathLabel := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)); pathLabel != "" && pathLabel != "." {
+			label = pathLabel
 		}
-		for _, session := range sessions {
-			status, running := catalogControllerStatus(session.ctrl, session.activity)
-			if session.state != nil {
-				status, running = catalogStateStatus(*session.state, session.activity)
-			}
-			if len(sessions) == 1 {
-				node.Open = session.open
-				node.Running = running
-				node.Status = status
-				continue
-			}
-			path := strings.TrimSpace(session.sessionPath)
-			sessionLabel := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-			if sessionLabel == "" || sessionLabel == "." {
-				sessionLabel = label
-			}
-			preview := ""
-			if previews {
-				preview = sessionPreviewForPath(path)
-			}
-			node.Children = append(node.Children, ProjectNode{
-				Key: projectSessionNodeKey(scope, path), Kind: sessionKind, Label: sessionLabel,
-				Root: workspaceRoot, TopicID: topicID, SessionPath: path, Preview: preview,
-				Open: session.open, Running: running, Status: status,
-				TurnsState: string(sessioncatalog.TurnsUnknown), Health: string(sessioncatalog.HealthOK),
-				Children: []ProjectNode{},
-			})
+		status, running := catalogControllerStatus(snapshot.ctrl, snapshot.activity)
+		if snapshot.state != nil {
+			status, running = catalogStateStatus(*snapshot.state, snapshot.activity)
 		}
-		out = append(out, node)
+		preview := ""
+		if previews {
+			preview = sessionPreviewForPath(path)
+		}
+		key := kind + "_" + snapshot.topicID
+		if path != "" {
+			key = projectSessionNodeKey(scope, path)
+		}
+		out = append(out, ProjectNode{
+			Key: key, Kind: kind, Label: a.localizedTopicTitle(label, snapshot.topicTitleSource),
+			Root: workspaceRoot, TopicID: snapshot.topicID, SessionPath: path, Preview: preview,
+			Open: snapshot.open, Running: running, Status: status,
+			TurnsState: string(sessioncatalog.TurnsUnknown), Health: string(sessioncatalog.HealthOK),
+			Children: []ProjectNode{},
+		})
 	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Key < out[j].Key })
 	return out, sessionsByTopic
 }
 
@@ -266,7 +248,7 @@ func (a *App) metadataTopicPage(req ProjectTopicPageRequest) (ProjectTopicPage, 
 	items := a.metadataProjectTopics(req.Scope, req.WorkspaceRoot)
 	filteredByGroup := items[:0]
 	for _, item := range items {
-		if projectTopicRequestAllows(req, item.TopicID, item.Pinned) {
+		if projectTopicRequestAllows(req, item.TopicID, item.Pinned) && projectNodeRequestAllows(req, item) {
 			filteredByGroup = append(filteredByGroup, item)
 		}
 	}
@@ -540,8 +522,12 @@ func (a *App) withLiveTopics(catalog *sessioncatalog.Catalog, req ProjectTopicPa
 		return page
 	}
 	indexed := make(map[string]bool, len(page.Items))
+	projectedPaths := make(map[string]bool, len(page.Items))
 	for _, item := range page.Items {
 		indexed[item.TopicID] = true
+		if path := strings.TrimSpace(item.SessionPath); path != "" {
+			projectedPaths[sessionRuntimeKey(path)] = true
+		}
 	}
 	query := strings.ToLower(strings.TrimSpace(req.Query))
 	live := []ProjectNode{}
@@ -552,14 +538,14 @@ func (a *App) withLiveTopics(catalog *sessioncatalog.Catalog, req ProjectTopicPa
 		if indexed[node.TopicID] {
 			continue
 		}
-		if !projectTopicRequestAllows(req, node.TopicID, node.Pinned) {
+		if !projectTopicRequestAllows(req, node.TopicID, node.Pinned) || !projectNodeRequestAllows(req, node) {
 			continue
 		}
 		// A restored tab may still carry a legacy topic ID for a recovery
 		// session the catalog re-anchored onto the root logical topic. That
 		// logical row already represents the conversation, so a second
 		// runtime-only row would break the one-row ordinary-list contract.
-		if liveTopicProjectedOnPage(ctx, catalog, sessionsByTopic[node.TopicID], indexed) {
+		if liveTopicProjectedOnPage(ctx, catalog, sessionsByTopic[node.TopicID], projectedPaths, indexed) {
 			continue
 		}
 		if query != "" && !strings.Contains(strings.ToLower(node.Label), query) {
@@ -595,7 +581,7 @@ func (a *App) withLiveTopics(catalog *sessioncatalog.Catalog, req ProjectTopicPa
 // the catalog has not indexed yet keeps the live row (that is the lag case
 // withLiveTopics exists for), and an off-page projection also keeps it so an
 // open conversation never disappears from the first page.
-func liveTopicProjectedOnPage(ctx context.Context, catalog *sessioncatalog.Catalog, paths []string, indexed map[string]bool) bool {
+func liveTopicProjectedOnPage(ctx context.Context, catalog *sessioncatalog.Catalog, paths []string, projectedPaths, projectedTopicIDs map[string]bool) bool {
 	if catalog == nil || len(paths) == 0 {
 		return false
 	}
@@ -604,7 +590,11 @@ func liveTopicProjectedOnPage(ctx context.Context, catalog *sessioncatalog.Catal
 		if err != nil || !ok {
 			return false
 		}
-		if !indexed[record.TopicID] {
+		logicalTopicID := strings.TrimSpace(record.LogicalTopicID)
+		if logicalTopicID == "" {
+			logicalTopicID = strings.TrimSpace(record.TopicID)
+		}
+		if !projectedPaths[sessionRuntimeKey(path)] && !projectedTopicIDs[logicalTopicID] {
 			return false
 		}
 	}
@@ -612,6 +602,9 @@ func liveTopicProjectedOnPage(ctx context.Context, catalog *sessioncatalog.Catal
 }
 
 func (a *App) catalogTopicPage(catalog *sessioncatalog.Catalog, req ProjectTopicPageRequest) (ProjectTopicPage, error) {
+	if manualSessionOrderFor(req.Scope, req.WorkspaceRoot) {
+		return a.catalogSessionOrderedPage(catalog, req)
+	}
 	out := ProjectTopicPage{Items: []ProjectNode{}}
 	manualOrder := manualTopicOrderFor(req.Scope, req.WorkspaceRoot)
 	limit := req.Limit
@@ -647,12 +640,22 @@ func (a *App) catalogTopicPage(catalog *sessioncatalog.Catalog, req ProjectTopic
 		}
 		out.Revision = page.Revision
 		for i, topic := range page.Items {
-			node, ok := a.projectNodeFromCatalogTopic(topic, topicOverlays, sessionOverlays, preferred)
-			if !ok {
+			nodes := a.projectNodesFromCatalogTopic(topic, topicOverlays, sessionOverlays, preferred)
+			filtered := nodes[:0]
+			for _, node := range nodes {
+				if projectNodeRequestAllows(req, node) {
+					filtered = append(filtered, node)
+				}
+			}
+			nodes = filtered
+			if len(nodes) == 0 {
 				continue
 			}
-			out.Items = append(out.Items, node)
-			if len(out.Items) == limit {
+			out.Items = append(out.Items, nodes...)
+			// Keep every session belonging to one historical topic on the same
+			// page. The page may exceed limit by that topic's expansion, and the
+			// cursor advances past the whole topic so no sibling is skipped.
+			if len(out.Items) >= limit {
 				if i+1 < len(page.Items) || page.NextCursor != "" {
 					out.NextCursor = encodeProjectTopicCursor(topic, req.SortMode, manualOrder, req.groupCursorBind)
 				}

@@ -27,18 +27,52 @@ func projectTopicLess(left, right ProjectNode, sortMode string, manualOrder bool
 	if leftActivity != rightActivity {
 		return leftActivity > rightActivity
 	}
-	return left.TopicID < right.TopicID
+	if left.TopicID != right.TopicID {
+		return left.TopicID < right.TopicID
+	}
+	return left.Key < right.Key
 }
 
 func manualTopicOrderFor(scope, workspaceRoot string) bool {
 	f := loadProjectsFile()
 	if strings.TrimSpace(scope) != "project" {
-		return f.GlobalManualTopicOrder
+		return f.GlobalManualSessionOrder || f.GlobalManualTopicOrder
 	}
 	if index := projectIndexByRoot(f.Projects, workspaceRoot); index >= 0 {
-		return f.Projects[index].ManualTopicOrder
+		return f.Projects[index].ManualSessionOrder || f.Projects[index].ManualTopicOrder
 	}
 	return false
+}
+
+func manualSessionOrderFor(scope, workspaceRoot string) bool {
+	f := loadProjectsFile()
+	if strings.TrimSpace(scope) != "project" {
+		return f.GlobalManualSessionOrder
+	}
+	if index := projectIndexByRoot(f.Projects, workspaceRoot); index >= 0 {
+		return f.Projects[index].ManualSessionOrder
+	}
+	return false
+}
+
+func sessionOrderRank(projects desktopProjectFile, scope, workspaceRoot, key string) int {
+	order := projects.GlobalSessionOrder
+	manual := projects.GlobalManualSessionOrder
+	if strings.TrimSpace(scope) == "project" {
+		if index := projectIndexByRoot(projects.Projects, workspaceRoot); index >= 0 {
+			order = projects.Projects[index].SessionOrder
+			manual = projects.Projects[index].ManualSessionOrder
+		}
+	}
+	if !manual {
+		return -1
+	}
+	for index, candidate := range order {
+		if candidate == key {
+			return index
+		}
+	}
+	return -1
 }
 
 func encodeProjectTopicCursor(topic sessioncatalog.TopicRecord, sortMode string, manualOrder bool, binding string) string {

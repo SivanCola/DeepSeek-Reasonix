@@ -179,6 +179,51 @@ func TestForkSessionPublishesHeaderBackedChildAfterParent(t *testing.T) {
 	}
 }
 
+func TestSidebarKeepsCanonicalSessionsWithSharedTopicIndependent(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	root := t.TempDir()
+	app := NewApp()
+	t.Cleanup(app.closeSessionServices)
+	app.ctx = t.Context()
+	app.desktopSessions.root = filepath.Join(root, "desktop-sessions-v5", "by-id")
+	app.desktopSessions.workspaceState = workspacestate.NewStore(filepath.Join(root, "desktop", "workspace-state-v1.json"))
+	workspaceID, err := app.ensureDesktopWorkspace(t.Context(), "project", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"branch-a", "branch-b"} {
+		if _, err := app.desktopSessionService("").Create(t.Context(), session.CreateOptions{SessionID: id, CWD: root, Origin: session.SessionOriginNew}); err != nil {
+			t.Fatal(err)
+		}
+		if err := app.workspaceRegistry().AttachSession(t.Context(), "", workspaceID, id, ""); err != nil {
+			t.Fatal(err)
+		}
+		if err := app.workspaceRegistry().EnsureSessionTopic(t.Context(), id, "shared-topic", "Shared topic"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := app.unifiedProjectTopics(ProjectTopicPageRequest{Scope: "project", WorkspaceRoot: root, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 2 {
+		t.Fatalf("two durable sessions should occupy two rows: %#v", page.Items)
+	}
+	seen := map[string]bool{}
+	for _, row := range page.Items {
+		if row.Session == nil {
+			t.Fatalf("row has no session identity: %#v", row)
+		}
+		if row.TopicID != "shared-topic" || len(row.Children) != 0 {
+			t.Fatalf("row is not an independent session: %#v", row)
+		}
+		seen[row.Session.SessionID] = true
+	}
+	if !seen["branch-a"] || !seen["branch-b"] {
+		t.Fatalf("lost a durable branch: %#v", seen)
+	}
+}
+
 func TestForkSessionTargetRetryReusesDurableChildWithoutOpeningTab(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	root := t.TempDir()
@@ -189,6 +234,9 @@ func TestForkSessionTargetRetryReusesDurableChildWithoutOpeningTab(t *testing.T)
 	app.desktopSessions.workspaceState = workspacestate.NewStore(filepath.Join(root, "desktop", "workspace-state-v1.json"))
 	workspaceID, err := app.ensureDesktopWorkspace(t.Context(), "project", root)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := addProject(root, "Fork project"); err != nil {
 		t.Fatal(err)
 	}
 	parent, err := app.desktopSessionService("").Create(t.Context(), session.CreateOptions{
@@ -216,6 +264,19 @@ func TestForkSessionTargetRetryReusesDurableChildWithoutOpeningTab(t *testing.T)
 	if err := app.desktopSessions.workspaceState.AttachSession(t.Context(), "", workspaceID, parent.Ref().SessionID, ""); err != nil {
 		t.Fatal(err)
 	}
+	if err := app.desktopSessionService("").SetTitle(t.Context(), parent.Ref(), "Parent work"); err != nil {
+		t.Fatal(err)
+	}
+	parentTitle, parentPinned := "Parent work", true
+	if err := app.workspaceRegistry().UpdatePresentation(t.Context(), []string{parent.Ref().SessionID}, &parentTitle, &parentPinned); err != nil {
+		t.Fatal(err)
+	}
+	parentRef := parent.Ref()
+	if err := app.SaveSessionGroups("project", root, []desktopGroup{{
+		ID: "feature", Title: "Feature", SessionKeys: []string{projectNodeSessionKey(ProjectNode{Session: &parentRef})},
+	}}); err != nil {
+		t.Fatal(err)
+	}
 	app.tabs = map[string]*WorkspaceTab{"active": {ID: "active", SessionID: "unrelated"}}
 	app.activeTabID = "active"
 
@@ -238,6 +299,14 @@ func TestForkSessionTargetRetryReusesDurableChildWithoutOpeningTab(t *testing.T)
 	ids := state.Workspaces[workspaceID].SessionIDs
 	if len(ids) != 2 || ids[0] != parent.Ref().SessionID || ids[1] != first.SessionID {
 		t.Fatalf("workspace children after retry = %#v", ids)
+	}
+	childPresentation := state.Presentation[first.SessionID]
+	if childPresentation.Pinned || childPresentation.Title != "Parent work · 分叉" {
+		t.Fatalf("fork presentation = %+v, want inherited title suffix without pin", childPresentation)
+	}
+	groups, err := app.ListProjectGroups("project", root)
+	if err != nil || len(groups) != 1 || !containsDesktopString(groups[0].SessionKeys, projectNodeSessionKey(ProjectNode{Session: &first})) {
+		t.Fatalf("fork groups = %#v, err=%v; child should inherit parent group", groups, err)
 	}
 	if app.activeTabID != "active" || len(app.tabs) != 1 {
 		t.Fatalf("target fork changed navigation: active=%q tabs=%d", app.activeTabID, len(app.tabs))

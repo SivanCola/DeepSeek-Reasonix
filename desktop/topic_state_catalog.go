@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"strings"
 
 	"reasonix/internal/sessioncatalog"
@@ -12,13 +13,18 @@ func (a *App) ListProjectTopics(req ProjectTopicPageRequest) (ProjectTopicPage, 
 	if strings.HasPrefix(strings.TrimSpace(req.WorkspaceRoot), "remote-project:") {
 		return ProjectTopicPage{Items: []ProjectNode{}}, nil
 	}
-	if err := resolveProjectTopicGroupFilter(&req); err != nil {
-		return ProjectTopicPage{Items: []ProjectNode{}}, err
-	}
 	if err := topicStateReadable(topicTitleRoot(req.Scope, req.WorkspaceRoot)); err != nil {
 		return ProjectTopicPage{Items: []ProjectNode{}}, err
 	}
-	return a.unifiedProjectTopics(req)
+	for attempt := 0; ; attempt++ {
+		page, err := a.unifiedProjectTopics(req)
+		var conflict *SessionOperationError
+		// Discovery can publish while the first snapshot is being assembled.
+		// Rebuild that snapshot, but never reinterpret an old pagination cursor.
+		if req.Cursor != "" || attempt == 2 || !errors.As(err, &conflict) || conflict.Code != "stale_cursor" {
+			return page, err
+		}
+	}
 }
 
 func (a *App) GetTopicSummary(key ProjectTopicKey) (ProjectNode, error) {

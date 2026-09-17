@@ -74,15 +74,24 @@ func (e *SessionOperationError) RPCErrorData() map[string]any {
 // only the lowest-priority legacy/topic-only compatibility lookup.
 // Higher-priority fields never fall back when invalid.
 type SessionSelector struct {
+	Source      *SessionSourceRef   `json:"source,omitempty"`
 	Ref         *session.SessionRef `json:"ref,omitempty"`
 	SessionPath string              `json:"sessionPath,omitempty"`
 	TopicID     string              `json:"topicId,omitempty"`
+}
+
+type SessionSourceRef struct {
+	HostID    string `json:"hostId"`
+	SourceKey string `json:"sourceKey,omitempty"`
+	Path      string `json:"path"`
+	HeadID    string `json:"headId,omitempty"`
 }
 
 // SessionTarget resolves durable identity independently from runtime state.
 // Controller is optional and is never used to decide whether the session
 // exists.
 type SessionTarget struct {
+	Source              *SessionSourceRef
 	TopicID             string
 	SessionRef          session.SessionRef
 	SessionPath         string
@@ -103,6 +112,9 @@ type sessionTargetSelector = SessionSelector
 func (target SessionTarget) key() string {
 	if strings.TrimSpace(target.SessionRef.SessionID) != "" {
 		return "ref:" + target.SessionRef.HostID + ":" + target.SessionRef.SessionID
+	}
+	if target.Source != nil {
+		return "source:" + target.Source.HostID + ":" + target.Source.SourceKey
 	}
 	if path := strings.TrimSpace(target.SessionPath); path != "" {
 		return "path:" + sessionRuntimeKey(path)
@@ -134,7 +146,15 @@ func (a *App) resolveSessionTargetWithArchived(selector sessionTargetSelector, a
 		}
 		return a.resolveCanonicalSessionTargetState(*selector.Ref, strings.TrimSpace(selector.TopicID), allowArchived)
 	}
+	if selector.Source != nil {
+		return a.resolveSourceSessionTarget(selector, allowArchived)
+	}
 	if path := strings.TrimSpace(selector.SessionPath); path != "" {
+		if source, err := parseSessionSourceRoute(path); err != nil {
+			return SessionTarget{}, err
+		} else if source != nil {
+			return a.resolveSessionTargetWithArchived(SessionSelector{Source: source, TopicID: selector.TopicID}, allowArchived)
+		}
 		if ref, ok := sessionRefForRoute(a.desktopSessionService(""), path); ok {
 			return a.resolveCanonicalSessionTargetState(ref, strings.TrimSpace(selector.TopicID), allowArchived)
 		}
@@ -160,6 +180,9 @@ func (a *App) resolveSessionTargetWithArchived(selector sessionTargetSelector, a
 		return SessionTarget{}, newSessionOperationError("ambiguous_target", "Select a specific session before using this action.")
 	}
 	if len(legacyPaths) == 1 {
+		if rows := expandSessionSourceRows(ProjectNode{SessionPath: legacyPaths[0]}); len(rows) > 1 {
+			return SessionTarget{}, newSessionOperationError("ambiguous_target", "Select a specific historical head before using this action.")
+		}
 		target, resolveErr := a.resolveLegacySessionTarget(legacyPaths[0], topicID, allowArchived)
 		if resolveErr == nil {
 			target.Scope, target.WorkspaceRoot = scope, root

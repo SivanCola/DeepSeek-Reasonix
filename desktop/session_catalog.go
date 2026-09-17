@@ -90,6 +90,8 @@ type ProjectTopicPageRequest struct {
 	groupCursorBind  string
 	groupInclude     map[string]struct{}
 	groupExclude     map[string]struct{}
+	groupSelected    *desktopGroup
+	groupAll         []desktopGroup
 }
 
 type ProjectTopicKey struct {

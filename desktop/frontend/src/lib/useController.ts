@@ -4658,6 +4658,9 @@ export function useController() {
     pendingTopicActivationRef.current = pending;
     noteActivationRequested(pending.requestId);
     const ticket = await app.StartTopicActivation({
+      selector: sessionPath.startsWith("session-source:") ? { source: JSON.parse(decodeURIComponent(sessionPath.slice("session-source:".length))) }
+        : sessionPath.startsWith("session-id:") ? { ref: { hostId: "local", sessionId: sessionPath.slice("session-id:".length) } }
+          : sessionPath ? { sessionPath } : undefined,
       scope,
       workspaceRoot,
       topicId,

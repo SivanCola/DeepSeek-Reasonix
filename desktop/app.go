@@ -16,17 +16,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
-	goruntime "runtime"
-	"slices"
-	"sort"
-	"strconv"
-	"strings"
-	"sync"
-	"sync/atomic"
-	"time"
-	"unicode/utf8"
-
 	"reasonix/desktop/internal/browserops"
 	"reasonix/desktop/internal/instanceidentity"
 	"reasonix/desktop/internal/workspacestate"
@@ -62,6 +51,16 @@ import (
 	"reasonix/internal/tool"
 	"reasonix/internal/tool/builtin"
 	"reasonix/internal/transcript"
+	"regexp"
+	goruntime "runtime"
+	"slices"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+	"unicode/utf8"
 )
 
 // sessionTempFromController returns the logical-session private temporary
@@ -2656,77 +2655,6 @@ func (a *App) activeSessionDir() string {
 		return tabRuntimeSessionDir(tab)
 	}
 	return tabSessionDir(tab)
-}
-
-// ListSessions returns the saved sessions newest-first for the history panel,
-// marking the one the current conversation is writing to and attaching any
-// user-chosen titles.
-func (a *App) ListSessions() []SessionMeta {
-	dir := a.activeSessionDir()
-	active := a.activeSessionPath(dir)
-	if tab := a.activeTab(); tab != nil {
-		active = tab.currentSessionIdentity()
-	}
-	return a.listSessionsFromDir(dir, active)
-}
-
-// ListSessionsForTab returns sessions from the directory owned by tabID. Task
-// Monitor uses this stable target after asynchronous control lookups so a tab
-// switch cannot redirect the eventual session lookup to another workspace.
-func (a *App) ListSessionsForTab(tabID string) []SessionMeta {
-	target, err := a.taskMonitorTargetForTab(tabID)
-	if err != nil {
-		return []SessionMeta{}
-	}
-	active := target.sessionPath
-	if tab := a.tabByID(tabID); tab != nil {
-		active = tab.currentSessionIdentity()
-	}
-	return a.listSessionsFromDir(target.sessionDir, active)
-}
-
-func (a *App) listSessionsFromDir(dir, active string) []SessionMeta {
-	v3 := a.listCanonicalSessionsFromDir(dir, active)
-	state, stateErr := a.workspaceRegistry().Load(a.bootContext())
-	if stateErr != nil {
-		return v3
-	}
-	adopted := map[string]bool{}
-	for _, mapping := range state.SourceMappings {
-		adopted[sessionRuntimeKey(mapping.Path)] = true
-	}
-	catalog := a.sessionCatalog.Load()
-	if catalog == nil {
-		return v3
-	}
-	target := sessioncatalog.DirectoryTarget{Path: dir, Scope: "global"}
-	for _, candidate := range a.sessionCatalogTargets() {
-		if sameProjectRoot(candidate.Path, dir) {
-			target = candidate
-			break
-		}
-	}
-	records, err := listCatalogSessionsForDirectory(a.bootContext(), catalog, target, dir)
-	if err != nil {
-		return v3
-	}
-	open := a.openSessionPaths(dir)
-	channelRoutes := channelSessionRoutesForDir(dir)
-	out := make([]SessionMeta, 0, len(records)+len(v3))
-	out = append(out, v3...)
-	for _, record := range records {
-		if adopted[sessionRuntimeKey(record.Path)] {
-			continue
-		}
-		_, isOpen := open[record.Path]
-		meta := sessionMetaFromCatalog(record, record.Path == active, isOpen)
-		if route, ok := channelRoutes[sessionRuntimeKey(record.Path)]; ok {
-			applyChannelSessionRoute(&meta, route)
-		}
-		out = append(out, meta)
-	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].LastActivityAt > out[j].LastActivityAt })
-	return out
 }
 
 // ListTrashedSessions returns sessions that were moved to the local trash,

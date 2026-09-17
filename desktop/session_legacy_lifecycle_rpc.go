@@ -14,7 +14,7 @@ func (a *App) DeleteSession(path string) error {
 }
 
 func (a *App) archiveSessionPathWithOperation(path, operationID string) (SessionTarget, error) {
-	target, err := a.resolveSessionTarget(sessionTargetSelector{SessionPath: path})
+	target, err := a.resolveSessionMutationTarget(sessionTargetSelector{SessionPath: path})
 	if err != nil {
 		return SessionTarget{}, err
 	}

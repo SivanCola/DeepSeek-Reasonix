@@ -7,8 +7,14 @@ export interface ProjectNode extends RemoteProjectNodeFields, CanonicalProjectNo
   label: string;
   root?: string;
   topicId?: string;
+  parentSession?: import("./sessionRef").SessionRef;
+  sessionOrigin?: string;
   recoveryPath?: string;
   sessionPath?: string;
+  source?: import("../generated/desktopContract.generated").SessionSourceRef;
+  identityAliases?: string[];
+  lifecycleGeneration?: number;
+  tabId?: string;
   preview?: string;
   projectColor?: string;
   turns?: number;

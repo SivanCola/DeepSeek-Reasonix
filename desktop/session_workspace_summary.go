@@ -13,6 +13,7 @@ type WorkspaceSessionSummary struct {
 	ResultSequence  uint64             `json:"resultSequence,omitempty"`
 	ModelRef        string             `json:"modelRef,omitempty"`
 	ParentSessionID string             `json:"parentSessionId,omitempty"`
+	Origin          string             `json:"origin,omitempty"`
 	Blank           bool               `json:"blank"`
 	Archived        bool               `json:"archived"`
 	Running         bool               `json:"running"`

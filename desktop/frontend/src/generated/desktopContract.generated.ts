@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 10;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:a26aa1ebed6d2d3b3a6fb1f62043b9932d86be859a592d3211c0f4d0f393b9ad";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:443d6c2d386cb010a89e47f4ce3921c2fc1b8c5bbef383858f57914b4de7bf66";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -183,8 +183,10 @@ export const DESKTOP_COMMANDS = [
   "GetProjectTreeSnapshot",
   "GetRecoveryLineage",
   "GetRuntimeStateSnapshot",
+  "GetSessionActivityBaseline",
   "GetSessionArchitectureDiagnostics",
   "GetSessionCatalogStatus",
+  "GetSessionOrganization",
   "GetSessionUpgradeStatus",
   "GetSessionVersionState",
   "GetTask",
@@ -408,6 +410,7 @@ export const DESKTOP_COMMANDS = [
   "RenameTopic",
   "RenameWorkspace",
   "ReorderProjects",
+  "ReorderSessions",
   "ReorderTabs",
   "ReorderTopics",
   "ReplayPendingPromptIdentitiesForTab",
@@ -589,6 +592,7 @@ export const DESKTOP_COMMANDS = [
   "SetRemoteTabToolApprovalMode",
   "SetSandbox",
   "SetSessionExperience",
+  "SetSessionPinned",
   "SetShellPreference",
   "SetSkillEnabled",
   "SetSkillImplicitInvocation",
@@ -675,6 +679,7 @@ export const DESKTOP_COMMANDS = [
   "UpdateMCPServer",
   "UpdatePlugin",
   "UpdateRemoteHost",
+  "UpdateSessionOrganization",
   "UpdateSubagentProfile",
   "UpgradeDeepSeekProviderAccess",
   "UsageStats",
@@ -2925,7 +2930,13 @@ export interface ProjectGroupsSnapshot {
 }
 
 export interface ProjectNode {
+  source?: SessionSourceRef | null;
+  identityAliases?: string[];
+  lifecycleGeneration?: number;
+  tabId?: string;
   session?: SessionRef | null;
+  parentSession?: SessionRef | null;
+  sessionOrigin?: string;
   canArchive?: boolean;
   key: string;
   kind: string;
@@ -3569,6 +3580,14 @@ export interface ServerView {
   managedByPlugin?: string;
 }
 
+export interface SessionActivityBaseline {
+  ref: SessionRef;
+  resultSequence: number;
+  eventVersion: string;
+  lifecycleGeneration: number;
+  complete: boolean;
+}
+
 export interface SessionArchitectureDiagnostics {
   pending_operations: number;
   missing_members: number;
@@ -3655,6 +3674,7 @@ export interface SessionLifecycleTarget {
 }
 
 export interface SessionMeta {
+  source?: SessionSourceRef | null;
   path: string;
   sessionId?: string;
   hostId?: string;
@@ -3697,6 +3717,30 @@ export interface SessionMutationResult {
   titleVersion?: string;
   lifecycleGeneration: number;
   projectionPending?: boolean;
+  identityAliases?: string[];
+}
+
+export interface SessionOrganizationMutation {
+  kind: string;
+  target?: SessionSelector | null;
+  anchor?: SessionSelector | null;
+  position?: string;
+  groupId?: string;
+  title?: string;
+}
+
+export interface SessionOrganizationSnapshot {
+  revision: number;
+  applied: boolean;
+  manualOrderEnabled: boolean;
+  order: string[];
+  groups: desktopGroup[];
+}
+
+export interface SessionOrganizationWorkspace {
+  scope: string;
+  workspaceRoot?: string;
+  hostId?: string;
 }
 
 export interface SessionRestoreResult {
@@ -3721,9 +3765,17 @@ export interface SessionRuntimeView {
 }
 
 export interface SessionSelector {
+  source?: SessionSourceRef | null;
   ref?: SessionRef | null;
   sessionPath?: string;
   topicId?: string;
+}
+
+export interface SessionSourceRef {
+  hostId: string;
+  sourceKey?: string;
+  path: string;
+  headId?: string;
 }
 
 export interface SessionTakeoverView {
@@ -4160,6 +4212,7 @@ export interface ToolView {
 }
 
 export interface TopicActivationRequest {
+  selector?: SessionSelector | null;
   scope: string;
   workspaceRoot: string;
   topicId: string;
@@ -4350,6 +4403,7 @@ export interface WorkspaceSessionSummary {
   resultSequence?: number;
   modelRef?: string;
   parentSessionId?: string;
+  origin?: string;
   blank: boolean;
   archived: boolean;
   running: boolean;
@@ -4378,6 +4432,8 @@ export interface desktopGroup {
   id: string;
   title: string;
   topicIds?: string[];
+  sessionKeys?: string[];
+  excludedSessionKeys?: string[];
 }
 
 export interface readFileRecord {
@@ -5280,8 +5336,10 @@ export interface GeneratedDesktopCommands {
   GetProjectTreeSnapshot(): Promise<ProjectTreeSnapshot>;
   GetRecoveryLineage(arg0: ProjectTopicKey): Promise<RecoveryLineageView>;
   GetRuntimeStateSnapshot(): Promise<RuntimeStateProjection>;
+  GetSessionActivityBaseline(arg0: SessionSelector): Promise<SessionActivityBaseline>;
   GetSessionArchitectureDiagnostics(): Promise<SessionArchitectureDiagnostics>;
   GetSessionCatalogStatus(): Promise<SessionCatalogStatus>;
+  GetSessionOrganization(arg0: SessionOrganizationWorkspace): Promise<SessionOrganizationSnapshot>;
   GetSessionUpgradeStatus(): Promise<SessionUpgradeStatus>;
   GetSessionVersionState(arg0: ProjectTopicKey): Promise<SessionVersionStateView>;
   GetTask(arg0: string): Promise<TaskSnapshot | null>;
@@ -5505,6 +5563,7 @@ export interface GeneratedDesktopCommands {
   RenameTopic(arg0: string, arg1: string): Promise<void>;
   RenameWorkspace(arg0: string, arg1: string): Promise<void>;
   ReorderProjects(arg0: string[]): Promise<void>;
+  ReorderSessions(arg0: string, arg1: string, arg2: string[]): Promise<void>;
   ReorderTabs(arg0: string[]): Promise<void>;
   ReorderTopics(arg0: string, arg1: string, arg2: string[]): Promise<void>;
   ReplayPendingPromptIdentitiesForTab(arg0: string): Promise<PromptIdentityView[]>;
@@ -5686,6 +5745,7 @@ export interface GeneratedDesktopCommands {
   SetRemoteTabToolApprovalMode(arg0: string, arg1: string): Promise<void>;
   SetSandbox(arg0: string, arg1: boolean, arg2: string, arg3: string[], arg4: string): Promise<void>;
   SetSessionExperience(arg0: string): Promise<void>;
+  SetSessionPinned(arg0: SessionSelector, arg1: boolean): Promise<void>;
   SetShellPreference(arg0: string): Promise<void>;
   SetSkillEnabled(arg0: string, arg1: boolean): Promise<void>;
   SetSkillImplicitInvocation(arg0: boolean): Promise<void>;
@@ -5772,6 +5832,7 @@ export interface GeneratedDesktopCommands {
   UpdateMCPServer(arg0: string, arg1: MCPServerInput): Promise<void>;
   UpdatePlugin(arg0: string): Promise<string>;
   UpdateRemoteHost(arg0: string, arg1: RemoteHostInput): Promise<RemoteHostView>;
+  UpdateSessionOrganization(arg0: SessionOrganizationWorkspace, arg1: number, arg2: SessionOrganizationMutation): Promise<SessionOrganizationSnapshot>;
   UpdateSubagentProfile(arg0: string, arg1: string, arg2: SubagentProfileInput): Promise<void>;
   UpgradeDeepSeekProviderAccess(arg0: string): Promise<string>;
   UsageStats(arg0: UsageStatsRequest): Promise<UsageStatsRange>;

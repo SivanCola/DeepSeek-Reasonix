@@ -2313,10 +2313,10 @@
     }
   },
   "ForkSession": {
-    "domain": "desktop/session_workspace_api.go",
+    "domain": "desktop/session_workspace_fork.go",
     "owner": "App.ForkSession",
     "sources": [
-      "desktop/session_workspace_api.go"
+      "desktop/session_workspace_fork.go"
     ],
     "scope": {
       "kind": "owner-inputs",
@@ -2328,10 +2328,10 @@
     }
   },
   "ForkSessionTarget": {
-    "domain": "desktop/session_workspace_api.go",
+    "domain": "desktop/session_workspace_fork.go",
     "owner": "App.ForkSessionTarget",
     "sources": [
-      "desktop/session_workspace_api.go"
+      "desktop/session_workspace_fork.go"
     ],
     "scope": {
       "kind": "owner-inputs",
@@ -2552,6 +2552,20 @@
       "inputs": []
     }
   },
+  "GetSessionActivityBaseline": {
+    "domain": "desktop/session_activity_baseline.go",
+    "owner": "App.GetSessionActivityBaseline",
+    "sources": [
+      "desktop/session_activity_baseline.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.GetSessionActivityBaseline",
+      "inputs": [
+        "selector"
+      ]
+    }
+  },
   "GetSessionArchitectureDiagnostics": {
     "domain": "desktop/session_workspace_api.go",
     "owner": "App.GetSessionArchitectureDiagnostics",
@@ -2574,6 +2588,20 @@
       "kind": "owner-state",
       "resolver": "App.GetSessionCatalogStatus",
       "inputs": []
+    }
+  },
+  "GetSessionOrganization": {
+    "domain": "desktop/session_organization.go",
+    "owner": "App.GetSessionOrganization",
+    "sources": [
+      "desktop/session_organization.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.GetSessionOrganization",
+      "inputs": [
+        "workspace"
+      ]
     }
   },
   "GetSessionUpgradeStatus": {
@@ -3345,10 +3373,10 @@
     }
   },
   "ListSessions": {
-    "domain": "desktop/app.go",
+    "domain": "desktop/session_history_listing.go",
     "owner": "App.ListSessions",
     "sources": [
-      "desktop/app.go"
+      "desktop/session_history_listing.go"
     ],
     "scope": {
       "kind": "owner-state",
@@ -3357,10 +3385,10 @@
     }
   },
   "ListSessionsForTab": {
-    "domain": "desktop/app.go",
+    "domain": "desktop/session_history_listing.go",
     "owner": "App.ListSessionsForTab",
     "sources": [
-      "desktop/app.go"
+      "desktop/session_history_listing.go"
     ],
     "scope": {
       "kind": "owner-inputs",
@@ -5746,6 +5774,22 @@
       "resolver": "App.ReorderProjects",
       "inputs": [
         "workspaceRoots"
+      ]
+    }
+  },
+  "ReorderSessions": {
+    "domain": "desktop/project_tree_organization.go",
+    "owner": "App.ReorderSessions",
+    "sources": [
+      "desktop/project_tree_organization.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.ReorderSessions",
+      "inputs": [
+        "scope",
+        "workspaceRoot",
+        "orderedSessionKeys"
       ]
     }
   },
@@ -8440,6 +8484,21 @@
       ]
     }
   },
+  "SetSessionPinned": {
+    "domain": "desktop/session_workspace_api.go",
+    "owner": "App.SetSessionPinned",
+    "sources": [
+      "desktop/session_workspace_api.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.SetSessionPinned",
+      "inputs": [
+        "selector",
+        "pinned"
+      ]
+    }
+  },
   "SetShellPreference": {
     "domain": "desktop/shell_support.go",
     "owner": "App.SetShellPreference",
@@ -9729,6 +9788,22 @@
       "inputs": [
         "id",
         "in"
+      ]
+    }
+  },
+  "UpdateSessionOrganization": {
+    "domain": "desktop/session_organization.go",
+    "owner": "App.UpdateSessionOrganization",
+    "sources": [
+      "desktop/session_organization.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.UpdateSessionOrganization",
+      "inputs": [
+        "workspace",
+        "expectedRevision",
+        "mutation"
       ]
     }
   },

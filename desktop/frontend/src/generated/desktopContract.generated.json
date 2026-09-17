@@ -4345,7 +4345,7 @@
     },
     {
       "cancellation": "before-dispatch",
-      "domain": "desktop/session_workspace_api.go",
+      "domain": "desktop/session_workspace_fork.go",
       "name": "ForkSession",
       "owner": "App.ForkSession",
       "params": [
@@ -4371,12 +4371,12 @@
         "resolver": "App.ForkSession"
       },
       "sources": [
-        "desktop/session_workspace_api.go"
+        "desktop/session_workspace_fork.go"
       ]
     },
     {
       "cancellation": "before-dispatch",
-      "domain": "desktop/session_workspace_api.go",
+      "domain": "desktop/session_workspace_fork.go",
       "name": "ForkSessionTarget",
       "owner": "App.ForkSessionTarget",
       "params": [
@@ -4402,7 +4402,7 @@
         "resolver": "App.ForkSessionTarget"
       },
       "sources": [
-        "desktop/session_workspace_api.go"
+        "desktop/session_workspace_fork.go"
       ]
     },
     {
@@ -4780,6 +4780,33 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/session_activity_baseline.go",
+      "name": "GetSessionActivityBaseline",
+      "owner": "App.GetSessionActivityBaseline",
+      "params": [
+        {
+          "kind": "object",
+          "ref": "main.SessionSelector"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.SessionActivityBaseline"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "selector"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.GetSessionActivityBaseline"
+      },
+      "sources": [
+        "desktop/session_activity_baseline.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/session_workspace_api.go",
       "name": "GetSessionArchitectureDiagnostics",
       "owner": "App.GetSessionArchitectureDiagnostics",
@@ -4815,6 +4842,33 @@
       },
       "sources": [
         "desktop/session_catalog_runtime.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/session_organization.go",
+      "name": "GetSessionOrganization",
+      "owner": "App.GetSessionOrganization",
+      "params": [
+        {
+          "kind": "object",
+          "ref": "main.SessionOrganizationWorkspace"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.SessionOrganizationSnapshot"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "workspace"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.GetSessionOrganization"
+      },
+      "sources": [
+        "desktop/session_organization.go"
       ]
     },
     {
@@ -6284,7 +6338,7 @@
     },
     {
       "cancellation": "before-dispatch",
-      "domain": "desktop/app.go",
+      "domain": "desktop/session_history_listing.go",
       "name": "ListSessions",
       "owner": "App.ListSessions",
       "params": [],
@@ -6301,12 +6355,12 @@
         "resolver": "App.ListSessions"
       },
       "sources": [
-        "desktop/app.go"
+        "desktop/session_history_listing.go"
       ]
     },
     {
       "cancellation": "before-dispatch",
-      "domain": "desktop/app.go",
+      "domain": "desktop/session_history_listing.go",
       "name": "ListSessionsForTab",
       "owner": "App.ListSessionsForTab",
       "params": [
@@ -6329,7 +6383,7 @@
         "resolver": "App.ListSessionsForTab"
       },
       "sources": [
-        "desktop/app.go"
+        "desktop/session_history_listing.go"
       ]
     },
     {
@@ -10753,6 +10807,39 @@
       },
       "sources": [
         "desktop/tabs.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/project_tree_organization.go",
+      "name": "ReorderSessions",
+      "owner": "App.ReorderSessions",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "elem": {
+            "kind": "string"
+          },
+          "kind": "array"
+        }
+      ],
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "scope",
+          "workspaceRoot",
+          "orderedSessionKeys"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.ReorderSessions"
+      },
+      "sources": [
+        "desktop/project_tree_organization.go"
       ]
     },
     {
@@ -15710,6 +15797,33 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/session_workspace_api.go",
+      "name": "SetSessionPinned",
+      "owner": "App.SetSessionPinned",
+      "params": [
+        {
+          "kind": "object",
+          "ref": "main.SessionSelector"
+        },
+        {
+          "kind": "boolean"
+        }
+      ],
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "selector",
+          "pinned"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.SetSessionPinned"
+      },
+      "sources": [
+        "desktop/session_workspace_api.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/shell_support.go",
       "name": "SetShellPreference",
       "owner": "App.SetShellPreference",
@@ -18141,6 +18255,42 @@
       },
       "sources": [
         "desktop/remote_app.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/session_organization.go",
+      "name": "UpdateSessionOrganization",
+      "owner": "App.UpdateSessionOrganization",
+      "params": [
+        {
+          "kind": "object",
+          "ref": "main.SessionOrganizationWorkspace"
+        },
+        {
+          "kind": "integer"
+        },
+        {
+          "kind": "object",
+          "ref": "main.SessionOrganizationMutation"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.SessionOrganizationSnapshot"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "workspace",
+          "expectedRevision",
+          "mutation"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.UpdateSessionOrganization"
+      },
+      "sources": [
+        "desktop/session_organization.go"
       ]
     },
     {
@@ -30459,6 +30609,41 @@
     "main.ProjectNode": {
       "fields": [
         {
+          "name": "source",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "main.SessionSourceRef"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "identityAliases",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "string"
+            },
+            "kind": "array"
+          }
+        },
+        {
+          "name": "lifecycleGeneration",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "tabId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
           "name": "session",
           "optional": true,
           "type": {
@@ -30467,6 +30652,24 @@
               "ref": "session.SessionRef"
             },
             "kind": "nullable"
+          }
+        },
+        {
+          "name": "parentSession",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "session.SessionRef"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "sessionOrigin",
+          "optional": true,
+          "type": {
+            "kind": "string"
           }
         },
         {
@@ -33984,6 +34187,41 @@
         }
       ]
     },
+    "main.SessionActivityBaseline": {
+      "fields": [
+        {
+          "name": "ref",
+          "type": {
+            "kind": "object",
+            "ref": "session.SessionRef"
+          }
+        },
+        {
+          "name": "resultSequence",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "eventVersion",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "lifecycleGeneration",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "complete",
+          "type": {
+            "kind": "boolean"
+          }
+        }
+      ]
+    },
     "main.SessionArchitectureDiagnostics": {
       "fields": [
         {
@@ -34406,6 +34644,17 @@
     "main.SessionMeta": {
       "fields": [
         {
+          "name": "source",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "main.SessionSourceRef"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
           "name": "path",
           "type": {
             "kind": "string"
@@ -34668,6 +34917,134 @@
           "type": {
             "kind": "boolean"
           }
+        },
+        {
+          "name": "identityAliases",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "string"
+            },
+            "kind": "array"
+          }
+        }
+      ]
+    },
+    "main.SessionOrganizationMutation": {
+      "fields": [
+        {
+          "name": "kind",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "target",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "main.SessionSelector"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "anchor",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "main.SessionSelector"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "position",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "groupId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "title",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
+    "main.SessionOrganizationSnapshot": {
+      "fields": [
+        {
+          "name": "revision",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "applied",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "manualOrderEnabled",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "order",
+          "type": {
+            "elem": {
+              "kind": "string"
+            },
+            "kind": "array"
+          }
+        },
+        {
+          "name": "groups",
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "main.desktopGroup"
+            },
+            "kind": "array"
+          }
+        }
+      ]
+    },
+    "main.SessionOrganizationWorkspace": {
+      "fields": [
+        {
+          "name": "scope",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "workspaceRoot",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "hostId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
         }
       ]
     },
@@ -34767,6 +35144,17 @@
     "main.SessionSelector": {
       "fields": [
         {
+          "name": "source",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "main.SessionSourceRef"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
           "name": "ref",
           "optional": true,
           "type": {
@@ -34786,6 +35174,36 @@
         },
         {
           "name": "topicId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
+    "main.SessionSourceRef": {
+      "fields": [
+        {
+          "name": "hostId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "sourceKey",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "path",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "headId",
           "optional": true,
           "type": {
             "kind": "string"
@@ -37159,6 +37577,17 @@
     "main.TopicActivationRequest": {
       "fields": [
         {
+          "name": "selector",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "main.SessionSelector"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
           "name": "scope",
           "type": {
             "kind": "string"
@@ -38102,6 +38531,13 @@
           }
         },
         {
+          "name": "origin",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
           "name": "blank",
           "type": {
             "kind": "boolean"
@@ -38237,6 +38673,26 @@
         },
         {
           "name": "topicIds",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "string"
+            },
+            "kind": "array"
+          }
+        },
+        {
+          "name": "sessionKeys",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "string"
+            },
+            "kind": "array"
+          }
+        },
+        {
+          "name": "excludedSessionKeys",
           "optional": true,
           "type": {
             "elem": {

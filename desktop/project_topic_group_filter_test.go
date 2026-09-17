@@ -126,8 +126,11 @@ func TestResolveProjectTopicGroupFilterSupportsMaximumSizedGroup(t *testing.T) {
 	for index := range ids {
 		ids[index] = fmt.Sprintf("topic-%05d", index)
 	}
-	app := NewApp()
-	if err := app.SaveSessionGroups("project", root, []desktopGroup{{ID: "large", Title: "Large", TopicIDs: ids}}); err != nil {
+	// This pure legacy-filter contract reads its legacy import representation.
+	if err := updateProjectsFile(func(f *desktopProjectFile) (bool, error) {
+		f.Projects[projectIndexByRoot(f.Projects, root)].Groups = []desktopGroup{{ID: "large", Title: "Large", TopicIDs: ids}}
+		return true, nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 	req := ProjectTopicPageRequest{Scope: "project", WorkspaceRoot: root, GroupFilter: "group", GroupID: "large"}
@@ -149,11 +152,11 @@ func TestProjectTopicGroupCursorBindingCoversListIdentity(t *testing.T) {
 	if err := addProject(otherRoot, "Other bound project"); err != nil {
 		t.Fatal(err)
 	}
-	app := NewApp()
 	for _, projectRoot := range []string{root, otherRoot} {
-		if err := app.SaveSessionGroups("project", projectRoot, []desktopGroup{{
-			ID: "feature", Title: "Feature", TopicIDs: []string{"a", "b"},
-		}}); err != nil {
+		if err := updateProjectsFile(func(f *desktopProjectFile) (bool, error) {
+			f.Projects[projectIndexByRoot(f.Projects, projectRoot)].Groups = []desktopGroup{{ID: "feature", Title: "Feature", TopicIDs: []string{"a", "b"}}}
+			return true, nil
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -188,17 +191,7 @@ func TestProjectTopicGroupCursorBindingCoversListIdentity(t *testing.T) {
 }
 
 func TestMetadataFallbackBindsGroupCursorToMembershipRevision(t *testing.T) {
-	isolateDesktopUserDirs(t)
-	root := t.TempDir()
-	if err := addProject(root, "Metadata group"); err != nil {
-		t.Fatal(err)
-	}
-	for _, topicID := range []string{"a", "b", "c"} {
-		if err := setTopicTitle(root, topicID, strings.ToUpper(topicID)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	app := NewApp()
+	app, root, _ := canonicalOrganizationFixture(t, "a", "b", "c")
 	if err := app.SaveSessionGroups("project", root, []desktopGroup{{
 		ID: "feature", Title: "Feature", TopicIDs: []string{"a", "b"},
 	}}); err != nil {
@@ -265,4 +258,31 @@ func TestGetTopicSummaryHonorsCatalogFallbackCompleteness(t *testing.T) {
 			t.Fatalf("complete summary = %#v, want an empty non-null result", summary)
 		}
 	})
+}
+
+func TestSessionGroupCanSplitRowsSharingTopicID(t *testing.T) {
+	app, root, refs := canonicalOrganizationFixtureWithTopic(t, "shared", "a", "b")
+	bRef := refs["b"]
+	b := ProjectNode{Key: "b", Kind: "topic", TopicID: "shared", Session: &bRef}
+	group := desktopGroup{
+		ID: "one", Title: "One", TopicIDs: []string{"shared"},
+		ExcludedSessionKeys: []string{projectNodeSessionKey(b)},
+	}
+	if err := app.SaveSessionGroups("project", root, []desktopGroup{group}); err != nil {
+		t.Fatal(err)
+	}
+	grouped, err := app.ListProjectTopics(ProjectTopicPageRequest{Scope: "project", WorkspaceRoot: root, GroupFilter: "group", GroupID: "one", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(grouped.Items) != 1 || grouped.Items[0].Session == nil || grouped.Items[0].Session.SessionID != "a" {
+		t.Fatalf("group membership did not isolate A: %#v", grouped.Items)
+	}
+	ungrouped, err := app.ListProjectTopics(ProjectTopicPageRequest{Scope: "project", WorkspaceRoot: root, GroupFilter: "ungrouped", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ungrouped.Items) != 1 || ungrouped.Items[0].Session == nil || ungrouped.Items[0].Session.SessionID != "b" {
+		t.Fatalf("ungrouped membership did not isolate B: %#v", ungrouped.Items)
+	}
 }

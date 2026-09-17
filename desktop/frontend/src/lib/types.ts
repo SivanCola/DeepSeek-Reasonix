@@ -889,6 +889,7 @@ export interface HistoryPage {
 // ── Two-phase topic activation (desktop/topic_activation.go) ────────────────
 
 export interface TopicActivationRequest {
+  selector?: import("../generated/desktopContract.generated").SessionSelector;
   scope: string;
   workspaceRoot: string;
   topicId: string;

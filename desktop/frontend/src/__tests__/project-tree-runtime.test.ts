@@ -208,12 +208,13 @@ const completedTopic: ProjectNode = {
 };
 const completedTopicKey = projectTreeReadActivityKey(completedTopic) ?? "";
 const legacyTopicKey = "project\u001f/repo\u001ftopic-complete";
+const legacyCompletedSessionKey = "session\u001flocal\u001fcomplete";
 const migratedReadActivity = projectTreeMigrateReadActivity({
-  [completedTopicKey]: 0,
+  [legacyCompletedSessionKey]: 0,
   ["session\u001flocal\u001falready-read"]: 12,
   [legacyTopicKey]: 2000,
 }, 1);
-eq(migratedReadActivity[completedTopicKey], undefined, "read-state v2 removes a placeholder session zero baseline");
+eq(migratedReadActivity[legacyCompletedSessionKey], undefined, "read-state v2 removes a placeholder session zero baseline");
 eq(migratedReadActivity["session\u001flocal\u001falready-read"], 12, "read-state v2 preserves durable session read progress");
 eq(migratedReadActivity[legacyTopicKey], 2000, "read-state v2 preserves legacy topic read progress");
 eq(
@@ -269,7 +270,7 @@ eq(
 );
 
 eq(
-  projectTreeTopicHasUnreadActivity(completedTopic, { [completedTopicKey]: 10 }, "project", "/repo", "topic-complete"),
+  projectTreeTopicHasUnreadActivity(completedTopic, { [completedTopicKey]: 10 }, "project", "/repo", "topic-complete", "session-id:session-complete"),
   false,
   "active topic does not show unread attention",
 );
@@ -304,8 +305,8 @@ eq(
 );
 eq(
   topicIsActive({ ...completedTopic, sessionPath: "/s/a.jsonl" }, "project", "/repo", "topic-complete", "/s/other.jsonl"),
-  true,
-  "logical topic stays active when the representative path is not the open file",
+  false,
+  "another canonical session cannot become active through a shared topic",
 );
 
 for (const status of ["thinking", "streaming", "waiting_confirmation", "background_job"] as const) {

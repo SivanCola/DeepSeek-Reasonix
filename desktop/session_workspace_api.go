@@ -8,14 +8,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
-	"strconv"
-	"strings"
-	"time"
-
 	"reasonix/desktop/internal/workspacestate"
 	"reasonix/internal/agent"
 	"reasonix/internal/session"
+	"reflect"
+	"strconv"
+	"strings"
+	"time"
 )
 
 const localDesktopHostID = "local"
@@ -276,6 +275,14 @@ func listWorkspaceSessionInfo(ctx context.Context, reader workspaceSessionInfoRe
 	return infos, readErr
 }
 
+// Double-collect the owner metadata around list materialization. Registry and
+// catalog revisions alone do not observe a live session's title/result events.
+// Stat reads metadata only; it never synchronously replays cold transcripts.
+func workspaceSessionInfoUnchanged(ctx context.Context, reader workspaceSessionInfoReader, ids []string, before map[string]session.SessionInfo) bool {
+	after, _ := listWorkspaceSessionInfo(ctx, reader, ids)
+	return reflect.DeepEqual(before, after)
+}
+
 func listAllCanonicalSessionInfo(ctx context.Context, query *session.Query) (map[string]session.SessionInfo, error) {
 	infos := map[string]session.SessionInfo{}
 	if query == nil {
@@ -310,7 +317,7 @@ func workspaceSessionRow(workspaceID, sessionID string, info session.SessionInfo
 		row.Title, row.Preview, row.Turns = info.Title, info.Preview, info.Turns
 		row.CreatedAt, row.UpdatedAt = unixMillis(info.CreatedAt), unixMillis(info.UpdatedAt)
 		row.ResultSequence = info.ResultSequence
-		row.ModelRef, row.ParentSessionID = info.ModelRef, info.ParentSessionID
+		row.ModelRef, row.ParentSessionID, row.Origin = info.ModelRef, info.ParentSessionID, string(info.Origin)
 		row.Blank = info.MetadataStatus == session.MetadataReady && info.Turns == 0 && strings.TrimSpace(info.Title) == "" && strings.TrimSpace(info.Preview) == ""
 		row.MetadataStatus = info.MetadataStatus
 		row.Health = "healthy"
@@ -521,178 +528,11 @@ func (a *App) CreateSession(workspaceID string) (session.SessionRef, error) {
 // ForkSession creates an independently routed canonical child and publishes it
 // immediately after its parent in the same Workspace. An empty boundary means
 // the latest completed turn; no message-count inference is used.
-func (a *App) ForkSession(ref session.SessionRef, turnBoundary string) (session.SessionRef, error) {
-	plan, err := a.planCanonicalFork(ref, turnBoundary)
-	if err != nil {
-		return session.SessionRef{}, err
-	}
-	operationID := "fork-" + strings.TrimPrefix(newTabID(), "tab_")
-	childID := "desktop-" + strings.TrimPrefix(newTabID(), "tab_")
-	return a.executeCanonicalFork(ref, plan, operationID, childID)
-}
-
-type canonicalForkPlan struct {
-	workspaceID      string
-	beforeID         string
-	sourceGeneration uint64
-	target           session.ForkTarget
-}
-
-func (a *App) planCanonicalFork(ref session.SessionRef, turnBoundary string) (canonicalForkPlan, error) {
-	if err := validateLocalSessionRef(ref); err != nil {
-		return canonicalForkPlan{}, err
-	}
-	state, err := a.workspaceRegistry().Load(context.Background())
-	if err != nil {
-		return canonicalForkPlan{}, err
-	}
-	workspaceID, beforeID := "", ""
-	for _, id := range state.WorkspaceIDs {
-		workspace := state.Workspaces[id]
-		for index, sessionID := range workspace.SessionIDs {
-			if sessionID != ref.SessionID {
-				continue
-			}
-			workspaceID = id
-			if index+1 < len(workspace.SessionIDs) {
-				beforeID = workspace.SessionIDs[index+1]
-			}
-			break
-		}
-		if workspaceID != "" {
-			break
-		}
-	}
-	if workspaceID == "" {
-		return canonicalForkPlan{}, workspacestate.ErrSessionNotFound
-	}
-	sourceState := state.SessionStates[ref.SessionID]
-	if sourceState.Lifecycle != workspacestate.Active {
-		return canonicalForkPlan{}, workspacestate.ErrMutationConflict
-	}
-	targets, err := a.desktopSessionService("").ForkTargetSetFor(a.bootContext(), ref)
-	if err != nil {
-		return canonicalForkPlan{}, err
-	}
-	turnBoundary = strings.TrimSpace(turnBoundary)
-	var selected session.ForkTarget
-	if turnBoundary == "" {
-		for _, target := range slices.Backward(targets.Targets) {
-			if target.Available {
-				selected = target
-				break
-			}
-		}
-		if selected.TurnID == "" {
-			return canonicalForkPlan{}, errors.New("session has no completed turn to fork")
-		}
-	} else {
-		for _, target := range targets.Targets {
-			if target.TurnID == turnBoundary {
-				selected = target
-				break
-			}
-		}
-		if selected.TurnID == "" || !selected.Available {
-			reason := selected.Reason
-			if reason == "" {
-				reason = session.ForkHistoryUnverifiable
-			}
-			return canonicalForkPlan{}, &session.ForkUnavailableError{TurnID: turnBoundary, Reason: reason}
-		}
-	}
-	return canonicalForkPlan{
-		workspaceID: workspaceID, beforeID: beforeID,
-		sourceGeneration: sourceState.Generation, target: selected,
-	}, nil
-}
-
-func (a *App) executeCanonicalFork(ref session.SessionRef, plan canonicalForkPlan, operationID, childID string) (session.SessionRef, error) {
-	operationID = strings.TrimSpace(operationID)
-	childID = strings.TrimSpace(childID)
-	if operationID == "" || childID == "" {
-		return session.SessionRef{}, errors.New("fork operation and child identities are required")
-	}
-	if err := a.workspaceRegistry().BeginCreate(a.bootContext(), workspacestate.PendingCreate{
-		OperationID: operationID, WorkspaceID: plan.workspaceID, SessionID: childID,
-	}); err != nil {
-		return session.SessionRef{}, err
-	}
-	forked, err := a.desktopSessionService("").CreateFork(a.bootContext(), session.ForkRequest{
-		Source: ref, TurnID: plan.target.TurnID, BoundarySequence: plan.target.BoundarySequence,
-		OperationID: operationID, ChildID: childID,
-	})
-	if err != nil {
-		_ = a.workspaceRegistry().AbortCreate(context.Background(), childID)
-		return session.SessionRef{}, err
-	}
-	if err := a.workspaceRegistry().AttachSessionFromSourceIfUnchanged(
-		a.bootContext(),
-		operationID,
-		plan.workspaceID,
-		childID,
-		plan.beforeID,
-		ref.SessionID,
-		plan.sourceGeneration,
-	); err != nil {
-		if errors.Is(err, workspacestate.ErrMutationConflict) {
-			_ = a.desktopSessionService("").Delete(context.Background(), forked.Child)
-			_ = a.workspaceRegistry().AbortCreate(context.Background(), childID)
-		}
-		return session.SessionRef{}, err
-	}
-	a.emitProjectTreeChanged()
-	return forked.Child, nil
-}
-
-// ForkSessionTarget forks one explicit durable target without staging it into
-// the current tab. Legacy-only sources must first be adopted into canonical
-// storage so turn boundaries remain verifiable.
-func (a *App) ForkSessionTarget(selector SessionSelector, turnBoundary string) (session.SessionRef, error) {
-	target, err := a.resolveSessionTarget(selector)
-	if err != nil {
-		return session.SessionRef{}, err
-	}
-	if target.SessionRef.SessionID == "" {
-		return session.SessionRef{}, newSessionOperationError("unsupported", "This historical session has no verifiable canonical turn boundaries.")
-	}
-	plan, err := a.planCanonicalFork(target.SessionRef, turnBoundary)
-	if err != nil {
-		return session.SessionRef{}, sessionOperationErrorForTarget(err, target.key(), "")
-	}
-	operation, err := a.beginForkOperation(forkOperation{
-		Surface: "target", SourceHostID: target.SessionRef.HostID, SourceSessionID: target.SessionRef.SessionID,
-		TurnID: plan.target.TurnID, BoundarySequence: plan.target.BoundarySequence,
-	})
-	if err != nil {
-		return session.SessionRef{}, sessionOperationErrorForTarget(err, target.key(), "")
-	}
-	if operation.State == "completed" && strings.TrimSpace(operation.ChildSessionID) != "" {
-		return session.SessionRef{HostID: localDesktopHostID, SessionID: operation.ChildSessionID}, nil
-	}
-	childID := "desktop-" + strings.TrimPrefix(operation.OperationID, "fork_")
-	child, err := a.executeCanonicalFork(target.SessionRef, plan, operation.OperationID, childID)
-	if err != nil {
-		var unavailable *session.ForkUnavailableError
-		if errors.As(err, &unavailable) {
-			_ = a.discardForkOperation(operation.OperationID)
-		}
-		return session.SessionRef{}, sessionOperationErrorForTarget(err, target.key(), operation.OperationID)
-	}
-	if err := a.completeForkOperation(operation.OperationID, child.SessionID); err != nil {
-		// The child and workspace membership are already durable. Preserve that
-		// committed result; startup/journal reconciliation can repair the
-		// presentation receipt without creating another child.
-		return child, nil
-	}
-	return child, nil
-}
-
 // CopySessionTarget creates a full-history copy under a new durable identity.
 // The caller-supplied operation id makes retries idempotent across storage
 // publication and workspace attachment. The copy is never opened or selected.
 func (a *App) CopySessionTarget(selector SessionSelector, operationID string) (SessionCreationResult, error) {
-	target, err := a.resolveSessionTarget(selector)
+	target, err := a.resolveSessionMutationTarget(selector)
 	if err != nil {
 		return SessionCreationResult{}, err
 	}
@@ -850,7 +690,13 @@ func (a *App) ReadSessionHistory(ref session.SessionRef, cursor string, limit in
 // History bodies are loaded after the runtime commits so a live writer is not
 // snapshotted on the navigation goroutine.
 func (a *App) OpenSession(ref session.SessionRef) (HistoryPage, error) {
-	navigationSequence := a.desktopSessions.navigationSeq.Add(1)
+	return a.openSessionWithNavigation(ref, a.desktopSessions.navigationSeq.Add(1))
+}
+
+func (a *App) openSessionWithNavigation(ref session.SessionRef, navigationSequence uint64) (HistoryPage, error) {
+	if a.desktopSessions.navigationSeq.Load() != navigationSequence {
+		return HistoryPage{}, errSessionNavigationSuperseded
+	}
 	if err := validateLocalSessionRef(ref); err != nil {
 		return HistoryPage{}, err
 	}
@@ -885,6 +731,38 @@ func (a *App) RenameCanonicalSession(ref session.SessionRef, title string) error
 	return a.renameCanonicalSessionTarget(target, title)
 }
 
+// SetSessionPinned updates one durable session, never all members of its topic.
+// An older path is adopted through the existing journal before storing the
+// session-specific preference.
+func (a *App) SetSessionPinned(selector SessionSelector, pinned bool) error {
+	target, err := a.resolveSessionMutationTarget(selector)
+	if err != nil {
+		return err
+	}
+	if target.SessionRef.SessionID == "" && target.SessionPath != "" {
+		workspaceID, ensureErr := a.ensureDesktopWorkspace(a.bootContext(), target.Scope, target.WorkspaceRoot)
+		if ensureErr != nil {
+			return ensureErr
+		}
+		if err = a.migrateLegacySession(a.bootContext(), target.SessionPath,
+			desktopMigrationSource{scope: target.Scope, workspaceRoot: target.WorkspaceRoot}, workspaceID); err != nil {
+			return err
+		}
+		target, err = a.resolveSessionTarget(SessionSelector{SessionPath: target.SessionPath})
+		if err != nil {
+			return err
+		}
+	}
+	if target.SessionRef.SessionID == "" {
+		return newSessionOperationError(sessionOperationNoMessages, "This empty session has no durable preference yet.")
+	}
+	if err := a.workspaceRegistry().UpdatePresentation(a.bootContext(), []string{target.SessionRef.SessionID}, nil, &pinned); err != nil {
+		return err
+	}
+	a.emitProjectTreeMetadataChanged()
+	return nil
+}
+
 func (a *App) renameCanonicalSessionTarget(target SessionTarget, title string) error {
 	ref := target.SessionRef
 	if err := validateLocalSessionRef(ref); err != nil {
@@ -905,6 +783,7 @@ func (a *App) renameCanonicalSessionTarget(target SessionTarget, title string) e
 	if err != nil {
 		return err
 	}
+	a.updateCanonicalSessionTitle(ref, strings.TrimSpace(title))
 	a.emitProjectTreeChanged()
 	return nil
 }

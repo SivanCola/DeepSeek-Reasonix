@@ -233,6 +233,7 @@ interface DesktopWindowState {
 // AppBindings is the hand-written React-to-Go contract. _CheckGeneratedBindings
 // catches generated methods missing here; update this interface and typecheck.
 export interface AppBindings extends SessionLifecycleBindings, ForkTargetsBindings, ToolRecoveryBindings, ModelSettingsBindings, SessionCatalogBindings, ProjectTreeOrganizationBindings, HistoryCatalogBindings, TaskCatalogBindings, BlankProjectBindings, QualityFloorBindings, SessionTitleBindings, ScrollDiagnosticBindings, RemoteProjectBindings, MCPAppBindings, PinnedContextBindings, FollowupBindings, TranscriptProtocolBindings, SessionReaderBindings {
+  GetSessionActivityBaseline(selector: SessionSelector): Promise<import("../generated/desktopContract.generated").SessionActivityBaseline>;
   GetWorkspaceSnapshot(): Promise<WorkspaceSnapshot>;
   CreateSession(workspaceId: string): Promise<SessionRef>;
   ForkSession(ref: SessionRef, turnBoundary: string): Promise<SessionRef>;
@@ -251,6 +252,7 @@ export interface AppBindings extends SessionLifecycleBindings, ForkTargetsBindin
   OpenSession(ref: SessionRef): Promise<HistoryPage>;
   ReadSessionHistory(ref: SessionRef, cursor: string, limit: number): Promise<HistoryPage>;
   RenameCanonicalSession(ref: SessionRef, title: string): Promise<void>;
+  SetSessionPinned(selector: SessionSelector, pinned: boolean): Promise<void>;
   ArchiveCanonicalSession(ref: SessionRef): Promise<void>;
   ArchiveSessionTarget(selector: SessionSelector): Promise<SessionMutationResult>;
   RestoreCanonicalSession(ref: SessionRef): Promise<void>;
@@ -2315,6 +2317,9 @@ function makeMockApp(): AppBindings {
     async CreateSession(_workspaceId: string) { return { hostId: "local", sessionId: `mock-${Date.now()}` }; },
     async ForkSession(_ref: SessionRef, _turnBoundary: string) { return { hostId: "local", sessionId: `mock-fork-${Date.now()}` }; },
     async ForkSessionTarget(_selector: SessionSelector, _turnBoundary: string) { return { hostId: "local", sessionId: `mock-fork-${Date.now()}` }; },
+    async GetSessionActivityBaseline(selector: SessionSelector) {
+      return { ref: selector.ref ?? { hostId: "local", sessionId: "" }, resultSequence: 0, eventVersion: "", lifecycleGeneration: 0, complete: false };
+    },
     async CopySessionTarget(_selector: SessionSelector, operationId: string): Promise<SessionCreationResult> {
       return {
         ref: { hostId: "local", sessionId: `mock-copy-${operationId || Date.now()}` },
@@ -2388,6 +2393,7 @@ function makeMockApp(): AppBindings {
     },
     async ReadSessionHistory(_ref: SessionRef, _cursor: string, _limit: number) { return { messages: [], startTurn: 0, endTurn: 0, totalTurns: 0, hasOlder: false }; },
     async RenameCanonicalSession(_ref: SessionRef, _title: string) {},
+    async SetSessionPinned(_selector: SessionSelector, _pinned: boolean) { notifyMockProjectTreeChanged(); },
     async ArchiveCanonicalSession(ref: SessionRef) { mockArchivedSessionIDs.add(ref.sessionId); notifyMockProjectTreeChanged(); },
     async ArchiveSessionTarget(selector: SessionSelector): Promise<SessionMutationResult> {
       const node = mockSessionTitleTarget(mockProjectTree, selector);
