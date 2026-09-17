@@ -1,4 +1,4 @@
-package providerprobe
+package boot
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"reasonix/internal/netclient"
 )
 
-func TestConnectionUsesRequestLocalCredentialAndNoTools(t *testing.T) {
+func TestProbeProviderConnectionUsesRequestLocalCredentialAndNoTools(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
@@ -31,7 +31,7 @@ func TestConnectionUsesRequestLocalCredentialAndNoTools(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	entry := config.ProviderEntry{Name: "draft", Kind: "openai", BaseURL: server.URL + "/v1", Model: "chat", APIKeyEnv: "DRAFT_KEY"}
-	if err := TestConnection(context.Background(), entry, "draft-secret", netclient.ProxySpec{Mode: netclient.ModeOff}); err != nil {
+	if err := ProbeProviderConnection(context.Background(), entry, "draft-secret", netclient.ProxySpec{Mode: netclient.ModeOff}); err != nil {
 		t.Fatal(err)
 	}
 	if requests != 1 {

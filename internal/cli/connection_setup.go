@@ -11,8 +11,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"reasonix/internal/boot"
 	"reasonix/internal/config"
-	"reasonix/internal/providerprobe"
 )
 
 type connectionSetup struct {
@@ -125,7 +125,7 @@ func (m chatTUI) handleConnectionSetupKey(msg tea.KeyPressMsg) (tea.Model, tea.C
 		key := setup.key
 		proxy := cfg.NetworkProxySpec()
 		return m, func() tea.Msg {
-			err := providerprobe.TestConnection(ctx, probeEntry, key, proxy)
+			err := boot.ProbeProviderConnection(ctx, probeEntry, key, proxy)
 			return connectionCredentialTestedMsg{providerName: setup.providerName, setup: setup, version: version, err: err}
 		}
 	case "backspace":

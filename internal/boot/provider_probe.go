@@ -1,4 +1,4 @@
-package providerprobe
+package boot
 
 import (
 	"context"
@@ -6,27 +6,26 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/boot"
 	"reasonix/internal/config"
 	"reasonix/internal/netclient"
 	"reasonix/internal/provider"
 )
 
-const Timeout = 20 * time.Second
+const providerProbeTimeout = 20 * time.Second
 
-// TestConnection performs a request-local, tool-free chat probe. The supplied
-// credential is frozen into a copy of entry and is never persisted or exported
+// ProbeProviderConnection performs a request-local, tool-free chat probe. The
+// supplied credential is frozen into entry and is never persisted or exported
 // to the process environment.
-func TestConnection(ctx context.Context, entry config.ProviderEntry, key string, proxy netclient.ProxySpec) error {
+func ProbeProviderConnection(ctx context.Context, entry config.ProviderEntry, key string, proxy netclient.ProxySpec) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ctx, cancel := context.WithTimeout(ctx, Timeout)
+	ctx, cancel := context.WithTimeout(ctx, providerProbeTimeout)
 	defer cancel()
 	if strings.TrimSpace(key) != "" {
 		entry = entry.WithAPIKeyForProbe(key)
 	}
-	client, err := boot.NewProviderWithProxy(&entry, proxy)
+	client, err := NewProviderWithProxy(&entry, proxy)
 	if err != nil {
 		return err
 	}

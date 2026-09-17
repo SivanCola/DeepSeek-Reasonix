@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"reasonix/internal/boot"
 	"reasonix/internal/config"
-	"reasonix/internal/providerprobe"
 )
 
 // TestProviderModel sends a bounded, tool-free probe through the configured
@@ -30,7 +30,7 @@ func (a *App) TestProviderModel(p ProviderView, model, key string) error {
 		copied := entry.WithAPIKeyForProbe(key)
 		entry = &copied
 	}
-	return providerprobe.TestConnection(a.reqCtx(), *entry, key, withProbeDirectHost(a.networkProxySpecForRoot(root), entry.BaseURL, p.NoProxy))
+	return boot.ProbeProviderConnection(a.reqCtx(), *entry, key, withProbeDirectHost(a.networkProxySpecForRoot(root), entry.BaseURL, p.NoProxy))
 }
 
 // FetchProviderModelCatalogDraft discovers models using an unsaved credential.
