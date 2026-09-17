@@ -3,6 +3,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"syscall"
@@ -47,7 +48,10 @@ func credentialPlatformRepair(path string, expected os.FileInfo, verify func() e
 	}
 	if err := verify(); err != nil {
 		if rollbackErr := f.Chmod(before); rollbackErr != nil {
-			return nil, fmt.Errorf("verification failed: %v; rollback failed: %w", err, rollbackErr)
+			return nil, errors.Join(
+				fmt.Errorf("verification failed: %w", err),
+				fmt.Errorf("rollback failed: %w", rollbackErr),
+			)
 		}
 		return nil, fmt.Errorf("verification failed: %w; changed attributes were restored", err)
 	}

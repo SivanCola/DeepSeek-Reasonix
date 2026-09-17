@@ -1,7 +1,6 @@
 package config
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -146,7 +145,7 @@ func TestModelSettingsReceiptContainsNoCredential(t *testing.T) {
 		t.Fatalf("receipt contains credential material: %s", raw)
 	}
 	if receipt, ok := LookupModelSettingsReceipt("receipt"); !ok || receipt.ResultRevision != "result" {
-		t.Fatalf("receipt lookup = %s, %+v, %v", fmt.Sprint(raw), receipt, ok)
+		t.Fatalf("receipt lookup = %s, %+v, %v", string(raw), receipt, ok)
 	}
 }
 
