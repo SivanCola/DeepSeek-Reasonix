@@ -14,6 +14,7 @@ import (
 	"reasonix/internal/agent"
 	"reasonix/internal/config"
 	"reasonix/internal/control"
+	"reasonix/internal/sessioncatalog"
 )
 
 type runtimeStatusSessionController struct {
@@ -3313,16 +3314,20 @@ func TestProjectTreeMigratesNewCLISessionAfterProjectDirMarker(t *testing.T) {
 	app.startSessionCatalog()
 	_ = waitForSessionCatalogForTest(t, app, nil)
 	t.Cleanup(func() { app.stopSessionCatalog(time.Second) })
+	reconcileDone := make(chan struct{}, 1)
+	app.catalogReconcileDoneHook = func(target sessioncatalog.DirectoryTarget) {
+		if sameDesktopPath(target.Path, dir) {
+			reconcileDone <- struct{}{}
+		}
+	}
 	// Exercise the same explicit reconcile path used after a watcher event. The
 	// catalog starts asynchronously, so wait for its publication before asking
 	// it to scan the project directory.
 	if !app.requestSessionCatalogReconcile(dir) {
 		t.Fatal("request initial project session catalog reconcile")
 	}
-	nodes := waitForCatalogTreeCondition(t, app, "the first project CLI session", func(nodes []ProjectNode) bool {
-		return len(nodes) == 1 && nodes[0].Kind == "project" && len(nodes[0].Children) == 1 &&
-			nodes[0].Children[0].TopicID == firstTopicID
-	})
+	<-reconcileDone
+	nodes := app.ListProjectTree()
 	if len(nodes) != 1 || nodes[0].Kind != "project" || len(nodes[0].Children) != 1 || nodes[0].Children[0].TopicID != firstTopicID {
 		t.Fatalf("first project CLI session should appear in project tree, got %#v; want topic %q", nodes, firstTopicID)
 	}
@@ -3335,11 +3340,8 @@ func TestProjectTreeMigratesNewCLISessionAfterProjectDirMarker(t *testing.T) {
 	if !app.requestSessionCatalogReconcile(dir) {
 		t.Fatal("request updated project session catalog reconcile")
 	}
-	nodes = waitForCatalogTreeCondition(t, app, "a reconciled newest project CLI session", func(nodes []ProjectNode) bool {
-		return len(nodes) == 1 && nodes[0].Kind == "project" && len(nodes[0].Children) == 2 &&
-			nodes[0].Children[0].TopicID == secondTopicID && nodes[0].Children[0].LastActivityAt > 0 &&
-			nodes[0].Children[1].TopicID == firstTopicID
-	})
+	<-reconcileDone
+	nodes = app.ListProjectTree()
 	if len(nodes) != 1 || nodes[0].Kind != "project" || len(nodes[0].Children) != 2 {
 		t.Fatalf("second project CLI session should trigger re-scan, got %#v", nodes)
 	}
