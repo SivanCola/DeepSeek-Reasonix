@@ -1859,10 +1859,10 @@
     }
   },
   "DeleteTopic": {
-    "domain": "desktop/tabs.go",
+    "domain": "desktop/topic_delete.go",
     "owner": "App.DeleteTopic",
     "sources": [
-      "desktop/tabs.go"
+      "desktop/topic_delete.go"
     ],
     "scope": {
       "kind": "owner-inputs",
@@ -2574,6 +2574,18 @@
       "inputs": [
         "req"
       ]
+    }
+  },
+  "GetLegacyEmptySessionCleanupStatus": {
+    "domain": "desktop/legacy_empty_session_cleanup.go",
+    "owner": "App.GetLegacyEmptySessionCleanupStatus",
+    "sources": [
+      "desktop/legacy_empty_session_cleanup.go"
+    ],
+    "scope": {
+      "kind": "owner-state",
+      "resolver": "App.GetLegacyEmptySessionCleanupStatus",
+      "inputs": []
     }
   },
   "GetModelSettingsApplication": {
@@ -6780,6 +6792,18 @@
         "tabID",
         "id"
       ]
+    }
+  },
+  "RetryLegacyEmptySessionCleanup": {
+    "domain": "desktop/legacy_empty_session_cleanup.go",
+    "owner": "App.RetryLegacyEmptySessionCleanup",
+    "sources": [
+      "desktop/legacy_empty_session_cleanup.go"
+    ],
+    "scope": {
+      "kind": "owner-state",
+      "resolver": "App.RetryLegacyEmptySessionCleanup",
+      "inputs": []
     }
   },
   "RetryModelSettingsApplication": {

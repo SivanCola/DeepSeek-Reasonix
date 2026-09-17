@@ -418,6 +418,30 @@ func (s *Store) WithSessionUnchanged(ctx context.Context, id, workspaceID string
 	return commit()
 }
 
+// WithStateLocked holds the registry's process and file locks while commit
+// validates a read-only state snapshot and performs a related external write.
+// The callback must not call this Store.
+func (s *Store) WithStateLocked(ctx context.Context, commit func(State) error) error {
+	if s == nil || strings.TrimSpace(s.path) == "" || s.path == "." {
+		return errors.New("workspace state path is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	release, err := filelock.Acquire(ctx, s.path+".lock")
+	if err != nil {
+		return err
+	}
+	defer release()
+	state, err := load(s.path)
+	if err != nil {
+		return err
+	}
+	if commit == nil {
+		return nil
+	}
+	return commit(state)
+}
+
 func (s *Store) mutate(ctx context.Context, change func(*State) error) error {
 	if s == nil || strings.TrimSpace(s.path) == "" || s.path == "." {
 		return errors.New("workspace state path is required")

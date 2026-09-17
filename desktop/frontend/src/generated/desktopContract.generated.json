@@ -3440,7 +3440,7 @@
     },
     {
       "cancellation": "before-dispatch",
-      "domain": "desktop/tabs.go",
+      "domain": "desktop/topic_delete.go",
       "name": "DeleteTopic",
       "owner": "App.DeleteTopic",
       "params": [
@@ -3457,7 +3457,7 @@
         "resolver": "App.DeleteTopic"
       },
       "sources": [
-        "desktop/tabs.go"
+        "desktop/topic_delete.go"
       ]
     },
     {
@@ -4830,6 +4830,26 @@
       },
       "sources": [
         "desktop/history_catalog.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/legacy_empty_session_cleanup.go",
+      "name": "GetLegacyEmptySessionCleanupStatus",
+      "owner": "App.GetLegacyEmptySessionCleanupStatus",
+      "params": [],
+      "result": {
+        "kind": "object",
+        "ref": "main.LegacyEmptySessionCleanupStatus"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [],
+        "kind": "owner-state",
+        "resolver": "App.GetLegacyEmptySessionCleanupStatus"
+      },
+      "sources": [
+        "desktop/legacy_empty_session_cleanup.go"
       ]
     },
     {
@@ -12724,6 +12744,26 @@
       },
       "sources": [
         "desktop/inbox_app.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/legacy_empty_session_cleanup.go",
+      "name": "RetryLegacyEmptySessionCleanup",
+      "owner": "App.RetryLegacyEmptySessionCleanup",
+      "params": [],
+      "result": {
+        "kind": "object",
+        "ref": "main.LegacyEmptySessionCleanupStatus"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [],
+        "kind": "owner-state",
+        "resolver": "App.RetryLegacyEmptySessionCleanup"
+      },
+      "sources": [
+        "desktop/legacy_empty_session_cleanup.go"
       ]
     },
     {
@@ -29278,6 +29318,139 @@
         }
       ]
     },
+    "main.LegacyEmptySessionCleanupItem": {
+      "fields": [
+        {
+          "name": "id",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "kind",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "workspaceId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "sessionId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "topicId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "title",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "phase",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "classification",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "reason",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
+    "main.LegacyEmptySessionCleanupStatus": {
+      "fields": [
+        {
+          "name": "version",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "batchId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "state",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "removed",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "pending",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "busy",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "unknown",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "protected",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "hasContent",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "items",
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "main.LegacyEmptySessionCleanupItem"
+            },
+            "kind": "array"
+          }
+        }
+      ]
+    },
     "main.LegacyWorkbenchDataView": {
       "fields": [
         {
@@ -39126,9 +39299,20 @@
         },
         {
           "name": "ref",
+          "optional": true,
           "type": {
-            "kind": "object",
-            "ref": "session.SessionRef"
+            "elem": {
+              "kind": "object",
+              "ref": "session.SessionRef"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "recoveryEntryId",
+          "optional": true,
+          "type": {
+            "kind": "string"
           }
         },
         {
@@ -39184,6 +39368,20 @@
           "name": "canPurge",
           "type": {
             "kind": "boolean"
+          }
+        },
+        {
+          "name": "cleanupBatchId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "cleanupKind",
+          "optional": true,
+          "type": {
+            "kind": "string"
           }
         }
       ]

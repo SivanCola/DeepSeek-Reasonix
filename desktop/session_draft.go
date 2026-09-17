@@ -603,7 +603,10 @@ func (a *App) BeginDraftSubmission(request SessionDraftSubmissionRequest) (resul
 	} else if op.Phase == "reserved" {
 		a.goSafe("resumeDraftSubmission", func() {
 			if _, resumeErr := a.resumeDraftSubmission(op); resumeErr != nil {
-				slog.Warn("desktop: draft submission paused", "operation", op.ID, "phase", op.Phase, "err", resumeErr)
+				// Runtime preparation errors may retain provider configuration.
+				// Keep diagnostics value-free and surface the actionable error through
+				// the durable operation state instead of copying it into logs.
+				slog.Warn("desktop: draft submission paused", "operation", op.ID, "phase", op.Phase)
 			}
 		})
 	}

@@ -4966,16 +4966,16 @@ func saveProjectsFile(f desktopProjectFile) error {
 func updateProjectsFile(mutator func(*desktopProjectFile) (bool, error)) error {
 	desktopProjectsFileMu.Lock()
 	defer desktopProjectsFileMu.Unlock()
+	return updateProjectsFileLocked(mutator)
+}
 
-	f := loadProjectsFile()
-	changed, err := mutator(&f)
+func updateProjectsFileLocked(mutator func(*desktopProjectFile) (bool, error)) error {
+	release, err := acquireDesktopProjectsFileLock()
 	if err != nil {
 		return err
 	}
-	if !changed {
-		return nil
-	}
-	return saveProjectsFile(f)
+	defer release()
+	return updateProjectsFileCrossProcessLocked(mutator)
 }
 
 func prependTopicInProjectsFile(workspaceRoot, topicID string, ensureProject bool) error {
@@ -5055,7 +5055,22 @@ func removeTopicFromProjectsFile(topicID string) error {
 	if topicID == "" {
 		return nil
 	}
-	return updateProjectsFile(func(f *desktopProjectFile) (bool, error) {
+	desktopProjectsFileMu.Lock()
+	defer desktopProjectsFileMu.Unlock()
+	return removeTopicFromProjectsFileLocked(topicID)
+}
+
+func removeTopicFromProjectsFileLocked(topicID string) error {
+	release, err := acquireDesktopProjectsFileLock()
+	if err != nil {
+		return err
+	}
+	defer release()
+	return removeTopicFromProjectsFileCrossProcessLocked(topicID)
+}
+
+func removeTopicFromProjectsFileCrossProcessLocked(topicID string) error {
+	return updateProjectsFileCrossProcessLocked(func(f *desktopProjectFile) (bool, error) {
 		changed := false
 		if next := removeString(f.GlobalTopics, topicID); !sameStringList(next, f.GlobalTopics) {
 			f.GlobalTopics = next
@@ -5582,7 +5597,8 @@ func (a *App) localizedDefaultTopicTitle() string {
 
 func isDefaultTopicTitle(title string) bool {
 	switch strings.TrimSpace(title) {
-	case defaultTopicTitle, defaultTopicTitleEn, defaultTopicTitleZhTW:
+	case "", defaultTopicTitle, defaultTopicTitleEn, defaultTopicTitleZhTW,
+		"新建会话", "新建會話", "新会话":
 		return true
 	default:
 		return false
@@ -6402,6 +6418,11 @@ func (a *App) ReorderProjects(workspaceRoots []string) error {
 func (a *App) RenameTopic(topicID, title string) error {
 	a.topicTitleMutationMu.Lock()
 	defer a.topicTitleMutationMu.Unlock()
+	// Keep candidate protection inside the same mutation fence used by the
+	// cleanup worker. Otherwise a rename can mark an archive-pending candidate
+	// as protected while that worker still proceeds to remove its index.
+	// Same-value manual renames remain durable evidence of use.
+	a.protectLegacyCleanupTopicMutation(topicID)
 	if handled, err := a.updateCanonicalTopicPresentation(topicID, &title, nil); handled || err != nil {
 		return err
 	}
@@ -6578,62 +6599,6 @@ func (a *App) emitProjectTreeChangedForSessionDirs(dirs ...string) {
 func (a *App) emitProjectTreeMetadataChanged() {
 	a.requestSessionCatalogMetadataSync()
 	a.emitProjectTreeChangedEvent()
-}
-
-// DeleteTopic removes a topic and its title metadata.
-func (a *App) DeleteTopic(topicID string) error {
-	return friendlySessionFileError(a.deleteTopic(topicID))
-}
-
-func (a *App) deleteTopic(topicID string) error {
-	// Deletion converges on the fully-deleted state instead of keying the
-	// whole cleanup on the title entry: a retry after a partial failure (or a
-	// concurrent duplicate delete) may find the title already gone while the
-	// sources map, created-at entry, sidebar index, or tombstone still need
-	// cleanup, so every step checks its own leftovers.
-	//
-	// Detailed cleanup is limited to roots that can actually hold the topic:
-	// roots whose sidebar index lists it, plus any root whose title map
-	// contains it. The title probe tolerates read errors on unindexed roots
-	// so unreadable metadata in an unrelated project cannot abort the
-	// deletion, while roots known to hold the topic still fail hard instead
-	// of being half-cleaned silently.
-	f := loadProjectsFile()
-	indexed := map[string]bool{
-		"": containsDesktopString(f.GlobalTopics, topicID) ||
-			containsDesktopString(f.GlobalPinnedTopics, topicID),
-	}
-	roots := make([]string, 0, len(f.Projects)+1)
-	for _, p := range f.Projects {
-		roots = append(roots, p.Root)
-		indexed[p.Root] = containsDesktopString(p.Topics, topicID) ||
-			containsDesktopString(p.PinnedTopics, topicID)
-	}
-	// Publish the tombstone before clearing any per-scope state. A concurrent
-	// session repair may already hold a stale title snapshot, but its commit-time
-	// merge will now see the tombstone and cannot resurrect this topic.
-	if err := removeTopicFromProjectsFile(topicID); err != nil {
-		return err
-	}
-	roots = append(roots, "")
-	for _, root := range roots {
-		titles, err := loadTopicTitlesForUpdate(root)
-		if err != nil {
-			if indexed[root] {
-				return err
-			}
-			continue
-		}
-		_, hasTitle := titles[topicID]
-		if !hasTitle && !indexed[root] {
-			continue
-		}
-		if err := deleteTopicState(root, topicID); err != nil {
-			return err
-		}
-	}
-	a.emitProjectTreeMetadataChanged()
-	return nil
 }
 
 // SetTopicPinned controls whether a topic is pinned to the top of its project

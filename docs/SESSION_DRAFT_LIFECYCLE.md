@@ -124,6 +124,40 @@ receipt to pretend execution did not happen.
 
 ## Compatibility
 
+### One-time legacy empty-session cleanup
+
+The first upgraded startup freezes a versioned set of default-title Sessions
+and legacy Topic placeholders that already belong to registered local or global
+Workspaces. The background worker runs only after Session migration, draft
+operation reconciliation, and tab restoration. Identities created after that
+freeze, including draft reservation and retry Sessions, can never enter the
+batch.
+
+A candidate moves to Trash only when the complete canonical or legacy artifact
+set proves it has no user, assistant, or tool message; accepted model or shell
+submission; Goal; pinned context; inbox item; job; checkpoint; recovery state;
+derived relationship; active draft operation; runtime; or unsent restored UI
+state. An empty-string message is still usage. System-only initialization and
+empty derived containers are not usage. Corrupt, inaccessible, unsupported, or
+future-version data is retained as `unknown` rather than treated as empty.
+
+Default titles are matched exactly after trimming. Sessions with content keep
+their title, order, identity, and data; no numbered-title migration is applied.
+Conclusive empty Sessions use the existing reversible archive lifecycle without
+opening a fallback Controller. Topic-only placeholders keep a schema-v1 recovery
+snapshot of their original scope, title, order, pin, and group position and are
+shown in Trash without fabricating a SessionRef. Restoring either form preserves
+its identity and permanently excludes it from this cleanup batch.
+Busy or unreadable candidates stay visible in their original project. Trash
+shows the pending count and a **Recheck** action that retries only the frozen
+batch; it never discovers identities created after the upgrade boundary.
+
+The independent
+`desktop/legacy-empty-session-cleanup-v1.json` sidecar has atomic writes,
+cross-process worker ownership, stable operation IDs, and strict unknown-version
+protection. Older releases ignore it. Legacy JSONL migration sources are retained
+even when their mapped canonical Session is archived.
+
 | Format or API | New-reader behavior | Previous-reader behavior | Result |
 | --- | --- | --- | --- |
 | Session v5 | Unchanged identity, events, and transcript protocol. | Unchanged. | Compatible. |
@@ -133,7 +167,8 @@ receipt to pretend execution did not happen.
 | Draft SQLite v3 | Versioned frozen request and settings in `request_json`; all saves use CAS. | Releases without drafts ignore the independent file. | Rollback preserves drafts for a later upgrade. |
 | Draft SQLite v4 | Transactional migration adds request identity, source digest, operation revision and separate expanded execution bytes. Snapshot versions remain independent of schema versions. | v3 refuses to write v4. | Original fingerprints and Session/Submission IDs remain intact. |
 | Unknown future draft schema | Read/write is refused and the file is retained. | Not applicable. | No silent downgrade overwrite. |
-| Existing blank Sessions | Kept as formal Sessions; never auto-converted or deleted. | Unchanged. | Compatible. |
+| Upgrade-time blank Sessions | Only frozen, default-title, conclusively unused local candidates are moved to Trash once. Content-bearing or uncertain Sessions are unchanged. | Older releases ignore the cleanup sidecar and continue to read formal Sessions and Trash. | Reversible lifecycle-compatible cleanup. |
+| Legacy cleanup sidecar v1 | Records frozen identities, decisions, stable archive operations, placeholder recovery metadata, and restore protection. Unknown versions are retained and cleanup stops. | Ignored. | No downgrade overwrite or candidate rescan. |
 | Legacy runtime APIs | `EnsureBlankSurface` and related APIs retain their semantics. | Unchanged. | Remote, IM, automation, recovery, and worktree flows remain isolated. |
 
 Draft IDs and submission IDs are host metadata only. They are excluded from

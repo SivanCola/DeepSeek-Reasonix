@@ -20,6 +20,14 @@ func (a *App) archiveSessionRefsLocked(refs []session.SessionRef, dependencies .
 }
 
 func (a *App) archiveSessionRefsWithOperation(refs []session.SessionRef, operationID string, dependencies ...string) (fallbackRuntimeTarget, error) {
+	return a.archiveSessionRefsWithOperationConditional(refs, operationID, nil, dependencies...)
+}
+
+// archiveSessionRefsWithOperationConditional runs verify after runtime and
+// filesystem maintenance ownership has been acquired, while session removal is
+// still serialized. It is used by maintenance jobs whose read decision must be
+// fenced from a concurrent title/content/runtime mutation.
+func (a *App) archiveSessionRefsWithOperationConditional(refs []session.SessionRef, operationID string, verify func(context.Context, workspacestate.State) error, dependencies ...string) (fallbackRuntimeTarget, error) {
 	a.sessionRemovalMu.Lock()
 	defer a.sessionRemovalMu.Unlock()
 	ctx := a.bootContext()
@@ -102,7 +110,7 @@ func (a *App) archiveSessionRefsWithOperation(refs []session.SessionRef, operati
 		return fallbackRuntimeTarget{}, err
 	}
 	op := workspacestate.Operation{ID: operationID, Kind: "archive", Lifecycle: workspacestate.Archived, SessionIDs: ids, ExpectedGeneration: state.Generation, Dependencies: dependencies}
-	if err := a.workspaceRegistry().BeginOperation(ctx, op); err != nil {
+	if err := a.beginConditionalArchiveOperation(ctx, state, op, verify); err != nil {
 		return fallbackRuntimeTarget{}, err
 	}
 	if err := a.workspaceRegistry().PrepareOperationContent(ctx, op.ID, ids, nil, nil); err != nil {
@@ -120,6 +128,15 @@ func (a *App) archiveSessionRefsWithOperation(refs []session.SessionRef, operati
 		}
 	}
 	return fallback, nil
+}
+
+func (a *App) beginConditionalArchiveOperation(ctx context.Context, state workspacestate.State, op workspacestate.Operation, verify func(context.Context, workspacestate.State) error) error {
+	if verify != nil {
+		if err := verify(ctx, state); err != nil {
+			return err
+		}
+	}
+	return a.workspaceRegistry().BeginOperation(ctx, op)
 }
 
 // Called only after durable commit, with runtime mutation admission held.
@@ -342,6 +359,7 @@ func (a *App) restoreCanonicalSession(ctx context.Context, ref session.SessionRe
 	if err := a.workspaceRegistry().CommitOperation(ctx, op.ID); err != nil {
 		return SessionRestoreResult{}, err
 	}
+	a.markLegacyCleanupSessionRestored(ref.SessionID)
 	state, err = a.workspaceRegistry().Load(ctx)
 	if err != nil {
 		return SessionRestoreResult{}, err

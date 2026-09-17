@@ -131,17 +131,20 @@ func (a *App) ApplySessionLifecycle(req SessionLifecycleRequest) (SessionLifecyc
 }
 
 type TrashEntry struct {
-	ID             string             `json:"id"`
-	Ref            session.SessionRef `json:"ref"`
-	Title          string             `json:"title"`
-	WorkspaceID    string             `json:"workspaceId"`
-	WorkspaceTitle string             `json:"workspaceTitle"`
-	ArchivedAt     int64              `json:"archivedAt"`
-	Health         string             `json:"health"`
-	OperationPhase string             `json:"operationPhase,omitempty"`
-	CanPreview     bool               `json:"canPreview"`
-	CanRestore     bool               `json:"canRestore"`
-	CanPurge       bool               `json:"canPurge"`
+	ID              string              `json:"id"`
+	Ref             *session.SessionRef `json:"ref,omitempty"`
+	RecoveryEntryID string              `json:"recoveryEntryId,omitempty"`
+	Title           string              `json:"title"`
+	WorkspaceID     string              `json:"workspaceId"`
+	WorkspaceTitle  string              `json:"workspaceTitle"`
+	ArchivedAt      int64               `json:"archivedAt"`
+	Health          string              `json:"health"`
+	OperationPhase  string              `json:"operationPhase,omitempty"`
+	CanPreview      bool                `json:"canPreview"`
+	CanRestore      bool                `json:"canRestore"`
+	CanPurge        bool                `json:"canPurge"`
+	CleanupBatchID  string              `json:"cleanupBatchId,omitempty"`
+	CleanupKind     string              `json:"cleanupKind,omitempty"`
 }
 type TrashEntryPage struct {
 	Items      []TrashEntry `json:"items"`
@@ -162,6 +165,8 @@ func (a *App) ListTrashEntries(query, cursor string, limit int) (TrashEntryPage,
 	}
 	rows := []TrashEntry{}
 	service := a.desktopSessionService("")
+	cleanupState, _ := a.legacyCleanup.Load(a.bootContext())
+	cleanupBySession := legacyCleanupArchivedSessions(cleanupState)
 	for id, status := range state.SessionStates {
 		op := state.PendingOperations["purge-"+id]
 		purgeState := workspacestate.ClassifyPurge(state, id)
@@ -169,7 +174,9 @@ func (a *App) ListTrashEntries(query, cursor string, limit int) (TrashEntryPage,
 		if status.Lifecycle != workspacestate.Archived && !pending {
 			continue
 		}
-		row := TrashEntry{ID: id, Ref: session.SessionRef{HostID: localDesktopHostID, SessionID: id}, Title: state.Presentation[id].Title, ArchivedAt: status.ArchivedAt, CanPurge: purgeState != workspacestate.PurgeInvalid, Health: "ready"}
+		ref := session.SessionRef{HostID: localDesktopHostID, SessionID: id}
+		row := TrashEntry{ID: id, Ref: &ref, Title: state.Presentation[id].Title, ArchivedAt: status.ArchivedAt, CanPurge: purgeState != workspacestate.PurgeInvalid, Health: "ready"}
+		decorateLegacyCleanupTrashEntry(&row, cleanupState.BatchID, cleanupBySession[id])
 		for wid, w := range state.Workspaces {
 			if containsDesktopString(w.SessionIDs, id) {
 				row.WorkspaceID = wid
@@ -177,7 +184,7 @@ func (a *App) ListTrashEntries(query, cursor string, limit int) (TrashEntryPage,
 				break
 			}
 		}
-		if info, e := service.Query().Stat(a.bootContext(), row.Ref); e == nil {
+		if info, e := service.Query().Stat(a.bootContext(), ref); e == nil {
 			if info.Title != "" {
 				row.Title = info.Title
 			}
@@ -197,6 +204,7 @@ func (a *App) ListTrashEntries(query, cursor string, limit int) (TrashEntryPage,
 			rows = append(rows, row)
 		}
 	}
+	rows = append(rows, legacyCleanupTopicTrashEntries(cleanupState, state, query)...)
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].ArchivedAt != rows[j].ArchivedAt {
 			return rows[i].ArchivedAt > rows[j].ArchivedAt
@@ -236,7 +244,7 @@ func validateLifecycleRequest(req SessionLifecycleRequest) error {
 			if err := validateLocalSessionRef(*target.Ref); err != nil {
 				return err
 			}
-		} else if req.Action != "restore" {
+		} else if req.Action != "restore" && !(req.Action == "purge" && strings.HasPrefix(target.RecoveryEntryID, "legacy-cleanup:")) {
 			return errors.New("historical recovery entries can only be restored")
 		}
 		body, _ := json.Marshal(target)
@@ -309,10 +317,19 @@ func (a *App) applyLifecycleTarget(req SessionLifecycleRequest, key string, inde
 	case "archive":
 		opErr = archiveErr
 	case "purge":
-		release := a.lockRuntimeMutation("purge lifecycle command")
-		opErr = a.purgeCanonicalSession(ctx, *target.Ref, req.ExpectedGeneration)
-		release()
+		if target.Ref == nil && strings.HasPrefix(target.RecoveryEntryID, "legacy-cleanup:") {
+			opErr = a.purgeLegacyCleanupTopic(strings.TrimPrefix(target.RecoveryEntryID, "legacy-cleanup:"), target.WorkspaceID)
+		} else {
+			release := a.lockRuntimeMutation("purge lifecycle command")
+			opErr = a.purgeCanonicalSession(ctx, *target.Ref, req.ExpectedGeneration)
+			release()
+		}
 	case "restore":
+		if target.Ref == nil && strings.HasPrefix(target.RecoveryEntryID, "legacy-cleanup:") {
+			opErr = a.restoreLegacyCleanupTopic(strings.TrimPrefix(target.RecoveryEntryID, "legacy-cleanup:"), target.WorkspaceID)
+			item.WorkspaceID = target.WorkspaceID
+			break
+		}
 		var restored SessionRestoreResult
 		if target.Ref == nil {
 			restored, opErr = a.restoreRecoveryEntryInWorkspace(target.RecoveryEntryID, child, target.WorkspaceID)

@@ -9,6 +9,7 @@ import type {
   DesktopCommandName,
   HistoryWindowPage,
   HistoryWindowRequest,
+  LegacyEmptySessionCleanupStatus,
   MarkdownSVGView,
   MessageFieldPage,
   MessageHistoryPage,
@@ -242,6 +243,8 @@ interface DesktopWindowState {
 // AppBindings is the hand-written React-to-Go contract. _CheckGeneratedBindings
 // catches generated methods missing here; update this interface and typecheck.
 export interface AppBindings extends SessionLifecycleBindings, ForkTargetsBindings, ToolRecoveryBindings, ModelSettingsBindings, SessionCatalogBindings, ProjectTreeOrganizationBindings, HistoryCatalogBindings, TaskCatalogBindings, BlankProjectBindings, QualityFloorBindings, SessionTitleBindings, ScrollDiagnosticBindings, RemoteProjectBindings, MCPAppBindings, PinnedContextBindings, FollowupBindings, TranscriptProtocolBindings, SessionReaderBindings {
+  GetLegacyEmptySessionCleanupStatus(): Promise<LegacyEmptySessionCleanupStatus>;
+  RetryLegacyEmptySessionCleanup(): Promise<LegacyEmptySessionCleanupStatus>;
   OpenSessionDraft(workspaceId: string): Promise<SessionDraftView>;
   OpenSessionDraftForTarget(scope: string, workspaceRoot: string): Promise<SessionDraftView>;
   RestoreSessionDraft(): Promise<SessionDraftView | null>;
@@ -1002,6 +1005,12 @@ export function onReady(cb: (tabId?: string) => void): () => void {
 
 export function onProjectTreeChanged(cb: () => void): () => void {
   return hostEvents("project-tree:changed", (payload?: unknown) => (payload as { reason?: unknown } | undefined)?.reason !== "runtime" && (payload as { reason?: unknown } | undefined)?.reason !== "catalog-v2" && cb()) ?? subscribeMockProjectTreeChanged(cb);
+}
+
+export function onLegacyEmptySessionCleanupChanged(cb: (status: LegacyEmptySessionCleanupStatus) => void): () => void {
+  return hostEvents("legacy-empty-session-cleanup:changed", (payload?: unknown) => {
+    if (payload && typeof payload === "object") cb(payload as LegacyEmptySessionCleanupStatus);
+  }) ?? (() => {});
 }
 
 // onTopicActivation subscribes to the "topic:activation" channel carrying the
@@ -2453,6 +2462,12 @@ function makeMockApp(): AppBindings {
     ...makeMockSessionCatalogBindings(cloneProjectTree),
     ...makeMockBlankProjectBindings(),
     async GetWorkspaceSnapshot() { return mockWorkspaceSnapshot(); },
+    async GetLegacyEmptySessionCleanupStatus() {
+      return { version: 1, state: "complete", removed: 0, pending: 0, busy: 0, unknown: 0, protected: 0, hasContent: 0, items: [] };
+    },
+    async RetryLegacyEmptySessionCleanup() {
+      return { version: 1, state: "complete", removed: 0, pending: 0, busy: 0, unknown: 0, protected: 0, hasContent: 0, items: [] };
+    },
     ...makeMockSessionLifecycleBindings(mockWorkspaceSnapshot, mockArchivedSessionIDs, mockPurgedSessionIDs, notifyMockProjectTreeChanged),
     async CreateSession(_workspaceId: string) { return { hostId: "local", sessionId: `mock-${Date.now()}` }; },
     async ForkSession(_ref: SessionRef, _turnBoundary: string) { return { hostId: "local", sessionId: `mock-fork-${Date.now()}` }; },

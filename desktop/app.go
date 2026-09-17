@@ -17,7 +17,6 @@ import (
 	"os"
 	"path/filepath"
 	"reasonix/desktop/internal/browserops"
-	"reasonix/desktop/internal/draftstate"
 	"reasonix/desktop/internal/instanceidentity"
 	"reasonix/desktop/internal/workspacestate"
 	"reasonix/internal/agent"
@@ -205,8 +204,7 @@ type App struct {
 	// Desktop host. desktopSessions owns its persistence and navigation state.
 	sessionServicesMu sync.Mutex
 	sessionServices   map[string]*session.Service
-	desktopSessions   desktopSessionState
-	desktopDrafts     *draftstate.Store
+	desktopPersistenceState
 
 	// tabsRestored is closed when restoreOrBuildTabs has finished populating
 	// a.tabs from desktop-tabs.json (or built the first-launch tab). Startup
@@ -463,21 +461,20 @@ func (a *App) jsProfilingMiddleware() func(http.Handler) http.Handler {
 // last session's desktop-tabs.json.
 func NewApp() *App {
 	a := &App{
-		tabs:                   map[string]*WorkspaceTab{},
-		runtimeByID:            map[string]*desktopSessionRuntime{},
-		runtimeBySessionKey:    map[string]*desktopSessionRuntime{},
-		sessionServices:        map[string]*session.Service{},
-		aiSessionTitleInFlight: map[string]aiSessionTitleOperation{},
-		desktopSessions:        newDesktopSessionState(),
-		desktopDrafts:          draftstate.New(config.DesktopDraftStatePath()),
-		catalogReconcileJobs:   map[string]*desktopCatalogReconcileJob{},
-		detachedSessions:       map[string]*WorkspaceTab{},
-		mediaTokens:            newMediaTokenStore(),
-		presentPreview:         newWorkspacePreviewOrigin(),
-		botInstalls:            map[string]*botInstallSession{},
-		botRuntime:             newDesktopBotRuntime(),
-		remoteWindows:          newRemoteWindowRegistry(),
-		topicState:             desktopTopicState,
+		tabs:                    map[string]*WorkspaceTab{},
+		runtimeByID:             map[string]*desktopSessionRuntime{},
+		runtimeBySessionKey:     map[string]*desktopSessionRuntime{},
+		sessionServices:         map[string]*session.Service{},
+		aiSessionTitleInFlight:  map[string]aiSessionTitleOperation{},
+		desktopPersistenceState: newDesktopPersistenceState(),
+		catalogReconcileJobs:    map[string]*desktopCatalogReconcileJob{},
+		detachedSessions:        map[string]*WorkspaceTab{},
+		mediaTokens:             newMediaTokenStore(),
+		presentPreview:          newWorkspacePreviewOrigin(),
+		botInstalls:             map[string]*botInstallSession{},
+		botRuntime:              newDesktopBotRuntime(),
+		remoteWindows:           newRemoteWindowRegistry(),
+		topicState:              desktopTopicState,
 		worktreeReservations: worktreeRuntimeReservations{
 			cleanup: map[string]struct{}{},
 			merge:   map[string]struct{}{},
@@ -511,6 +508,7 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.shuttingDown.Store(false)
 	a.initializeDesktopSessionRoot()
+	a.registerLegacyCleanupUpgradeBatch()
 	// Only the process that claimed the pre-shell diagnostics lock consumes
 	// lifecycle evidence.
 	initializeLifecycleDiagnostics(a)
@@ -534,7 +532,7 @@ func (a *App) startup(ctx context.Context) {
 	a.tabsRestored = make(chan struct{})
 	a.mu.Unlock()
 	go a.restoreOrBuildTabs()
-	a.goSafe("reconcileDraftSubmissions", a.reconcileDraftSubmissionOperations)
+	a.startDesktopPersistenceReconciliation()
 	a.registerHistoryIndexEvents()
 	a.startSessionCatalog()
 	a.goSafe("refreshBotRuntime", a.refreshBotRuntime)

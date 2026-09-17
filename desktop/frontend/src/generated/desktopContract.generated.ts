@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 10;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:e44e931be7864989a2dbd9e9f14941a8f672ed108fc6c4e30db2e203fd9a78ce";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:9765e815beff9cb0d5f7496d1ce9ea5c1d3bf27efad735d192be87e40dc65a15";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -184,6 +184,7 @@ export const DESKTOP_COMMANDS = [
   "GetDraftSubmission",
   "GetHistoryIndexStatus",
   "GetHistorySearchContext",
+  "GetLegacyEmptySessionCleanupStatus",
   "GetModelSettingsApplication",
   "GetModelSettingsRequest",
   "GetPinnedFilesForTab",
@@ -478,6 +479,7 @@ export const DESKTOP_COMMANDS = [
   "ResumeTranscriptSessionForTab",
   "RetryAuthenticationForTab",
   "RetryInboxItem",
+  "RetryLegacyEmptySessionCleanup",
   "RetryModelSettingsApplication",
   "RetrySessionRecovery",
   "RevealBackgroundRuntime",
@@ -2577,6 +2579,31 @@ export interface JobView {
   startedAt: number;
 }
 
+export interface LegacyEmptySessionCleanupItem {
+  id: string;
+  kind: string;
+  workspaceId?: string;
+  sessionId?: string;
+  topicId?: string;
+  title?: string;
+  phase: string;
+  classification?: string;
+  reason?: string;
+}
+
+export interface LegacyEmptySessionCleanupStatus {
+  version: number;
+  batchId?: string;
+  state: string;
+  removed: number;
+  pending: number;
+  busy: number;
+  unknown: number;
+  protected: number;
+  hasContent: number;
+  items: LegacyEmptySessionCleanupItem[];
+}
+
 export interface LegacyWorkbenchDataView {
   mirrorCount: number;
   mirrorBytes: number;
@@ -4399,7 +4426,8 @@ export interface TopicMeta {
 
 export interface TrashEntry {
   id: string;
-  ref: SessionRef;
+  ref?: SessionRef | null;
+  recoveryEntryId?: string;
   title: string;
   workspaceId: string;
   workspaceTitle: string;
@@ -4409,6 +4437,8 @@ export interface TrashEntry {
   canPreview: boolean;
   canRestore: boolean;
   canPurge: boolean;
+  cleanupBatchId?: string;
+  cleanupKind?: string;
 }
 
 export interface TrashEntryPage {
@@ -5502,6 +5532,7 @@ export interface GeneratedDesktopCommands {
   GetDraftSubmission(arg0: string): Promise<SessionDraftSubmissionView>;
   GetHistoryIndexStatus(): Promise<historycatalog_Status>;
   GetHistorySearchContext(arg0: HistorySearchContextRequest): Promise<HistorySearchContextLine[]>;
+  GetLegacyEmptySessionCleanupStatus(): Promise<LegacyEmptySessionCleanupStatus>;
   GetModelSettingsApplication(): Promise<ModelSettingsResult>;
   GetModelSettingsRequest(arg0: string): Promise<ModelSettingsResult>;
   GetPinnedFilesForTab(arg0: string): Promise<PinnedFileInfo[]>;
@@ -5796,6 +5827,7 @@ export interface GeneratedDesktopCommands {
   ResumeTranscriptSessionForTab(arg0: string, arg1: string): Promise<HistorySwitchPhases>;
   RetryAuthenticationForTab(arg0: string): Promise<AuthenticationState>;
   RetryInboxItem(arg0: string, arg1: string): Promise<void>;
+  RetryLegacyEmptySessionCleanup(): Promise<LegacyEmptySessionCleanupStatus>;
   RetryModelSettingsApplication(arg0: string): Promise<ModelSettingsResult>;
   RetrySessionRecovery(arg0: RecoveryPreferenceRequest): Promise<void>;
   RevealBackgroundRuntime(arg0: string): Promise<TabMeta>;
