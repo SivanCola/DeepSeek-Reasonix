@@ -6,7 +6,7 @@ import type { Translator } from "../lib/i18n";
 import { isTopicNode, projectTreeTopicArchiveBlocked } from "../lib/projectTreeTopic";
 import type { ProjectTreeRefresh } from "../lib/projectTreeArchive";
 import type { ProjectNode, ProjectTreeOrganizationBindings, SessionGroup } from "../lib/types";
-import { PROJECT_TREE_WINDOW_INITIAL, forgetProjectTreeWindowLimit, projectTreeListKey, projectTreeWindowRows, type ProjectTreeListPageState } from "../lib/projectTreeWindow";
+import { forgetProjectTreeWindowLimit, projectTreeListKey, projectTreeWindowProjection, type ProjectTreeListPageState } from "../lib/projectTreeWindow";
 import { projectSessionIdentity } from "../lib/projectSessionIdentity";
 import { mutateSessionOrganization, projectNodeSelector } from "../lib/sessionOrganization";
 import type { SessionOrganizationMutation } from "../generated/desktopContract.generated";
@@ -401,7 +401,6 @@ export function ProjectTreeGroupRows({
   listLimit,
   onEnsureList,
   onExpandList,
-  onCollapseList,
   onRetryList,
   onForgetList,
 }: {
@@ -420,8 +419,7 @@ export function ProjectTreeGroupRows({
   listState: (groupID: string) => ProjectTreeListPageState | undefined;
   listLimit: (groupID: string) => number;
   onEnsureList: (groupID: string) => void;
-  onExpandList: (groupID: string) => void;
-  onCollapseList: (groupID: string) => void;
+  onExpandList: (groupID: string, loadedCount: number) => void;
   onRetryList: (groupID: string) => void;
   onForgetList: (groupID: string) => void;
 }) {
@@ -453,33 +451,18 @@ export function ProjectTreeGroupRows({
     }
   }, [expandedGroupIDs, onEnsureList, queryActive, remote, visible]);
 
-  const renderWindowControls = (groupID: string, label: string, loadedCount: number) => {
+  const renderWindowControls = (groupID: string, label: string, loadedCount: number, hasHiddenLoadedRows: boolean) => {
     if (queryActive) return null;
     const state = listState(groupID);
-    const limit = listLimit(groupID);
-    const canExpand = remote ? loadedCount > limit : Boolean(state?.nextCursor);
-    const canCollapse = limit > PROJECT_TREE_WINDOW_INITIAL;
-    if (!state?.loading && !state?.error && !canExpand && !canCollapse) return null;
-    const collapseAndRestoreFocus = (button: HTMLButtonElement) => {
-      const actions = button.parentElement;
-      const groupHeader = button.closest(".project-tree__group")?.querySelector<HTMLElement>(".project-tree__group-main");
-      const firstTopic = actions?.parentElement?.querySelector<HTMLButtonElement>(".project-tree__topic-main");
-      onCollapseList(groupID);
-      requestAnimationFrame(() => {
-        const replacement = actions?.querySelector<HTMLButtonElement>("button:not(:disabled)");
-        (replacement ?? firstTopic ?? groupHeader)?.focus();
-      });
-    };
+    const canExpand = hasHiddenLoadedRows || Boolean(state?.nextCursor);
+    if (!state?.loading && !state?.error && !canExpand) return null;
     return <div className="project-tree__topic-window-actions" style={{ paddingLeft: 14 + depth * 16 }}>
       {state?.error ? <button type="button" className="project-tree__topic-window-toggle" aria-label={t("projectTree.retryGroup", { name: label })} onClick={() => onRetryList(groupID)}>
         {t("projectTree.loadFailedRetry")}
       </button> : null}
       {state?.loading ? <span className="project-tree__topic-window-status">{t("projectTree.loadingMore")}</span> : null}
-      {!state?.loading && !state?.error && canExpand ? <button type="button" className="project-tree__topic-window-toggle" aria-label={t("projectTree.expandGroup", { name: label })} onClick={() => onExpandList(groupID)}>
+      {!state?.loading && !state?.error && canExpand ? <button type="button" className="project-tree__topic-window-toggle" aria-label={t("projectTree.expandGroup", { name: label })} onClick={() => onExpandList(groupID, loadedCount)}>
         {t("projectTree.expandDisplay")}
-      </button> : null}
-      {!state?.loading && canCollapse ? <button type="button" className="project-tree__topic-window-toggle" aria-label={t("projectTree.collapseGroup", { name: label })} onClick={(event) => collapseAndRestoreFocus(event.currentTarget)}>
-        {t("projectTree.collapseDisplay")}
       </button> : null}
     </div>;
   };
@@ -502,19 +485,24 @@ export function ProjectTreeGroupRows({
 
   const ungrouped = children.filter((child) => !groups.some((group) => projectTreeGroupContainsNode(group, child)));
   const ungroupedRows = scopedRows("", ungrouped);
-  const visibleUngrouped = queryActive ? ungroupedRows : projectTreeWindowRows(ungroupedRows, listLimit(""), isActive);
+  const ungroupedProjection = queryActive
+    ? { rows: ungroupedRows, hasHiddenLoadedRows: false }
+    : projectTreeWindowProjection(ungroupedRows, listLimit(""), isActive);
   const commitRename = (id: string) => {
     if (!groupDraft.trim()) onForgetList(id);
     organization.renameGroup(key, id, groupDraft);
     setEditingGroup(null);
   };
   return <>
-    {visibleUngrouped.map((child) => renderNode(child, depth, section, visible))}
-    {renderWindowControls("", folder.label, ungroupedRows.length)}
+    {ungroupedProjection.rows.map((child) => renderNode(child, depth, section, visible))}
+    {renderWindowControls("", folder.label, ungroupedRows.length, ungroupedProjection.hasHiddenLoadedRows)}
     {groups.map((group) => {
       const collapsed = queryActive ? false : organization.groupCollapsed(key, group.id);
       const members = children.filter((child) => projectTreeGroupContainsNode(group, child));
       const groupRows = scopedRows(group.id, members);
+      const groupProjection = queryActive
+        ? { rows: groupRows, hasHiddenLoadedRows: false }
+        : projectTreeWindowProjection(groupRows, listLimit(group.id), isActive);
       if (queryActive && groupRows.length === 0) return null;
       const canDrop = organization.canDropTopicInto(key);
       return <div key={group.id} className={`project-tree__group${collapsed ? " project-tree__group--collapsed" : ""}`}>
@@ -571,8 +559,8 @@ export function ProjectTreeGroupRows({
           onClose={() => setMenuGroup(null)}
         />}
         {!collapsed && <div className="project-tree__group-children">
-          {(queryActive ? groupRows : projectTreeWindowRows(groupRows, listLimit(group.id), isActive)).map((child) => renderNode(child, depth, section, visible))}
-          {renderWindowControls(group.id, group.title, groupRows.length)}
+          {groupProjection.rows.map((child) => renderNode(child, depth, section, visible))}
+          {renderWindowControls(group.id, group.title, groupRows.length, groupProjection.hasHiddenLoadedRows)}
         </div>}
       </div>;
     })}

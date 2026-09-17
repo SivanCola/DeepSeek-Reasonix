@@ -47,9 +47,7 @@ const organization: ProjectTreeOrganizationController = {
 
 const t = ((key: string, values?: Record<string, string>) => {
   if (key === "projectTree.expandDisplay") return "Show more";
-  if (key === "projectTree.collapseDisplay") return "Show less";
   if (key === "projectTree.expandGroup") return `Show more in ${values?.name}`;
-  if (key === "projectTree.collapseGroup") return `Show less in ${values?.name}`;
   return key;
 }) as Translator;
 
@@ -68,11 +66,10 @@ function Harness() {
     remote={false}
     activeTopicId={undefined}
     isActive={() => false}
-    listState={(groupID) => ({ itemKeys: (groupID ? groups.find((group) => group.id === groupID)?.topicIds : children.filter((node) => node.topicId?.startsWith("plain-")).map((node) => node.key))?.map((id) => id.startsWith("topic-") ? id : `topic-${id}`) ?? [], nextCursor: "more", loading: false, initialized: true })}
+    listState={(groupID) => ({ itemKeys: (groupID ? groups.find((group) => group.id === groupID)?.topicIds : children.filter((node) => node.topicId?.startsWith("plain-")).map((node) => node.key))?.map((id) => id.startsWith("topic-") ? id : `topic-${id}`) ?? [], loading: false, initialized: true })}
     listLimit={(groupID) => limits[groupID] ?? 5}
     onEnsureList={() => {}}
-    onExpandList={(groupID) => setLimits((current) => ({ ...current, [groupID]: (current[groupID] ?? 5) + 10 }))}
-    onCollapseList={(groupID) => setLimits((current) => ({ ...current, [groupID]: 5 }))}
+    onExpandList={(groupID) => setLimits((current) => ({ ...current, [groupID]: (current[groupID] ?? 5) + 5 }))}
     onRetryList={() => {}}
     onForgetList={() => {}}
   />;
@@ -87,12 +84,16 @@ assert.equal(rows("feature-"), 5);
 assert.equal(rows("bugs-"), 5);
 
 await act(async () => (container.querySelector('[aria-label="Show more in Feature"]') as HTMLButtonElement).click());
-assert.equal(rows("feature-"), 15);
+assert.equal(rows("feature-"), 10);
 assert.equal(rows("bugs-"), 5, "expanding one group leaves the other group unchanged");
 assert.equal(rows("plain-"), 5, "expanding a group leaves ungrouped rows unchanged");
+assert.equal(container.querySelectorAll('[aria-label^="Show less in "]').length, 0, "session windows expose no competing collapse action");
 
-await act(async () => (container.querySelector('[aria-label="Show less in Feature"]') as HTMLButtonElement).click());
-assert.equal(rows("feature-"), 5);
+await act(async () => (container.querySelector('[aria-label="Show more in Feature"]') as HTMLButtonElement).click());
+assert.equal(rows("feature-"), 15);
+await act(async () => (container.querySelector('[aria-label="Show more in Feature"]') as HTMLButtonElement).click());
+assert.equal(rows("feature-"), 16);
+assert.equal(container.querySelector('[aria-label="Show more in Feature"]'), null, "the final loaded row removes the one-way disclosure");
 
 await act(async () => root.unmount());
 
@@ -120,7 +121,6 @@ await act(async () => secondRoot.render(<ProjectTreeGroupRows
   listLimit={() => 5}
   onEnsureList={() => {}}
   onExpandList={() => {}}
-  onCollapseList={() => {}}
   onRetryList={() => {}}
   onForgetList={() => {}}
 />));
@@ -152,7 +152,6 @@ function LazyGroupHarness() {
     listLimit={() => 5}
     onEnsureList={(groupID) => { ensuredGroups.push(groupID); }}
     onExpandList={() => {}}
-    onCollapseList={() => {}}
     onRetryList={() => {}}
     onForgetList={() => {}}
   />;
