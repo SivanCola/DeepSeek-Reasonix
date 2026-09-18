@@ -3069,6 +3069,14 @@ function makeMockApp(): MockAppBindings {
         },
         async SubmitToTab(_tabID, input) { await withMockTabScope(_tabID, () => this.Submit(input)); },
         async SubmitToTabWithID(_tabID, input, submissionID) { const submit = this.Submit as (value: string, id?: string) => Promise<void>; await withMockTabScope(_tabID, () => submit(input, submissionID)); },
+        async StartTurnForTab(_tabID, input, submissionID) {
+          const turnId = `mock-turn-${submissionID}`;
+          const submit = this.Submit as (value: string, id?: string) => Promise<void>;
+          void withMockTabScope(_tabID, () => submit(input, submissionID)).catch((error) => {
+            console.error("mock turn failed", error);
+          });
+          return { turnId, status: "started", disposition: "turn_started", runtimeEpoch: "mock", submissionId: submissionID };
+        },
         async SubmitDisplay(_display, input) { await this.Submit(input); },
         async SubmitDisplayToTab(_tabID, display, input) { await withMockTabScope(_tabID, () => this.SubmitDisplay(display, input)); },
         async SubmitDisplayToTabWithID(_tabID, _display, input, submissionID) { await this.SubmitToTabWithID(_tabID, input, submissionID); },
