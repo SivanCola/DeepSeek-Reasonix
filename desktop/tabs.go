@@ -36,6 +36,8 @@ import (
 	"unicode"
 )
 
+var errTabsSnapshotChanged = errors.New("desktop tabs changed during startup reconciliation")
+
 // WorkspaceTab
 
 // tabDisplayState follows one live runtime across visible, detached, and
@@ -92,16 +94,17 @@ type WorkspaceTab struct {
 	SessionID                string              // immutable v3 identity; empty for legacy/read-only tabs
 	PendingCreateOperationID string              // durable create reservation used before the first turn
 	draftAdmission           *draftAdmissionProfile
-	SessionGeneration        uint64                   // bumps on session rotation (clear/new); frontend hydrate identity
-	ReadOnly                 bool                     // true for external channel transcripts opened for browsing
-	Takeover                 struct{ Spectator bool } // handoff state grouped by its cross-runtime lifetime
-	Ctrl                     control.SessionAPI       // nil while booting / on error
-	Label                    string                   // model label (for the tab badge)
-	Ready                    bool                     // true once boot.Build completes
-	StartupErr               string                   // build error, surfaced to the frontend
-	StartupErrLeaseHeld      bool                     // true when StartupErr can be retried after a session lease releases
-	modelApplication         tabModelApplicationState // guarded by App.mu; never persisted
-	runtimeID                string                   // process-local SessionRuntime registry identity
+	persistenceExtra         map[string]json.RawMessage // unknown desktop-tabs.json fields retained across rewrites
+	SessionGeneration        uint64                     // bumps on session rotation (clear/new); frontend hydrate identity
+	ReadOnly                 bool                       // true for external channel transcripts opened for browsing
+	Takeover                 struct{ Spectator bool }   // handoff state grouped by its cross-runtime lifetime
+	Ctrl                     control.SessionAPI         // nil while booting / on error
+	Label                    string                     // model label (for the tab badge)
+	Ready                    bool                       // true once boot.Build completes
+	StartupErr               string                     // build error, surfaced to the frontend
+	StartupErrLeaseHeld      bool                       // true when StartupErr can be retried after a session lease releases
+	modelApplication         tabModelApplicationState   // guarded by App.mu; never persisted
+	runtimeID                string                     // process-local SessionRuntime registry identity
 	sessionLease             *agent.SessionLease
 	sessionLeaseMu           sync.Mutex
 	sessionLeaseKey          atomic.Pointer[string] // lock-free mirror; updated with sessionLease under sessionLeaseMu
@@ -4781,20 +4784,72 @@ func (a *App) saveTabsWrite(dir string, entries []desktopTabEntry, activeID stri
 	if remoteActive != "" {
 		activeID = remoteActive
 	}
-	f := desktopTabsFile{Tabs: entries, ActiveTab: activeID, RemoteTabs: remoteEntries, RemoteTabOrder: remoteOrder, TabOrder: tabOrder}
+	f := desktopTabsFile{Tabs: entries, ActiveTab: activeID, RemoteTabs: remoteEntries, RemoteTabOrder: remoteOrder, TabOrder: tabOrder, extra: cloneDesktopJSONFields(a.tabsFileExtra)}
+	_ = a.writeTabsFileLocked(dir, f, version)
+}
+
+func (a *App) rememberTabsFileExtra(extra map[string]json.RawMessage) {
+	a.tabsSaveMu.Lock()
+	a.tabsFileExtra = cloneDesktopJSONFields(extra)
+	a.tabsSaveMu.Unlock()
+}
+
+// persistReconciledTabsFile durably removes invalid startup presentation state
+// before any corresponding runtime is published. Snapshot versions prevent a
+// late startup write from replacing a newer renderer-driven mutation.
+func (a *App) tabsSnapshotVersion() uint64 {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.tabsSaveVersion
+}
+
+func (a *App) tabsSnapshotCurrent(version uint64) bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.tabsSaveVersion == version
+}
+
+func (a *App) persistReconciledTabsFile(f desktopTabsFile, expectedVersion uint64) (uint64, error) {
+	a.mu.Lock()
+	if a.tabsSaveVersion != expectedVersion {
+		a.mu.Unlock()
+		return 0, errTabsSnapshotChanged
+	}
+	a.tabsSaveVersion++
+	version := a.tabsSaveVersion
+	a.mu.Unlock()
+	a.tabsSaveMu.Lock()
+	defer a.tabsSaveMu.Unlock()
+	if version < a.tabsLastWrittenVersion {
+		return 0, errTabsSnapshotChanged
+	}
+	f.extra = cloneDesktopJSONFields(a.tabsFileExtra)
+	if err := a.writeTabsFileLocked(desktopConfigDir(), f, version); err != nil {
+		return version, err
+	}
+	return version, nil
+}
+
+// writeTabsFileLocked writes one complete, already-reconciled snapshot. The
+// caller holds tabsSaveMu.
+func (a *App) writeTabsFileLocked(dir string, f desktopTabsFile, version uint64) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
 	b, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
-		return
+		return err
 	}
 	path := filepath.Join(dir, tabsFileName)
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		return
+		return err
 	}
 	if err := fileutil.ReplaceFile(tmp, path); err != nil {
-		return
+		return err
 	}
 	a.tabsLastWrittenVersion = version
+	return nil
 }
 
 func (a *App) orderedTabIDsLocked() []string {

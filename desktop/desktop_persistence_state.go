@@ -2,6 +2,7 @@ package main
 
 import (
 	"log/slog"
+	"sync/atomic"
 
 	"reasonix/desktop/internal/draftstate"
 	"reasonix/desktop/internal/legacycleanup"
@@ -11,11 +12,13 @@ import (
 // desktopPersistenceState groups process-lifetime stores and their recovery
 // coordinator so App does not expose each lifecycle field independently.
 type desktopPersistenceState struct {
-	desktopSessions      desktopSessionState
-	desktopDrafts        *draftstate.Store
-	legacyCleanup        *legacycleanup.Store
-	desktopMigrationDone chan struct{}
-	legacyCleanupWorker  legacyCleanupWorkerState
+	desktopSessions             desktopSessionState
+	desktopDrafts               *draftstate.Store
+	legacyCleanup               *legacycleanup.Store
+	desktopMigrationDone        chan struct{}
+	desktopMigrationFailed      atomic.Bool
+	beforeSavedTabMigrationWait func()
+	legacyCleanupWorker         legacyCleanupWorkerState
 }
 
 func newDesktopPersistenceState() desktopPersistenceState {

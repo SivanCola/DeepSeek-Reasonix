@@ -233,6 +233,21 @@ func (a *App) classifyLegacyCleanupRegistry(ctx context.Context, ref session.Ses
 			return state, legacyCleanupDecision{"protected", "create_or_derivation", session.SessionInfo{}, session.Snapshot{}}, false
 		}
 	}
+	for _, recovery := range state.RecoveryEntries {
+		if recovery.SessionID == ref.SessionID {
+			return state, legacyCleanupDecision{"protected", "recovery_owner", session.SessionInfo{}, session.Snapshot{}}, false
+		}
+		for _, source := range frozen.Sources {
+			if recovery.Path != "" && sameDesktopPath(recovery.Path, source.Path) {
+				return state, legacyCleanupDecision{"protected", "recovery_owner", session.SessionInfo{}, session.Snapshot{}}, false
+			}
+		}
+	}
+	for _, operation := range state.PendingOperations {
+		if slices.Contains(operation.SessionIDs, ref.SessionID) || (operation.Mapping != nil && operation.Mapping.SessionID == ref.SessionID) {
+			return state, legacyCleanupDecision{"protected", "pending_operation", session.SessionInfo{}, session.Snapshot{}}, false
+		}
+	}
 	if decision, valid := classifyLegacyCleanupSourceMappings(state, ref, frozen); !valid {
 		return state, decision, false
 	}

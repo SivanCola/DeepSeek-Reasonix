@@ -84,6 +84,14 @@ func (a *App) archiveSessionRefsWithOperationConditional(refs []session.SessionR
 			if err := a.validateDesktopWorkspaceMembership(ctx, workspaceID, ref); err != nil {
 				return fallbackRuntimeTarget{}, err
 			}
+		} else if verify != nil {
+			// Maintenance callers carry a final content/lifecycle CAS. Permit
+			// them to archive a conclusively empty session whose immutable
+			// header and registry workspace disagree; requiring that same
+			// agreement here would make the corrupted state unrepairable.
+			if !conditionalArchiveRegistryHasSingleActiveOwner(state, id) {
+				return fallbackRuntimeTarget{}, workspacestate.ErrMutationConflict
+			}
 		} else {
 			if _, err := a.canonicalSessionWorkspace(ctx, ref); err != nil {
 				return fallbackRuntimeTarget{}, err
@@ -130,6 +138,19 @@ func (a *App) archiveSessionRefsWithOperationConditional(refs []session.SessionR
 	return fallback, nil
 }
 
+func conditionalArchiveRegistryHasSingleActiveOwner(state workspacestate.State, sessionID string) bool {
+	if state.SessionStates[sessionID].Lifecycle != workspacestate.Active {
+		return false
+	}
+	owners := 0
+	for _, workspace := range state.Workspaces {
+		if slices.Contains(workspace.SessionIDs, sessionID) {
+			owners++
+		}
+	}
+	return owners == 1
+}
+
 func (a *App) beginConditionalArchiveOperation(ctx context.Context, state workspacestate.State, op workspacestate.Operation, verify func(context.Context, workspacestate.State) error) error {
 	if verify != nil {
 		if err := verify(ctx, state); err != nil {
@@ -162,9 +183,16 @@ func (a *App) finishArchivedRuntimeBindings(removed []removedSessionRuntime) fal
 		a.activeTabID = a.tabOrder[0]
 	}
 	fallback.needs = len(removed) > 0 && len(a.tabs) == 0
-	dir, entries, activeID, version := a.saveTabsCollectLocked()
+	var dir, activeID string
+	var entries []desktopTabEntry
+	var version uint64
+	if len(removed) > 0 {
+		dir, entries, activeID, version = a.saveTabsCollectLocked()
+	}
 	a.mu.Unlock()
-	a.saveTabsWrite(dir, entries, activeID, version)
+	if len(removed) > 0 {
+		a.saveTabsWrite(dir, entries, activeID, version)
+	}
 	a.finalizeRemovedTopicRuntimes(removed)
 	a.closeRemainingRemovedSessionRuntimesAdmissionHeld(removed, map[control.SessionAPI]bool{})
 	return fallback

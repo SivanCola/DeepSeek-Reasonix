@@ -100,6 +100,7 @@ func (a *App) remoteTabsFileEntries(localIDs []string) ([]desktopRemoteTabEntry,
 			SessionPath:  tab.session.path,
 			SessionID:    tab.session.sessionID,
 			SessionReset: tab.session.reset,
+			extra:        cloneDesktopJSONFields(tab.persistenceExtra),
 		})
 	}
 	order := append([]string(nil), ids...)

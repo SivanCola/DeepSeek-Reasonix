@@ -127,6 +127,13 @@ func (a *App) bindTabCanonicalSession(
 			CWD: desktopWorkspaceRoot(scope, workspaceRoot), Origin: session.SessionOriginLegacyImport,
 		})
 		if errors.Is(err, errUnadoptedLegacySourceMissing) {
+			evidence := a.loadSavedTabReconcileEvidence(ctx, false)
+			if evidence.registryErr != nil || evidence.draftErr != nil {
+				return ref, "", errors.Join(errLegacySourceRecoveryPending, evidence.registryErr, evidence.draftErr)
+			}
+			if savedTabHasRecoveryOwner(desktopTabEntry{SessionPath: legacyPath}, evidence) {
+				return ref, "", errLegacySourceRecoveryPending
+			}
 			ref, workspaceID, err = a.bindFreshDesktopSession(ctx, scope, workspaceRoot, identity)
 		}
 	default:
@@ -154,6 +161,7 @@ func (a *App) tabForSessionBoot(scope, workspaceRoot, sessionID string) *Workspa
 }
 
 var errUnadoptedLegacySourceMissing = errors.New("unadopted legacy source is missing")
+var errLegacySourceRecoveryPending = errors.New("legacy session recovery is pending")
 
 // The Desktop registry owns adoption. Re-freezing a previously imported source
 // can generate a different identity after a catalog sidecar refresh, even when

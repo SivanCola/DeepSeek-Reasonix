@@ -92,7 +92,8 @@ type remoteTab struct {
 	attachedGen uint64
 	// Pending approval/ask frames are retained while the frontend surface is
 	// inactive. RemoteTabSnapshot replays them when that surface mounts again.
-	pendingEvents map[string]json.RawMessage
+	pendingEvents    map[string]json.RawMessage
+	persistenceExtra map[string]json.RawMessage
 
 	// Transient runtime state is projected into TabMeta even while this tab is
 	// inactive, matching the local tab strip's running/prompt/job indicators.
@@ -486,7 +487,7 @@ func (a *App) restoreRemoteTabShells(f desktopTabsFile) {
 				sessionID:  sessionID,
 				reset:      entry.SessionReset,
 			},
-			hostLabel: hostLabel, topicTitle: title, model: model,
+			hostLabel: hostLabel, topicTitle: title, model: model, persistenceExtra: cloneDesktopJSONFields(entry.extra),
 			routing: remoteTabSessionRouting{currentPath: route, running: map[string]bool{}},
 		}
 		restored.modelSeq = remoteTabModelSeq.Add(1)
