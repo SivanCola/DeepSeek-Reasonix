@@ -725,9 +725,7 @@ func (a *App) restoreOrBuildTabs() {
 	if err := reconcileTopicArchiveMetadataPending(a.deleteTopic); err != nil {
 		slog.Warn("desktop: topic archive metadata reconciliation remains pending")
 	}
-	tabsVersion := a.tabsSnapshotVersion()
-	f := loadTabsFile()
-	a.rememberTabsFileExtra(f.extra)
+	f, tabsVersion := a.loadTabsForRestore()
 	_, _ = recoverLegacyProjectSidebarRoots(f)
 	_, _ = config.ApplyUserConfigUpgradesOnStartup(config.UserConfigPath())
 	_, _ = config.MigrateMCPToUserConfigOnUpgrade(desktopMCPMigrationRoots(f))
@@ -744,38 +742,12 @@ func (a *App) restoreOrBuildTabs() {
 		}
 		a.setDesktopLocale(i18n.DetectLanguage(lang))
 	}
-	originalTabsFile := f
-	reconciled, changed := a.reconcileSavedTabs(ctx, f)
-	if !a.tabsSnapshotCurrent(tabsVersion) {
-		// A renderer action won startup ownership. Its versioned save is now the
-		// authoritative presentation state; publishing this older snapshot would
-		// duplicate or overwrite the newly selected surface.
-		return
-	}
-	if changed {
-		committedVersion, err := a.persistReconciledTabsFile(reconciled, tabsVersion)
-		if err != nil {
-			if committedVersion != 0 {
-				tabsVersion = committedVersion
-			}
-			if errors.Is(err, errTabsSnapshotChanged) {
-				return
-			}
-			slog.Warn("desktop_saved_tab_reconcile_persist_failed", "reason", "write_failed")
-			f = originalTabsFile
-		} else {
-			tabsVersion = committedVersion
-			f = reconciled
-		}
-	} else {
-		f = reconciled
-	}
-	if !a.tabsSnapshotCurrent(tabsVersion) {
+	f, tabsVersion, restoreCurrent := a.reconcileTabsBeforeRestore(ctx, f, tabsVersion)
+	if !restoreCurrent {
 		return
 	}
 	// Every surviving layout style is single-surface, and a config that failed
 	// to load already took this path when the predicate could still be false.
-	// Reconcile first so a stale active entry cannot discard a valid fallback.
 	f = singleSurfaceTabsFile(f)
 	// Restore remote tabs as disconnected shells; activation performs the
 	// first network work so desktop startup remains offline-safe.

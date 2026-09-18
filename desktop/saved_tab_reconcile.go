@@ -42,6 +42,28 @@ type savedTabReconcileEvidence struct {
 	cleanup     legacycleanup.State
 }
 
+func (a *App) reconcileTabsBeforeRestore(ctx context.Context, file desktopTabsFile, version uint64) (desktopTabsFile, uint64, bool) {
+	original := file
+	reconciled, changed := a.reconcileSavedTabs(ctx, file)
+	if !a.tabsSnapshotCurrent(version) {
+		return file, version, false
+	}
+	if changed {
+		committedVersion, err := a.persistReconciledTabsFile(reconciled, version)
+		if committedVersion != 0 {
+			version = committedVersion
+		}
+		if errors.Is(err, errTabsSnapshotChanged) {
+			return file, version, false
+		}
+		if err != nil {
+			slog.Warn("desktop_saved_tab_reconcile_persist_failed", "reason", "write_failed")
+			return original, version, a.tabsSnapshotCurrent(version)
+		}
+	}
+	return reconciled, version, a.tabsSnapshotCurrent(version)
+}
+
 // reconcileSavedTabs filters only presentation entries whose durable identity
 // is conclusively gone. It runs before restored tabs are published, so a stale
 // entry can neither block legacy cleanup nor acquire a controller or lease.

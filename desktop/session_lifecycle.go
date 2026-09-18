@@ -80,22 +80,8 @@ func (a *App) archiveSessionRefsWithOperationConditional(refs []session.SessionR
 	}()
 	for _, id := range ids {
 		ref := unique[id]
-		if workspaceID := staged[id]; workspaceID != "" {
-			if err := a.validateDesktopWorkspaceMembership(ctx, workspaceID, ref); err != nil {
-				return fallbackRuntimeTarget{}, err
-			}
-		} else if verify != nil {
-			// Maintenance callers carry a final content/lifecycle CAS. Permit
-			// them to archive a conclusively empty session whose immutable
-			// header and registry workspace disagree; requiring that same
-			// agreement here would make the corrupted state unrepairable.
-			if !conditionalArchiveRegistryHasSingleActiveOwner(state, id) {
-				return fallbackRuntimeTarget{}, workspacestate.ErrMutationConflict
-			}
-		} else {
-			if _, err := a.canonicalSessionWorkspace(ctx, ref); err != nil {
-				return fallbackRuntimeTarget{}, err
-			}
+		if err := a.validateConditionalArchiveWorkspace(ctx, state, ref, staged[id], verify != nil); err != nil {
+			return fallbackRuntimeTarget{}, err
 		}
 		if runtime, live := service.Runtime(ref); live {
 			phase := runtime.StateSnapshot().Phase
@@ -136,6 +122,22 @@ func (a *App) archiveSessionRefsWithOperationConditional(refs []session.SessionR
 		}
 	}
 	return fallback, nil
+}
+
+func (a *App) validateConditionalArchiveWorkspace(ctx context.Context, state workspacestate.State, ref session.SessionRef, stagedWorkspaceID string, maintenance bool) error {
+	if stagedWorkspaceID != "" {
+		return a.validateDesktopWorkspaceMembership(ctx, stagedWorkspaceID, ref)
+	}
+	if !maintenance {
+		_, err := a.canonicalSessionWorkspace(ctx, ref)
+		return err
+	}
+	// A final content/lifecycle CAS lets maintenance archive proven-empty
+	// sessions even when immutable and registry workspace ownership disagree.
+	if !conditionalArchiveRegistryHasSingleActiveOwner(state, ref.SessionID) {
+		return workspacestate.ErrMutationConflict
+	}
+	return nil
 }
 
 func conditionalArchiveRegistryHasSingleActiveOwner(state workspacestate.State, sessionID string) bool {

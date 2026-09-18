@@ -36,8 +36,6 @@ import (
 	"unicode"
 )
 
-var errTabsSnapshotChanged = errors.New("desktop tabs changed during startup reconciliation")
-
 // WorkspaceTab
 
 // tabDisplayState follows one live runtime across visible, detached, and
@@ -4761,95 +4759,6 @@ func (a *App) saveTabsCollectLocked() (string, []desktopTabEntry, string, uint64
 	}
 	a.tabsSaveVersion++
 	return dir, entries, persistedActiveTabID(entries, a.activeTabID), a.tabsSaveVersion
-}
-
-// saveTabsWrite writes the tab-snapshot to disk. It does not require a.mu, but
-// writes must be serialized because every save uses the same destination and
-// fixed .tmp path.
-func (a *App) saveTabsWrite(dir string, entries []desktopTabEntry, activeID string, version uint64) {
-	a.tabsSaveMu.Lock()
-	defer a.tabsSaveMu.Unlock()
-	if version < a.tabsLastWrittenVersion {
-		return
-	}
-
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return
-	}
-	localIDs := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		localIDs = append(localIDs, entry.ID)
-	}
-	remoteEntries, remoteOrder, tabOrder, remoteActive := a.remoteTabsFileEntries(localIDs)
-	if remoteActive != "" {
-		activeID = remoteActive
-	}
-	f := desktopTabsFile{Tabs: entries, ActiveTab: activeID, RemoteTabs: remoteEntries, RemoteTabOrder: remoteOrder, TabOrder: tabOrder, extra: cloneDesktopJSONFields(a.tabsFileExtra)}
-	_ = a.writeTabsFileLocked(dir, f, version)
-}
-
-func (a *App) rememberTabsFileExtra(extra map[string]json.RawMessage) {
-	a.tabsSaveMu.Lock()
-	a.tabsFileExtra = cloneDesktopJSONFields(extra)
-	a.tabsSaveMu.Unlock()
-}
-
-// persistReconciledTabsFile durably removes invalid startup presentation state
-// before any corresponding runtime is published. Snapshot versions prevent a
-// late startup write from replacing a newer renderer-driven mutation.
-func (a *App) tabsSnapshotVersion() uint64 {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return a.tabsSaveVersion
-}
-
-func (a *App) tabsSnapshotCurrent(version uint64) bool {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return a.tabsSaveVersion == version
-}
-
-func (a *App) persistReconciledTabsFile(f desktopTabsFile, expectedVersion uint64) (uint64, error) {
-	a.mu.Lock()
-	if a.tabsSaveVersion != expectedVersion {
-		a.mu.Unlock()
-		return 0, errTabsSnapshotChanged
-	}
-	a.tabsSaveVersion++
-	version := a.tabsSaveVersion
-	a.mu.Unlock()
-	a.tabsSaveMu.Lock()
-	defer a.tabsSaveMu.Unlock()
-	if version < a.tabsLastWrittenVersion {
-		return 0, errTabsSnapshotChanged
-	}
-	f.extra = cloneDesktopJSONFields(a.tabsFileExtra)
-	if err := a.writeTabsFileLocked(desktopConfigDir(), f, version); err != nil {
-		return version, err
-	}
-	return version, nil
-}
-
-// writeTabsFileLocked writes one complete, already-reconciled snapshot. The
-// caller holds tabsSaveMu.
-func (a *App) writeTabsFileLocked(dir string, f desktopTabsFile, version uint64) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	b, err := json.MarshalIndent(f, "", "  ")
-	if err != nil {
-		return err
-	}
-	path := filepath.Join(dir, tabsFileName)
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		return err
-	}
-	if err := fileutil.ReplaceFile(tmp, path); err != nil {
-		return err
-	}
-	a.tabsLastWrittenVersion = version
-	return nil
 }
 
 func (a *App) orderedTabIDsLocked() []string {
