@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -34,6 +34,21 @@ test("same-run failed-job retry preserves the exact signed bytes of all platform
     assert.equal(readFileSync(path.join(f.target, `${platform}.zip`), "utf8"), `signed:${platform}`);
     assert.equal(readFileSync(path.join(f.target, `${platform}.zip.minisig`), "utf8"), `signature:${platform}`);
   }
+});
+
+test("publisher selects only complete platform bundles beside unsigned intermediates", t => {
+  const f = fixture(t);
+  for (const arch of ["amd64", "arm64"]) mkdirSync(path.join(f.bundles, `${identity.prefix}-unsigned-windows-${arch}`));
+  assert.throws(() => collect(f.bundles, f.target, identity), /unexpected platform bundle/);
+  const workflow = readFileSync(new URL("../.github/workflows/release-desktop.yml", import.meta.url), "utf8");
+  const pattern = workflow.match(/pattern: \$\{\{ inputs\.preflight_artifact_prefix \|\| needs\.resolve\.outputs\.artifact_prefix \}\}-(.+)/)[1];
+  const selected = readdirSync(f.bundles).filter(name => path.matchesGlob(name, `${identity.prefix}-${pattern}`));
+  assert.deepEqual(selected.sort(), platforms.map(platform => `${identity.prefix}-${platform}`).sort());
+  const downloaded = path.join(path.dirname(f.bundles), "downloaded");
+  mkdirSync(downloaded);
+  for (const name of selected) cpSync(path.join(f.bundles, name), path.join(downloaded, name), { recursive: true });
+  collect(downloaded, f.target, identity);
+  for (const platform of platforms) assert.equal(readFileSync(path.join(f.target, `${platform}.zip`), "utf8"), `signed:${platform}`);
 });
 
 test("another run, future attempt and missing identity cannot be reused", () => {

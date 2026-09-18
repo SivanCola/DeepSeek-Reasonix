@@ -902,7 +902,7 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           path: ${{ runner.temp }}/desktop-bundles
-          pattern: ${{ inputs.preflight_artifact_prefix || needs.resolve.outputs.artifact_prefix }}-*
+          pattern: ${{ inputs.preflight_artifact_prefix || needs.resolve.outputs.artifact_prefix }}-{darwin-arm64,darwin-amd64,darwin-universal,windows-amd64,windows-arm64,linux-amd64}
           github-token: ${{ github.token }}
           run-id: ${{ inputs.reuse_manual_artifacts && '34816299501' || github.run_id }}
 
