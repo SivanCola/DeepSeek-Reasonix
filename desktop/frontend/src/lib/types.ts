@@ -9,6 +9,7 @@ export type { SettingsView } from "./settingsViewTypes";
 export type { ProviderProtocolEndpoint, ProviderCatalog, ProviderPresetView } from "./providerCatalogTypes";
 import type { WireReadStatus } from "./readStatus";
 export type { WireReadStatus } from "./readStatus";
+export type { WireImageIdentity, WireImageRecoveryAction } from "./imageRecoveryTypes";
 import type { RecoveryEventFields } from "./recoveryStatus";
 // Wire contract: one discriminated event channel mirrors desktop/wire.go and internal/serve/wire.go.
 import type { HistoryServerSearch } from "./searchSources";
@@ -416,7 +417,6 @@ export interface MemoryCitation {
   note?: string;
   kind?: string;
 }
-
 export interface WireEvent extends RecoveryEventFields {
 	sessionId?: string;
 	source?: string;
@@ -458,6 +458,7 @@ export interface WireEvent extends RecoveryEventFields {
   outcome?: "completed" | "partial" | "blocked" | "final_readiness" | "recovery_paused" | "completion_uncertain" | "incomplete_read";
   readiness?: WireFinalReadiness;
   protocolRecovery?: { id: string };
+  imageRecovery?: import("./imageRecoveryTypes").WireImageRecoveryAction;
   diagnostic?: { kind: string; status?: number; traceId?: string; providerId?: string; providerDisplayName?: string; protocol?: string; requestPath?: string };
   /** Optional: "headers" | "stream". Older clients ignore unknown fields. */
   retryScope?: "headers" | "stream" | "protocol";

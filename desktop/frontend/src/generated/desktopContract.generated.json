@@ -11443,7 +11443,7 @@
     },
     {
       "cancellation": "before-dispatch",
-      "domain": "desktop/app.go",
+      "domain": "desktop/workspace_removal.go",
       "name": "RemoveWorkspace",
       "owner": "App.RemoveWorkspace",
       "params": [
@@ -11460,7 +11460,7 @@
         "resolver": "App.RemoveWorkspace"
       },
       "sources": [
-        "desktop/app.go"
+        "desktop/workspace_removal.go"
       ]
     },
     {
@@ -12223,6 +12223,70 @@
       },
       "sources": [
         "desktop/chat_file_reference.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/image_recovery.go",
+      "name": "ResolveImageRecovery",
+      "owner": "App.ResolveImageRecovery",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "elem": {
+            "kind": "object",
+            "ref": "provider.ImageIdentity"
+          },
+          "kind": "array"
+        }
+      ],
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "id",
+          "selected"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.ResolveImageRecovery"
+      },
+      "sources": [
+        "desktop/image_recovery.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/image_recovery.go",
+      "name": "ResolveImageRecoveryForTab",
+      "owner": "App.ResolveImageRecoveryForTab",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "elem": {
+            "kind": "object",
+            "ref": "provider.ImageIdentity"
+          },
+          "kind": "array"
+        }
+      ],
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID",
+          "id",
+          "selected"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.ResolveImageRecoveryForTab"
+      },
+      "sources": [
+        "desktop/image_recovery.go"
       ]
     },
     {
@@ -23822,6 +23886,17 @@
             "elem": {
               "kind": "object",
               "ref": "provider.ProtocolRecoveryAction"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "imageRecovery",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "provider.ImageRecoveryAction"
             },
             "kind": "nullable"
           }
@@ -42037,6 +42112,71 @@
         {
           "name": "requestPath",
           "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
+    "provider.ImageIdentity": {
+      "fields": [
+        {
+          "name": "messageId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "imageOrdinal",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "contentDigest",
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
+    "provider.ImageRecoveryAction": {
+      "fields": [
+        {
+          "name": "id",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "reason",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "candidates",
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "provider.ImageRecoveryCandidate"
+            },
+            "kind": "array"
+          }
+        }
+      ]
+    },
+    "provider.ImageRecoveryCandidate": {
+      "fields": [
+        {
+          "name": "identity",
+          "type": {
+            "kind": "object",
+            "ref": "provider.ImageIdentity"
+          }
+        },
+        {
+          "name": "label",
           "type": {
             "kind": "string"
           }

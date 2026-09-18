@@ -328,15 +328,15 @@ func (a *App) StartTurnForAttachmentTarget(token, submissionID string, req contr
 		return TurnStartView{}, fmt.Errorf("attachment target is not a session")
 	}
 	if receipt, found, err := c.LookupSubmissionContext(a.attachmentOperationContext(target), req); found || err != nil {
-		return TurnStartView{TurnID: receipt.TurnID, SubmissionID: submissionID, Status: event.TurnQueued, Disposition: control.SubmitTurnStarted}, err
+		return TurnStartView{TurnID: receipt.TurnID, SubmissionID: submissionID, Status: event.TurnQueued, Disposition: control.SubmitTurnStarted}, inboxBridgeError(err)
 	}
 	prepared, err := c.PrepareSubmission(a.attachmentOperationContext(target), req)
 	if err != nil {
-		return TurnStartView{}, err
+		return TurnStartView{}, inboxBridgeError(err)
 	}
 	admission, ctrl, err := a.beginTabTurn(target.tabID, true, submissionID)
 	if err != nil {
-		return TurnStartView{}, err
+		return TurnStartView{}, a.submissionAdmissionError(target.tabID, req, err)
 	}
 	defer admission.abort()
 	if ctrl != target.ctrl || !a.attachmentTargetCurrent(target) {
@@ -360,7 +360,7 @@ func (a *App) StartTurnForAttachmentTarget(token, submissionID string, req contr
 	}
 	receipt, err := c.SubmitPreparedWithSetup(a.attachmentOperationContext(target), prepared, setup)
 	if err != nil {
-		return TurnStartView{}, err
+		return TurnStartView{}, inboxBridgeError(err)
 	}
 	admission.finish(ctrl)
 	return TurnStartView{TurnID: receipt.TurnID, SubmissionID: submissionID, Status: event.TurnQueued, Disposition: control.SubmitTurnStarted}, nil
@@ -382,7 +382,7 @@ func (a *App) EnqueueForAttachmentTarget(token, submissionID, input, display str
 	}
 	receipt, err := c.TryEnqueueFollowupContext(a.attachmentOperationContext(target), control.InboxRequest{Intent: sessioninbox.IntentFollowup, Display: display, Raw: input, Submit: input, Source: "desktop", Idempotency: submissionID, Invocations: invocations, Attachments: attachments})
 	if err != nil {
-		return InboxReceiptView{}, err
+		return InboxReceiptView{}, inboxBridgeError(err)
 	}
 	a.emitInboxChanged(target.tabID)
 	return InboxReceiptView{ItemID: receipt.ItemID, Paused: receipt.Paused}, nil

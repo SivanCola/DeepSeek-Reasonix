@@ -59,6 +59,41 @@ func TestAttachmentTargetKeepsSourceAcrossFocusSwitch(t *testing.T) {
 	}
 }
 
+func TestAttachmentTargetMapsMissingDraftContentToStableBridgeError(t *testing.T) {
+	root := t.TempDir()
+	c := control.New(control.Options{WorkspaceRoot: root})
+	t.Cleanup(c.Close)
+	tab := &WorkspaceTab{ID: "a", Scope: "project", WorkspaceRoot: root, Ctrl: c, SessionGeneration: 1}
+	a := &App{tabs: map[string]*WorkspaceTab{"a": tab}, activeTabID: "a"}
+	target, err := a.CaptureAttachmentTarget(ComposerTarget{Kind: "session", TabID: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { a.ReleaseAttachmentTarget(target.Token) })
+	draft, err := a.StageImageForTarget(target.Token, "paste", "shot.png", "image/png", "data:image/png;base64,"+desktopTinyPNG)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential, _, err := c.ReadDraftImage(t.Context(), draft.DraftID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := credential.Ref.Content.Digest
+	object := filepath.Join(root, ".reasonix", "content-v1", "objects", digest[:2], digest[2:4], digest)
+	if err := os.Remove(object); err != nil {
+		t.Fatal(err)
+	}
+	_, err = a.StartTurnForAttachmentTarget(target.Token, "missing-image", control.SubmissionRequest{
+		Input: "inspect", Attachments: []control.SubmissionAttachment{{ClientAttachmentID: "image", DraftID: draft.DraftID}},
+	})
+	if err == nil || err.Error() != "reasonix_error:image_attachment_unreadable" {
+		t.Fatalf("error = %v, want stable image failure", err)
+	}
+	if c.Running() {
+		t.Fatal("missing draft content started a turn")
+	}
+}
+
 func TestAttachmentDraftSurvivesSameSessionRuntimeReplacement(t *testing.T) {
 	root := t.TempDir()
 	opts := control.Options{WorkspaceRoot: root, SessionPath: filepath.Join(root, "session.jsonl")}

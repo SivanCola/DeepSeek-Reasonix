@@ -25,6 +25,7 @@ const dataURL = `data:image/png;base64,${png}`;
 const digest = createHash("sha256").update(Buffer.from(png, "base64")).digest("hex");
 const requests = [];
 const checks = [];
+const diagnostics = {};
 const held = new Map();
 let app, page, compatibilityRef;
 const provider = createServer(async (req, res) => {
@@ -181,6 +182,7 @@ try {
   // RPC navigation above deliberately bypasses the renderer navigation owner.
   // Reload to hydrate that owner before exercising the real Composer UI.
   await page.reload();
+  await waitForSmokeCondition(async () => (await active())?.id === other.id);
   await page.locator("textarea").first().waitFor({ state: "visible" });
   await waitForSmokeCondition(async () => !(await page.locator("textarea").first().isDisabled()));
   const textarea = page.locator("textarea").first();
@@ -192,6 +194,7 @@ try {
     node.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: data }));
   }, png);
   await page.locator(".composer-context__item").first().waitFor();
+  await waitForSmokeCondition(async () => !(await page.locator(".composer__btn--send").isDisabled()));
   const objects = globSync(`**/.content-v1/objects/**/${digest}`, { cwd: home });
   const workspaceSources = globSync("**/.reasonix/attachments/*", { cwd: home }).filter(path => {
     const bytes = readFileSync(join(home, path));
@@ -201,6 +204,8 @@ try {
   assert.ok(admittedFiles.length > 0);
   for (const path of admittedFiles) unlinkSync(join(home, path));
   const before = requests.length;
+  diagnostics.failedDraftBeforeSend = { active: await active(), expectedTabId: other.id, requests: before, objects: [...objects] };
+  assert.equal(diagnostics.failedDraftBeforeSend.active?.id, other.id);
   await page.locator(".composer__btn--send").click();
   await page.waitForFunction(() => /图片读取失败|could not be read/i.test(document.body.textContent || ""));
   await waitForSmokeCondition(async () => !(await page.locator(".composer__btn--send").isDisabled()));
@@ -237,13 +242,16 @@ try {
     assert.equal(requests.length, beforeRequests);
     record("previous installed binary rejects revision 3 and preserves manifest/event bytes");
   }
-  writeFileSync(join(evidence, "result.json"), JSON.stringify({ manifest, home, checks, imageDigest: digest, providerRequests: requests.length }, null, 2));
+  writeFileSync(join(evidence, "result.json"), JSON.stringify({ manifest, home, checks, diagnostics, imageDigest: digest, providerRequests: requests.length }, null, 2));
 } catch (error) {
   if (page && !page.isClosed()) {
     await page.screenshot({ path: join(evidence, "failure.png") });
     writeFileSync(join(evidence, "failure-dom.txt"), await page.locator("body").innerText());
   }
-  writeFileSync(join(evidence, "failure.json"), JSON.stringify({ home, checks, error: String(error), stack: error.stack }, null, 2));
+  diagnostics.failure = page && !page.isClosed() ? { active: await active().catch(() => null), requests: requests.length,
+    textarea: await page.locator("textarea").first().inputValue().catch(() => null),
+    attachments: await page.locator(".composer-context__item").count().catch(() => -1) } : null;
+  writeFileSync(join(evidence, "failure.json"), JSON.stringify({ home, checks, diagnostics, error: String(error), stack: error.stack }, null, 2));
   throw error;
 } finally {
   if (app) await app.close();

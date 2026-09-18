@@ -527,6 +527,12 @@ func (c *Controller) emitTurnDoneEvent(err error, cancelRequested bool, completi
 	if errors.As(err, &readErr) {
 		done.ReadPause = readErr.Pause
 	}
+	if imageErr := provider.AsImageRequestError(err); imageErr != nil {
+		if recovery := provider.ImageRecoveryForError(imageErr); recovery != nil {
+			c.setPendingImageRecovery(recovery, imageErr.Scope)
+			done.ImageRecovery = recovery
+		}
+	}
 	done.Diagnostic = provider.DiagnoseFailure(err)
 	done.Detail = provider.FailureDiagnosticDetail(done.Diagnostic)
 	if !cancelRequested {

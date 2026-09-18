@@ -654,6 +654,41 @@ func (s *Session) FlushThrough(ctx context.Context, through uint64) (DurableRece
 	return s.binding.FlushThrough(ctx, through)
 }
 
+// EnsureStorageRevision atomically publishes an opt-in storage boundary before
+// a required event unknown to revision-3 readers can be accepted.
+func (s *Session) EnsureStorageRevision(ctx context.Context, revision int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s == nil {
+		return ErrReadOnly
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.readOnly || s.binding == nil {
+		return ErrReadOnly
+	}
+	if s.sealed {
+		if s.sealedError != nil {
+			return s.sealedError
+		}
+		return osClosedError()
+	}
+	if s.manifest.StorageRevision >= revision {
+		return nil
+	}
+	store, ok := s.binding.handle.(*Store)
+	if !ok || store == nil {
+		return errors.New("session: writable store unavailable")
+	}
+	manifest, err := store.ensureStorageRevision(revision)
+	if err != nil {
+		return err
+	}
+	s.manifest = manifest
+	return nil
+}
+
 // Read exposes the durable prefix through a paged read. Events accepted but not
 // yet checkpointed are visible through AcceptedPage instead.
 func (s *Session) Read(ctx context.Context, offset uint64, limit int) (EventPage, error) {

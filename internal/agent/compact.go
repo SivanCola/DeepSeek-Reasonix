@@ -398,8 +398,9 @@ func (a *Agent) summaryRequest(region []provider.Message, instructions string) p
 			prefix = append([]provider.Message{visible[0]}, prefix...)
 		}
 	}
-	messages := a.normalizeModelRequestMessages(prefix)
+	messages := append([]provider.Message(nil), prefix...)
 	messages = append(messages, HostGeneratedUserMessage(compactionInstructionWithFocus(instructions)))
+	messages = provider.ImagePreflightMessages(messages)
 	var schemas []provider.ToolSchema
 	if a.svc.tools != nil {
 		schemas = a.providerToolSchemas()
@@ -428,6 +429,11 @@ func (a *Agent) runSummaryRequest(ctx context.Context, req provider.Request) (su
 	if err != nil {
 		return "", nil, err
 	}
+	req.Messages, err = a.preflightRequestImages(ctx, req.Messages)
+	if err != nil {
+		return "", nil, err
+	}
+	req.Messages = a.normalizeModelRequestMessages(req.Messages)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	ctx = provider.WithRequestAttemptCounter(ctx)

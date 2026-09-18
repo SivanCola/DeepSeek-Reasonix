@@ -1,17 +1,18 @@
 package attachment
 
 const (
-	MaxSourceBytes     = 64 << 20
-	MaxSourcePixels    = 50_000_000
-	DefaultMaxCount    = 20
-	DefaultBatchBytes  = 200 << 20
-	ViewImageMaxBytes  = 3 << 20
-	ViewImageMaxPixels = 40_000_000
-	VariantMaxDim      = 1568
-	VariantJPEGQuality = 85
-	VariantPolicyV1    = 1
-	DefaultCacheBytes  = 512 << 20
-	DefaultTransforms  = 2
+	MaxSourceBytes        = 64 << 20
+	MaxSourcePixels       = 50_000_000
+	DefaultMaxCount       = 20
+	DefaultBatchBytes     = 200 << 20
+	ViewImageMaxBytes     = 3 << 20
+	ViewImageMaxPixels    = 40_000_000
+	VariantMaxDim         = 1568
+	VariantInlineMaxBytes = 32 << 20
+	VariantJPEGQuality    = 85
+	VariantPolicyV1       = 1
+	DefaultCacheBytes     = 512 << 20
+	DefaultTransforms     = 2
 )
 
 // Policy is the shared budget object. Host is the final enforcer.

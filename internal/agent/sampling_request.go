@@ -147,6 +147,10 @@ func (a *Agent) buildSamplingRequest(ctx context.Context, trigger string) (sampl
 	if err != nil {
 		return samplingRequest{}, err
 	}
+	requestMessages, err = a.preflightRequestImages(ctx, requestMessages)
+	if err != nil {
+		return samplingRequest{}, err
+	}
 	requestMessages = a.normalizeModelRequestMessages(requestMessages)
 	// context.prepare: extensions may rewrite the message copy feeding THIS
 	// request. The session log is never touched — the replacement is

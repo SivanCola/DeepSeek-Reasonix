@@ -5,8 +5,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"image/png"
@@ -233,6 +235,52 @@ func TestPrepareVariantCacheHitProbesAndReplacementRevalidatesOriginal(t *testin
 	if _, err = svc.PrepareVariant(t.Context(), ref, VariantPolicyV1); err != nil {
 		t.Fatalf("restored original did not rebuild the variant: %v", err)
 	}
+}
+
+func TestPrepareInlineVariantReencodesOversizedUnscaledPNG(t *testing.T) {
+	raw := pngWithAncillaryChunk(t, opaquePNG(t, 8, 8), VariantInlineMaxBytes+1)
+	if len(raw) <= VariantInlineMaxBytes {
+		t.Fatalf("fixture bytes=%d", len(raw))
+	}
+	first, err := PrepareInlineVariant(t.Context(), raw, "image/png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := PrepareInlineVariant(t.Context(), raw, "image/png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Bytes) == 0 || len(first.Bytes) > VariantInlineMaxBytes {
+		t.Fatalf("variant bytes=%d", len(first.Bytes))
+	}
+	if first.Width != 8 || first.Height != 8 || first.SourceWidth != 8 || first.SourceHeight != 8 {
+		t.Fatalf("variant dimensions=%+v", first)
+	}
+	if !bytes.Equal(first.Bytes, second.Bytes) || first.Digest != second.Digest {
+		t.Fatal("oversized inline variant was not deterministic")
+	}
+}
+
+func pngWithAncillaryChunk(t *testing.T, raw []byte, payloadBytes int) []byte {
+	t.Helper()
+	if len(raw) < 12 || !bytes.Equal(raw[len(raw)-12:len(raw)-8], []byte{0, 0, 0, 0}) || string(raw[len(raw)-8:len(raw)-4]) != "IEND" {
+		t.Fatal("fixture is not a canonical PNG")
+	}
+	payload := make([]byte, payloadBytes)
+	chunkType := []byte("ruSt")
+	chunk := make([]byte, 12+len(payload))
+	binary.BigEndian.PutUint32(chunk[:4], uint32(len(payload)))
+	copy(chunk[4:8], chunkType)
+	copy(chunk[8:], payload)
+	checksum := crc32.NewIEEE()
+	_, _ = checksum.Write(chunkType)
+	_, _ = checksum.Write(payload)
+	binary.BigEndian.PutUint32(chunk[len(chunk)-4:], checksum.Sum32())
+	out := make([]byte, 0, len(raw)+len(chunk))
+	out = append(out, raw[:len(raw)-12]...)
+	out = append(out, chunk...)
+	out = append(out, raw[len(raw)-12:]...)
+	return out
 }
 
 func TestVariantCancelIsolatesWaiters(t *testing.T) {

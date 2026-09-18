@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 10;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:210b4903013fe94e0a8506371eebab2f81233f58f29f2168f2595c5845ceeccd";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:ab0edda56f4bbd3bf52e1f6f6704cabd916fc7a2390b6a1a01944c924816703a";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -461,6 +461,8 @@ export const DESKTOP_COMMANDS = [
   "ResetThemePack",
   "ResizeTerminalForTab",
   "ResolveChatFileReferencesForTab",
+  "ResolveImageRecovery",
+  "ResolveImageRecoveryForTab",
   "ResolveMarkdownImageForTab",
   "ResolvePlanDecision",
   "ResolvePlanDecisionTab",
@@ -1413,6 +1415,7 @@ export interface Event {
   outcome?: string;
   readiness?: eventwire_FinalReadiness | null;
   protocolRecovery?: ProtocolRecoveryAction | null;
+  imageRecovery?: ImageRecoveryAction | null;
   diagnostic?: FailureDiagnostic | null;
   receipt?: CompletionReceipt | null;
   checkpointTurn?: number | null;
@@ -4827,6 +4830,23 @@ export interface FailureDiagnostic {
   requestPath?: string;
 }
 
+export interface ImageIdentity {
+  messageId: string;
+  imageOrdinal: number;
+  contentDigest: string;
+}
+
+export interface ImageRecoveryAction {
+  id: string;
+  reason: string;
+  candidates: ImageRecoveryCandidate[];
+}
+
+export interface ImageRecoveryCandidate {
+  identity: ImageIdentity;
+  label: string;
+}
+
 export interface MCPAppPresentation {
   server: string;
   tool: string;
@@ -5958,6 +5978,8 @@ export interface GeneratedDesktopCommands {
   ResetThemePack(): Promise<void>;
   ResizeTerminalForTab(arg0: string, arg1: string, arg2: number, arg3: number): Promise<void>;
   ResolveChatFileReferencesForTab(arg0: string, arg1: string, arg2: ChatFileReferenceRequest[]): Promise<ChatFileReferenceResult>;
+  ResolveImageRecovery(arg0: string, arg1: ImageIdentity[]): Promise<void>;
+  ResolveImageRecoveryForTab(arg0: string, arg1: string, arg2: ImageIdentity[]): Promise<void>;
   ResolveMarkdownImageForTab(arg0: string, arg1: string): Promise<MarkdownImageView>;
   ResolvePlanDecision(arg0: string, arg1: string): Promise<void>;
   ResolvePlanDecisionTab(arg0: string, arg1: string, arg2: string): Promise<void>;

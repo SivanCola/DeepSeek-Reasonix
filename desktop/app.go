@@ -18,7 +18,6 @@ import (
 	"path/filepath"
 	"reasonix/desktop/internal/browserops"
 	"reasonix/desktop/internal/instanceidentity"
-	"reasonix/desktop/internal/workspacestate"
 	"reasonix/internal/agent"
 	"reasonix/internal/billing"
 	"reasonix/internal/boot"
@@ -248,6 +247,10 @@ type App struct {
 	// deletion; keep that snapshot outside a.mu, but do not let DeleteSession or
 	// topic/workspace removal trash the same files while it is in flight.
 	sessionRemovalMu sync.Mutex
+	// workspaceRemovalFlights deduplicates concurrent removals of the same
+	// normalized workspace for this App lifecycle.
+	workspaceRemovalMu      sync.Mutex
+	workspaceRemovalFlights map[string]*workspaceRemovalFlight
 
 	// runtimeRebuildMu serializes controller rebuilds (build + swap), teardown,
 	// and MCP lifecycle mutations. Two concurrent rebuilds of the same tab both
@@ -472,6 +475,7 @@ func NewApp() *App {
 		desktopPersistenceState: newDesktopPersistenceState(),
 		catalogReconcileJobs:    map[string]*desktopCatalogReconcileJob{},
 		detachedSessions:        map[string]*WorkspaceTab{},
+		workspaceRemovalFlights: map[string]*workspaceRemovalFlight{},
 		mediaTokens:             newMediaTokenStore(),
 		presentPreview:          newWorkspacePreviewOrigin(),
 		botInstalls:             map[string]*botInstallSession{},
@@ -4773,158 +4777,6 @@ func (a *App) ListWorkspaces() []WorkspaceMeta {
 		})
 	}
 	return out
-}
-
-func (a *App) RemoveWorkspace(dir string) error {
-	if dir == "" {
-		return fmt.Errorf("workspace path is required")
-	}
-	dir = normalizeProjectRoot(dir)
-
-	var fallback *WorkspaceTab
-	// sessionRemovalMu covers every step that can still touch this workspace's
-	// session files: snapshotting, unlinking the tab/runtime bindings, and
-	// closing the unlinked runtimes (quiescing autosave). Once a runtime is
-	// unlinked from a.tabs/detachedSessions it is invisible to
-	// DeleteSession/TrashTopic/RestoreSession, so it must stop writing before
-	// the lock is released. Project bookkeeping, the fallback controller build,
-	// and notifications run after release.
-	if err := func() error {
-		defer a.lockRuntimeMutation("remove-workspace")()
-		a.sessionRemovalMu.Lock()
-		defer a.sessionRemovalMu.Unlock()
-
-		type workspaceTabCandidate struct {
-			id  string
-			tab *WorkspaceTab
-		}
-
-		var closeTabs []*WorkspaceTab
-		var closeDetached []*WorkspaceTab
-		a.mu.Lock()
-		for _, tab := range a.tabs {
-			if tabInWorkspace(tab, dir) && tab.hasActiveRuntimeWork() {
-				a.mu.Unlock()
-				return fmt.Errorf("workspace has running sessions; stop them before removing")
-			}
-		}
-		for _, tab := range a.detachedSessions {
-			if tabInWorkspace(tab, dir) && tab.hasActiveRuntimeWork() {
-				a.mu.Unlock()
-				return fmt.Errorf("workspace has running sessions; stop them before removing")
-			}
-		}
-		candidates := make([]workspaceTabCandidate, 0)
-		for id, tab := range a.tabs {
-			if !tabInWorkspace(tab, dir) {
-				continue
-			}
-			candidates = append(candidates, workspaceTabCandidate{id: id, tab: tab})
-		}
-		a.mu.Unlock()
-
-		snapshotted := make(map[string]*WorkspaceTab, len(candidates))
-		for _, candidate := range candidates {
-			id, tab := candidate.id, candidate.tab
-			snapshotted[id] = tab
-			if err := a.snapshotTab(tab); err != nil {
-				slog.Warn("desktop: snapshot before removing workspace failed", "tab", id, "workspace", dir, "err", err)
-				return fmt.Errorf("save current session before removing workspace: %w", err)
-			}
-		}
-		if err := a.workspaceRegistry().SetWorkspaceVisible(a.bootContext(), desktopWorkspaceID("project", dir), false); err != nil && !errors.Is(err, workspacestate.ErrWorkspaceNotFound) {
-			return err
-		}
-
-		a.mu.Lock()
-		for _, tab := range a.tabs {
-			if tabInWorkspace(tab, dir) && tab.hasActiveRuntimeWork() {
-				a.mu.Unlock()
-				return fmt.Errorf("workspace has running sessions; stop them before removing")
-			}
-		}
-		for _, tab := range a.detachedSessions {
-			if tabInWorkspace(tab, dir) && tab.hasActiveRuntimeWork() {
-				a.mu.Unlock()
-				return fmt.Errorf("workspace has running sessions; stop them before removing")
-			}
-		}
-		for id, tab := range a.tabs {
-			if tabInWorkspace(tab, dir) && snapshotted[id] != tab {
-				a.mu.Unlock()
-				return fmt.Errorf("workspace tabs changed while removing; retry")
-			}
-		}
-		for _, candidate := range candidates {
-			id, tab := candidate.id, candidate.tab
-			if tab == nil || a.tabs[id] != tab || !tabInWorkspace(tab, dir) {
-				continue
-			}
-			a.markTabRemovedLocked(tab)
-			closeTabs = append(closeTabs, tab)
-			delete(a.tabs, id)
-			a.removeTabOrderLocked(id)
-			if a.activeTabID == id {
-				a.activeTabID = ""
-			}
-		}
-		for key, tab := range a.detachedSessions {
-			if !tabInWorkspace(tab, dir) {
-				continue
-			}
-			closeDetached = append(closeDetached, tab)
-			delete(a.detachedSessions, key)
-		}
-		if len(a.tabs) == 0 {
-			fallback = a.createTabEntry("global", globalTabWorkspaceRoot(), "")
-			fallback.TopicTitle = "Global"
-			fallback.sink = &tabEventSink{tabID: fallback.ID, app: a, ctx: a.ctx}
-			a.tabs[fallback.ID] = fallback
-			a.tabOrder = append(a.tabOrder, fallback.ID)
-			a.activeTabID = fallback.ID
-		} else if a.activeTabID == "" {
-			if ordered := a.orderedTabIDsLocked(); len(ordered) > 0 {
-				a.activeTabID = ordered[0]
-			}
-		}
-		a.saveTabsLocked()
-		a.mu.Unlock()
-
-		for _, tab := range closeTabs {
-			a.closeTabRuntimeAdmissionHeld(tab)
-		}
-		for _, tab := range closeDetached {
-			a.closeTabRuntimeAdmissionHeld(tab)
-		}
-		return nil
-	}(); err != nil {
-		return err
-	}
-
-	// The fallback tab is already linked into a.tabs; its controller build is
-	// asynchronous and does not touch removed session files, so it does not
-	// need the removal lock.
-	if fallback != nil {
-		a.startTabControllerBuild(fallback)
-	}
-
-	forgetWorkspace(dir)
-	if err := removeProject(dir); err != nil {
-		return err
-	}
-	// If the removed workspace was the active one, clear the pointer
-	// so we don't leave a stale reference to a deleted project.
-	if loadWorkspace() == dir {
-		if remaining := loadProjectsFile(); len(remaining.Projects) > 0 {
-			// Fall back to the first remaining project
-			saveWorkspace(remaining.Projects[0].Root)
-		} else {
-			// No projects left; clear the active pointer entirely
-			clearWorkspace()
-		}
-	}
-	a.emitProjectTreeMetadataChanged()
-	return nil
 }
 
 func migrateLegacyWorkspacesIntoProjects() {

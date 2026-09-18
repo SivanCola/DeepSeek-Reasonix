@@ -221,6 +221,7 @@ type Controller struct {
 	permissionMu       sync.Mutex
 	permissionStateMu  sync.RWMutex
 	permissionRevision atomic.Uint64
+	imageRecovery      imageRecoveryState
 	runtimeOwner       *extension.RuntimeOwner
 	lastResumeDecision extension.ResumeDecision
 	// extensions is the frozen extension dispatcher for this controller

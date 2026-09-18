@@ -1,7 +1,12 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
+	"image"
+	"image/color"
+	"image/png"
 	"testing"
 
 	"reasonix/internal/attachment"
@@ -56,5 +61,38 @@ func TestTaskToolPropagatesSubagentImageInputsWithoutCombiningImages(t *testing.
 	}
 	if len(got.ImageInputs) != 0 {
 		t.Fatalf("request ImageInputs = %+v, want resolved away", got.ImageInputs)
+	}
+}
+
+func validTaskPNGDataURL(t *testing.T) string {
+	t.Helper()
+	var buf bytes.Buffer
+	img := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+	img.SetNRGBA(0, 0, color.NRGBA{R: 1, G: 2, B: 3, A: 255})
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
+}
+
+func TestTaskToolPropagatesSubagentImageCandidates(t *testing.T) {
+	sub := &mockProvider{name: "sub", chunks: []provider.Chunk{
+		{Type: provider.ChunkText, Text: "image received"},
+		{Type: provider.ChunkDone},
+	}}
+	task := newTestTaskTool(t, sub, tool.NewRegistry(), "sys", "", "", nil)
+	imageURL := validTaskPNGDataURL(t)
+	ctx := WithSubagentImageCandidates(testTaskContext(), []string{imageURL})
+	if _, err := task.Execute(ctx, []byte(`{"prompt":"inspect the attached image"}`)); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	var images []string
+	for _, msg := range sub.lastReq.Messages {
+		if msg.Role == provider.RoleUser {
+			images = msg.Images
+		}
+	}
+	if len(images) != 1 || images[0] != imageURL {
+		t.Fatalf("sub-agent images = %v, want the parent candidate", images)
 	}
 }

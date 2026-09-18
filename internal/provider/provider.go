@@ -62,10 +62,10 @@ type Message struct {
 	// builds. Loaders migrate it into Content/RawContent before normal use.
 	ProviderContent string   `json:"provider_content,omitempty"`
 	Images          []string `json:"images,omitempty"` // vision refs: data URLs, http(s) image URLs, or Files API file-api- ids; embedded only for vision-capable models
-	// ImageInputs is the durable ordered image payload for new messages.
-	// Images remains the old-data read path. A message must not carry both.
-	ImageInputs      []attachment.ImageInput `json:"image_inputs,omitempty"`
-	ReasoningContent string                  `json:"reasoning_content,omitempty"` // assistant: thinking-mode chain-of-thought, round-tripped on multi-turn
+	// ImageInputs is durable; Images remains the old-data path, and a message must not carry both.
+	ImageInputs      []attachment.ImageInput  `json:"image_inputs,omitempty"`
+	ImageIsolations  []ImageIsolationDecision `json:"image_isolations,omitempty"`  // Host-only projection metadata; adapters never serialize it.
+	ReasoningContent string                   `json:"reasoning_content,omitempty"` // assistant: thinking-mode chain-of-thought, round-tripped on multi-turn
 	// ReasoningID is the provider-issued reasoning-item id (OpenAI Responses:
 	// Reasoning.id is required on input items),
 	// capturedfromthestreamedoutputitemandround-trippedbackintolaterinputs.

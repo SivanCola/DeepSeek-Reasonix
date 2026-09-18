@@ -6093,10 +6093,10 @@
     }
   },
   "RemoveWorkspace": {
-    "domain": "desktop/app.go",
+    "domain": "desktop/workspace_removal.go",
     "owner": "App.RemoveWorkspace",
     "sources": [
-      "desktop/app.go"
+      "desktop/workspace_removal.go"
     ],
     "scope": {
       "kind": "owner-inputs",
@@ -6518,6 +6518,37 @@
         "tabID",
         "turnKey",
         "candidates"
+      ]
+    }
+  },
+  "ResolveImageRecovery": {
+    "domain": "desktop/image_recovery.go",
+    "owner": "App.ResolveImageRecovery",
+    "sources": [
+      "desktop/image_recovery.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.ResolveImageRecovery",
+      "inputs": [
+        "id",
+        "selected"
+      ]
+    }
+  },
+  "ResolveImageRecoveryForTab": {
+    "domain": "desktop/image_recovery.go",
+    "owner": "App.ResolveImageRecoveryForTab",
+    "sources": [
+      "desktop/image_recovery.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.ResolveImageRecoveryForTab",
+      "inputs": [
+        "tabID",
+        "id",
+        "selected"
       ]
     }
   },

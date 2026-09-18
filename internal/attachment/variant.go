@@ -67,6 +67,21 @@ func NewVariantCache(maxBytes int64, transforms int) *VariantCache {
 	}
 }
 
+// PrepareInlineVariant validates an existing data-URL payload and produces the
+// same deterministic request encoding used by persisted attachments.
+func PrepareInlineVariant(ctx context.Context, raw []byte, mime string) (Variant, error) {
+	detected, width, height, err := ValidateImage(raw, mime, DefaultPolicy())
+	if err != nil {
+		return Variant{}, err
+	}
+	sum := sha256.Sum256(raw)
+	ref := AttachmentRef{
+		Version: RefVersion, Width: width, Height: height,
+		Content: sessioncontent.Ref{Digest: hex.EncodeToString(sum[:]), Bytes: int64(len(raw)), MediaType: detected},
+	}
+	return encodeVariant(ctx, ref, raw, VariantPolicyV1)
+}
+
 func (s *Service) PrepareVariant(ctx context.Context, ref AttachmentRef, policyVersion int) (Variant, error) {
 	if s == nil || s.cache == nil {
 		return Variant{}, Error{Code: CodeUnreadable, Message: "attachment variant cache unavailable"}
@@ -158,7 +173,7 @@ func variantCacheKey(ref AttachmentRef, raw []byte, policyVersion int) (variantK
 	}
 	w, h := scaledDims(cfg.Width, cfg.Height, VariantMaxDim)
 	format, quality := "original", 0
-	if w != cfg.Width || h != cfg.Height {
+	if w != cfg.Width || h != cfg.Height || len(raw) > VariantInlineMaxBytes {
 		if ref.MIME() == "image/jpeg" {
 			format, quality = "jpeg", VariantJPEGQuality
 		} else {
@@ -177,7 +192,7 @@ func encodeVariant(ctx context.Context, ref AttachmentRef, raw []byte, policyVer
 		return Variant{}, Error{Code: CodeCorrupt, Name: ref.DisplayName, Message: defaultDetail(CodeCorrupt), Cause: err}
 	}
 	w, h := scaledDims(cfg.Width, cfg.Height, VariantMaxDim)
-	if w == cfg.Width && h == cfg.Height {
+	if w == cfg.Width && h == cfg.Height && len(raw) <= VariantInlineMaxBytes {
 		return variantFromOriginal(ref, raw, cfg.Width, cfg.Height, policyVersion), nil
 	}
 	if err := ctx.Err(); err != nil {
