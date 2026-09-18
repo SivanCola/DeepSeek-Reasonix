@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -12,7 +13,8 @@ import (
 
 func draftAdmissionError(err error) error {
 	stable := inboxBridgeError(err)
-	if _, ok := stable.(*inboxCodedError); ok {
+	var coded *inboxCodedError
+	if errors.As(stable, &coded) {
 		return stable
 	}
 	return fmt.Errorf("draft submission not admitted: %w", err)

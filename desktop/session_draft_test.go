@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,20 @@ import (
 	"reasonix/internal/config"
 	"reasonix/internal/control"
 )
+
+func TestDraftAdmissionErrorPreservesWrappedCodedError(t *testing.T) {
+	coded := &inboxCodedError{code: "image_attachment_unreadable", cause: errors.New("missing image")}
+	wrapped := fmt.Errorf("validate draft: %w", coded)
+
+	got := draftAdmissionError(wrapped)
+	var found *inboxCodedError
+	if !errors.As(got, &found) || found != coded {
+		t.Fatalf("draftAdmissionError() = %v, want wrapped coded error", got)
+	}
+	if strings.Contains(got.Error(), "draft submission not admitted") {
+		t.Fatalf("draftAdmissionError() added generic prefix: %v", got)
+	}
+}
 
 func beginDraftTestOperation(t *testing.T, a *App, phase string) (draftstate.Draft, draftstate.Operation) {
 	t.Helper()
