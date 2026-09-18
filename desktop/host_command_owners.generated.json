@@ -637,6 +637,21 @@
       ]
     }
   },
+  "AttachDroppedForTarget": {
+    "domain": "desktop/session_draft.go",
+    "owner": "App.AttachDroppedForTarget",
+    "sources": [
+      "desktop/session_draft.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.AttachDroppedForTarget",
+      "inputs": [
+        "target",
+        "path"
+      ]
+    }
+  },
   "AttachmentDataURL": {
     "domain": "desktop/app.go",
     "owner": "App.AttachmentDataURL",
@@ -648,6 +663,21 @@
       "resolver": "App.AttachmentDataURL",
       "inputs": [
         "path"
+      ]
+    }
+  },
+  "AttachmentDataURLForTarget": {
+    "domain": "desktop/session_draft.go",
+    "owner": "App.AttachmentDataURLForTarget",
+    "sources": [
+      "desktop/session_draft.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.AttachmentDataURLForTarget",
+      "inputs": [
+        "target",
+        "rel"
       ]
     }
   },
@@ -729,6 +759,20 @@
       ]
     }
   },
+  "BeginDraftSubmission": {
+    "domain": "desktop/session_draft.go",
+    "owner": "App.BeginDraftSubmission",
+    "sources": [
+      "desktop/session_draft.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.BeginDraftSubmission",
+      "inputs": [
+        "request"
+      ]
+    }
+  },
   "BeginSessionExportForTarget": {
     "domain": "desktop/session_export.go",
     "owner": "App.BeginSessionExportForTarget",
@@ -769,6 +813,20 @@
       "kind": "owner-state",
       "resolver": "App.Cancel",
       "inputs": []
+    }
+  },
+  "CancelDraftSubmission": {
+    "domain": "desktop/session_draft.go",
+    "owner": "App.CancelDraftSubmission",
+    "sources": [
+      "desktop/session_draft.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.CancelDraftSubmission",
+      "inputs": [
+        "operationID"
+      ]
     }
   },
   "CancelJob": {
@@ -1848,10 +1906,10 @@
     }
   },
   "DeleteTopic": {
-    "domain": "desktop/tabs.go",
+    "domain": "desktop/topic_delete.go",
     "owner": "App.DeleteTopic",
     "sources": [
-      "desktop/tabs.go"
+      "desktop/topic_delete.go"
     ],
     "scope": {
       "kind": "owner-inputs",
@@ -1913,6 +1971,21 @@
       "inputs": []
     }
   },
+  "DiscardSessionDraft": {
+    "domain": "desktop/session_draft.go",
+    "owner": "App.DiscardSessionDraft",
+    "sources": [
+      "desktop/session_draft.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.DiscardSessionDraft",
+      "inputs": [
+        "draftID",
+        "revision"
+      ]
+    }
+  },
   "DisconnectRemoteHost": {
     "domain": "desktop/remote_app.go",
     "owner": "App.DisconnectRemoteHost",
@@ -1924,6 +1997,20 @@
       "resolver": "App.DisconnectRemoteHost",
       "inputs": [
         "id"
+      ]
+    }
+  },
+  "DismissSessionDraft": {
+    "domain": "desktop/session_draft.go",
+    "owner": "App.DismissSessionDraft",
+    "sources": [
+      "desktop/session_draft.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.DismissSessionDraft",
+      "inputs": [
+        "draftID"
       ]
     }
   },
@@ -2496,6 +2583,34 @@
       "inputs": []
     }
   },
+  "GetDraftContext": {
+    "domain": "desktop/session_draft.go",
+    "owner": "App.GetDraftContext",
+    "sources": [
+      "desktop/session_draft.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.GetDraftContext",
+      "inputs": [
+        "draftID"
+      ]
+    }
+  },
+  "GetDraftSubmission": {
+    "domain": "desktop/session_draft.go",
+    "owner": "App.GetDraftSubmission",
+    "sources": [
+      "desktop/session_draft.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.GetDraftSubmission",
+      "inputs": [
+        "operationID"
+      ]
+    }
+  },
   "GetHistoryIndexStatus": {
     "domain": "desktop/history_catalog.go",
     "owner": "App.GetHistoryIndexStatus",
@@ -2520,6 +2635,18 @@
       "inputs": [
         "req"
       ]
+    }
+  },
+  "GetLegacyEmptySessionCleanupStatus": {
+    "domain": "desktop/legacy_empty_session_cleanup.go",
+    "owner": "App.GetLegacyEmptySessionCleanupStatus",
+    "sources": [
+      "desktop/legacy_empty_session_cleanup.go"
+    ],
+    "scope": {
+      "kind": "owner-state",
+      "resolver": "App.GetLegacyEmptySessionCleanupStatus",
+      "inputs": []
     }
   },
   "GetModelSettingsApplication": {
@@ -2663,6 +2790,34 @@
       "kind": "owner-state",
       "resolver": "App.GetSessionCatalogStatus",
       "inputs": []
+    }
+  },
+  "GetSessionDraft": {
+    "domain": "desktop/session_draft.go",
+    "owner": "App.GetSessionDraft",
+    "sources": [
+      "desktop/session_draft.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.GetSessionDraft",
+      "inputs": [
+        "draftID"
+      ]
+    }
+  },
+  "GetSessionDraftState": {
+    "domain": "desktop/session_draft.go",
+    "owner": "App.GetSessionDraftState",
+    "sources": [
+      "desktop/session_draft.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.GetSessionDraftState",
+      "inputs": [
+        "draftID"
+      ]
     }
   },
   "GetSessionOrganization": {
@@ -3349,6 +3504,21 @@
       ]
     }
   },
+  "ListDirForTarget": {
+    "domain": "desktop/session_draft.go",
+    "owner": "App.ListDirForTarget",
+    "sources": [
+      "desktop/session_draft.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.ListDirForTarget",
+      "inputs": [
+        "target",
+        "rel"
+      ]
+    }
+  },
   "ListHistorySessions": {
     "domain": "desktop/history_catalog.go",
     "owner": "App.ListHistorySessions",
@@ -3444,6 +3614,18 @@
     "scope": {
       "kind": "owner-state",
       "resolver": "App.ListRemoteProjects",
+      "inputs": []
+    }
+  },
+  "ListSessionDraftSummaries": {
+    "domain": "desktop/session_draft.go",
+    "owner": "App.ListSessionDraftSummaries",
+    "sources": [
+      "desktop/session_draft.go"
+    ],
+    "scope": {
+      "kind": "owner-state",
+      "resolver": "App.ListSessionDraftSummaries",
       "inputs": []
     }
   },
@@ -4010,6 +4192,20 @@
       "inputs": []
     }
   },
+  "ModelsForDraft": {
+    "domain": "desktop/model_catalog.go",
+    "owner": "App.ModelsForDraft",
+    "sources": [
+      "desktop/model_catalog.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.ModelsForDraft",
+      "inputs": [
+        "draftID"
+      ]
+    }
+  },
   "ModelsForTab": {
     "domain": "desktop/model_catalog.go",
     "owner": "App.ModelsForTab",
@@ -4314,6 +4510,35 @@
       "resolver": "App.OpenSession",
       "inputs": [
         "ref"
+      ]
+    }
+  },
+  "OpenSessionDraft": {
+    "domain": "desktop/session_draft.go",
+    "owner": "App.OpenSessionDraft",
+    "sources": [
+      "desktop/session_draft.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.OpenSessionDraft",
+      "inputs": [
+        "workspaceID"
+      ]
+    }
+  },
+  "OpenSessionDraftForTarget": {
+    "domain": "desktop/session_draft.go",
+    "owner": "App.OpenSessionDraftForTarget",
+    "sources": [
+      "desktop/session_draft.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.OpenSessionDraftForTarget",
+      "inputs": [
+        "scope",
+        "workspaceRoot"
       ]
     }
   },
@@ -6472,6 +6697,18 @@
       ]
     }
   },
+  "RestoreSessionDraft": {
+    "domain": "desktop/session_draft.go",
+    "owner": "App.RestoreSessionDraft",
+    "sources": [
+      "desktop/session_draft.go"
+    ],
+    "scope": {
+      "kind": "owner-state",
+      "resolver": "App.RestoreSessionDraft",
+      "inputs": []
+    }
+  },
   "RestoreSessionTarget": {
     "domain": "desktop/session_operations.go",
     "owner": "App.RestoreSessionTarget",
@@ -6483,6 +6720,21 @@
       "resolver": "App.RestoreSessionTarget",
       "inputs": [
         "selector"
+      ]
+    }
+  },
+  "ResumeDraftSubmission": {
+    "domain": "desktop/session_draft.go",
+    "owner": "App.ResumeDraftSubmission",
+    "sources": [
+      "desktop/session_draft.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.ResumeDraftSubmission",
+      "inputs": [
+        "operationID",
+        "expectedRevision"
       ]
     }
   },
@@ -6616,6 +6868,18 @@
         "tabID",
         "id"
       ]
+    }
+  },
+  "RetryLegacyEmptySessionCleanup": {
+    "domain": "desktop/legacy_empty_session_cleanup.go",
+    "owner": "App.RetryLegacyEmptySessionCleanup",
+    "sources": [
+      "desktop/legacy_empty_session_cleanup.go"
+    ],
+    "scope": {
+      "kind": "owner-state",
+      "resolver": "App.RetryLegacyEmptySessionCleanup",
+      "inputs": []
     }
   },
   "RetryModelSettingsApplication": {
@@ -6879,6 +7143,20 @@
       "inputs": []
     }
   },
+  "SaveClipboardImageForTarget": {
+    "domain": "desktop/session_draft.go",
+    "owner": "App.SaveClipboardImageForTarget",
+    "sources": [
+      "desktop/session_draft.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.SaveClipboardImageForTarget",
+      "inputs": [
+        "target"
+      ]
+    }
+  },
   "SaveDoc": {
     "domain": "desktop/app.go",
     "owner": "App.SaveDoc",
@@ -7001,6 +7279,22 @@
       ]
     }
   },
+  "SavePastedFileForTarget": {
+    "domain": "desktop/session_draft.go",
+    "owner": "App.SavePastedFileForTarget",
+    "sources": [
+      "desktop/session_draft.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.SavePastedFileForTarget",
+      "inputs": [
+        "target",
+        "name",
+        "dataURL"
+      ]
+    }
+  },
   "SavePastedImage": {
     "domain": "desktop/app.go",
     "owner": "App.SavePastedImage",
@@ -7011,6 +7305,21 @@
       "kind": "owner-inputs",
       "resolver": "App.SavePastedImage",
       "inputs": [
+        "dataURL"
+      ]
+    }
+  },
+  "SavePastedImageForTarget": {
+    "domain": "desktop/session_draft.go",
+    "owner": "App.SavePastedImageForTarget",
+    "sources": [
+      "desktop/session_draft.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.SavePastedImageForTarget",
+      "inputs": [
+        "target",
         "dataURL"
       ]
     }
@@ -7133,6 +7442,20 @@
         "hostID",
         "toolCallID",
         "remotePath"
+      ]
+    }
+  },
+  "SaveSessionDraft": {
+    "domain": "desktop/session_draft.go",
+    "owner": "App.SaveSessionDraft",
+    "sources": [
+      "desktop/session_draft.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.SaveSessionDraft",
+      "inputs": [
+        "request"
       ]
     }
   },
@@ -7291,6 +7614,21 @@
       "resolver": "App.SearchFileRefsForTab",
       "inputs": [
         "tabID",
+        "query"
+      ]
+    }
+  },
+  "SearchFileRefsForTarget": {
+    "domain": "desktop/session_draft.go",
+    "owner": "App.SearchFileRefsForTarget",
+    "sources": [
+      "desktop/session_draft.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.SearchFileRefsForTarget",
+      "inputs": [
+        "target",
         "query"
       ]
     }
@@ -8585,6 +8923,20 @@
         "workspaceRoot",
         "allowWrite",
         "shell"
+      ]
+    }
+  },
+  "SetSessionDraftRestoreTarget": {
+    "domain": "desktop/session_draft.go",
+    "owner": "App.SetSessionDraftRestoreTarget",
+    "sources": [
+      "desktop/session_draft.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.SetSessionDraftRestoreTarget",
+      "inputs": [
+        "draftID"
       ]
     }
   },

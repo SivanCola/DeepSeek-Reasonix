@@ -401,8 +401,8 @@ func (c *rpcClient) call(t *testing.T, method string, params any) frame {
 	select {
 	case f := <-c.callAsync(method, params):
 		return f
-	case <-time.After(2 * time.Second):
-		t.Fatalf("%s: timed out", method)
+	case <-t.Context().Done():
+		t.Fatalf("%s: %v", method, t.Context().Err())
 		return frame{}
 	}
 }

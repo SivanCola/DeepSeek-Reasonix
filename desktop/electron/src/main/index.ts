@@ -245,6 +245,8 @@ function bootstrap(dataHome: string): void {
         app.relaunch({ args, ...(execPath ? { execPath } : {}) });
       },
     },
+    flushRenderer: () => mainWindow.flushSessionDraft(),
+    resumeRenderer: () => mainWindow.resumeSessionDraftEditing(),
     // Website views go first: a WebContents closing after its window is
     // gone is the ordering that left orphaned renderers in the prototype.
     onCloseAllowed: () => mainWindow.allowClose(),

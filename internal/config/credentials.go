@@ -419,7 +419,7 @@ func CredentialStoreRevision() string {
 	if strings.TrimSpace(path) == "" {
 		return "unavailable"
 	}
-	data, err := os.ReadFile(path)
+	data, err := readCredentialFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "missing"
@@ -747,14 +747,14 @@ func removeCredentialFromFile(path, key string) error {
 }
 
 func readCredentialFileLines(path string) ([]string, error) {
-	data, err := fileencoding.ReadFileUTF8(path)
+	data, err := readCredentialFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	text := strings.TrimRight(string(data), "\n")
+	text := strings.TrimRight(string(fileencoding.DecodeToUTF8(data)), "\n")
 	if text == "" {
 		return nil, nil
 	}

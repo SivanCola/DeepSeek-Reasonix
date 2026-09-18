@@ -82,11 +82,13 @@ Provider entries store the name of the credential variable in `api_key_env`, not
 the secret value.
 
 Saved provider and bot credential variables are removed from every
-model-controlled child-process environment. The global credential `.env` is
-also hidden from Reasonix's file readers, sandboxed shell commands, and MCP
-servers; this does not change the visibility of a project's ordinary `.env`.
-On Windows, shell commands remain outside an OS sandbox as documented in the
-Guide, so approve shell access only for trusted tasks.
+model-controlled child-process environment. On macOS and Linux, the global
+credential `.env` is also hidden from Reasonix's file readers, sandboxed shell
+commands, and MCP servers; this does not change the visibility of a project's
+ordinary `.env`. Windows uses Harness-style `WRITE_RESTRICTED` tokens that
+constrain writes but not reads. Its local tools run as the same OS user and can
+deliberately read user-readable files, including the credential store, so use
+restricted permissions as a write boundary rather than a credential vault.
 
 Example:
 

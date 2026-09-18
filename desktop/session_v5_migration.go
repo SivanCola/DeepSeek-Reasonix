@@ -57,9 +57,11 @@ func (a *App) startDesktopSessionMigration(ctx context.Context) {
 	startupState, err := a.workspaceRegistry().Load(ctx)
 	if err != nil {
 		slogWarnDesktopMigration(err)
+		close(a.desktopMigrationDone)
 		return
 	}
 	go func() {
+		defer close(a.desktopMigrationDone)
 		if err := a.backupDesktopUpgradeMetadata(ctx); err != nil {
 			slogWarnDesktopMigration(err)
 			return

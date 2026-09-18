@@ -18,7 +18,7 @@ function fakeApp(sequencer: () => QuitSequencer) {
   return { app, calls };
 }
 
-function build(options: { prevent?: boolean; beforeCloseError?: Error } = {}) {
+function build(options: { prevent?: boolean; beforeCloseError?: Error; flushError?: Error } = {}) {
   const log: string[] = [];
   let sequencer!: QuitSequencer;
   const { app, calls } = fakeApp(() => sequencer);
@@ -32,7 +32,17 @@ function build(options: { prevent?: boolean; beforeCloseError?: Error } = {}) {
       log.push("shutdown");
     },
   };
-  sequencer = new QuitSequencer({ service, app, onCloseAllowed: () => log.push("closeAllowed"), log: silent });
+  sequencer = new QuitSequencer({
+    service,
+    app,
+    flushRenderer: async () => {
+      log.push("flush");
+      if (options.flushError) throw options.flushError;
+    },
+    resumeRenderer: async () => { log.push("resume"); },
+    onCloseAllowed: () => log.push("closeAllowed"),
+    log: silent,
+  });
   return { sequencer, app, calls, log };
 }
 
@@ -42,7 +52,7 @@ test("a plain quit asks Go, shuts the service down once, then exits", async () =
   assert.equal(sequencer.currentPhase, "asking");
   await tick();
   await tick();
-  assert.deepEqual(log, ["beforeClose:quit", "shutdown", "closeAllowed"]);
+  assert.deepEqual(log, ["flush", "beforeClose:quit", "flush", "shutdown", "closeAllowed"]);
   assert.deepEqual(calls, ["quit", "quit", "quit", "exit"]);
   assert.equal(sequencer.currentPhase, "done");
 });
@@ -51,12 +61,12 @@ test("Go can veto the quit; the shell stays running", async () => {
   const { sequencer, app, calls, log } = build({ prevent: true });
   app.quit();
   await tick();
-  assert.deepEqual(log, ["beforeClose:quit"]);
+  assert.deepEqual(log, ["flush", "beforeClose:quit", "resume"]);
   assert.deepEqual(calls, ["quit"]);
   assert.equal(sequencer.currentPhase, "idle");
   app.quit();
   await tick();
-  assert.deepEqual(log, ["beforeClose:quit", "beforeClose:quit"], "a later quit asks again");
+  assert.deepEqual(log, ["flush", "beforeClose:quit", "resume", "flush", "beforeClose:quit", "resume"], "a later quit asks again");
 });
 
 test("re-entrant quits while asking do not ask twice", async () => {
@@ -64,7 +74,7 @@ test("re-entrant quits while asking do not ask twice", async () => {
   app.quit();
   app.quit();
   await tick();
-  assert.deepEqual(log, ["beforeClose:quit"]);
+  assert.deepEqual(log, ["flush", "beforeClose:quit", "resume"]);
   assert.deepEqual(calls, ["quit", "quit"]);
 });
 
@@ -72,7 +82,7 @@ test("host/app.quit approval skips beforeClose and goes straight to shutdown", a
   const { sequencer, calls, log } = build({ prevent: true });
   sequencer.approve();
   await tick();
-  assert.deepEqual(log, ["shutdown", "closeAllowed"]);
+  assert.deepEqual(log, ["flush", "shutdown", "closeAllowed"]);
   assert.deepEqual(calls, ["quit", "quit", "exit"]);
 });
 
@@ -81,15 +91,35 @@ test("a failed beforeClose does not trap the user in a shell that cannot quit", 
   app.quit();
   await tick();
   await tick();
-  assert.deepEqual(log, ["beforeClose:quit", "shutdown", "closeAllowed"]);
+  assert.deepEqual(log, ["flush", "beforeClose:quit", "flush", "shutdown", "closeAllowed"]);
   assert.equal(calls[calls.length - 1], "exit");
+});
+
+test("a failed renderer flush cancels quit before Go is asked", async () => {
+  const { sequencer, app, calls, log } = build({ flushError: new Error("draft conflict") });
+  app.quit();
+  await tick();
+  assert.deepEqual(log, ["flush"]);
+  assert.deepEqual(calls, ["quit"]);
+  assert.equal(sequencer.currentPhase, "idle");
+  assert.equal(sequencer.isQuitting, false);
+});
+
+test("direct approval also withholds shutdown when renderer flush fails", async () => {
+  const { sequencer, calls, log } = build({ flushError: new Error("draft conflict") });
+  sequencer.approve();
+  await tick();
+  assert.deepEqual(log, ["flush"]);
+  assert.deepEqual(calls, ["quit"]);
+  assert.equal(sequencer.currentPhase, "idle");
+  assert.equal(sequencer.isQuitting, false);
 });
 
 test("relaunch runs the shutdown and re-spawns with the requested args", async () => {
   const { sequencer, calls, log } = build();
   sequencer.relaunch(["--after-update"]);
   await tick();
-  assert.deepEqual(log, ["shutdown", "closeAllowed"]);
+  assert.deepEqual(log, ["flush", "shutdown", "closeAllowed"]);
   assert.deepEqual(calls, ["quit", "relaunch:--after-update", "quit", "exit"]);
 });
 
@@ -98,7 +128,7 @@ test("relaunch waits for shutdown then starts the committed stable launcher", as
   sequencer.relaunch(["--after-update"], "/opt/reasonix/reasonix-launcher");
   assert.deepEqual(calls, ["quit"]);
   await tick();
-  assert.deepEqual(log, ["shutdown", "closeAllowed"]);
+  assert.deepEqual(log, ["flush", "shutdown", "closeAllowed"]);
   assert.deepEqual(calls, ["quit", "relaunch:--after-update@/opt/reasonix/reasonix-launcher", "quit", "exit"]);
 });
 
@@ -121,13 +151,15 @@ test("cleanup failure cannot skip later cleanup or the final quit deadline", asy
 test("service termination failure withholds shell exit and permits an exit retry", async () => {
   let attempts = 0;
   let exits = 0;
+  let resumes = 0;
   let q!: QuitSequencer;
   q = new QuitSequencer({
     service: { beforeClose: async () => false, shutdown: async () => { if (++attempts === 1) throw new Error("child alive"); } },
     app: { quit: () => { if (q.onBeforeQuit()) exits++; }, relaunch() {} },
+    resumeRenderer: async () => { resumes++; },
     onCloseAllowed() {}, log: silent,
   });
   q.approve(); await tick();
-  assert.equal(exits, 0); assert.equal(q.isQuitting, false);
+  assert.equal(exits, 0); assert.equal(q.isQuitting, false); assert.equal(resumes, 1);
   q.approve(); await tick(); assert.equal(exits, 1);
 });

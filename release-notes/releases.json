@@ -28,7 +28,7 @@
             "en": "Learn how sessions are owned and managed within the app.",
             "zh": "了解会话在应用中的所有权和管理方式。"
           },
-          "href": "https://github.com/esengine/DeepSeek-Reasonix/blob/9ec875a684517d8a2137fdd6a04b1132a888f550/docs/APP_SESSION_OWNERSHIP.md"
+          "href": "https://github.com/esengine/DeepSeek-Reasonix/blob/26f1984e97d8f4403317d6d00dd27c77395a7a3d/docs/APP_SESSION_OWNERSHIP.md"
         },
         {
           "title": {
@@ -39,7 +39,7 @@
             "en": "Understand how independent sessions work and their lifecycle.",
             "zh": "了解独立会话的工作原理及其生命周期。"
           },
-          "href": "https://github.com/esengine/DeepSeek-Reasonix/blob/9ec875a684517d8a2137fdd6a04b1132a888f550/docs/INDEPENDENT_SESSIONS.md"
+          "href": "https://github.com/esengine/DeepSeek-Reasonix/blob/26f1984e97d8f4403317d6d00dd27c77395a7a3d/docs/INDEPENDENT_SESSIONS.md"
         },
         {
           "title": {
@@ -50,7 +50,7 @@
             "en": "Explore management pages for sessions and archives.",
             "zh": "探索会话和归档的管理页面。"
           },
-          "href": "https://github.com/esengine/DeepSeek-Reasonix/blob/9ec875a684517d8a2137fdd6a04b1132a888f550/docs/MANAGEMENT_PAGES.md"
+          "href": "https://github.com/esengine/DeepSeek-Reasonix/blob/26f1984e97d8f4403317d6d00dd27c77395a7a3d/docs/MANAGEMENT_PAGES.md"
         },
         {
           "title": {
@@ -61,7 +61,7 @@
             "en": "Details on the transcript architecture and its components.",
             "zh": "对话记录架构及其组件的详细信息。"
           },
-          "href": "https://github.com/esengine/DeepSeek-Reasonix/blob/9ec875a684517d8a2137fdd6a04b1132a888f550/docs/TRANSCRIPT_ARCHITECTURE.md"
+          "href": "https://github.com/esengine/DeepSeek-Reasonix/blob/26f1984e97d8f4403317d6d00dd27c77395a7a3d/docs/TRANSCRIPT_ARCHITECTURE.md"
         },
         {
           "title": {
@@ -72,7 +72,7 @@
             "en": "Learn how persistent PowerShell preserves state and reports command completion on Windows.",
             "zh": "了解持久 PowerShell 如何在 Windows 上保留状态并报告命令完成情况。"
           },
-          "href": "https://github.com/esengine/DeepSeek-Reasonix/blob/9ec875a684517d8a2137fdd6a04b1132a888f550/docs/WINDOWS_AGENT_SHELL.md"
+          "href": "https://github.com/esengine/DeepSeek-Reasonix/blob/26f1984e97d8f4403317d6d00dd27c77395a7a3d/docs/WINDOWS_AGENT_SHELL.md"
         },
         {
           "title": {
@@ -83,7 +83,7 @@
             "en": "Acceptance criteria for Windows installer builds.",
             "zh": "Windows 安装程序构建的验收标准。"
           },
-          "href": "https://github.com/esengine/DeepSeek-Reasonix/blob/9ec875a684517d8a2137fdd6a04b1132a888f550/docs/WINDOWS_INSTALLER_ACCEPTANCE.md"
+          "href": "https://github.com/esengine/DeepSeek-Reasonix/blob/26f1984e97d8f4403317d6d00dd27c77395a7a3d/docs/WINDOWS_INSTALLER_ACCEPTANCE.md"
         }
       ],
       "highlights": [
@@ -537,6 +537,22 @@
           }
         ],
         "fixed": [
+          {
+            "targets": [
+              "desktop"
+            ],
+            "title": {
+              "en": "Keep migrated history stable through restart",
+              "zh": "保持迁移会话的身份并清除恢复后的错误提示"
+            },
+            "body": {
+              "en": "Startup and history continuation reuse the migrated session identity, preventing duplicate imports after metadata refresh. Successful history recovery also clears its error state without leaving a stale chat warning.",
+              "zh": "启动和继续读取历史时复用已迁移的会话身份，避免元数据刷新后重复导入。历史恢复成功后清除错误状态，不再残留错误的聊天警告。"
+            },
+            "refs": [
+              10472
+            ]
+          },
           {
             "targets": [
               "desktop"

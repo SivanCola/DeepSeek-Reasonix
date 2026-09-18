@@ -1,4 +1,3 @@
-import { hostEvents } from "./hostEvents";
 import { makeMockSessionExportBindings, type SessionExportBindings } from "./sessionExportBridge";
 import { makeMockSessionLifecycleBindings, type SessionLifecycleBindings } from "./sessionLifecycleBindings";
 import { makeMockModelSettingsBindings, type ModelSettingsBindings } from "./modelSettingsBridge";
@@ -11,6 +10,7 @@ import type {
   DesktopCommandName,
   HistoryWindowPage,
   HistoryWindowRequest,
+  LegacyEmptySessionCleanupStatus,
   MarkdownSVGView,
   MessageFieldPage,
   MessageHistoryPage,
@@ -19,10 +19,18 @@ import type {
   SearchHistoryPage,
   SessionArchitectureDiagnostics,
   SessionCreationResult,
+  SessionDraftContextView,
+  SessionDraftSaveRequest,
+  SessionDraftSaveResult,
+  SessionDraftSubmissionRequest,
+  SessionDraftSubmissionView,
+  SessionDraftSummary,
+  SessionDraftView,
   SessionHistoryContentChunk,
   SessionMutationResult,
   SessionRef,
   SessionSelector,
+  ComposerTarget,
   WorkspaceSessionPage,
   WorkspaceSnapshot,
 } from "../generated/desktopContract.generated";
@@ -236,6 +244,30 @@ interface DesktopWindowState {
 // AppBindings is the hand-written React-to-Go contract. _CheckGeneratedBindings
 // catches generated methods missing here; update this interface and typecheck.
 export interface AppBindings extends SessionExportBindings, SessionLifecycleBindings, ForkTargetsBindings, ToolRecoveryBindings, ModelSettingsBindings, SessionCatalogBindings, ProjectTreeOrganizationBindings, HistoryCatalogBindings, TaskCatalogBindings, BlankProjectBindings, QualityFloorBindings, SessionTitleBindings, ScrollDiagnosticBindings, RemoteProjectBindings, MCPAppBindings, PinnedContextBindings, FollowupBindings, TranscriptProtocolBindings, SessionReaderBindings {
+  GetLegacyEmptySessionCleanupStatus(): Promise<LegacyEmptySessionCleanupStatus>;
+  RetryLegacyEmptySessionCleanup(): Promise<LegacyEmptySessionCleanupStatus>;
+  OpenSessionDraft(workspaceId: string): Promise<SessionDraftView>;
+  OpenSessionDraftForTarget(scope: string, workspaceRoot: string): Promise<SessionDraftView>;
+  RestoreSessionDraft(): Promise<SessionDraftView | null>;
+  SaveSessionDraft(request: SessionDraftSaveRequest): Promise<SessionDraftSaveResult>;
+  ListSessionDraftSummaries(): Promise<SessionDraftSummary[]>;
+  DiscardSessionDraft(draftId: string, revision: number): Promise<void>;
+  DismissSessionDraft(draftId: string): Promise<void>;
+  SetSessionDraftRestoreTarget(draftId: string): Promise<void>;
+  GetSessionDraft(draftId: string): Promise<SessionDraftView>;
+  GetSessionDraftState(draftId: string): Promise<import("../generated/desktopContract.generated").SessionDraftState>;
+  ResumeDraftSubmission(operationId: string, revision: number): Promise<SessionDraftSubmissionView>;
+  GetDraftContext(draftId: string): Promise<SessionDraftContextView>;
+  BeginDraftSubmission(request: SessionDraftSubmissionRequest): Promise<SessionDraftSubmissionView>;
+  GetDraftSubmission(operationId: string): Promise<SessionDraftSubmissionView>;
+  CancelDraftSubmission(operationId: string): Promise<SessionDraftSubmissionView>;
+  SavePastedImageForTarget(target: ComposerTarget, dataUrl: string): Promise<string>;
+  SavePastedFileForTarget(target: ComposerTarget, name: string, dataUrl: string): Promise<string>;
+  SaveClipboardImageForTarget(target: ComposerTarget): Promise<string>;
+  AttachDroppedForTarget(target: ComposerTarget, path: string): Promise<DroppedItem>;
+  ListDirForTarget(target: ComposerTarget, rel: string): Promise<DirEntry[]>;
+  SearchFileRefsForTarget(target: ComposerTarget, query: string): Promise<DirEntry[]>;
+  AttachmentDataURLForTarget(target: ComposerTarget, path: string): Promise<string>;
   GetSessionActivityBaseline(selector: SessionSelector): Promise<import("../generated/desktopContract.generated").SessionActivityBaseline>;
   GetWorkspaceSnapshot(): Promise<WorkspaceSnapshot>;
   CreateSession(workspaceId: string): Promise<SessionRef>;
@@ -617,6 +649,7 @@ export interface AppBindings extends SessionExportBindings, SessionLifecycleBind
   Models(): Promise<ModelInfo[]>;
   SetModel(name: string): Promise<void>;
   ModelsForTab(tabID: string): Promise<ModelInfo[]>;
+  ModelsForDraft(draftID: string): Promise<ModelInfo[]>;
   SetModelForTab(tabID: string, name: string): Promise<void>;
   Effort(): Promise<EffortInfo>;
   SetEffort(level: string): Promise<void>;
@@ -865,6 +898,10 @@ export type _CheckGenToApp = AssertNever<Exclude<DesktopCommandName, keyof AppBi
 // Must match desktop/app.go's eventChannel constant.
 const EVENT_CHANNEL = "agent:event";
 
+function hostEvents(name: string, cb: (...args: unknown[]) => void): (() => void) | null {
+  const host = desktopHost();
+  return host.kind === "none" ? null : host.events.on(name, cb);
+}
 
 let mockSingleton: AppBindings | null = null;
 function getMock(): AppBindings {
@@ -969,6 +1006,12 @@ export function onReady(cb: (tabId?: string) => void): () => void {
 
 export function onProjectTreeChanged(cb: () => void): () => void {
   return hostEvents("project-tree:changed", (payload?: unknown) => (payload as { reason?: unknown } | undefined)?.reason !== "runtime" && (payload as { reason?: unknown } | undefined)?.reason !== "catalog-v2" && cb()) ?? subscribeMockProjectTreeChanged(cb);
+}
+
+export function onLegacyEmptySessionCleanupChanged(cb: (status: LegacyEmptySessionCleanupStatus) => void): () => void {
+  return hostEvents("legacy-empty-session-cleanup:changed", (payload?: unknown) => {
+    if (payload && typeof payload === "object") cb(payload as LegacyEmptySessionCleanupStatus);
+  }) ?? (() => {});
 }
 
 // onTopicActivation subscribes to the "topic:activation" channel carrying the
@@ -1376,6 +1419,29 @@ function makeMockApp(): AppBindings {
   const deepSeekUpgradeMock = scenario === "deepseek_upgrade";
   const benchMock = scenario === "bench";
   const mockAttachmentDataURLs = new Map<string, string>();
+  const mockDrafts = new Map<string, SessionDraftView>();
+  const mockDraftOperations = new Map<string, SessionDraftSubmissionView>();
+  const mockDraftForTarget = (scope: string, workspaceRoot: string): SessionDraftView => {
+    const normalizedScope = scope === "project" && workspaceRoot ? "project" : "global";
+    const normalizedRoot = normalizedScope === "project" ? workspaceRoot : "";
+    const workspaceId = normalizedScope === "global" ? "global" : `project-${normalizedRoot}`;
+    const prior = [...mockDrafts.values()].find((draft) => draft.workspaceId === workspaceId && draft.status === "active");
+    if (prior) return prior;
+    const now = Date.now();
+    const draft: SessionDraftView = {
+      id: `draft-mock-${mockDrafts.size + 1}`,
+      workspaceId,
+      scope: normalizedScope,
+      workspaceRoot: normalizedRoot,
+      revision: 1,
+      contentJson: "{}",
+      settings: { model: "deepseek/deepseek-v4-flash", mode: "default", toolApprovalMode: "ask", disabledMcp: {}, mcpOrder: [] },
+      status: "active",
+      updatedAt: now,
+    };
+    mockDrafts.set(draft.id, draft);
+    return draft;
+  };
   let cancelled = false;
   let pendingAskPreview = false, pendingApprovalPreview = false;
   // Mirrors the last emitted approval preview so mode switches can mirror the
@@ -2319,9 +2385,91 @@ function makeMockApp(): AppBindings {
     archivedSessionIds: [...mockArchivedSessionIDs], pendingCreates: [],
   });
   return {
+    async OpenSessionDraft(workspaceId: string) {
+      const prior = [...mockDrafts.values()].find((draft) => draft.workspaceId === workspaceId && draft.status === "active");
+      if (prior) return structuredClone(prior);
+      return structuredClone(mockDraftForTarget(workspaceId === "global" ? "global" : "project", workspaceId === "global" ? "" : workspaceId));
+    },
+    async OpenSessionDraftForTarget(scope: string, workspaceRoot: string) {
+      return structuredClone(mockDraftForTarget(scope, workspaceRoot));
+    },
+    async RestoreSessionDraft() {
+      return structuredClone([...mockDrafts.values()].find((draft) => draft.status === "active") ?? null);
+    },
+    async SaveSessionDraft(request: SessionDraftSaveRequest) {
+      const current = mockDrafts.get(request.draftId);
+      if (!current || current.status !== "active") throw new Error("session draft not found");
+      if (current.revision !== request.revision) return { draft: structuredClone(current), conflict: true, outcome: "conflict" };
+      const next = { ...current, revision: current.revision + 1, contentJson: request.contentJson, settings: structuredClone(request.settings), updatedAt: Date.now() };
+      mockDrafts.set(next.id, next);
+      return { draft: structuredClone(next), conflict: false, outcome: "saved" };
+    },
+    async ListSessionDraftSummaries() {
+      return [...mockDrafts.values()].filter((draft) => draft.status === "active").map((draft) => ({
+        id: draft.id, workspaceId: draft.workspaceId, scope: draft.scope, workspaceRoot: draft.workspaceRoot,
+        revision: draft.revision, hasContent: draft.contentJson !== "{}", state: "saved", updatedAt: draft.updatedAt,
+      }));
+    },
+    async DiscardSessionDraft(draftId: string, revision: number) {
+      const current = mockDrafts.get(draftId);
+      if (!current || current.revision !== revision) throw new Error("session draft revision conflict");
+      mockDrafts.set(draftId, { ...current, status: "discarded", revision: current.revision + 1 });
+    },
+    async DismissSessionDraft(_draftId: string) {},
+    async SetSessionDraftRestoreTarget(_draftId: string) {},
+    async GetSessionDraft(draftId: string) {
+      const draft = mockDrafts.get(draftId);
+      if (!draft) throw new Error("session draft not found");
+      return structuredClone(draft);
+    },
+    async GetDraftContext(draftId: string) {
+      const draft = mockDrafts.get(draftId);
+      if (!draft) throw new Error("session draft not found");
+      return { draft: structuredClone(draft), commands: [], servers: [] };
+    },
+    async GetSessionDraftState(draftId: string) {
+      const draft = mockDrafts.get(draftId);
+      if (!draft) throw new Error("session draft not found");
+      const operation = [...mockDraftOperations.values()].reverse().find(item => item.draftId === draftId);
+      return structuredClone({ draft, operation });
+    },
+    async ResumeDraftSubmission(operationId: string, revision: number) {
+      const operation = mockDraftOperations.get(operationId);
+      if (!operation || operation.revision !== revision) throw new Error("operation revision conflict");
+      return structuredClone(operation);
+    },
+    async BeginDraftSubmission(request: SessionDraftSubmissionRequest) {
+      const draft = mockDrafts.get(request.draftId);
+      if (!draft || draft.revision !== request.revision) throw new Error("session draft revision conflict");
+      const operationId = `draft-op-mock-${mockDraftOperations.size + 1}`;
+      const sessionId = `draft-session-mock-${mockDraftOperations.size + 1}`;
+      const view: SessionDraftSubmissionView = { operationId, draftId: draft.id, requestId: request.requestId, revision: 1, canResume: false, canEdit: false, canCancel: false, canDiscard: false, phase: "accepted", submissionId: `draft-submit-mock-${mockDraftOperations.size + 1}`, session: { hostId: "local", sessionId }, updatedAt: Date.now() };
+      mockDraftOperations.set(operationId, view);
+      mockDrafts.set(draft.id, { ...draft, status: "converted", revision: draft.revision + 1 });
+      return structuredClone(view);
+    },
+    async GetDraftSubmission(operationId: string) {
+      const operation = mockDraftOperations.get(operationId);
+      if (!operation) throw new Error("session draft submission not found");
+      return structuredClone(operation);
+    },
+    async CancelDraftSubmission(operationId: string) {
+      const operation = mockDraftOperations.get(operationId);
+      if (!operation) throw new Error("session draft submission not found");
+      const next = { ...operation, phase: operation.phase === "accepted" ? "accepted" : "cancelled", updatedAt: Date.now() };
+      mockDraftOperations.set(operationId, next);
+      return structuredClone(next);
+    },
+    ...makeMockSessionExportBindings(),
     ...makeMockSessionCatalogBindings(cloneProjectTree),
     ...makeMockBlankProjectBindings(),
     async GetWorkspaceSnapshot() { return mockWorkspaceSnapshot(); },
+    async GetLegacyEmptySessionCleanupStatus() {
+      return { version: 1, state: "complete", removed: 0, pending: 0, busy: 0, unknown: 0, protected: 0, hasContent: 0, items: [] };
+    },
+    async RetryLegacyEmptySessionCleanup() {
+      return { version: 1, state: "complete", removed: 0, pending: 0, busy: 0, unknown: 0, protected: 0, hasContent: 0, items: [] };
+    },
     ...makeMockSessionLifecycleBindings(mockWorkspaceSnapshot, mockArchivedSessionIDs, mockPurgedSessionIDs, notifyMockProjectTreeChanged),
     async CreateSession(_workspaceId: string) { return { hostId: "local", sessionId: `mock-${Date.now()}` }; },
     async ForkSession(_ref: SessionRef, _turnBoundary: string) { return { hostId: "local", sessionId: `mock-fork-${Date.now()}` }; },
@@ -3331,7 +3479,6 @@ function makeMockApp(): AppBindings {
           return out;
         },
         ...makeMockSessionReaderBindings(),
-        ...makeMockSessionExportBindings(),
     async ListSessions() {
       return sessions.map((s) => ({ ...s }));
     },
@@ -4110,6 +4257,9 @@ function makeMockApp(): AppBindings {
     async ListDirForTab(_tabID: string, rel: string) {
       return this.ListDir(rel);
     },
+    async ListDirForTarget(_target: ComposerTarget, rel: string) {
+      return this.ListDir(rel);
+    },
     async SearchFileRefs(query: string) {
       const q = query.toLowerCase();
       return ["desktop/frontend/src/lib/bridge.ts", "desktop/frontend/src/main.tsx", "internal/control/refs.go"]
@@ -4117,6 +4267,9 @@ function makeMockApp(): AppBindings {
         .map((name) => ({ name, isDir: false }));
     },
     async SearchFileRefsForTab(_tabID: string, query: string) {
+      return this.SearchFileRefs(query);
+    },
+    async SearchFileRefsForTarget(_target: ComposerTarget, query: string) {
       return this.SearchFileRefs(query);
     },
     async ReadFile(rel: string) {
@@ -4295,15 +4448,24 @@ function makeMockApp(): AppBindings {
       mockAttachmentDataURLs.set(path, dataUrl);
       return path;
     },
+    async SavePastedImageForTarget(_target: ComposerTarget, dataUrl: string) {
+      return this.SavePastedImage(dataUrl);
+    },
     async SaveClipboardImage() {
       const path = `.reasonix/attachments/mock-clipboard-${mockAttachmentDataURLs.size + 1}.png`;
       mockAttachmentDataURLs.set(path, mockPreviewImageDataURL);
       return path;
     },
+    async SaveClipboardImageForTarget(_target: ComposerTarget) {
+      return this.SaveClipboardImage();
+    },
     async SavePastedFile(name: string, dataUrl: string) {
       const path = `.reasonix/attachments/mock-${name}`;
       mockAttachmentDataURLs.set(path, dataUrl);
       return path;
+    },
+    async SavePastedFileForTarget(_target: ComposerTarget, name: string, dataUrl: string) {
+      return this.SavePastedFile(name, dataUrl);
     },
     async PickExportFile(defaultFilename: string, _mimeType: string) {
       return defaultFilename;
@@ -4354,8 +4516,14 @@ function makeMockApp(): AppBindings {
       mockAttachmentDataURLs.set(attachmentPath, mockPreviewImageDataURL);
       return { kind: "attachment" as const, path: attachmentPath };
     },
+    async AttachDroppedForTarget(_target: ComposerTarget, path: string) {
+      return this.AttachDropped(path);
+    },
     async AttachmentDataURL(path: string) {
       return mockAttachmentDataURLs.get(path) ?? mockPreviewImageDataURL;
+    },
+    async AttachmentDataURLForTarget(_target: ComposerTarget, path: string) {
+      return this.AttachmentDataURL(path);
     },
         async Models() {
           const active = mockTabs.find((tab) => tab.active) ?? mockTabs[0];
@@ -4365,6 +4533,10 @@ function makeMockApp(): AppBindings {
         async ModelsForTab(tabID) {
           const tab = mockTabs.find((item) => item.id === tabID) ?? mockTabs.find((item) => item.active) ?? mockTabs[0];
           const current = mockTabModelRef(tab);
+          return mockModelCatalog.map((model) => ({ ...model, current: model.ref === current }));
+        },
+        async ModelsForDraft(draftID) {
+          const current = mockDrafts.get(draftID)?.settings.model ?? "";
           return mockModelCatalog.map((model) => ({ ...model, current: model.ref === current }));
         },
         async SetModel(name) {

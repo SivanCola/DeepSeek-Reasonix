@@ -20,6 +20,7 @@ import type { useAppRuntimeAdapter } from "./useAppRuntimeAdapter";
 import type { useAppShellStores } from "./useAppShellStores";
 import type { useNavigationSurface } from "../lib/useNavigationSurface";
 import type { useAppSessionComposition } from "./useAppSessionComposition";
+import type { useSessionDraftSurface } from "./useSessionDraftSurface";
 
 type Runtime = ReturnType<typeof useAppRuntimeAdapter>;
 type Shell = ReturnType<typeof useAppShellStores>;
@@ -44,6 +45,7 @@ export type AppNavigationCompositionInput = {
     setTasksOpen: React.Dispatch<React.SetStateAction<false | "session" | "all">>;
   };
   session: SessionComposition;
+  draft: ReturnType<typeof useSessionDraftSurface>;
 };
 
 /**
@@ -116,6 +118,11 @@ export function useAppNavigationComposition(input: AppNavigationCompositionInput
     enterConversation,
     pickWorkspace,
     switchWorkspace,
+    draft: {
+      target: input.draft.surface ? { scope: input.draft.surface.draft.scope, workspaceRoot: input.draft.surface.draft.workspaceRoot } : undefined,
+      open: input.draft.open,
+      dismiss: input.draft.dismiss,
+    },
     ports: {
       openTaskSessionForTab: (tabId, taskId) => desktopBridge.openTaskSessionForTab(tabId, taskId),
       listSessionsForTab: (tabId) => desktopBridge.listSessionsForTab(tabId),

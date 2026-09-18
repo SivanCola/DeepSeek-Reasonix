@@ -15,6 +15,7 @@ import type { useComposerModeActions } from "../lib/useComposerModeActions";
 import type { useComposerGoalCommands } from "../app-runtime/useComposerGoalCommands";
 import type { useRemoteComposerRuntimeActions } from "../lib/useRemoteComposerIntegration";
 import type { useControllerProfileCommands } from "../lib/useControllerProfileCommands";
+import { draftSubmissionLocksEditing, type useSessionDraftSurface } from "../app-runtime/useSessionDraftSurface";
 import type {
   ApprovalProps,
   AskProps,
@@ -278,11 +279,12 @@ export type ComposerSurfaceInput = {
   fileRefRefreshKey: ComposerProps["fileRefRefreshKey"];
   guidance: { key: string; itemId?: string; text: string } | null;
   guidanceQueuePreviewItems: ComposerProps["guidanceQueuePreviewItems"];
+  draft?: ReturnType<typeof useSessionDraftSurface>;
 };
 
 export function buildComposerSurface(input: ComposerSurfaceInput): DecisionFooterRegionProps["composer"] {
   const { base, view, profile, router, modes, goals, remoteGoal, modelSwitch, inserts, control, remoteComposer } = input;
-  return {
+  const surface: DecisionFooterRegionProps["composer"] = {
     hidden: view.hidden,
     inert: view.inert,
     hero: view.hero,
@@ -338,6 +340,91 @@ export function buildComposerSurface(input: ComposerSurfaceInput): DecisionFoote
       guidanceQueuePreviewItems: input.guidanceQueuePreviewItems,
       showContextWindowRing: view.showContextWindowRing,
       heroMode: view.hero && view.showContextWindowRing,
+    },
+  };
+  const draft = input.draft?.surface;
+  if (!draft || !input.draft) return surface;
+  const draftController = input.draft;
+  const operationActive = draft.preparingSubmission || draftSubmissionLocksEditing(draft.operation);
+  return {
+    hidden: false,
+    inert: false,
+    hero: true,
+    headline: input.view.headline,
+    props: {
+      ...surface.props,
+      running: operationActive && draft.operation?.phase !== "accepted",
+      collaborationMode: (draft.settings.collaborationMode || "normal") as ComposerProps["collaborationMode"],
+      toolApprovalMode: (draft.settings.toolApprovalMode || "ask") as ComposerProps["toolApprovalMode"],
+      goal: draft.settings.goal,
+      cwd: draft.draft.workspaceRoot,
+      workspaceRoot: draft.draft.workspaceRoot,
+      modelLabel: draft.settings.model,
+      commandCatalog: draft.commands,
+      tabId: undefined,
+      onCaptureSubmit: () => draftController.captureSubmission(draft.draft.id, draft.generation),
+      onReleaseSubmit: draftController.releasePreparation,
+      onPrepareSubmit: draftController.flushPreparation,
+      onSend: (display, submit, tabId, structured, capture) => (
+        draftController.submitFrom(draft.draft.id, draft.generation, display, submit, tabId, structured, capture)
+      ),
+      onSteer: undefined,
+      onCycleMode: () => draftController.updateSettingsFor(draft.draft.id, draft.generation, { collaborationMode: draft.settings.collaborationMode === "plan" ? "normal" : "plan" }),
+      readOnly: false,
+      attachmentInputEnabled: true,
+      imageInputEnabled: draft.models?.find(model => model.ref === draft.settings.model)?.vision ?? false,
+      imageUnderstandingEnabled: false,
+      onCancel: async () => {
+        await draftController.cancelSubmission();
+        return { discardedItemIds: [] };
+      },
+      onSetMode: (mode) => draftController.updateSettingsFor(draft.draft.id, draft.generation, { mode }),
+      onSetCollaborationMode: (collaborationMode) => draftController.updateSettingsFor(draft.draft.id, draft.generation, { collaborationMode }),
+      onSetToolApprovalMode: (toolApprovalMode) => draftController.updateSettingsFor(draft.draft.id, draft.generation, { toolApprovalMode }),
+      onClearGoal: () => draftController.updateSettingsFor(draft.draft.id, draft.generation, { goal: "", collaborationMode: "normal" }),
+      onEditGoal: (goal) => draftController.updateSettingsFor(draft.draft.id, draft.generation, { goal, collaborationMode: goal ? "goal" : "normal" }),
+      onPauseGoal: () => {},
+      onResumeGoal: () => {},
+      onSwitchModel: (model) => { draftController.updateSettingsFor(draft.draft.id, draft.generation, { model }); return true; },
+      onSetEffort: (effort) => draftController.updateSettingsFor(draft.draft.id, draft.generation, { effort }),
+      effort: {
+        supported: true,
+        current: draft.settings.effort || "auto",
+        default: "auto",
+        levels: ["auto", "low", "medium", "high", "max"],
+      },
+      disabled: operationActive,
+      submitDisabled: draft.saveState === "conflict" || draft.pendingTasks > 0 || operationActive,
+      submitDisabledReason: draft.saveState === "conflict" ? "Resolve the draft conflict before sending." : undefined,
+      decisionPending: operationActive,
+      ready: true,
+      liveStore: undefined,
+      suspendedByDecision: false,
+      sessionKey: `draft:${draft.draft.id}`,
+      inboxSessionPath: undefined,
+      inboxHostId: undefined,
+      inboxWorkspace: undefined,
+      workspaceScopeKey: `draft:${draft.draft.workspaceId}`,
+      workspaceContext: surface.props.workspaceContext ? {
+        ...surface.props.workspaceContext,
+        scope: draft.draft.scope === "project" ? "project" : "global",
+        workspaceRoot: draft.draft.workspaceRoot,
+        scopeKey: `draft:${draft.draft.workspaceId}`,
+        remote: false,
+      } : undefined,
+      persistentDraft: {
+        draftId: draft.draft.id,
+        generation: draft.generation,
+        initial: draft.content,
+        revision: draft.draft.revision,
+        onChange: draftController.updateContentFor,
+        onPatch: draftController.patchContentFor,
+        isCurrent: draftController.isCurrentHandle,
+        canEdit: draftController.canEditHandle,
+        trackTask: draftController.trackTask,
+        onTaskError: draftController.reportTaskError,
+      },
+      composerTarget: { kind: "draft", draftId: draft.draft.id },
     },
   };
 }

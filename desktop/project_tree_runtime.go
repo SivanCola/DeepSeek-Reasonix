@@ -184,6 +184,12 @@ func (a *App) closeTab(tabID string, allowDetach bool) error {
 	err := a.closeTabRuntime(tabID, allowDetach)
 	if err == nil {
 		a.emitProjectTreeRuntimeChangedWithLegacy()
+		// Closing an idle view may release the last reason an upgrade candidate
+		// was classified busy. Retry the frozen batch once; unknown candidates
+		// remain manual/startup-only and detached work stays protected.
+		a.goSafe("retryLegacyEmptySessionCleanupAfterTabClose", func() {
+			a.retryLegacyEmptySessionCleanupAfterRuntimeRelease()
+		})
 	}
 	return err
 }

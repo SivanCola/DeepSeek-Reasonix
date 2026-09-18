@@ -7,8 +7,8 @@ test("every test prefix, example and fuzz seed has exactly one execution owner",
   const names = [..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"].map(letter => `Test${letter}Feature`);
   names.push("Test", "Test_Compatibility", "Test中文", "Example", "ExampleController_Open", "FuzzSession", conptyProbe);
   for (const name of names) assert.equal(owners(name).length, 1, name);
-  assert.deepEqual(owners("ExampleController_Open"), ["A-D"]);
-  assert.deepEqual(owners("FuzzSession"), ["A-D"]);
+  assert.deepEqual(owners("ExampleController_Open"), ["A-B"]);
+  assert.deepEqual(owners("FuzzSession"), ["A-B"]);
   assert.deepEqual(owners(conptyProbe), ["conpty-probe"]);
   const counts = verifyInventory(new Map(names.map(name => [name, name])));
   assert.equal(Object.values(counts).reduce((sum, count) => sum + count, 0), names.length);

@@ -23,7 +23,7 @@ function formatKiB(bytes) {
 
 function assertBudget(label, actual, budget) {
   if (actual > budget) {
-    throw new Error(`${label} is ${formatKiB(actual)}; budget is ${formatKiB(budget)}`);
+    throw new Error(`${label} is ${formatKiB(actual)} (${actual} B); budget is ${formatKiB(budget)} (${Math.floor(budget)} B)`);
   }
   process.stdout.write(`  PASS  ${label}: ${formatKiB(actual)} / ${formatKiB(budget)}\n`);
 }
@@ -456,12 +456,11 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // Independent-session identity, organization CAS and unread/lifecycle guards
 // measure 2443.0 KiB against the same-toolchain main-v2 base of 2440.7 KiB
 // (+2.3 KiB, 0.095%). Retain one tenth; all other limits stay unchanged.
-// Complete export execution/rendering stays lazy. Bounded progress/lifecycle
-// observation and cross-page tool-state hydration measure 2444.2 KiB versus
-// 2442.2 KiB from HEAD with the same build configuration (+2.0 KiB, 0.08%).
-// Chromium 240/1000-turn reader/switch benchmarks pass on their first attempt;
-// the export probe retains one surface for 22 PDF pages / 6 PNGs. Keep the
-// next tenth only; gzip, CSS, per-chunk and interaction budgets are unchanged.
-const rawInitialBudgetKiB = 2_444.9;
+// Complete export execution/rendering remains lazy; only bounded progress,
+// lifecycle observation, and cross-page tool-state hydration enter startup.
+// A full 40-character identity measures 2064513 B in the browser build and
+// 2064459 B in Electron, versus 2064077 B on current main-v2 (+436 B, 0.021%).
+// Retain the smallest one-decimal ceiling; all other limits stay unchanged.
+const rawInitialBudgetKiB = 2_016.2;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

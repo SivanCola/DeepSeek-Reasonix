@@ -6,7 +6,8 @@ import { isolatedGroups, selectPackages, testArgs } from "./windows-go-tests.mjs
 const packages = ["reasonix/cmd/reasonix", "reasonix/internal/agent", "reasonix/internal/agent/testutil",
   "reasonix/internal/agentpreset", "reasonix/internal/boot", "reasonix/internal/control",
   "reasonix/internal/control/child", "reasonix/internal/extension/sidecar", "reasonix/internal/proc",
-  "reasonix/internal/lsp", "reasonix/internal/newpackage", "reasonix/internal/projectiondb",
+  "reasonix/internal/serve", "reasonix/internal/session", "reasonix/internal/worktree",
+  "reasonix/internal/lsp", "reasonix/internal/fileops", "reasonix/internal/newpackage", "reasonix/internal/projectiondb",
   "reasonix/internal/sessioncatalog", "reasonix/internal/sqliteuri", "reasonix/internal/topicstate",
   "reasonix/internal/winsandbox", "reasonix/tools/repolint"];
 
@@ -20,6 +21,7 @@ test("the full Windows groups cover every package exactly once, including new pa
 test("PR smoke keeps platform coverage without duplicating isolated suites", () => {
   assert.deepEqual(selectPackages(packages, "smoke"), [
     "reasonix/cmd/reasonix", "reasonix/internal/extension/sidecar", "reasonix/internal/proc", "reasonix/internal/lsp",
+    "reasonix/internal/fileops",
     "reasonix/internal/projectiondb", "reasonix/internal/sessioncatalog", "reasonix/internal/sqliteuri",
     "reasonix/internal/topicstate", "reasonix/internal/winsandbox",
   ]);

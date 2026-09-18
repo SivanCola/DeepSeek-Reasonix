@@ -182,6 +182,8 @@ export function ProjectTree({
   showShortcutBadges = false,
   shortcutPlatform,
   onVisibleTopicsChange,
+  draftSummaries = [],
+  onOpenDraft,
 }: ProjectTreeProps) {
   const t = useT();
   const { showToast } = useToast();
@@ -251,6 +253,24 @@ export function ProjectTree({
   });
   const applyRuntimeProjection = useProjectTreeRuntimeProjection(setTree, currentArchiveTombstones);
   const clickTimerRef = useRef<ProjectTreePendingTopicOpen | null>(null);
+  useEffect(() => {
+    const invalidatePendingOpen = (event: Event) => {
+      const pending = clickTimerRef.current;
+      if (!pending) return;
+      const target = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-topic-open-key]") : null;
+      if (event.type === "click" && target?.dataset.topicOpenKey === pending.rowKey) return;
+      const keyEvent = event as globalThis.KeyboardEvent;
+      if (event.type === "keydown" && !keyEvent.metaKey && !keyEvent.ctrlKey && keyEvent.key !== "Escape") return;
+      clearTimeout(pending.timer);
+      clickTimerRef.current = null;
+    };
+    document.addEventListener("click", invalidatePendingOpen, true);
+    document.addEventListener("keydown", invalidatePendingOpen, true);
+    return () => {
+      document.removeEventListener("click", invalidatePendingOpen, true);
+      document.removeEventListener("keydown", invalidatePendingOpen, true);
+    };
+  }, []);
   useEffect(() => {
     return () => {
       if (clickTimerRef.current !== null) clearTimeout(clickTimerRef.current.timer);
@@ -1301,6 +1321,7 @@ export function ProjectTree({
           <button
             type="button"
             className="project-tree__topic-main"
+            data-topic-open-key={key}
             title={title}
             style={{ paddingLeft: 14 + depth * 16 }}
             onClick={() => {
@@ -1314,7 +1335,8 @@ export function ProjectTree({
                 if (projectTreeShouldSuppressOpenForRename(pending, nextClick)) return;
               }
               const timer = setTimeout(() => {
-                if (clickTimerRef.current?.timer === timer) clickTimerRef.current = null;
+                if (clickTimerRef.current?.timer !== timer) return;
+                clickTimerRef.current = null;
                 if (remote) {
                   if (openRemoteSessionNode(remote, openRemoteProject)) markNodeRead(node);
                   return;
@@ -1473,6 +1495,7 @@ export function ProjectTree({
     const projectPath = node.root ?? "";
     const colorTargetRoot = scope === "global" ? "" : projectPath;
     const projectLabel = node.label || (scope === "global" ? "Global" : "Untitled");
+    const workspaceDraft = draftSummaries.find((draft) => draft.scope === scope && (scope === "global" || draft.workspaceRoot === projectRoot));
     const projectPinned = Boolean(node.pinned);
     const projectActive = node.remote ? Boolean(activeRemote && remoteProjectKey(activeRemote) === remoteProjectKey(node.remote)) : activeScope === scope && (scope === "global" || activeWorkspaceRoot === node.root);
     const projectMenuOpen = menuProject?.key === key;
@@ -1548,6 +1571,12 @@ export function ProjectTree({
         }]
       : [];
     const remoteProjectMenuItems = node.remote ? buildRemoteProjectMenuItems({ ref: node.remote, t, closeMenu, openRemoteProject, openRemoteWindow, setRemoteSessions, refresh, showToast }) : [];
+    const newSessionMenuItem: ContextMenuItem = {
+      key: "new-session",
+      icon: <Plus size={13} />,
+      label: t("projectTree.newTopic"),
+      onSelect: () => { void handleCreateTopic(scope, projectPath, key); },
+    };
     const projectMenuItems: ContextMenuItem[] = [
       {
         key: "new-group",
@@ -1555,14 +1584,7 @@ export function ProjectTree({
         label: t("projectTree.newGroup"),
         onSelect: () => organization.createGroup(node, t("projectTree.newGroup")),
       },
-      {
-        key: "new-session",
-        icon: <Plus size={13} />,
-        label: t("projectTree.newTopic"),
-        onSelect: () => {
-          void handleCreateTopic(scope, projectPath, key);
-        },
-      },
+      newSessionMenuItem,
       ...isolatedWorkspaceItems,
       {
         key: "rename",
@@ -1616,6 +1638,7 @@ export function ProjectTree({
         : []),
     ];
     const workbenchProjectMenuItems: ContextMenuItem[] = [
+      newSessionMenuItem,
       ...(scope === "project"
         ? [
             {
@@ -1800,6 +1823,19 @@ export function ProjectTree({
             <span className={`project-tree__folder-label${!hasChildren ? " project-tree__folder-label--empty" : ""}`}>
               {projectLabel}
               {node.isolatedWorktree && <WorktreeBadge size={11} />}
+              {workspaceDraft ? <span
+                className={`project-tree__draft-badge${workspaceDraft.state && workspaceDraft.state !== "saved" ? ` project-tree__draft-badge--${workspaceDraft.state}` : ""}`}
+                role="button"
+                tabIndex={0}
+                title={workspaceDraft.state && workspaceDraft.state !== "saved" ? workspaceDraft.state : undefined}
+                onClick={(event) => { event.stopPropagation(); void onOpenDraft?.(scope, projectRoot); }}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  void onOpenDraft?.(scope, projectRoot);
+                }}
+              >{t("draft.badge")}</span> : null}
               {node.remote ? <span className={`project-tree__remote-badge project-tree__remote-badge--${remoteServeBadgeState(remoteServers[node.remote.hostId]?.[node.remote.workspace], remoteGroupBusy[remoteProjectKey(node.remote)])}`} aria-hidden="true" /> : null}
             </span>
             <ProjectTreeFolderActivity folder={node} />

@@ -79,6 +79,37 @@ func TestStoreCreateTransactionIsIdempotent(t *testing.T) {
 	assertStrings(t, state.Workspaces[GlobalWorkspaceID].SessionIDs, []string{"session"})
 }
 
+func TestAbortCreateIfOperationCannotEraseNewerReservation(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "workspace-state-v1.json"))
+	ctx := t.Context()
+	if err := store.EnsureWorkspace(ctx, Workspace{ID: GlobalWorkspaceID, Title: "Global", Visible: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BeginCreate(ctx, PendingCreate{OperationID: "new", WorkspaceID: GlobalWorkspaceID, SessionID: "session"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AbortCreateIfOperation(ctx, "session", "old"); err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.Load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending := state.PendingCreates["session"]; pending.OperationID != "new" {
+		t.Fatalf("newer reservation was removed: %+v", pending)
+	}
+	if err := store.AbortCreateIfOperation(ctx, "session", "new"); err != nil {
+		t.Fatal(err)
+	}
+	state, err = store.Load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := state.PendingCreates["session"]; ok {
+		t.Fatal("matching reservation was not removed")
+	}
+}
+
 func TestWorkspacePresentationCanBeRenamedHiddenAndReordered(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "workspace-state-v1.json")
 	store := NewStore(path)

@@ -44,13 +44,16 @@ func TestPublicDeleteArchivesLegacyWithoutMovingOriginal(t *testing.T) {
 		t.Fatalf("archive not in trash: %+v %v", page, err)
 	}
 	ref := page.Items[0].Ref
-	if result, err := a.ApplySessionLifecycle(lifecycleRequest(t, a, ref, "restore-public-archive", "restore")); err != nil || !result.Committed {
+	if ref == nil {
+		t.Fatal("canonical trash entry is missing its session reference")
+	}
+	if result, err := a.ApplySessionLifecycle(lifecycleRequest(t, a, *ref, "restore-public-archive", "restore")); err != nil || !result.Committed {
 		t.Fatalf("restore: %+v %v", result, err)
 	}
-	if err := a.ArchiveCanonicalSession(ref); err != nil {
+	if err := a.ArchiveCanonicalSession(*ref); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.PurgeCanonicalSession(ref); err != nil {
+	if err := a.PurgeCanonicalSession(*ref); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.migrateDesktopSessionsV5(t.Context()); err != nil {

@@ -85,6 +85,16 @@ try {
   Assert-True (-not (Test-VisibleUpgradeHistory $root $marker)) 'A matching sidebar title must not pass.'
   $root.Children = @($sidebar, $transcript)
   Assert-True (Test-VisibleUpgradeHistory $root $marker) 'Visible transcript assistant body should pass.'
+  $failure = New-UIElement 'Failed to load conversation history. Previous content was kept when available — retry to try again.'
+  $transcript.Children = @($body, $failure)
+  Assert-True (-not (Test-VisibleUpgradeHistory $root $marker)) 'Visible history with an obsolete failure notice must not pass.'
+  $transcript.Children = @($body)
+  $recovery = New-UIElement 'Loading history' 'reasonix-session-recovery-test'
+  $root.Children = @($sidebar, $transcript, $recovery)
+  Assert-True (-not (Test-VisibleUpgradeHistory $root $marker)) 'History behind an unresolved recovery banner must not pass.'
+  $recovery.Current.IsOffscreen = $true
+  Assert-True (Test-VisibleUpgradeHistory $root $marker) 'An offscreen recovery surface does not block the visible session.'
+  $root.Children = @($sidebar, $transcript)
   $body.Current.IsOffscreen = $true
   Assert-True (-not (Test-VisibleUpgradeHistory $root $marker)) 'Offscreen history must not pass.'
   $body.Current.IsOffscreen = $false
