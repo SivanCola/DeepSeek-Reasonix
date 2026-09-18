@@ -91,10 +91,9 @@ func (a *App) reconcileSavedTabs(ctx context.Context, file desktopTabsFile) (des
 		anyNeedsMigration = anyNeedsMigration || !final
 	}
 
-	afterMigration := fast
 	if anyNeedsMigration {
 		migrationFinished := a.waitForDesktopMigration(ctx)
-		afterMigration = a.loadSavedTabReconcileEvidence(ctx, true)
+		afterMigration := a.loadSavedTabReconcileEvidence(ctx, true)
 		for index := range file.Tabs {
 			if !needsMigration[index] {
 				continue

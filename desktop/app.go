@@ -742,7 +742,7 @@ func (a *App) restoreOrBuildTabs() {
 		}
 		a.setDesktopLocale(i18n.DetectLanguage(lang))
 	}
-	f, tabsVersion, restoreCurrent := a.reconcileTabsBeforeRestore(ctx, f, tabsVersion)
+	f, _, restoreCurrent := a.reconcileTabsBeforeRestore(ctx, f, tabsVersion)
 	if !restoreCurrent {
 		return
 	}
