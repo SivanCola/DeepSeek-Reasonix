@@ -44,7 +44,7 @@ func (a *App) recoveryWorkspaceChoices(ctx context.Context, state workspacestate
 			}
 		}
 	} else {
-		allowed[desktopWorkspaceID(entry.Scope, entry.WorkspaceRoot)] = true
+		allowed[desktopWorkspaceOwnerID(state, entry.Scope, entry.WorkspaceRoot)] = true
 		if entry.WorkspaceID != "" {
 			allowed[entry.WorkspaceID] = true
 		}

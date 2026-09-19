@@ -197,7 +197,7 @@ func (a *App) mergeCanonicalWorkspaceShells(projects []ProjectNode) []ProjectNod
 		if project.Kind == "global_folder" {
 			scope = "global"
 		}
-		id := desktopWorkspaceID(scope, project.Root)
+		id := desktopWorkspaceOwnerID(state, scope, project.Root)
 		if workspace, ok := state.Workspaces[id]; ok && !workspace.Visible {
 			continue
 		}
@@ -228,7 +228,7 @@ func (a *App) mergeCanonicalWorkspaceShells(projects []ProjectNode) []ProjectNod
 		if project.Kind == "global_folder" {
 			scope, root = "global", ""
 		}
-		workspace := state.Workspaces[desktopWorkspaceID(scope, root)]
+		workspace := state.Workspaces[desktopWorkspaceOwnerID(state, scope, root)]
 		if len(workspace.SessionIDs) == 0 {
 			continue
 		}

@@ -199,7 +199,7 @@ func (a *App) sessionTargetIdentityAliases(target SessionTarget) []string {
 	if target.SessionRef.SessionID != "" {
 		aliases = append(aliases, projectNodeSessionKey(ProjectNode{Session: &target.SessionRef}))
 		if state, err := a.workspaceRegistry().Load(a.bootContext()); err == nil {
-			aliases = append(aliases, sourceAliases(state, desktopWorkspaceID(target.Scope, target.WorkspaceRoot), target.SessionRef.SessionID)...)
+			aliases = append(aliases, sourceAliases(state, desktopWorkspaceOwnerID(state, target.Scope, target.WorkspaceRoot), target.SessionRef.SessionID)...)
 		}
 	}
 	return aliases

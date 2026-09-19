@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"reasonix/desktop/internal/workspacestate"
@@ -28,8 +29,59 @@ type desktopSessionState struct {
 	root                          string
 	workspaceState                *workspacestate.Store
 	navigationSeq                 atomic.Uint64
+	navigationMu                  sync.Mutex
+	navigationGeneration          uint64
+	navigationCancel              context.CancelFunc
 	pruneBlockedPersistence       atomic.Uint64
 	pendingCreateRecovered        atomic.Uint64
+}
+
+func (a *App) beginSessionNavigationContext(navigation ...uint64) (context.Context, func()) {
+	base := a.bootContext()
+	a.desktopSessions.navigationMu.Lock()
+	// Admission and cancellation share this lock: a delayed request must not
+	// cancel a newer intent or register after shutdown's cancellation sweep.
+	var rejected error
+	if a.shuttingDown.Load() {
+		rejected = context.Canceled
+	} else if len(navigation) > 0 && navigation[0] != 0 && a.desktopSessions.navigationSeq.Load() != navigation[0] {
+		rejected = errSessionNavigationSuperseded
+	}
+	if rejected != nil {
+		a.desktopSessions.navigationMu.Unlock()
+		ctx, cancel := context.WithCancelCause(base)
+		cancel(rejected)
+		return ctx, func() {}
+	}
+	if a.desktopSessions.navigationCancel != nil {
+		a.desktopSessions.navigationCancel()
+	}
+	a.desktopSessions.navigationGeneration++
+	generation := a.desktopSessions.navigationGeneration
+	ctx, cancel := context.WithCancel(base)
+	a.desktopSessions.navigationCancel = cancel
+	a.desktopSessions.navigationMu.Unlock()
+	return ctx, func() {
+		cancel()
+		a.desktopSessions.navigationMu.Lock()
+		if a.desktopSessions.navigationGeneration == generation {
+			a.desktopSessions.navigationCancel = nil
+		}
+		a.desktopSessions.navigationMu.Unlock()
+	}
+}
+
+func (a *App) cancelSessionNavigation() {
+	if a == nil {
+		return
+	}
+	a.desktopSessions.navigationMu.Lock()
+	a.desktopSessions.navigationGeneration++
+	if a.desktopSessions.navigationCancel != nil {
+		a.desktopSessions.navigationCancel()
+		a.desktopSessions.navigationCancel = nil
+	}
+	a.desktopSessions.navigationMu.Unlock()
 }
 
 func newDesktopSessionState() desktopSessionState {
@@ -61,6 +113,36 @@ func desktopWorkspaceID(scope, workspaceRoot string) string {
 	root := canonicalRuntimeRoot(workspaceRoot)
 	digest := sha256.Sum256([]byte(root))
 	return "project-" + hex.EncodeToString(digest[:12])
+}
+
+func desktopWorkspaceOwnerID(state workspacestate.State, scope, workspaceRoot string) string {
+	id := desktopWorkspaceID(scope, workspaceRoot)
+	if strings.TrimSpace(scope) != "project" {
+		return id
+	}
+	if persisted, ok, err := workspacestate.ResolveWorkspaceID(state, workspaceRoot); err == nil && ok {
+		return persisted
+	}
+	return id
+}
+
+func (a *App) resolveDesktopWorkspaceID(ctx context.Context, scope, workspaceRoot string) (string, error) {
+	id := desktopWorkspaceID(scope, workspaceRoot)
+	if strings.TrimSpace(scope) != "project" {
+		return id, nil
+	}
+	state, err := a.workspaceRegistry().Load(ctx)
+	if err != nil {
+		return "", err
+	}
+	persisted, ok, err := workspacestate.ResolveWorkspaceID(state, workspaceRoot)
+	if err != nil {
+		return "", err
+	}
+	if ok {
+		return persisted, nil
+	}
+	return id, nil
 }
 
 func desktopWorkspaceRoot(scope, workspaceRoot string) string {

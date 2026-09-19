@@ -4846,7 +4846,11 @@ func (a *App) RemoveWorkspace(dir string) error {
 				return fmt.Errorf("save current session before removing workspace: %w", err)
 			}
 		}
-		if err := a.workspaceRegistry().SetWorkspaceVisible(a.bootContext(), desktopWorkspaceID("project", dir), false); err != nil && !errors.Is(err, workspacestate.ErrWorkspaceNotFound) {
+		workspaceID, err := a.resolveDesktopWorkspaceID(a.bootContext(), "project", dir)
+		if err != nil {
+			return err
+		}
+		if err := a.workspaceRegistry().SetWorkspaceVisible(a.bootContext(), workspaceID, false); err != nil && !errors.Is(err, workspacestate.ErrWorkspaceNotFound) {
 			return err
 		}
 

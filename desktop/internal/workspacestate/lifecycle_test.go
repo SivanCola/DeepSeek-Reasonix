@@ -9,6 +9,46 @@ import (
 	"testing"
 )
 
+func TestDiscoveryRechecksConcurrentWorkspaceOwner(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	scanner, writer := NewStore(path), NewStore(path)
+	root := t.TempDir()
+	// The scanner derived an ID before another writer registered this root.
+	candidate := Workspace{ID: "derived-after-upgrade", Root: root, Title: "stale", Visible: true}
+	if err := writer.EnsureWorkspace(t.Context(), Workspace{ID: "persisted-owner", Root: root, Title: "User title", Visible: false}); err != nil {
+		t.Fatal(err)
+	}
+	if err := scanner.ReconcileDiscoveredSession(t.Context(), RecoveryEntry{ID: "discovered", SessionID: "orphan"}, &candidate); err != nil {
+		t.Fatal(err)
+	}
+	state, err := NewStore(path).Load(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := state.Workspaces["persisted-owner"]
+	if len(state.Workspaces) != 1 || len(owner.SessionIDs) != 1 || owner.SessionIDs[0] != "orphan" || owner.Title != "User title" || owner.Visible {
+		t.Fatalf("discovery replaced physical ownership or presentation: %+v", state.Workspaces)
+	}
+}
+
+func TestDiscoveryRejectsWorkspaceIDForAnotherDirectory(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "state.json"))
+	if err := store.EnsureWorkspace(t.Context(), Workspace{ID: "collision", Root: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+	err := store.ReconcileDiscoveredSession(t.Context(), RecoveryEntry{ID: "discovered", SessionID: "orphan"}, &Workspace{ID: "collision", Root: t.TempDir()})
+	if !errors.Is(err, ErrMutationConflict) {
+		t.Fatalf("discovery attached session to a different directory: %v", err)
+	}
+	state, err := store.Load(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Workspaces["collision"].SessionIDs) != 0 {
+		t.Fatal("failed discovery changed session ownership")
+	}
+}
+
 func TestDiscoveryRechecksConcurrentOwnership(t *testing.T) {
 	for _, phase := range []string{"prepared", "attached", "archived"} {
 		t.Run(phase, func(t *testing.T) {

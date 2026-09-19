@@ -18,6 +18,52 @@ func (s *Store) EnsureWorkspace(ctx context.Context, workspace Workspace) error 
 	return err
 }
 
+// ResolveWorkspaceID returns the persisted owner of root's physical directory.
+// Path-based projections must use this owner instead of deriving a fresh ID
+// from a newer path spelling or identity scheme.
+func ResolveWorkspaceID(state State, root string) (string, bool, error) {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return "", false, nil
+	}
+	identity, err := pathidentity.Resolve(root, pathidentity.Options{FollowLeaf: true})
+	if err != nil {
+		return "", false, fmt.Errorf("resolve workspace root: %w", err)
+	}
+	matches, err := matchingWorkspaceIDs(state, identity)
+	if err != nil {
+		return "", false, err
+	}
+	if len(matches) == 0 {
+		return "", false, nil
+	}
+	return matches[0], true, nil
+}
+
+func matchingWorkspaceIDs(state State, candidate pathidentity.Identity) ([]string, error) {
+	matches := make([]string, 0, 1)
+	if candidate.Key == "" {
+		return matches, nil
+	}
+	for id, existing := range state.Workspaces {
+		if strings.TrimSpace(existing.Root) == "" {
+			continue
+		}
+		identity, err := pathidentity.Resolve(existing.Root, pathidentity.Options{FollowLeaf: true})
+		if err != nil {
+			return nil, fmt.Errorf("resolve persisted workspace %q: %w", id, err)
+		}
+		if identity.Key == candidate.Key {
+			matches = append(matches, id)
+		}
+	}
+	slices.Sort(matches)
+	if len(matches) > 1 {
+		return nil, fmt.Errorf("%w: %s", ErrAmbiguousIdentity, strings.Join(matches, ", "))
+	}
+	return matches, nil
+}
+
 // EnsureWorkspaceResolved registers workspace or returns the authoritative ID
 // of an existing workspace with the same physical directory identity.
 func (s *Store) EnsureWorkspaceResolved(ctx context.Context, workspace Workspace) (string, error) {
@@ -48,23 +94,10 @@ func (s *Store) EnsureWorkspaceResolved(ctx context.Context, workspace Workspace
 			}
 			return nil
 		}
-		matches := make([]string, 0, 1)
 		if candidate.Key != "" {
-			for id, existing := range state.Workspaces {
-				if strings.TrimSpace(existing.Root) == "" {
-					continue
-				}
-				identity, resolveErr := pathidentity.Resolve(existing.Root, pathidentity.Options{FollowLeaf: true})
-				if resolveErr != nil {
-					return fmt.Errorf("resolve persisted workspace %q: %w", id, resolveErr)
-				}
-				if identity.Key == candidate.Key {
-					matches = append(matches, id)
-				}
-			}
-			slices.Sort(matches)
-			if len(matches) > 1 {
-				return fmt.Errorf("%w: %s", ErrAmbiguousIdentity, strings.Join(matches, ", "))
+			matches, matchErr := matchingWorkspaceIDs(*state, candidate)
+			if matchErr != nil {
+				return matchErr
 			}
 			if len(matches) == 1 {
 				if err := revalidateCandidate(); err != nil {

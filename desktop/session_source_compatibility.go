@@ -113,7 +113,7 @@ func (a *App) recordDesktopSource(ctx context.Context, path, format, fingerprint
 		}
 		presentation.Title = meta.TopicTitle
 	}
-	presentation = historicalTopicPresentation(workspaceID, presentation)
+	presentation = a.historicalTopicPresentation(ctx, workspaceID, presentation)
 	return a.workspaceRegistry().RecordSource(ctx, workspacestate.SourceMapping{
 		SourceKey: desktopSourceKey(path, ""), Path: path, Format: format, Fingerprint: fingerprint,
 		SessionID: targetID, WorkspaceID: workspaceID,
@@ -151,7 +151,7 @@ func (a *App) commitDesktopImport(ctx context.Context, source desktopMigrationSo
 		}
 		presentation.Title = meta.TopicTitle
 	}
-	presentation = historicalTopicPresentation(workspaceID, presentation)
+	presentation = a.historicalTopicPresentation(ctx, workspaceID, presentation)
 	opID, err := a.prepareDesktopImport(ctx, source, path, fingerprint, targetID, workspaceID)
 	if err != nil {
 		return err
@@ -165,16 +165,25 @@ func (a *App) commitDesktopImport(ctx context.Context, source desktopMigrationSo
 	return a.workspaceRegistry().CommitOperation(ctx, opID)
 }
 
-func historicalTopicPresentation(workspaceID string, presentation workspacestate.Presentation) workspacestate.Presentation {
-	return historicalTopicPresentationFrom(loadProjectsFile(), workspaceID, presentation)
+func (a *App) historicalTopicPresentation(ctx context.Context, workspaceID string, presentation workspacestate.Presentation) workspacestate.Presentation {
+	projects := loadProjectsFile()
+	if workspaceID == workspacestate.GlobalWorkspaceID {
+		return historicalTopicPresentationFrom(projects, workspaceID, "", presentation)
+	}
+	workspaceRoot := ""
+	if state, err := a.workspaceRegistry().Load(ctx); err == nil {
+		workspaceRoot = state.Workspaces[workspaceID].Root
+	}
+	return historicalTopicPresentationFrom(projects, workspaceID, workspaceRoot, presentation)
 }
 
-func historicalTopicPresentationFrom(projects desktopProjectFile, workspaceID string, presentation workspacestate.Presentation) workspacestate.Presentation {
+func historicalTopicPresentationFrom(projects desktopProjectFile, workspaceID, workspaceRoot string, presentation workspacestate.Presentation) workspacestate.Presentation {
 	topics, pinned := projects.GlobalTopics, projects.GlobalPinnedTopics
 	if workspaceID != workspacestate.GlobalWorkspaceID {
 		topics, pinned = nil, nil
 		for _, project := range projects.Projects {
-			if desktopWorkspaceID("project", project.Root) == workspaceID {
+			if (workspaceRoot != "" && sameProjectRoot(project.Root, workspaceRoot)) ||
+				(workspaceRoot == "" && desktopWorkspaceID("project", project.Root) == workspaceID) {
 				topics, pinned = project.Topics, project.PinnedTopics
 				break
 			}

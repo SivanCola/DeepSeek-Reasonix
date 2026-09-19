@@ -899,12 +899,12 @@ func (a *App) ensureDraftSessionTab(op draftstate.Operation) (TabMeta, error) {
 		return TabMeta{}, err
 	}
 	if meta := a.metaForDraftSession(op.SessionID); meta != nil {
-		if desktopWorkspaceID(meta.Scope, meta.WorkspaceRoot) != op.WorkspaceID {
-			return *meta, workspacestate.ErrMutationConflict
-		}
 		state, stateErr := a.workspaceRegistry().Load(a.bootContext())
 		if stateErr != nil {
 			return *meta, stateErr
+		}
+		if desktopWorkspaceOwnerID(state, meta.Scope, meta.WorkspaceRoot) != op.WorkspaceID {
+			return *meta, workspacestate.ErrMutationConflict
 		}
 		if lifecycle := state.SessionStates[op.SessionID].Lifecycle; lifecycle == workspacestate.Archived || lifecycle == workspacestate.Deleted {
 			return *meta, fmt.Errorf("session %q is %s and cannot accept the draft", op.SessionID, lifecycle)

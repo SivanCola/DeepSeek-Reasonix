@@ -149,7 +149,7 @@ func (a *App) projectTreeRuntimeTopics(snapshots []catalogRuntimeSnapshot) []Pro
 			node.SessionPath, node.Key = path, projectSessionNodeKey(scope, path)
 		}
 		if node.Session != nil {
-			node.IdentityAliases = sourceAliases(state, desktopWorkspaceID(scope, root), node.Session.SessionID)
+			node.IdentityAliases = sourceAliases(state, desktopWorkspaceOwnerID(state, scope, root), node.Session.SessionID)
 			node.LifecycleGeneration = state.SessionStates[node.Session.SessionID].Generation
 			if snapshot.tabID != "" {
 				node.IdentityAliases = append(node.IdentityAliases, "tab\x00local\x00"+snapshot.tabID)
