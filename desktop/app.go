@@ -785,10 +785,7 @@ func (a *App) restoreOrBuildTabs() {
 			// goal-state onto the fresh path; reading it here stops a restart
 			// from re-seeding the cleared goal into the rotated session. A
 			// session without a sidecar keeps the persisted goal (legacy).
-			tab.goal = strings.TrimSpace(entry.Goal)
-			if !entry.restoreBlocked {
-				tab.goal = runningTabSessionGoal(strings.TrimSpace(entry.SessionPath), tab.goal)
-			}
+			restoreRuntime := prepareRestoredTabIdentity(tab, entry)
 			tab.toolApprovalMode = normalizeToolApprovalMode(entry.ToolApprovalMode)
 			if tab.toolApprovalMode == control.ToolApprovalAsk && tabModeHasAutoApproveTools(entry.Mode) {
 				tab.toolApprovalMode = control.ToolApprovalYolo
@@ -798,16 +795,10 @@ func (a *App) restoreOrBuildTabs() {
 			tab.PendingCreateOperationID = strings.TrimSpace(entry.CreateOperationID)
 			tab.persistenceExtra = cloneDesktopJSONFields(entry.extra)
 			tab.ReadOnly = entry.ReadOnly
-			if entry.restoreBlocked {
-				tab.StartupErr = "Saved session identity could not be verified. Recovery data was preserved."
-				tab.retainLegacyPinnedFiles(entry.PinnedFiles)
-			} else {
-				restoreTabPinnedContext(tab, entry.PinnedFiles)
-			}
 			tab.Takeover.Spectator = entry.TakeoverSpectator
 			tab.sink = &tabEventSink{tabID: tab.ID, app: a, ctx: ctx}
 			a.publishRestoredTab(tab, releaseAdmission)
-			if !entry.restoreBlocked {
+			if restoreRuntime {
 				toBuild = append(toBuild, tab)
 			}
 		}
