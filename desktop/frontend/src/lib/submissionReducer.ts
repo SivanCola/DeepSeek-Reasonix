@@ -101,13 +101,27 @@ export function installTranscriptRecords(s: State, a: Extract<Action, { type: "t
     }
     localRows.push({ item, left, right });
   }
+  // A durable user record can replace a local submission between two
+  // projections. Live process/assistant rows from that turn were previously
+  // anchored to the formal row before the local echo because the echo itself
+  // is owned outside `items`. Move that anchor to the durable user record so
+  // the already-mounted turn stays in user -> process -> assistant order.
+  const turnAnchors = new Map<string, string>();
+  for (const item of projected) {
+    if (item.kind === "user" && item.turnId) turnAnchors.set(item.turnId, item.id);
+  }
+  for (const local of Object.values(s.localSubmissions)) {
+    const id = local.messageId ? `m:${local.messageId}` : undefined;
+    if (local.turnId && id && projectedIds.has(id)) turnAnchors.set(local.turnId, id);
+  }
   const tails = new Map<string, string>();
   for (const row of localRows) {
-    const left = row.left && (tails.get(row.left) ?? row.left);
+    const anchor = (row.item.turnId && turnAnchors.get(row.item.turnId)) || row.left;
+    const left = anchor && (tails.get(anchor) ?? anchor);
     const leftIndex = left ? items.findIndex(item => item.id === left) : -1;
     if (leftIndex >= 0) {
       items.splice(leftIndex + 1, 0, row.item);
-      if (row.left) tails.set(row.left, row.item.id);
+      if (anchor) tails.set(anchor, row.item.id);
       continue;
     }
     const rightIndex = row.right ? items.findIndex(item => item.id === row.right) : -1;

@@ -188,6 +188,25 @@ test("authoritative projection keeps local notices at their persisted anchors", 
   });
   assert.deepEqual(state.items.map(item => item.id), ["m:user", "local:notice", "m:final"]);
 });
+
+test("durable user handoff keeps live rows after the user without remounting them", () => {
+  const previous = { kind: "assistant" as const, id: "m:previous", text: "before", reasoning: "", streaming: false };
+  const process = { kind: "tool" as const, id: "tool:live", name: "shell", args: "{}", readOnly: true,
+    status: "running" as const, turnId: "turn-live" };
+  const answer = { kind: "assistant" as const, id: "m:answer-live", text: "done", reasoning: "", streaming: false, turnId: "turn-live" };
+  const durableUser = { kind: "user" as const, id: "m:user-live", messageId: "user-live", text: "build", turnId: "turn-live" };
+  const state = reducer({ ...initialState, items: [previous, process, answer], transcriptProjectedIds: [previous.id],
+    localSubmissions: { submit: { submissionId: "submit", localId: "u1", text: "build", createdAt: 1, sequence: 1,
+      status: "accepted" as const, messageId: "user-live", turnId: "turn-live" } }, localSubmissionOrder: ["submit"] }, {
+    type: "transcript_records", confirmedUsers: [], projection: {
+      items: [previous, durableUser], removeIds: [], mutation: "patch", startTurn: 1, endTurn: 2, totalTurns: 2,
+      hasOlder: false, hasNewer: false, revision: 2, revisionKnown: true, digest: "cut",
+    },
+  });
+  assert.deepEqual(state.items.map(item => item.id), ["m:previous", "m:user-live", "tool:live", "m:answer-live"]);
+  assert.equal(state.items[2], process);
+  assert.equal(state.items[3], answer);
+});
 async function microtasks() { for (let i = 0; i < 16; i++) await Promise.resolve(); }
 
 for (const remote of [false, true]) for (const scenario of ["direct", "event-first", "late", "stale", "missing"] as const) {
