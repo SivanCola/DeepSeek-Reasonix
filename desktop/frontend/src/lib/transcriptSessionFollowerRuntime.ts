@@ -31,7 +31,7 @@ export class TranscriptSessionFollowerRuntime {
       const read = remote ? app.RemoteTranscriptFollowForTab : app.TranscriptFollowForTab;
       if (!read) return Promise.reject(new Error("Transcript v2 is required. Upgrade Desktop and Serve together."));
       return read(tabId, request);
-    });
+    }, { transport: remote ? "remote" : "local" });
   }
 
   async start(): Promise<void> {
@@ -70,7 +70,7 @@ export class TranscriptSessionFollowerRuntime {
     });
   }
 
-  stop(): void { noteSessionObservation(this.path, { action: "unsubscribe", tabId: this.tabId, generation: this.generation, sequence: this.coverage }); this.generation++; this.confirmationReads.clear(); this.submissionCoverage.clear(); this.releaseContentRecovery?.(); this.releaseContentRecovery = undefined; this.client.stop(); }
+  stop(closeSubscription = true, reason?: "service_stopping"): void { noteSessionObservation(this.path, { action: "unsubscribe", tabId: this.tabId, generation: this.generation, sequence: this.coverage }); this.generation++; this.confirmationReads.clear(); this.submissionCoverage.clear(); this.releaseContentRecovery?.(); this.releaseContentRecovery = undefined; this.client.stop(closeSubscription, reason); }
 
   private observeSubmissions(): void {
     const pending = new Set(this.state()?.localSubmissionOrder ?? []);

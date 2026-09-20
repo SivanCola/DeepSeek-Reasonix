@@ -100,7 +100,6 @@ function bootstrap(dataHome: string): void {
   let lastFailure: HandshakeFailure = startingPage;
   let startupTimer: ReturnType<typeof setTimeout> | undefined;
   const startupDelay = new StartupDelay();
-  log.info(`startup ${status.generation}: shell pid=${process.pid} version=${buildVersion}`);
   process.on("uncaughtException", (error) => log.error(`uncaught exception: ${errorText(error)}`));
   process.on("unhandledRejection", (reason) => log.error(`unhandled rejection: ${errorText(reason)}`));
 
@@ -142,6 +141,9 @@ function bootstrap(dataHome: string): void {
     /* Handshake reports invalid packaged identity. */
   }
   const shellLifecycle = new ShellLifecycle(dataHome, shellBuild);
+  log.info(
+    `startup ${status.generation}: shell pid=${process.pid} version=${shellBuild.version} channel=${shellBuild.channel || "unknown"} commit=${shellBuild.commit || "unknown"}`,
+  );
 
   let domReadyGeneration = "";
 
@@ -180,8 +182,7 @@ function bootstrap(dataHome: string): void {
         .catch((error: unknown) => log.warn(`domReady failed: ${errorText(error)}`))
         .then(attach);
     },
-    onCloseRequested: async () => record(await service.request("desktop/beforeClose", { reason: "window" })).prevent === true,
-    onCloseAllowed: () => lifecycle.approve(),
+    onCloseRequested: () => lifecycle.requestWindowClose(),
     onShellAction: (action: ShellAction) => {
       if (action === "open-logs") void shell.openPath(logsDir);
       else if (action === "restart") {
@@ -278,6 +279,7 @@ function bootstrap(dataHome: string): void {
     service: {
       beforeClose: async (reason) => record(await service.request("desktop/beforeClose", { reason })).prevent === true,
       shutdown: (reason, onProgress) => service.shutdown(reason, onProgress),
+      shutdownRequestIdentity: () => service.shutdownRequestIdentity,
     },
     app: {
       quit: () => app.quit(),
@@ -289,6 +291,20 @@ function bootstrap(dataHome: string): void {
     },
     flushRenderer: () => mainWindow.flushSessionDraft(),
     resumeRenderer: () => mainWindow.resumeSessionDraftEditing(),
+    onWindowClosePrevented: () => mainWindow.hide(),
+    onPrepareFailed: async (message) => {
+      const parent = mainWindow.browserWindow;
+      const options = {
+        type: "error" as const,
+        title: "Close paused / 关闭已暂停",
+        message: "Reasonix could not save the current draft. / Reasonix 无法保存当前草稿。",
+        detail: `${message}\n\nThe window will remain open so you can retry. / 窗口将保持打开，你可以重试。`,
+        buttons: ["OK / 确定"],
+        noLink: true,
+      };
+      if (parent) await dialog.showMessageBox(parent, options);
+      else await dialog.showMessageBox(options);
+    },
     onShutdownFailed: async (message) => {
       const options = {
         type: "error" as const,
@@ -436,7 +452,9 @@ function bootstrap(dataHome: string): void {
         const identityLog = hello.instance
           ? `, path identity v${hello.instance.identityVersion} ${hello.instance.identityDigest}`
           : ", legacy path identity";
-        log.info(`desktop service ready: generation ${hello.runtimeGeneration}, pid ${hello.service.pid}${identityLog}`);
+        log.info(
+          `desktop service ready: generation ${hello.runtimeGeneration}, pid ${hello.service.pid}, version=${hello.service.version} channel=${hello.service.channel || "unknown"} commit=${hello.service.commit || "unknown"}${identityLog}`,
+        );
         try {
           await zoomStore.load();
         } catch (error) {

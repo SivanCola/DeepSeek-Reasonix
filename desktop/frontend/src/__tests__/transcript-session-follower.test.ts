@@ -5,15 +5,16 @@ import { installDesktopHostStub } from "./desktopHostStub";
 
 Object.defineProperty(globalThis, "window", { configurable: true, value: {} });
 const commands: Record<string, unknown> = {};
-installDesktopHostStub(commands);
+const desktopStub = installDesktopHostStub(commands);
 const [{ TranscriptSessionFollower }, { initialState, reducer }, { getTranscriptStore }] = await Promise.all([
   import("../lib/transcriptSessionFollower"), import("../lib/useController"), import("../lib/transcriptStore"),
 ]);
 const { ChatSource } = await import("../lib/chatViewSource");
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>(done => { resolve = done; });
-  return { promise, resolve };
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
 }
 
 test("expired settled content requests the owning follower to resynchronize", async () => {
@@ -303,6 +304,51 @@ function initial(subscription: string): TranscriptFollowResponse {
         preview: "", contentRef: { digest: "canonical-message", bytes: 8192 } }],
     },
   };
+}
+
+for (const remote of [false, true]) for (const during of ["baseline", "baseline rejection", "delta", "retry", "load"] as const) {
+  test(`${remote ? "remote" : "local"} stopping during ${during} fences current and future followers`, async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    desktopStub.emitServiceState({ phase: "ready", generation: "running" });
+    const tab = `stopping-${remote}-${during}`;
+    const requests: FollowRequest[] = [];
+    const baseline = deferred<TranscriptFollowResponse>();
+    const delta = deferred<TranscriptFollowResponse>();
+    const readStarted = deferred<void>();
+    commands[remote ? "RemoteTranscriptFollowForTab" : "TranscriptFollowForTab"] = (_tab: string, request: FollowRequest) => {
+      requests.push(request);
+      if (request.close) return Promise.resolve({ protocolVersion: 2, changes: [] });
+      readStarted.resolve();
+      if (!request.subscription) return baseline.promise;
+      return delta.promise;
+    };
+    let state = { ...initialState };
+    const follower = new TranscriptSessionFollower(tab, "", remote, action => { state = reducer(state, action); });
+    const starting = follower.start();
+    if (during !== "load") await readStarted.promise;
+    if (during === "delta" || during === "retry") {
+      baseline.resolve(initial(tab)); await starting;
+      if (during === "retry") {
+        delta.resolve({ protocolVersion: 2, subscription: tab, changes: [], resetRequired: true });
+        await microtasks();
+      }
+    }
+    const before = requests.length;
+    desktopStub.emitServiceState({ phase: "stopping", generation: "running" });
+    const visible = state;
+    if (during === "baseline rejection") baseline.reject(new Error("stopping service rejected pending baseline"));
+    else baseline.resolve(initial(tab));
+    delta.resolve({ protocolVersion: 2, subscription: tab, changes: [{ revision: 11, commitSeq: 4, durableSeq: 4, index: 0, event: { kind: "text", messageId: "answer", text: "late" } }], resetRequired: false });
+    await starting; await microtasks();
+    t.mock.timers.tick(1000); await microtasks();
+    const late = new TranscriptSessionFollower(`${tab}-late`, "", remote, () => { throw new Error("stopped service must not publish"); });
+    await late.start(); await follower.start();
+    assert.equal(requests.length, before, "no cleanup, retry or new baseline after stopping");
+    assert.equal(state, visible, "a late response cannot update the retained transcript");
+    follower.stop(); late.stop();
+    desktopStub.emitServiceState({ phase: "ready", generation: "replacement" });
+    getTranscriptStore().evictTab(tab);
+  });
 }
 
 for (const remote of [false, true]) test(`${remote ? "remote" : "local"} follower preserves an outer snapshot identity from an older peer`, async () => {
