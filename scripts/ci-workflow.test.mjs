@@ -31,10 +31,16 @@ test("Windows PR verifies credential aliases before full push CI", () => {
   assert.match(ci, /name: test \(Windows credential ACL identity\)[\s\S]*?runner\.os == 'Windows' && github\.event_name == 'pull_request'[\s\S]*?go test -timeout=2m -run '\^TestCredentialAccessRepairsLegacyCredentialDeny\|\^TestRepairLegacyCredentialDenyMatchesFileAcrossPathAliases\$' \.\/internal\/config \.\/internal\/winaclresidue/);
 });
 
-test("release candidate verification cannot mutate repository contents before approval", () => {
+test("release tag mutation follows approval with an explicit identity and read-only default token", () => {
   assert.match(job(promote, "preflight"), /permissions:\n      actions: read\n      attestations: read\n      contents: read/);
   assert.match(job(promote, "authorize"), /environment: release[\s\S]*permissions:\n      contents: read/);
-  assert.match(job(promote, "activate"), /permissions:\n      contents: write/);
+  const activation = job(promote, "activate");
+  assert.match(activation, /needs: \[preflight, authorize\]/);
+  assert.match(activation, /permissions:\n      contents: read/);
+  assert.match(activation, /persist-credentials: false/);
+  assert.match(activation, /GH_TOKEN: \$\{\{ secrets.RELEASE_TAG_TOKEN \}\}/);
+  assert.match(activation, /RELEASE_TAG_ACTOR_ID: \$\{\{ needs.preflight.outputs.tag_actor_id \}\}/);
+  assert.doesNotMatch(job(promote, "preflight"), /release-candidate-tags.sh activate|git push/);
 });
 
 test("cancelled CI stops expensive workers but keeps result aggregation", () => {

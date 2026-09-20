@@ -29,7 +29,8 @@ The candidate payload lasts 30 days and its record/evidence 90 days. If the
 payload expires before publication, prepare a new candidate. The release
 skill's public postflight remains the authority for tags, npm, Desktop
 updates, Homebrew, and the hydrated website after an authorized publication.
-# Tag publisher identity / 标签发布身份
+
+## Tag publisher identity / 标签发布身份
 
 Publication requires the repository secret `RELEASE_TAG_TOKEN` and variable
 `RELEASE_TAG_ACTOR` (the token owner's login). Use a maintainer already allowed
