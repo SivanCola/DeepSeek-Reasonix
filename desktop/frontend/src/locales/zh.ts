@@ -434,6 +434,7 @@ export const zh: Record<DictKey, string> = {
   "topicBar.exportPhase.complete": "保存完成",
   "topicBar.exportPhase.cancelled": "已取消",
   "tool.statusUnknown": "执行状态待同步",
+  "tool.identityConflict": "工具身份冲突",
   "topicBar.exportDiagnostic": "导出会话诊断",
   "topicBar.exportSuccess": "已导出 {count} 个文件。",
   "topicBar.exportImageParts": "会话较长，已拆分导出为 {count} 个连续编号的 PNG 文件。",

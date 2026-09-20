@@ -433,6 +433,7 @@ export const en = {
   "topicBar.exportPhase.complete": "Complete",
   "topicBar.exportPhase.cancelled": "Cancelled",
   "tool.statusUnknown": "Execution status pending sync",
+  "tool.identityConflict": "Tool identity conflict",
   "topicBar.exportDiagnostic": "Export Session Diagnostics",
   "topicBar.exportSuccess": "Exported {count} file(s).",
   "topicBar.exportImageParts": "This conversation is long, so it was exported as {count} numbered PNG files.",

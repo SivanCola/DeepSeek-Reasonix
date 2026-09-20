@@ -34,6 +34,27 @@ type ToolResultRepairStats struct {
 	Conflicts int
 }
 
+// NeedsToolResultRepair keeps the common restore path from rebuilding
+// canonical history when every tool-result display row already has identity.
+func NeedsToolResultRepair(records []Message) bool {
+	for _, message := range records {
+		if message.Role == "tool" && message.MessageID == "" && message.ToolCallID != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func checkpointMessageIDs(records []Message) map[string]bool {
+	occupied := make(map[string]bool)
+	for _, message := range records {
+		if message.MessageID != "" {
+			occupied[message.MessageID] = true
+		}
+	}
+	return occupied
+}
+
 // RepairCheckpointToolResults joins legacy display rows that lost MessageID
 // with authoritative persisted history. ToolCallID is the only cross-stream
 // join key; known turn boundaries must also agree. Ambiguous or conflicting
@@ -41,6 +62,7 @@ type ToolResultRepairStats struct {
 func RepairCheckpointToolResults(records, canonical []Message) ([]Message, ToolResultRepairStats) {
 	repaired := append([]Message(nil), records...)
 	byCall := make(map[string][]Message)
+	occupied := checkpointMessageIDs(records)
 	historyTurn := 0
 	for _, message := range canonical {
 		if message.Role == "user" {
@@ -78,9 +100,14 @@ func RepairCheckpointToolResults(records, canonical []Message) ([]Message, ToolR
 			continue
 		}
 		formal := candidates[0]
+		if occupied[formal.MessageID] {
+			stats.Conflicts++
+			continue
+		}
 		// Keep the checkpoint row's display location and event-formatted result,
 		// while restoring fields owned by the persisted message.
 		legacy.MessageID = formal.MessageID
+		occupied[formal.MessageID] = true
 		if legacy.RecordID == "" {
 			legacy.RecordID = formal.RecordID
 		}

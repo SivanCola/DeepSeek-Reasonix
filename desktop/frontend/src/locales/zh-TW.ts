@@ -2699,6 +2699,7 @@ export const zhTW: Record<DictKey, string> = {
   "topicBar.exportPhase.complete": "儲存完成",
   "topicBar.exportPhase.cancelled": "已取消",
   "tool.statusUnknown": "執行狀態待同步",
+  "tool.identityConflict": "工具身分衝突",
   "topicBar.exportDiagnostic": "匯出會話診斷",
   "topicBar.exportSuccess": "已匯出 {count} 個檔案。",
   "topicBar.exportImageParts": "會話較長，已拆分匯出為 {count} 個連續編號的 PNG 檔案。",

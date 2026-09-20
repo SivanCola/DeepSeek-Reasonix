@@ -490,6 +490,11 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // Preserve the established 186 B Linux producer difference: 2074952 B, with
 // the next one-decimal ceiling. Gzip, chunk, CSS, locale, and resident-history
 // budgets remain unchanged.
-const rawInitialBudgetKiB = 2_026.4;
+// Conflict-preserving tool identity, anchored local rows, evidence-aware state
+// handoff, and idempotent projection replay measure 2081572 B locally (+6806 B,
+// 0.328%). Preserve the same Linux producer difference with 34 B of headroom at
+// the next decimal. Compressed, chunk, CSS, locale, and resident-history budgets
+// remain fixed.
+const rawInitialBudgetKiB = 2_033.0;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

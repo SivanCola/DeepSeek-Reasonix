@@ -72,6 +72,122 @@ test("business projection removes stale duplicate nodes and restores authoritati
   } });
   assert.deepEqual(state.items.map(item => item.id), ["m:user", "call", "m:final"]);
 });
+
+test("content-driven projection preserves a completed event result", () => {
+  const live = { kind: "tool" as const, id: "call", name: "write_file", args: "{}", readOnly: false,
+    status: "done" as const, output: "written", execution: { state: "completed" as const, durationMs: 99 } };
+  const projected = { ...live, status: "unknown" as const, output: "", execution: undefined,
+    resultMissing: true, resultEvidence: "missing" as const };
+  const state = reducer({ ...initialState, items: [live], transcriptProjectedIds: ["call"] }, {
+    type: "transcript_records", confirmedUsers: [], projection: {
+      items: [projected], removeIds: [], mutation: "patch", startTurn: 1, endTurn: 1, totalTurns: 1,
+      hasOlder: false, hasNewer: false, revision: 2, revisionKnown: true, digest: "cut",
+    },
+  });
+  const tool = state.items.find((item): item is typeof live => item.kind === "tool");
+  assert.equal(tool?.status, "done");
+  assert.equal(tool?.output, "written");
+  assert.equal(tool?.execution?.durationMs, 99);
+});
+
+test("formal empty result replaces an earlier event preview", () => {
+  const live = { kind: "tool" as const, id: "call", name: "write_file", args: "{}", readOnly: false,
+    status: "done" as const, output: "preview", error: "temporary", execution: { state: "completed" as const } };
+  const formal = { ...live, output: "", error: undefined, resultEvidence: "formal" as const };
+  const state = reducer({ ...initialState, items: [live], transcriptProjectedIds: ["call"] }, {
+    type: "transcript_records", confirmedUsers: [], projection: {
+      items: [formal], removeIds: [], mutation: "patch", startTurn: 1, endTurn: 1, totalTurns: 1,
+      hasOlder: false, hasNewer: false, revision: 2, revisionKnown: true, digest: "cut",
+    },
+  });
+  const tool = state.items[0];
+  assert.equal(tool.kind === "tool" && tool.output, "");
+  assert.equal(tool.kind === "tool" && tool.error, undefined);
+});
+
+test("duplicate authoritative projection keys are rejected without changing the mounted state", () => {
+  const tool = { kind: "tool" as const, id: "call", name: "write_file", args: "{}", readOnly: false,
+    status: "done" as const, output: "written" };
+  const before = { ...initialState, items: [tool], transcriptProjectedIds: [tool.id] };
+  const state = reducer(before, { type: "transcript_records", confirmedUsers: [], projection: {
+    items: [tool, { ...tool, output: "conflicting" }], removeIds: [], mutation: "patch",
+    startTurn: 1, endTurn: 1, totalTurns: 1, hasOlder: false, hasNewer: false,
+    revision: 2, revisionKnown: true, digest: "cut",
+  } });
+  assert.equal(state, before);
+  assert.equal(state.items[0].kind === "tool" && state.items[0].output, "written");
+});
+
+test("an id-only late event cannot overwrite an ambiguous formal result", () => {
+  const first = { kind: "tool" as const, id: "call", name: "bash", args: "", readOnly: false,
+    status: "done" as const, output: "first", identityConflict: true };
+  const second = { ...first, id: "call:conflict:second", output: "second" };
+  const before = { ...initialState, items: [first, second], transcriptProjectedIds: [first.id, second.id] };
+  const state = reducer(before, {
+    type: "event", e: { kind: "tool_result", tool: { id: "call", name: "bash", output: "late", readOnly: false } },
+  });
+  assert.equal(state, before);
+  assert.deepEqual(state.items.map(item => item.kind === "tool" && item.output), ["first", "second"]);
+});
+
+test("reapplying an identical authoritative projection is a state no-op", () => {
+  const tool = { kind: "tool" as const, id: "call", name: "write_file", args: "{}", readOnly: false,
+    status: "done" as const, output: "written", resultEvidence: "formal" as const };
+  const projection = { items: [tool], removeIds: [], mutation: "patch" as const,
+    startTurn: 1, endTurn: 1, totalTurns: 1, hasOlder: false, hasNewer: false,
+    revision: 2, revisionKnown: true, digest: "cut" };
+  const first = reducer(initialState, { type: "transcript_records", confirmedUsers: [], projection });
+  const second = reducer(first, { type: "transcript_records", confirmedUsers: [], projection });
+  assert.equal(second, first);
+  assert.equal(second.historyMutation.seq, first.historyMutation.seq);
+});
+
+test("unrelated lazy body hydration cannot downgrade a completed tool event", async () => {
+  const tab = "completed-tool-hydration", path = "/session/completed-tool-hydration";
+  const body = "loaded old text";
+  commands.HistoryContentForTab = async (_tab: string, ref: { entryId: string; field: string }) => ({
+    entryId: ref.entryId, field: ref.field, chunk: 0, chunks: 1, data: body, done: true, stale: false,
+  });
+  const store = getTranscriptStore();
+  const projection = store.installSlice(tab, path, {
+    entries: [
+      { entryId: "m:old", turn: 1, order: 0, message: { role: "assistant", messageId: "old", content: "preview" },
+        refs: [{ entryId: "m:old", field: "content", size: body.length, chunks: 1, revision: 1, digest: "body" }] },
+      { entryId: "m:call", turn: 1, order: 1, message: { role: "assistant", messageId: "call", content: "",
+        toolCalls: [{ id: "write", name: "write_file", arguments: "{}" }] }, refs: [] },
+    ], nextCursor: "", newerCursor: "", hasOlder: false, hasNewer: false, totalTurns: 1, startTurn: 1, endTurn: 1,
+    revision: 1, revisionKnown: true, digest: "cut", stale: false,
+  });
+  let state = reducer({ ...initialState, transcriptProtocol: 2 }, { type: "transcript_records",
+    projection: { ...projection, removeIds: [], mutation: "replace" }, confirmedUsers: [] });
+  state = reducer(state, { type: "event", remote: true, e: { kind: "tool_result", tool: {
+    id: "write", name: "write_file", output: "written", readOnly: false,
+    execution: { state: "completed", durationMs: 99 },
+  } } });
+  const unsubscribe = store.subscribe(tab, change => {
+    if (change.projection) state = reducer(state, { type: "transcript_records", projection: change.projection, confirmedUsers: [] });
+  });
+  try {
+    await store.requestFullContent(tab, "m:old", "content");
+    const tool = state.items.find(item => item.kind === "tool");
+    assert.equal(tool?.kind === "tool" && tool.status, "done");
+    assert.equal(tool?.kind === "tool" && tool.output, "written");
+    assert.equal(tool?.kind === "tool" && tool.execution?.durationMs, 99);
+  } finally { unsubscribe(); store.evictTab(tab); }
+});
+
+test("authoritative projection keeps local notices at their persisted anchors", () => {
+  const user = { kind: "user" as const, id: "m:user", text: "build" };
+  const notice = { kind: "notice" as const, id: "local:notice", local: true, level: "info" as const, text: "checking" };
+  const final = { kind: "assistant" as const, id: "m:final", text: "done", reasoning: "", streaming: false };
+  const state = reducer({ ...initialState, items: [user, notice, final], transcriptProjectedIds: [user.id, final.id] }, {
+    type: "transcript_records", confirmedUsers: [], projection: {
+      items: [user, final], removeIds: [], mutation: "patch", startTurn: 1, endTurn: 1, totalTurns: 1,
+      hasOlder: false, hasNewer: false, revision: 2, revisionKnown: true, digest: "cut",
+    },
+  });
+  assert.deepEqual(state.items.map(item => item.id), ["m:user", "local:notice", "m:final"]);
+});
 async function microtasks() { for (let i = 0; i < 16; i++) await Promise.resolve(); }
 
 for (const remote of [false, true]) for (const scenario of ["direct", "event-first", "late", "stale", "missing"] as const) {
@@ -251,6 +367,40 @@ for (const remote of [false, true]) test(`${remote ? "remote" : "local"} followe
     assert.ok(process?.kind === "process" && process.foldable && process.collapsed,
       "normal completion folds after the duplicate trailing alias is removed");
     source.dispose();
+  } finally { follower.stop(); getTranscriptStore().evictTab(tab); }
+});
+
+for (const remote of [false, true]) test(`${remote ? "remote" : "local"} follower joins a lazy formal result through its observation`, async () => {
+  const tab = `lazy-formal-result-${remote}`, path = `/session/${tab}`;
+  const response = initial(tab);
+  response.history!.messages = [
+    { messageId: "user", position: 0, version: 1, role: "user", eventSequence: 1, visibleTurn: 1,
+      preview: "build", inline: { id: "user", role: "user", content: "build" } },
+    { messageId: "owner", position: 1, version: 1, role: "assistant", eventSequence: 2, visibleTurn: 1,
+      preview: "", inline: { id: "owner", role: "assistant", content: "", tool_calls: [{ id: "lazy", name: "write_file", arguments: '{"path":"lazy.html"}' }] },
+      toolObservations: { lazy: { state: "completed", messageId: "result", version: 1, contentRef: { digest: "body", bytes: 8192 } } } },
+    { messageId: "result", position: 2, version: 1, role: "tool", eventSequence: 3, visibleTurn: 1,
+      preview: "written", contentRef: { digest: "body", bytes: 8192 } },
+    { messageId: "final", position: 3, version: 1, role: "assistant", eventSequence: 4, visibleTurn: 1, turnFinal: true,
+      preview: "done", inline: { id: "final", role: "assistant", content: "done" } },
+  ];
+  response.snapshot!.records = [{ id: "tool:lazy", order: 4,
+    message: { recordId: "tool:lazy", role: "tool", toolCallId: "lazy", toolName: "write_file", content: "written" }, refs: [] }];
+  response.snapshot!.totalRecords = 5;
+  const key = remote ? "RemoteTranscriptFollowForTab" : "TranscriptFollowForTab";
+  const pending = deferred<TranscriptFollowResponse>();
+  commands[key] = (_tab: string, request: FollowRequest) => request.close
+    ? Promise.resolve({ protocolVersion: 2, subscription: tab, changes: [], resetRequired: false })
+    : request.subscription ? pending.promise : Promise.resolve(response);
+  let state = initialState;
+  const follower = new TranscriptSessionFollower(tab, path, remote, action => { state = reducer(state, action); });
+  try {
+    await follower.start();
+    const tools = state.items.filter((item): item is Extract<import("../lib/useController").Item, { kind: "tool" }> => item.kind === "tool");
+    assert.equal(tools.length, 1);
+    assert.equal(tools[0].id, "lazy");
+    assert.equal(tools[0].args, '{"path":"lazy.html"}');
+    assert.ok(state.items.findIndex(item => item.id === "lazy") < state.items.findIndex(item => item.id === "m:final"));
   } finally { follower.stop(); getTranscriptStore().evictTab(tab); }
 });
 

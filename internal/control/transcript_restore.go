@@ -117,12 +117,14 @@ func restoreFromTranscriptCheckpoint(sessionPath string, ledger *turnevent.Ledge
 	if prefixDigest != checkpoint.TranscriptDigest || checkpoint.Identity.HeadID != identity.HeadID || checkpoint.Identity.RewriteEpoch != identity.RewriteEpoch {
 		return nil, false, nil
 	}
-	canonical := transcript.History(messages[:checkpoint.ProviderCount], transcript.HistoryOptions{})
-	repairedRecords, repairStats := transcript.RepairCheckpointToolResults(checkpoint.Records, canonical)
-	checkpoint.Records = repairedRecords
-	if repairStats.Missing > 0 || repairStats.Conflicts > 0 {
-		slog.Warn("transcript checkpoint tool identity recovery was inconclusive",
-			"missing", repairStats.Missing, "conflicts", repairStats.Conflicts)
+	if transcript.NeedsToolResultRepair(checkpoint.Records) {
+		canonical := transcript.History(messages[:checkpoint.ProviderCount], transcript.HistoryOptions{})
+		repairedRecords, repairStats := transcript.RepairCheckpointToolResults(checkpoint.Records, canonical)
+		checkpoint.Records = repairedRecords
+		if repairStats.Missing > 0 || repairStats.Conflicts > 0 {
+			slog.Warn("transcript checkpoint tool identity recovery was inconclusive",
+				"missing", repairStats.Missing, "conflicts", repairStats.Conflicts)
+		}
 	}
 	p, err := transcript.RestoreCheckpoint(checkpoint, identity)
 	if err != nil {

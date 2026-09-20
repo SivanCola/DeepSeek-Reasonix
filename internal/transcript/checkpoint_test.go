@@ -87,3 +87,18 @@ func TestRepairCheckpointToolResultsRefusesAmbiguousOrConflictingIdentity(t *tes
 		t.Fatalf("inconclusive rows were guessed: %+v", got)
 	}
 }
+
+func TestRepairCheckpointToolResultsDoesNotReuseOccupiedFormalIdentity(t *testing.T) {
+	records := []Message{
+		{RecordID: "m:result", MessageID: "result", Role: "tool", ToolCallID: "call"},
+		{RecordID: "tool:call", Role: "tool", ToolCallID: "call"},
+	}
+	canonical := []Message{{RecordID: "m:result", MessageID: "result", Role: "tool", ToolCallID: "call"}}
+	got, stats := RepairCheckpointToolResults(records, canonical)
+	if stats.Repaired != 0 || stats.Conflicts != 1 || got[1].MessageID != "" {
+		t.Fatalf("occupied formal identity was reused: stats=%+v rows=%+v", stats, got)
+	}
+	if !NeedsToolResultRepair(records) || NeedsToolResultRepair(records[:1]) {
+		t.Fatal("repair fast-path predicate does not match missing tool identities")
+	}
+}
