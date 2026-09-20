@@ -492,9 +492,9 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // budgets remain unchanged.
 // Conflict-preserving tool identity, anchored local rows, evidence-aware state
 // handoff, and idempotent projection replay measure 2081572 B locally (+6806 B,
-// 0.328%). Preserve the same Linux producer difference with 34 B of headroom at
-// the next decimal. Compressed, chunk, CSS, locale, and resident-history budgets
-// remain fixed.
-const rawInitialBudgetKiB = 2_033.0;
+// 0.328%). The durable-user/live-turn anchor brings the Linux CI producer to
+// 2081799 B. Retain 95 B of headroom at the next decimal; compressed, chunk,
+// CSS, locale, and resident-history budgets remain fixed.
+const rawInitialBudgetKiB = 2_033.1;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
