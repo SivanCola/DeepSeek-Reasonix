@@ -27,12 +27,14 @@ permissions:
 jobs:
   preflight:
     name: verify sealed candidate before approval
+    if: github.repository == 'esengine/DeepSeek-Reasonix' && github.ref == 'refs/heads/main-v2' && github.ref_protected
     runs-on: ubuntu-latest
     permissions:
       actions: read
       attestations: read
       contents: read
     outputs:
+      tag_actor_id: ${{ steps.identity.outputs.actor_id }}
       candidate_id: ${{ steps.record.outputs.candidate_id }}
       version: ${{ steps.record.outputs.version }}
       source_sha: ${{ steps.record.outputs.source_sha }}
@@ -80,6 +82,12 @@ jobs:
             --signer-digest "$signer_sha" --source-ref refs/heads/main-v2 --deny-self-hosted-runners
           node scripts/resolve-release-candidate.mjs inspect "${{ inputs.candidate_id }}" \
             record/record.json /tmp/record-artifact.json /tmp/producer-run.json
+      - name: Check the configured tag publisher before approval
+        id: identity
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TAG_TOKEN }}
+          RELEASE_TAG_ACTOR: ${{ vars.RELEASE_TAG_ACTOR }}
+        run: node scripts/verify-release-tag-identity.mjs "${{ steps.record.outputs.version }}"
       - name: Download exact candidate payload
         env:
           GH_TOKEN: ${{ github.token }}
@@ -199,14 +207,18 @@ jobs:
     needs: [preflight, authorize]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ github.sha }}
+          persist-credentials: false
       - name: Create or verify all implementation tags
         env:
+          GH_TOKEN: ${{ secrets.RELEASE_TAG_TOKEN }}
+          RELEASE_TAG_ACTOR: ${{ vars.RELEASE_TAG_ACTOR }}
+          RELEASE_TAG_ACTOR_ID: ${{ needs.preflight.outputs.tag_actor_id }}
           OPERATION: ${{ inputs.operation }}
           VERSION: ${{ needs.preflight.outputs.version }}
           SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
@@ -214,6 +226,8 @@ jobs:
           RELEASE_REVOKED_CANDIDATES: ${{ vars.RELEASE_REVOKED_CANDIDATES }}
         run: |
           set -euo pipefail
+          node scripts/verify-release-tag-identity.mjs "$VERSION"
+          gh auth setup-git --hostname github.com
           node scripts/resolve-release-candidate.mjs active "$CANDIDATE_ID"
           git fetch origin main-v2 --tags
           bash scripts/release-candidate-tags.sh activate "$OPERATION" "$VERSION" "$SOURCE_SHA"
