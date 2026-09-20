@@ -1562,6 +1562,7 @@ jobs:
             .github/workflows/release-candidate-verify.yml \
             .github/workflows/release-promote.yml \
             .github/workflows/release-verify.yml \
+            .github/workflows/release-site-recovery.yml \
             .github/workflows/release.yml \
             .github/workflows/release-npm.yml \
             .github/workflows/release-desktop.yml \

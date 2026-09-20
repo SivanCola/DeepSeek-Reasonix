@@ -56,7 +56,8 @@ export function classifyPaths(input, { full = false } = {}) {
       flags.site = true;
       setReason(reasons, "site", path, "site source");
     }
-    if (RELEASE_CONTROL.test(path)) {
+    const releaseControl = RELEASE_CONTROL.test(path) || /^scripts\/(?:sync-release-site|observe-release-site|fetch-stable-release-manifest|check-release-public-access|test-release-control-contracts|validate-release-control-plane)[^/]*$/.test(path);
+    if (releaseControl) {
       flags.release_control = true;
       setReason(reasons, "release_control", path, "release control plane");
       if (path === ".github/workflows/pages.yml") {
@@ -87,7 +88,7 @@ export function classifyPaths(input, { full = false } = {}) {
         setReason(reasons, flag, path, "memory workflow or shared routing contract");
       }
     }
-    if (!RELEASE_CONTROL.test(path) && !ROOT_UNRELATED.test(path) && !ROOT_DOC.test(path)) {
+    if (!releaseControl && !ROOT_UNRELATED.test(path) && !ROOT_DOC.test(path)) {
       flags.code = true;
       setReason(reasons, "code", path, "root module input");
     }

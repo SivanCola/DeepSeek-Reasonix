@@ -87,7 +87,7 @@ test("actual site observation fails closed on HTTP errors and malformed or stale
         assert.equal(result.stdout.trim(), expected);
       }
     }
-    for (const file of ["../.github/workflows/release-promote.yml", "./verify-stable-release-artifacts.sh"]) {
+    for (const file of ["./sync-release-site.sh", "./verify-stable-release-artifacts.sh"]) {
       assert.match(readFileSync(new URL(file, import.meta.url), "utf8"), /observe-release-site\.sh/);
     }
   } finally {
