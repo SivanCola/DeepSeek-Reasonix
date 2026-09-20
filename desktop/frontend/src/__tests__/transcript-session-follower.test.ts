@@ -9,6 +9,7 @@ installDesktopHostStub(commands);
 const [{ TranscriptSessionFollower }, { initialState, reducer }, { getTranscriptStore }] = await Promise.all([
   import("../lib/transcriptSessionFollower"), import("../lib/useController"), import("../lib/transcriptStore"),
 ]);
+const { ChatSource } = await import("../lib/chatViewSource");
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>(done => { resolve = done; });
@@ -59,6 +60,17 @@ test("business replacement preserves authoritative final turn annotations", () =
     removeIds: [], startTurn: 0, endTurn: 1, totalTurns: 1, hasOlder: false, hasNewer: false, revision: 2, revisionKnown: true, digest: "cut",
   } });
   assert.equal(state.items[0].kind === "assistant" && state.items[0].turnDurationMs, 933524);
+});
+
+test("business projection removes stale duplicate nodes and restores authoritative order", () => {
+  const user = { kind: "user" as const, id: "m:user", text: "build" };
+  const tool = { kind: "tool" as const, id: "call", name: "edit_file", args: "{}", readOnly: false, status: "done" as const, output: "written" };
+  const final = { kind: "assistant" as const, id: "m:final", text: "done", reasoning: "", streaming: false };
+  const state = reducer({ ...initialState, items: [user, final, tool, { ...tool }] }, { type: "transcript_records", confirmedUsers: [], projection: {
+    items: [user, tool, final], removeIds: [], startTurn: 1, endTurn: 1, totalTurns: 1, hasOlder: false, hasNewer: false,
+    revision: 2, revisionKnown: true, digest: "cut",
+  } });
+  assert.deepEqual(state.items.map(item => item.id), ["m:user", "call", "m:final"]);
 });
 async function microtasks() { for (let i = 0; i < 16; i++) await Promise.resolve(); }
 
@@ -200,6 +212,45 @@ test("canonical tool history keeps its message identity when a tool call id is a
     await follower.start();
     assert.ok(getTranscriptStore().peek(tab, path)?.items.some(item => item.kind === "tool" && item.id === "older-call"));
     assert.ok(state.items.some(item => item.kind === "tool" && item.id === "older-call"));
+  } finally { follower.stop(); getTranscriptStore().evictTab(tab); }
+});
+
+for (const remote of [false, true]) test(`${remote ? "remote" : "local"} follower coalesces a legacy tool alias before the final answer`, async () => {
+  const tab = `legacy-tool-alias-${remote}`, path = `/session/${tab}`;
+  const response = initial(tab);
+  response.history!.messages = [
+    { messageId: "user-1", position: 0, version: 1, role: "user", eventSequence: 1, visibleTurn: 1,
+      preview: "make it", inline: { id: "user-1", role: "user", content: "make it" } },
+    { messageId: "call-owner", position: 1, version: 1, role: "assistant", eventSequence: 2, visibleTurn: 1,
+      preview: "", inline: { id: "call-owner", role: "assistant", content: "", tool_calls: [{ id: "call-1", name: "edit_file", arguments: '{"path":"blackhole.html"}' }] } },
+    { messageId: "result-1", position: 2, version: 1, role: "tool", eventSequence: 3, visibleTurn: 1,
+      preview: "written", inline: { id: "result-1", role: "tool", tool_call_id: "call-1", name: "edit_file", content: "written" } },
+    { messageId: "final-1", position: 3, version: 1, role: "assistant", eventSequence: 4, visibleTurn: 1, turnFinal: true,
+      preview: "done", inline: { id: "final-1", role: "assistant", content: "done" } },
+  ];
+  response.snapshot!.records = [{ id: "tool:call-1", order: 4,
+    message: { recordId: "tool:call-1", role: "tool", toolCallId: "call-1", toolName: "edit_file", content: "written" }, refs: [] }];
+  response.snapshot!.totalRecords = 5;
+  const key = remote ? "RemoteTranscriptFollowForTab" : "TranscriptFollowForTab";
+  const pending = deferred<TranscriptFollowResponse>();
+  commands[key] = (_tab: string, request: FollowRequest) => request.close
+    ? Promise.resolve({ protocolVersion: 2, subscription: tab, changes: [], resetRequired: false })
+    : request.subscription ? pending.promise : Promise.resolve(response);
+  let state = initialState;
+  const follower = new TranscriptSessionFollower(tab, path, remote, action => { state = reducer(state, action); });
+  try {
+    await follower.start();
+    const tools = state.items.filter(item => item.kind === "tool" && item.id === "call-1");
+    assert.equal(tools.length, 1, "formal result and tool:<callId> alias project one node");
+    assert.equal(tools[0].kind === "tool" && tools[0].args, '{"path":"blackhole.html"}');
+    assert.ok(state.items.findIndex(item => item.id === "call-1") < state.items.findIndex(item => item.id === "m:final-1"));
+    const source = new ChatSource(tab);
+    source.update({ items: state.items, running: false, hydrating: false, hasOlder: false, loadingOlder: false });
+    await Promise.resolve();
+    const process = source.getNodeSnapshot("m:user-1:process");
+    assert.ok(process?.kind === "process" && process.foldable && process.collapsed,
+      "normal completion folds after the duplicate trailing alias is removed");
+    source.dispose();
   } finally { follower.stop(); getTranscriptStore().evictTab(tab); }
 });
 

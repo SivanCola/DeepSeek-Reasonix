@@ -342,19 +342,25 @@ export class TranscriptStore {
 
   // ── record merge ops ──────────────────────────────────────────────────────
 
-  private viewOf(records: TranscriptRecord[]): {
-    records: TranscriptRecord[];
-    indexOf: Map<string, number>;
-    toolResultOwners: Map<string, string>;
-  } {
+  private viewOf(records: TranscriptRecord[]): { records: TranscriptRecord[]; indexOf: Map<string, number>;
+    toolResultOwners: Map<string, string>; suppressedToolResults: Set<string> } {
     const indexOf = new Map<string, number>();
     const toolResultOwners = new Map<string, string>();
     records.forEach((rec, index) => {
       indexOf.set(rec.entryId, index);
       const toolCallId = rec.message.role === "tool" ? rec.message.toolCallId : undefined;
-      if (toolCallId && !toolResultOwners.has(toolCallId)) toolResultOwners.set(toolCallId, rec.entryId);
+      const current = toolCallId && toolResultOwners.get(toolCallId);
+      if (toolCallId && (!current || (!records[indexOf.get(current)!].message.messageId && rec.message.messageId))) toolResultOwners.set(toolCallId, rec.entryId);
     });
-    return { records, indexOf, toolResultOwners };
+    const suppressedToolResults = new Set<string>();
+    for (const result of records) {
+      const callId = result.message.role === "tool" ? result.message.toolCallId : undefined;
+      const ownerId = callId && toolResultOwners.get(callId);
+      if (!ownerId || ownerId === result.entryId || result.message.messageId) continue;
+      const owner = records[indexOf.get(ownerId)!];
+      if (owner.message.messageId && (!result.turn || !owner.turn || result.turn === owner.turn)) suppressedToolResults.add(result.entryId);
+    }
+    return { records, indexOf, toolResultOwners, suppressedToolResults };
   }
 
   private trackConversion(session: SessionTranscript, rec: TranscriptRecord, conversion: RecordConversion): void {
@@ -409,6 +415,12 @@ export class TranscriptStore {
     const view = this.viewOf(combined);
     const consumed = new Set(session.consumed);
     const removeIds: string[] = [];
+    for (const alias of view.suppressedToolResults) {
+      for (const item of session.contributions.get(alias) ?? []) removeIds.push(item.id);
+      session.contributions.set(alias, []);
+      consumed.delete(alias);
+      session.consumedBy.delete(alias);
+    }
     const prependItems: Item[] = [];
     for (const rec of fresh) {
       const before = new Set(consumed);
@@ -495,6 +507,10 @@ export class TranscriptStore {
       combined.sort(compareRecords);
     }
     const view = this.viewOf(combined);
+    if ([...view.suppressedToolResults].some(alias => (session.contributions.get(alias)?.length ?? 0) > 0)) {
+      this.rebuildFromRecords(session, combined);
+      return [];
+    }
     const consumed = new Set(session.consumed);
     const appendedItems: Item[] = [];
     let dirty = false;
@@ -911,25 +927,18 @@ export class TranscriptStore {
   }
 
   private reconvertAndNotify(session: SessionTranscript, rec: TranscriptRecord): void {
-    // A resolved field on a CONSUMED tool-result row shows up in the claiming
-    // call's tool item, so re-convert the claimer instead of the row.
-    const targetId = session.consumedBy.get(rec.entryId) ?? rec.entryId;
-    const target = session.byId.get(targetId);
-    if (!target) return;
-    // Re-convert with the record's established claims so tool results stay put.
-    const view = this.viewOf(session.records);
-    const consumed = new Set(session.consumed);
-    for (const claimed of session.matchTables.get(targetId)?.values() ?? []) consumed.delete(claimed);
-    const conversion = convertRecord(target, view, consumed, session.matchTables.get(targetId));
-    session.consumed = consumed;
-    this.trackConversion(session, target, conversion);
-    session.itemsCache = null;
-    this.rebuildProjection(session);
+    if (!session.byId.has(rec.entryId)) return;
+    const before = new Set((session.itemsCache ?? this.rebuildProjection(session)).map(item => item.id));
+    // canonicalMessage may reveal calls, observations, or formal identity.
+    // Replay the bounded resident window so claims, removals and ordering are
+    // published as one authoritative projection instead of a field-only patch.
+    this.rebuildFromRecords(session, session.records);
     const listeners = this.listeners.get(session.tabId);
     if (!listeners || listeners.size === 0) return;
-    const patches: Record<string, Item> = {};
-    for (const item of conversion.items) patches[item.id] = item;
-    const change: TranscriptContentChange = { tabId: session.tabId, patches };
+    const projection = this.projectionOf(session);
+    const after = new Set(projection.items.map(item => item.id));
+    const removeIds = [...before].filter(id => !after.has(id));
+    const change: TranscriptContentChange = { tabId: session.tabId, patches: {}, projection: { ...projection, removeIds } };
     for (const listener of listeners) listener(change);
   }
 

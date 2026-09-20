@@ -7,7 +7,7 @@ import { getMarkdownWorkerClient } from "../src/lib/markdownWorkerClient";
 import { Composer } from "../src/components/Composer";
 import { canonicalMessage } from "../src/lib/canonicalTranscriptBackend";
 import { historyMessagesToItems } from "../src/lib/historyItems";
-import type { ControllerLiveStore, Item, LiveStream } from "../src/lib/useController";
+import { initialState, reducer, type ControllerLiveStore, type Item, type LiveStream } from "../src/lib/useController";
 import "../src/styles.css";
 
 function makeTurns(count: number, start = 0): Item[] {
@@ -35,7 +35,7 @@ function weatherTurn(): Item[] {
     { ...end, id: "weather-final", text: "今天上海天气如下。以下为界面回放测试数据。\n\n## 上海 · 今日实况\n\n| 项目 | 数值 |\n|---|---|\n| 天气 | 晴 ☀️ |\n| 气温 | **25.5 °C** |\n| 湿度 | 66% |\n\n**全天**：多云转晴，23～30 °C。", reasoning: "" } as Item,
   ];
 }
-declare global { interface Window { chatFixture: { authored(): void; weather(): void; replace(count: number): void; reset(count: number): void; older(): void; tick(index: number): void; settle(): void; switchSession(): void; prepend(): void; ready: number; pending(): number } } }
+declare global { interface Window { chatFixture: { authored(): void; weather(): void; toolAliasRegression(): void; replace(count: number): void; reset(count: number): void; older(): void; tick(index: number): void; settle(): void; switchSession(): void; prepend(): void; ready: number; pending(): number } } }
 function Fixture() {
   const [items, setItems] = useState(() => makeTurns(20));
   const [session, setSession] = useState(0);
@@ -71,6 +71,17 @@ function Fixture() {
         clearLive(); setItems(historyMessagesToItems(messages, "authored").items); setRunning(false); setSession(value => value + 1);
       },
       weather: () => { clearLive(); setItems(weatherTurn()); setRunning(false); setSession(value => value + 1); },
+      toolAliasRegression: () => {
+        const user: Item = { kind: "user", id: "alias-user", text: "创建文件", checkpointTurn: 1 };
+        const tool: Item = { kind: "tool", id: "alias-call", name: "bash", args: "printf ok", readOnly: false, status: "done", output: "ok",
+          execution: { kind: "shell", shell: "bash", state: "completed", exitCode: 0, supportsAndAnd: true } };
+        const final: Item = { kind: "assistant", id: "alias-final", text: "已完成。", reasoning: "", streaming: false };
+        const projected = reducer({ ...initialState, items: [user, final, tool, { ...tool }] }, { type: "transcript_records", confirmedUsers: [], projection: {
+          items: [user, tool, final], removeIds: [], startTurn: 1, endTurn: 1, totalTurns: 1, hasOlder: false, hasNewer: false,
+          revision: 1, revisionKnown: true, digest: "alias-regression",
+        } });
+        clearLive(); setItems(projected.items); setRunning(false); setSession(value => value + 1);
+      },
       replace: count => { clearLive(); setItems(makeTurns(count)); setRunning(false); setReady(value => value + 1); },
       reset: count => { clearLive(); setItems(makeTurns(Math.min(60, count), Math.max(0, count - 60))); setRunning(false); setSession(value => value + 1); setReady(value => value + 1); },
       older: () => setItems(previous => { const start = Number(previous[0].id.slice(1)); return [...makeTurns(Math.min(60, start), Math.max(0, start - 60)), ...previous]; }),

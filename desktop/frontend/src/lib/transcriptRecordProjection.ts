@@ -48,10 +48,13 @@ export function itemIdForToolCall(toolCallId: string, fallback: string): string 
 /** Converts one record against the complete resident window. */
 export function convertRecord(
   rec: TranscriptRecord,
-  view: { records: TranscriptRecord[]; indexOf: Map<string, number>; toolResultOwners: Map<string, string> },
+  view: { records: TranscriptRecord[]; indexOf: Map<string, number>; toolResultOwners: Map<string, string>; suppressedToolResults?: Set<string> },
   consumed: Set<string>,
   priorMatches?: Map<number, string>,
 ): RecordConversion {
+  if (view.suppressedToolResults?.has(rec.entryId)) {
+    return { items: [], claims: [], unresolvedIds: [], pendingPositional: [], matches: new Map() };
+  }
   const converted = convertRecordBody(rec, view, consumed, priorMatches);
   if (rec.message.turnId) converted.items = converted.items.map(item => ({ ...item, turnId: rec.message.turnId }));
   return converted;
@@ -59,7 +62,7 @@ export function convertRecord(
 
 function convertRecordBody(
   rec: TranscriptRecord,
-  view: { records: TranscriptRecord[]; indexOf: Map<string, number>; toolResultOwners: Map<string, string> },
+  view: { records: TranscriptRecord[]; indexOf: Map<string, number>; toolResultOwners: Map<string, string>; suppressedToolResults?: Set<string> },
   consumed: Set<string>,
   priorMatches?: Map<number, string>,
 ): RecordConversion {

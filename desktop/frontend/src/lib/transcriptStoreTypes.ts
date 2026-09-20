@@ -75,6 +75,8 @@ export interface TranscriptContentChange {
   /** Re-converted items keyed by their stable item id. */
   patches: Record<string, Item>;
   expected?: Record<string, Item>;
+  /** Present when resolving content changed ownership or record structure. */
+  projection?: AppendEntriesResult;
 }
 
 export interface SessionTranscript {

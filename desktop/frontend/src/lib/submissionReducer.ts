@@ -38,10 +38,14 @@ export function confirmPendingUser(s: State, submissionId: string | undefined): 
 
 
 export function installTranscriptRecords(s: State, a: Extract<Action, { type: "transcript_records" }>): State {
-  const updates = new Map(a.projection.items.map(item => [item.id, item]));
+  const projected = [...new Map(a.projection.items.map(item => [item.id, item])).values()];
+  const projectedIds = new Set(projected.map(item => item.id));
   const removed = new Set(a.projection.removeIds);
-  const items = s.items.filter(item => !removed.has(item.id)).map(item => {
-    const update = updates.get(item.id);
+  const current = new Map<string, (typeof s.items)[number]>();
+  for (const item of s.items) if (!current.has(item.id)) current.set(item.id, item);
+  const items = projected.map(update => {
+    const item = current.get(update.id);
+    if (!item) return update;
     if (item.kind === "tool" && update?.kind === "tool" && update.resultMissing && item.status === "running") {
       return { ...update, status: "running" as const, execution: item.execution, startedAt: item.startedAt };
     }
@@ -49,17 +53,14 @@ export function installTranscriptRecords(s: State, a: Extract<Action, { type: "t
       return { ...update, turnFinal: true, turnDurationMs: item.turnDurationMs, turnUsage: item.turnUsage,
         samplingCount: item.samplingCount, toolCount: item.toolCount };
     }
-    return update ?? item;
+    return update;
   });
-  const present = new Set(items.map(item => item.id));
-  const positions = new Map(a.projection.items.map((item, index) => [item.id, index]));
-  for (const item of updates.values()) {
-    if (present.has(item.id)) continue;
-    const following = items.findIndex(candidate => (positions.get(candidate.id) ?? -1) > positions.get(item.id)!);
-    const output = item.kind === "user" && item.turnId
-      ? items.findIndex(candidate => candidate.kind !== "user" && candidate.turnId === item.turnId) : -1;
-    const at = following >= 0 && output >= 0 ? Math.min(following, output) : Math.max(following, output);
-    items.splice(at < 0 ? items.length : at, 0, item);
+  // Projection order is authoritative for resident transcript nodes. Keep
+  // only local/live nodes that have not yet entered that projection.
+  const present = new Set(projectedIds);
+  for (const item of s.items) {
+    if (present.has(item.id) || removed.has(item.id)) continue;
+    items.push(item);
     present.add(item.id);
   }
   return settleLocalSubmissions({ ...s, items, historyHasOlder: a.projection.hasOlder, historyHasNewer: a.projection.hasNewer }, items,

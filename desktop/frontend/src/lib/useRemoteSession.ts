@@ -354,7 +354,9 @@ export function useRemoteSession(tabId: string | undefined, initial?: RemoteTabS
         }
       }
     };
-    const offContent = getTranscriptStore().subscribe(tabId, change => dispatch({ type: "history_items_patch", patches: change.patches, expected: change.expected }));
+    const offContent = getTranscriptStore().subscribe(tabId, change => change.projection
+      ? dispatch({ type: "transcript_records", projection: change.projection, confirmedUsers: [] })
+      : dispatch({ type: "history_items_patch", patches: change.patches, expected: change.expected }));
     olderRef.current = async () => {
       if (transcriptRef.current.historyOlderLoading) return "empty";
       dispatch({ type: "history_older_start" });

@@ -485,6 +485,11 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // 2074127 B locally. Preserve the measured 186 B Linux producer difference
 // above (2074313 B combined), with 0.11 KiB headroom. Historical preparation
 // remains lazy; compressed, chunk, CSS, and locale limits stay unchanged.
-const rawInitialBudgetKiB = 2_025.8;
+// Tool-result identity coalescing and authoritative lazy-content projection
+// measure 2074766 B locally (+639 B over the preceding macOS measurement).
+// Preserve the established 186 B Linux producer difference: 2074952 B, with
+// the next one-decimal ceiling. Gzip, chunk, CSS, locale, and resident-history
+// budgets remain unchanged.
+const rawInitialBudgetKiB = 2_026.4;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
