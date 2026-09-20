@@ -1,3 +1,4 @@
+import { reduceCompactionEvent, reduceMaintenanceRuntimeSnapshot, reconcileMaintenanceState } from "./sessionMaintenanceReducer";
 import { isShellToolName } from "./shellToolIdentity";
 // useController is the frontend's state machine over the agent event stream. It keeps
 // per-tab output, tool state, and approvals while the user switches tabs; components
@@ -63,6 +64,7 @@ import { setTranscriptBindingIdentity } from "./canonicalTranscriptBackend";
 import { getTranscriptStore } from "./transcriptStore";
 import { TranscriptSessionFollower } from "./transcriptSessionFollower";
 import { historyReplaceAction, historyRevisionIsOlder } from "./sessionTranscriptMode";
+import { reconcileSessionOperationItems } from "./sessionMaintenanceOperation";
 import { matchingSnapshotItem, transcriptPageState, transcriptSnapshotState } from "./transcriptSnapshotState";
 import type { TranscriptSnapshot } from "./transcriptProtocol";
 import { recordFrontendDiagnostic } from "./frontendDiagnosticBridge";
@@ -339,6 +341,20 @@ export type Item = { turnId?: string } & (
       messages: number;
       summary: string;
       archive: string;
+      operationId?: string;
+      operationKind?: string;
+      status?: string;
+      activity?: string;
+      operationRevision?: number;
+      observedRuntimeRevision?: number;
+      interruptionInferred?: boolean;
+      runtimeEpoch?: string;
+      historyEntryId?: string;
+      errorCode?: string;
+      detail?: string;
+      applied?: boolean;
+      inputTokens?: number;
+      resultTokens?: number;
     }
   | {
       kind: "tool";
@@ -1673,20 +1689,10 @@ function applyEvent(s: State, e: WireEvent, preserveToolPayloads = false): State
     }
     case "phase":
       return { ...s, seq: s.seq + 1, items: [...s.items, { kind: "phase", id: `p${s.seq}`, text: e.text ?? "" }] };
+    case "session_operation":
     case "compaction_started":
-      return { ...s, seq: s.seq + 1, items: [...s.items, { kind: "compaction", id: `c${s.seq}`, pending: true, trigger: e.compaction?.trigger ?? "", messages: 0, summary: "", archive: "" }] };
-    case "compaction_done": {
-      const c = e.compaction;
-      const idx = [...s.items].reverse().findIndex((it) => it.kind === "compaction" && it.pending);
-      const at = idx < 0 ? -1 : s.items.length - 1 - idx;
-      if (!c?.summary) {
-        const items = at < 0 ? s.items : s.items.filter((_, i) => i !== at);
-        return { ...s, running: s.turnActive ? s.running : false, items };
-      }
-      const filled: Item = { kind: "compaction", id: at < 0 ? `c${s.seq}` : (s.items[at] as Extract<Item, { kind: "compaction" }>).id, pending: false, trigger: c.trigger ?? "", messages: c.messages ?? 0, summary: c.summary, archive: c.archive ?? "" };
-      const items = at < 0 ? [...s.items, filled] : s.items.map((it, i) => (i === at ? filled : it));
-      return { ...s, running: s.turnActive ? s.running : false, seq: s.seq + 1, items };
-    }
+    case "compaction_done":
+      return reduceCompactionEvent(s, e);
     case "steer":
       if (isHostRecoveryGuidance(e.text ?? "")) return s;
       return { ...s, seq: s.seq + 1, items: [...s.items, { kind: "notice", id: `s${s.seq}`, level: "info", text: `${STEER_NOTICE_PREFIX}${e.text ?? ""}`, inboxItemId: e.itemId }] };
@@ -1891,7 +1897,7 @@ function applyEvent(s: State, e: WireEvent, preserveToolPayloads = false): State
 }
 
 export function reducer(s: State, a: Action): State {
-  const next = reduceState(s, a);
+  const next = reconcileMaintenanceState(reduceState(s, a), a);
   return next.items !== s.items ? settleLocalSubmissions(next, next.items) : next;
 }
 
@@ -2077,14 +2083,8 @@ function reduceState(s: State, a: Action): State {
         : { ...s, meta: acceptedMeta, runtimeStateSnapshot };
     }
     case "optimistic_meta": return sameMeta(s.meta, a.meta) ? s : { ...s, meta: a.meta, hydrateError: undefined };
-    case "runtime_snapshot": {
-      const runtimeStateSnapshot = acceptSessionRuntimeSnapshot(s.runtimeStateSnapshot, a.snapshot);
-      if (runtimeStateSnapshot === s.runtimeStateSnapshot) return s;
-      const meta = runtimeStateSnapshot.todos !== undefined && s.meta
-        ? { ...s.meta, runtimeStateSnapshot, canonicalTodos: runtimeStateSnapshot.todos }
-        : s.meta;
-      return { ...s, meta, runtimeStateSnapshot };
-    }
+    case "runtime_snapshot":
+      return reduceMaintenanceRuntimeSnapshot(s, a.snapshot);
     case "context": {
       const sessionTokens = typeof a.context.sessionTokens === "number"
         ? Math.max(0, a.context.sessionTokens)
@@ -2145,13 +2145,14 @@ function reduceState(s: State, a: Action): State {
     case "message_action_done": return { ...s, messageAction: undefined };
     case "history": {
       const { items, seq } = historyMessagesToItems(a.messages, "h", s.seq);
+      const reconciled = reconcileSessionOperationItems(items, s.items);
       // Remote cards have no local ToolResultForTab fallback; retain expansion data.
-      return { ...s, items: a.remote ? items : compactArchivedToolItems(items), historyPrefixCount: items.length, pendingSubmissionId: undefined, seq, hydrateHistoryLoaded: true, hydratePlaceholderItems: undefined, historyStartTurn: 0, historyEndTurn: 0, historyTotalTurns: 0, historyHasOlder: false, historyHasNewer: false, historyOlderLoading: false, historyOlderError: undefined, historyNewerLoading: false, historyNewerError: undefined, historyRevision: undefined, historyDigest: undefined, historyMutation: { seq: s.historyMutation.seq + 1, kind: "replace" } };
+      return { ...s, items: a.remote ? reconciled : compactArchivedToolItems(reconciled), historyPrefixCount: reconciled.length, pendingSubmissionId: undefined, seq, hydrateHistoryLoaded: true, hydratePlaceholderItems: undefined, historyStartTurn: 0, historyEndTurn: 0, historyTotalTurns: 0, historyHasOlder: false, historyHasNewer: false, historyOlderLoading: false, historyOlderError: undefined, historyNewerLoading: false, historyNewerError: undefined, historyRevision: undefined, historyDigest: undefined, historyMutation: { seq: s.historyMutation.seq + 1, kind: "replace" } };
     }
     case "history_page": {
       if (historyRevisionIsOlder(s.historyRevision, a.page.revision)) return s;
       const { items, seq, firstTurn } = historyPageItems(a.page);
-      const nextItems = a.mode === "prepend" ? [...items, ...s.items] : items;
+      const nextItems = reconcileSessionOperationItems(a.mode === "prepend" ? [...items, ...s.items] : items, s.items);
       return {
         ...s,
         items: compactArchivedToolItems(nextItems),

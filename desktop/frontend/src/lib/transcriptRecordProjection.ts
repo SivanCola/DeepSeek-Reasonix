@@ -6,6 +6,7 @@ import { historicalResultNotice } from "./completionResultState";
 import { historyNoticeItems } from "./controllerNotices";
 import { appendHistoryAttachmentRefs } from "./historyAttachmentRefs";
 import { historySearchAndAnswer } from "./searchTranscript";
+import { sessionOperationFromHistory, sessionOperationItem } from "./sessionMaintenanceOperation";
 import { fileDiffFromWire, summarizeFileDiff } from "./tools";
 import { historyToolError, isReadOnlyTool, type Item } from "./useController";
 import type { HistoryContentRef, HistoryEntry, HistoryMessage, MemoryCitation } from "./types";
@@ -104,9 +105,18 @@ function convertRecordBody(
     return { items: historyNoticeItems(message, id), claims, unresolvedIds, pendingPositional, matches };
   }
   if (message.role === "compaction") {
+    const operation = sessionOperationFromHistory(message);
+    if (operation) {
+      items.push(sessionOperationItem(operation, rec.entryId));
+      return { items, claims, unresolvedIds, pendingPositional, matches };
+    }
     items.push({
       kind: "compaction", id, pending: Boolean(message.pending), trigger: message.trigger ?? "",
       messages: message.messages ?? 0, summary: message.summary ?? "", archive: message.archive ?? "",
+      operationId: message.operationId, operationKind: message.operationKind,
+      status: message.operationStatus, activity: message.operationActivity,
+      errorCode: message.errorCode, detail: message.detail, applied: message.applied,
+      inputTokens: message.inputTokens, resultTokens: message.resultTokens,
     });
     return { items, claims, unresolvedIds, pendingPositional, matches };
   }

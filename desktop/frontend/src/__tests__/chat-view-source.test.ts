@@ -153,3 +153,16 @@ assert.ok(auditProcess?.kind === "process" && !auditProcess.members.includes("au
 assert.equal(auditSource.toolAudits("call").length, 1, "paired audit stays available in tool details");
 assert.ok(auditSource.getOrderSnapshot().includes("unassociated"), "unpaired audit remains available as diagnostics");
 auditSource.dispose();
+
+const maintenanceSource = new ChatSource("maintenance-card");
+maintenanceSource.update({ ...input, running: true, items: [
+  { kind: "user", id: "compact-user", text: "/compact" },
+  { kind: "tool", id: "previous-tool", name: "bash", args: "{}", readOnly: true, status: "done" },
+  { kind: "assistant", id: "previous-answer", text: "done", reasoning: "", streaming: false },
+  { kind: "compaction", id: "maintenance:op", pending: true, trigger: "manual", messages: 0, summary: "", archive: "", operationId: "op", status: "running" },
+] });
+await Promise.resolve();
+const maintenanceProcess = maintenanceSource.getNodeSnapshot("compact-user:process");
+assert.ok(maintenanceProcess?.kind === "process" && !maintenanceProcess.members.includes("maintenance:op"), "maintenance card is independent from the previous process fold");
+assert.ok(maintenanceSource.getOrderSnapshot().includes("maintenance:op"), "pending maintenance remains mounted");
+maintenanceSource.dispose();

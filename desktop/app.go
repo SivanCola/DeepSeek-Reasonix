@@ -5417,6 +5417,9 @@ func (state *historyMessageConvertState) convertHistoryMessage(
 	toolResults map[string]provider.Message,
 ) []HistoryMessage {
 	var out []HistoryMessage
+	if m.Role == provider.Role("compaction") {
+		return maintenanceHistoryMessage(m)
+	}
 	if m.DecisionReceipt != nil {
 		return append(out, HistoryMessage{
 			Role:            "notice",
@@ -5968,37 +5971,38 @@ func previewSessionPage(sessionDir, path string, beforeTurn, limit int) (History
 }
 
 type previewEventRecord struct {
-	Kind             string                    `json:"kind"`
-	Type             string                    `json:"type"`
-	Role             string                    `json:"role"`
-	Origin           provider.MessageOrigin    `json:"origin"`
-	TS               json.RawMessage           `json:"ts"`
-	Time             json.RawMessage           `json:"time"`
-	Timestamp        json.RawMessage           `json:"timestamp"`
-	CreatedAt        json.RawMessage           `json:"createdAt"`
-	CreatedAtSnake   json.RawMessage           `json:"created_at"`
-	UpdatedAt        json.RawMessage           `json:"updatedAt"`
-	UpdatedAtSnake   json.RawMessage           `json:"updated_at"`
-	Text             string                    `json:"text"`
-	Detail           string                    `json:"detail"`
-	Code             string                    `json:"code"`
-	Content          string                    `json:"content"`
-	RawContent       string                    `json:"raw_content"`
-	Reasoning        string                    `json:"reasoning"`
-	ReasoningContent string                    `json:"reasoningContent"`
-	MemoryCitations  []provider.MemoryCitation `json:"memoryCitations"`
-	Level            string                    `json:"level"`
-	ToolCalls        []previewToolCall         `json:"toolCalls"`
-	CallID           string                    `json:"callId"`
-	ToolCallID       string                    `json:"toolCallId"`
-	ToolName         string                    `json:"toolName"`
-	Name             string                    `json:"name"`
-	Output           string                    `json:"output"`
-	Compaction       *previewCompaction        `json:"compaction"`
-	Trigger          string                    `json:"trigger"`
-	Messages         int                       `json:"messages"`
-	Summary          string                    `json:"summary"`
-	Archive          string                    `json:"archive"`
+	Kind             string                      `json:"kind"`
+	Type             string                      `json:"type"`
+	Role             string                      `json:"role"`
+	Origin           provider.MessageOrigin      `json:"origin"`
+	TS               json.RawMessage             `json:"ts"`
+	Time             json.RawMessage             `json:"time"`
+	Timestamp        json.RawMessage             `json:"timestamp"`
+	CreatedAt        json.RawMessage             `json:"createdAt"`
+	CreatedAtSnake   json.RawMessage             `json:"created_at"`
+	UpdatedAt        json.RawMessage             `json:"updatedAt"`
+	UpdatedAtSnake   json.RawMessage             `json:"updated_at"`
+	Text             string                      `json:"text"`
+	Detail           string                      `json:"detail"`
+	Code             string                      `json:"code"`
+	Content          string                      `json:"content"`
+	RawContent       string                      `json:"raw_content"`
+	Reasoning        string                      `json:"reasoning"`
+	ReasoningContent string                      `json:"reasoningContent"`
+	MemoryCitations  []provider.MemoryCitation   `json:"memoryCitations"`
+	Level            string                      `json:"level"`
+	ToolCalls        []previewToolCall           `json:"toolCalls"`
+	CallID           string                      `json:"callId"`
+	ToolCallID       string                      `json:"toolCallId"`
+	ToolName         string                      `json:"toolName"`
+	Name             string                      `json:"name"`
+	Output           string                      `json:"output"`
+	Compaction       *previewCompaction          `json:"compaction"`
+	Trigger          string                      `json:"trigger"`
+	Messages         int                         `json:"messages"`
+	Summary          string                      `json:"summary"`
+	Archive          string                      `json:"archive"`
+	SessionOperation *event.SessionOperationInfo `json:"sessionOperation"`
 }
 
 type previewToolCall struct {
@@ -6107,6 +6111,8 @@ func previewEventSessionMessages(path string) ([]HistoryMessage, bool, error) {
 				Summary:  c.Summary,
 				Archive:  c.Archive,
 			})
+		case "session_operation":
+			out = upsertMaintenancePreview(out, rec.SessionOperation)
 		}
 	}
 	return out, sawEvent, nil

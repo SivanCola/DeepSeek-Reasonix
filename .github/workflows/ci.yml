@@ -519,10 +519,12 @@ jobs:
   # desktop-windows-go merged. PACKAGE_REQUIRED mirrors desktop-windows-package's
   # own `if:` verbatim rather than testing for `push`, so workflow_dispatch does
   # not expect a skip from a job that runs.
+  # Status functions bypass implicit success(): still aggregate failed children,
+  # but release the concurrency slot when a newer head cancels this whole run.
   desktop:
     needs: [changes, desktop-prepare, desktop-go, desktop-go-race, desktop-frontend, desktop-browser,
             desktop-macos, desktop-windows, desktop-windows-go, desktop-windows-package]
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Verify desktop validation jobs
@@ -690,7 +692,7 @@ jobs:
 
   desktop-browser:
     needs: [changes, desktop-prepare, desktop-browser-group]
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Verify desktop browser groups
@@ -1311,7 +1313,7 @@ jobs:
 
   desktop-windows-go:
     needs: [changes, desktop-prepare, desktop-windows-go-group]
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Verify Windows desktop Go groups
@@ -1440,7 +1442,7 @@ jobs:
 
   ci-metrics:
     needs: [desktop, desktop-macos, desktop-windows, desktop-windows-go, desktop-windows-package]
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -1599,7 +1601,7 @@ jobs:
   # `success` even when its steps fail and the assertion would be a tautology.
   root:
     needs: [changes, windows-control, windows-isolated, sdk, site, coverage]
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Verify root validation jobs
@@ -1626,7 +1628,7 @@ jobs:
   # the branch gate.
   lint:
     needs: [changes, lint-code, release-control, desktop-prepare, desktop-frontend]
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Verify lint and frontend validation jobs

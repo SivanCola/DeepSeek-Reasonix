@@ -92,10 +92,20 @@ type chatTUI struct {
 	nextPasteID          int
 	usedPasteIDs         map[int]struct{}
 
-	state                 tuiState
-	runStart              time.Time
-	elapsed               int
-	elapsedTickGeneration uint64
+	state tuiState
+	// maintenance is the active controller-owned compaction lifecycle. It is
+	// deliberately separate from state: maintenance keeps the composer usable
+	// for durable queueing and must not start ordinary turn timers or metrics.
+	maintenance                 *event.SessionOperationInfo
+	maintenanceTranscriptID     string
+	maintenanceTranscriptIdx    int
+	maintenanceTerminal         map[string]struct{}
+	maintenanceLatest           map[string]event.SessionOperationInfo
+	compactCompatibilityPending bool
+	compactLifecycleObserved    bool
+	runStart                    time.Time
+	elapsed                     int
+	elapsedTickGeneration       uint64
 	// Recovery state is cleared by progress or completion.
 	retryAttempt int
 	retryMax     int
@@ -489,9 +499,9 @@ const resetMouseTracking = ansi.ResetModeMouseX10 +
 	ansi.ResetModeMouseExtUrxvt +
 	ansi.ResetModeMouseExtSgrPixel
 
-// compactDoneMsg reports that an async /compact pass returned. The card was
-// already drawn from the CompactionDone event; this only surfaces a failure and
-// snapshots on success.
+// compactDoneMsg is the compatibility completion for controllers that do not
+// support registered management submissions. SessionOperation owns the normal
+// lifecycle and persistence path.
 type compactDoneMsg struct{ err error }
 
 // tuiShutdownMsg asks the live TUI model to persist its current controller and
@@ -663,42 +673,45 @@ func newChatTUI(ctrl control.SessionAPI, missing string, eventCh chan event.Even
 	history := chatUIDisplayHistory(ctrl)
 	nextPasteID, usedPasteIDs := pasteIDStateForHistory(history)
 	return chatTUI{
-		ctrl:                 ctrl,
-		label:                ctrl.Label(),
-		modelRef:             ctrl.ModelRef(),
-		missing:              missing,
-		nativeScrollback:     nativeScrollback,
-		legacyScrollClear:    useLegacyViewportScrollClear(runtime.GOOS, os.Environ()),
-		mouseCaptureOff:      mouseCaptureOffByDefault(),
-		input:                ti,
-		spinner:              sp,
-		submittedInputCursor: -1,
-		queueEditCursor:      -1,
-		nextPasteID:          nextPasteID,
-		usedPasteIDs:         usedPasteIDs,
-		reasoningLineIdx:     -1,
-		reasoningTextIdx:     -1,
-		answerIdx:            -1,
-		toolStreamIdx:        -1,
-		reasoning:            &strings.Builder{},
-		pending:              &strings.Builder{},
-		pendingCommit:        &commitBuf,
-		diffMaxLines:         diffFoldLimit,
-		showReasoning:        nativeScrollback,
-		showTurnUsage:        true,
-		shellOutputs:         make(map[string]string),
-		shellExpanded:        make(map[string]bool),
-		shellTranscriptIdx:   make(map[string]int),
-		toolLineCountByID:    make(map[string]int),
-		subagentProgressIdx:  make(map[string]int),
-		subagentProgress:     make(map[string]*cliSubagentProgress),
-		eventCh:              eventCh,
-		history:              history,
-		host:                 ctrl.Host(),
-		commands:             ctrl.Commands(),
-		skills:               ctrl.SlashSkills(),
-		viewport:             viewport.New(viewport.WithWidth(termW)),
-		statusLineCount:      3,
+		ctrl:                     ctrl,
+		label:                    ctrl.Label(),
+		modelRef:                 ctrl.ModelRef(),
+		missing:                  missing,
+		nativeScrollback:         nativeScrollback,
+		legacyScrollClear:        useLegacyViewportScrollClear(runtime.GOOS, os.Environ()),
+		mouseCaptureOff:          mouseCaptureOffByDefault(),
+		input:                    ti,
+		spinner:                  sp,
+		submittedInputCursor:     -1,
+		queueEditCursor:          -1,
+		maintenanceTranscriptIdx: -1,
+		maintenanceTerminal:      make(map[string]struct{}),
+		maintenanceLatest:        make(map[string]event.SessionOperationInfo),
+		nextPasteID:              nextPasteID,
+		usedPasteIDs:             usedPasteIDs,
+		reasoningLineIdx:         -1,
+		reasoningTextIdx:         -1,
+		answerIdx:                -1,
+		toolStreamIdx:            -1,
+		reasoning:                &strings.Builder{},
+		pending:                  &strings.Builder{},
+		pendingCommit:            &commitBuf,
+		diffMaxLines:             diffFoldLimit,
+		showReasoning:            nativeScrollback,
+		showTurnUsage:            true,
+		shellOutputs:             make(map[string]string),
+		shellExpanded:            make(map[string]bool),
+		shellTranscriptIdx:       make(map[string]int),
+		toolLineCountByID:        make(map[string]int),
+		subagentProgressIdx:      make(map[string]int),
+		subagentProgress:         make(map[string]*cliSubagentProgress),
+		eventCh:                  eventCh,
+		history:                  history,
+		host:                     ctrl.Host(),
+		commands:                 ctrl.Commands(),
+		skills:                   ctrl.SlashSkills(),
+		viewport:                 viewport.New(viewport.WithWidth(termW)),
+		statusLineCount:          3,
 	}
 }
 
@@ -1559,6 +1572,11 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// here. Scrollback is the terminal's now, so there's no viewport to
 			// dismiss.
 			switch {
+			case m.maintenanceCancellable():
+				m.stopMaintenance()
+			case m.maintenance != nil:
+				// A projection already being saved cannot be rolled back. Keep
+				// the draft intact while the authoritative operation settles.
 			case m.state == tuiRunning && m.bubblePending:
 				m.unsendPending()
 			case m.state == tuiRunning:
@@ -1902,12 +1920,16 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.gitStatus = msg.status
 
 	case compactDoneMsg:
-		if msg.err != nil {
+		if m.maintenance != nil && m.maintenance.OperationID == "" {
+			m.maintenance = nil
+		}
+		if msg.err != nil && !m.compactLifecycleObserved {
 			m.notice(fmt.Sprintf("%s: %v", i18n.M.SlashCompactFailed, msg.err))
-		} else {
-			_ = m.ctrl.Snapshot()
+		} else if msg.err == nil {
 			m.followSessionLease()
 		}
+		m.compactLifecycleObserved = false
+		m.compactCompatibilityPending = false
 
 	case tuiShutdownMsg:
 		return m.shutdownAndQuit(msg)
@@ -3210,54 +3232,6 @@ func (m chatTUI) cancelRequested() bool {
 	return m.ctrl.CancelRequested()
 }
 
-func (m chatTUI) runningWorkingLine(cancelRequested, styled bool) string {
-	if m.state != tuiRunning {
-		return ""
-	}
-	if m.retryAttempt > 0 && !cancelRequested {
-		if line, ok := m.waitingRecoveryLine(); ok {
-			return line
-		}
-
-		return fmt.Sprintf("  "+i18n.M.ChatStatusRetryingFmt, m.spinner.View(), m.retryAttempt, m.retryMax)
-	}
-
-	var working string
-	if cancelRequested {
-		working = fmt.Sprintf("  "+i18n.M.ChatStatusCancellingFmt, m.spinner.View(), m.elapsed)
-	} else {
-		phaseLabel := m.readStatusLabel
-		if phaseLabel == "" {
-			phaseLabel = turnPhaseStatusLabel(m.turnPhase)
-		}
-		if phaseLabel != "" {
-			working = fmt.Sprintf("  %s %s · %ds", m.spinner.View(), phaseLabel, m.elapsed)
-		} else {
-			working = fmt.Sprintf("  "+i18n.M.ChatStatusThinkingFmt, m.spinner.View(), m.elapsed)
-		}
-	}
-	if m.turnTokens > 0 {
-		working += " · ↓" + shortTokens(m.turnTokens)
-	}
-	if n := m.inboxQueuedCount(); n > 0 {
-		var queued string
-		if n == 1 {
-			queued = " · ✎ 1 in inbox"
-		} else {
-			queued = fmt.Sprintf(" · ✎ %d in inbox", n)
-		}
-		if m.inboxSnap().Paused {
-			queued += " (paused)"
-		}
-		if styled {
-			working += dim(queued)
-		} else {
-			working += queued
-		}
-	}
-	return working
-}
-
 func (m chatTUI) View() tea.View {
 	if m.themeSweep != nil {
 		v := tea.NewView(m.themeSweep.render())
@@ -3910,7 +3884,7 @@ func (m chatTUI) computeStatusLineCount(width int) int {
 
 	// Count wrapped rows for every piece that View() renders as wrapped.
 	var lines int
-	if m.state == tuiRunning {
+	if working != "" {
 		// working (spinner) line — wraps independently of the status block below.
 		lines += strings.Count(wrapStatusLine(working, width), "\n") + 1
 	}
@@ -4157,14 +4131,7 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 			ctrl.SubmitFinalReadinessRecovery(input, prompt)
 		})
 	case "/compact":
-		m.echoLocalCommand(input)
-		// Compaction makes a (network) summarizer call; run it off the Update loop
-		// so the TUI doesn't freeze. The CompactionStarted/Done events render the
-		// card as they arrive; compactDoneMsg only handles the terminal error /
-		// snapshot once the pass returns. Any text after "/compact" is focus
-		// guidance steering what the summary keeps.
-		focus := strings.TrimSpace(strings.TrimPrefix(input, typedCmd))
-		return func() tea.Msg { return compactDoneMsg{err: m.ctrl.Compact(context.Background(), focus)} }
+		return m.runCompactCommand(input, typedCmd)
 	case "/context":
 		return m.showContextReport(input)
 	case "/new":

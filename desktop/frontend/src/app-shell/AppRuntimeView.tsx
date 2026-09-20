@@ -214,7 +214,7 @@ export function AppRuntimeView(props: AppRuntimeViewProps) {
     <WindowChromeLifecycle />
     <StartupGateLifecycle />
     <AppRuntimeEffects
-      running={state.running}
+      running={state.running && !state.runtimeStateSnapshot?.maintenance}
       onEvent={session.runtimeEventCommands.handleRuntimeEvent}
       onReady={session.runtimeEventCommands.handleRuntimeReady}
       onRebuilt={session.runtimeEventCommands.handleRuntimeRebuilt}

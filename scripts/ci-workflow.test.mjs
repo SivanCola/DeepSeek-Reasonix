@@ -37,14 +37,18 @@ test("release candidate verification cannot mutate repository contents before ap
   assert.match(job(promote, "activate"), /permissions:\n      contents: write/);
 });
 
-test("cancelled CI stops expensive workers but keeps result aggregation", () => {
+test("cancelled CI releases workers, aggregates, and metrics without hiding live failures", () => {
   for (const name of ["test", "windows-control", "windows-isolated", "race", "sdk", "desktop-prepare",
     "desktop-frontend", "desktop-browser-group", "desktop-go", "desktop-go-race", "desktop-macos",
     "desktop-windows", "desktop-windows-go-group", "desktop-windows-package", "lint-code", "site", "coverage", "prune-go-cache"]) {
     assert.equal(condition(job(ci, name), { cancelled: () => true }), false, name);
   }
-  for (const name of ["root", "lint", "desktop", "desktop-browser", "desktop-windows-go"])
-    assert.equal(condition(job(ci, name), { cancelled: () => true }), true, name);
+  for (const name of ["root", "lint", "desktop", "desktop-browser", "desktop-windows-go", "ci-metrics"]) {
+    assert.equal(condition(job(ci, name), { cancelled: () => true }), false, name);
+    // A failed dependency must still reach the fail-closed shell assertions.
+    assert.equal(condition(job(ci, name), { cancelled: () => false, success: () => false,
+      failure: () => true, needs: { child: { result: "failure" } } }), true, name);
+  }
 });
 
 test("packaging changes run native installer acceptance before merge", () => {

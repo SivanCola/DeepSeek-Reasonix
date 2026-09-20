@@ -504,6 +504,21 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // locally (+264 B). Preserve the observed 186 B desktop Linux producer
 // difference (2083372 B) at the next decimal. Compressed, chunk, CSS, locale,
 // and resident-history budgets remain fixed.
-const rawInitialBudgetKiB = 2_034.6;
+// Manual compaction lifecycle visibility and recovery add one keyed operation
+// projection, monotonic history/runtime reconciliation, and lazy persisted-row
+// decoding. Integrated with native window ownership, the measured payload is
+// 2084776 B (+9538 B, 0.46% over that base). Preserve the measured 186 B Linux
+// producer difference (2084962 B) and use the next one-decimal ceiling; gzip,
+// per-chunk, CSS, and locale gates remain unchanged.
+// Integrating browser deliverables and delayed loading feedback, then sharing
+// maintenance lookup/classification logic, measures 2084836 B locally and
+// 2084968 B in the Linux Electron producer, 2 B above the previous rounded
+// ceiling. Retain the next one-decimal ceiling (100 B headroom); all other
+// gates remain unchanged.
+// Combining maintenance with conflict-preserving tool projection measures
+// 2092520 B locally (+7684 B over main-v2, 0.37%). Preserve the established
+// 186 B Linux producer difference (2092706 B) at the next decimal; other
+// payload and resident-window budgets remain unchanged.
+const rawInitialBudgetKiB = 2_043.7;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
