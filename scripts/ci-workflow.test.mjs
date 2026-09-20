@@ -429,6 +429,9 @@ test("all desktop consumers verify the prepared build and reject a failed prepar
     assert.match(body, /canary_artifact_name/);
   }
   assert.match(job(ci, "desktop-macos"), /REASONIX_FRONTEND_PNPM_VERSION="\$\(pnpm --version\)"\n\s+export REASONIX_FRONTEND_PNPM_VERSION/);
+  for (const name of ["desktop-macos", "desktop-windows", "desktop-windows-package"]) {
+    assert.ok(job(ci, name).includes("REASONIX_FRONTEND_PRODUCER_ATTEMPT: ${{ needs.desktop-prepare.outputs.producer_attempt }}"));
+  }
   const prepare = job(ci, "desktop-prepare");
   assert.match(prepare, /producer_attempt: \$\{\{ steps\.artifact-identity\.outputs\.attempt \}\}/);
   assert.match(prepare, /id: artifact-identity\n\s+run: echo "attempt=\$GITHUB_RUN_ATTEMPT" >> "\$GITHUB_OUTPUT"/);
