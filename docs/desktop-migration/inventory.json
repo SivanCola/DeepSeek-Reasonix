@@ -917,7 +917,7 @@
       "kind": "command",
       "name": "ControlHistoricalImport",
       "detail": "(action string) (HistoricalImportStatus, error)",
-      "location": "desktop/historical_import.go:670",
+      "location": "desktop/historical_import.go:673",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -5397,7 +5397,7 @@
       "kind": "command",
       "name": "StartHistoricalImport",
       "detail": "(ids []string) (HistoricalImportStatus, error)",
-      "location": "desktop/historical_import.go:555",
+      "location": "desktop/historical_import.go:558",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -6467,7 +6467,14 @@
     {
       "kind": "persistence",
       "name": "snapshot.sqlite",
-      "location": "desktop/session_source_compatibility.go:370",
+      "location": "desktop/session_source_compatibility.go:381",
+      "class": "keep-business",
+      "owner": "format unchanged; read by both shells"
+    },
+    {
+      "kind": "persistence",
+      "name": "writer.lock",
+      "location": "desktop/historical_version_recovery.go:46",
       "class": "keep-business",
       "owner": "format unchanged; read by both shells"
     },

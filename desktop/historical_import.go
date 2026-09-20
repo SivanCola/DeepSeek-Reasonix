@@ -504,6 +504,9 @@ func (a *App) importHistoricalSource(ctx context.Context, id string, source hist
 	if err != nil {
 		return SessionRestoreResult{}, err
 	}
+	if result, handled, err := a.resumeConflictingHistoricalVersion(ctx, state, source, workspace); handled {
+		return result, err
+	}
 	migration := desktopMigrationSource{scope: source.scope, workspaceRoot: source.root, headID: source.head, versionFingerprint: source.version}
 	if resume := pendingHistoricalOperation(state, id); resume != nil {
 		migration.operationID = resume.ID
