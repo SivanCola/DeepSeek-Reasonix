@@ -588,6 +588,13 @@ function bootstrap(dataHome: string): void {
           const generation = service.generation;
           const result = await service.invoke(method, args);
           if (generation !== service.generation || lifecycle.isQuitting) return result;
+          // Keep recovery evidence content-free: distinguish an empty producer
+          // cut from rows lost later in renderer hydration. Poll replies have
+          // no snapshot and do not produce a log entry.
+          if (method === "TranscriptFollowForTab" && result && typeof result === "object") {
+            const cut = result as { snapshot?: { totalRecords?: number; coveredThroughSeq?: number }; history?: { status?: string; messages?: unknown[] } };
+            if (cut.snapshot) log.info(`transcript baseline records=${cut.snapshot.totalRecords ?? 0} sequence=${cut.snapshot.coveredThroughSeq ?? 0} history_status=${cut.history?.status ?? "missing"} history_messages=${cut.history?.messages?.length ?? 0}`);
+          }
           if (method === "Version" && typeof result === "string") status.rendererVersion = result;
           if (method === "ReportDesktopWebViewReady") {
             if (!firstHeartbeat) firstHeartbeat = Date.now();
