@@ -132,6 +132,7 @@ test("real public verifier rejects tag drift before inspecting any packages", t 
 test("recovery and publication share one owner and recovery cannot enter a publisher", () => {
   const recovery = readFileSync(".github/workflows/release-site-recovery.yml", "utf8");
   const promote = readFileSync(".github/workflows/release-promote.yml", "utf8");
+  assert.match(readFileSync(".github/workflows/release-stable.yml", "utf8"), /group: stable-release-publication/);
   for (const workflow of [recovery, promote]) {
     assert.match(workflow, /group: stable-release-publication/);
     assert.match(workflow, /bash scripts\/sync-release-site.sh/);
