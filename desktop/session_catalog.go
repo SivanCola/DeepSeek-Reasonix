@@ -92,6 +92,7 @@ type ProjectTopicPageRequest struct {
 	groupExclude     map[string]struct{}
 	groupSelected    *desktopGroup
 	groupAll         []desktopGroup
+	pinnedOnly       bool
 }
 
 type ProjectTopicKey struct {

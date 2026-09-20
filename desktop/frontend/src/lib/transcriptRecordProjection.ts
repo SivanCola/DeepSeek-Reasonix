@@ -18,6 +18,7 @@ export interface TranscriptRecord {
   message: HistoryMessage;
   refs: HistoryContentRef[];
   resolved?: Record<string, string>;
+  previewMessage?: HistoryMessage;
   staleRefs?: Record<string, true>;
   bytes: number;
 }

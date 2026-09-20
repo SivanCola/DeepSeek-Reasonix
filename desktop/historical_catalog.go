@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"time"
 
@@ -27,19 +30,93 @@ func (a *App) requestHistoricalCatalog() {
 		return
 	}
 	c.discoveryPending = true
+	revision, ctx := c.catalogRevision, c.ctx
 	c.workers.Add(1)
 	c.mu.Unlock()
 	go func() {
 		defer c.workers.Done()
-		_, _ = a.listHistoricalSessions(c.ctx)
+		defer func() {
+			c.mu.Lock()
+			c.discoveryPending = false
+			c.mu.Unlock()
+		}()
+		if _, err := a.listHistoricalSessions(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			slog.Warn("desktop: historical catalog discovery incomplete")
+		}
 		c.mu.Lock()
-		c.discoveryPending = false
-		stopped := c.stopped
+		changed := c.catalogRevision != revision && !c.stopped
 		c.mu.Unlock()
-		if !stopped {
-			a.emitProjectTreeChanged()
+		if changed {
+			// Discovery changes only this read projection. It must not invalidate
+			// the legacy index and feed its own reads back into directory scans.
+			a.emitProjectTreeChangedEvent()
 		}
 	}()
+}
+
+func (a *App) listHistoricalSessions(ctx context.Context) (HistoricalImportStatus, error) {
+	c := &a.historicalImports
+	c.discoveryMu.Lock()
+	defer c.discoveryMu.Unlock()
+	// Failed reads also settle the refresh interval. Otherwise a renderer read
+	// can immediately re-admit the same failed discovery.
+	defer func() {
+		c.mu.Lock()
+		c.catalogAt = time.Now()
+		c.mu.Unlock()
+	}()
+	state, err := a.workspaceRegistry().Load(ctx)
+	if err != nil {
+		return HistoricalImportStatus{Items: []HistoricalSessionView{}}, err
+	}
+	sources := map[string]historicalSource{}
+	add := func(path, format, scope, root, head string) {
+		sources[desktopSourceKey(path, head)] = historicalSource{path: path, format: format, scope: scope, root: root, head: head}
+	}
+	canonical, legacy := a.desktopHistoricalRoots()
+	var joined error
+	for _, source := range canonical {
+		joined = errors.Join(joined, scanHistoricalRoot(ctx, *source, "canonical", add))
+	}
+	for _, source := range legacy {
+		joined = errors.Join(joined, scanHistoricalRoot(ctx, source, "legacy", add))
+	}
+	addHistoricalRegistrySources(state, add)
+	catalog := readHistoricalCanonicalCatalog(ctx, sources)
+	saved, presentationErr := readHistoricalSidecar()
+	if err := ctx.Err(); err != nil {
+		return HistoricalImportStatus{Items: []HistoricalSessionView{}}, err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.initialize(ctx)
+	if !c.queueLoaded {
+		c.loadQueueLocked()
+	}
+	changed := !reflect.DeepEqual(c.catalog, catalog)
+	if changed {
+		c.catalog = catalog
+	}
+	if presentationErr == nil {
+		changed = changed || !reflect.DeepEqual(c.presentations, saved.Presentations)
+		c.presentations = saved.Presentations
+	}
+	for id, source := range sources {
+		if source.path == "" {
+			continue
+		}
+		c.sources[id] = source
+		view := historicalImportView(state, id, source, c.views[id])
+		if presentation := c.presentations[id]; presentation.Title != "" {
+			view.Title = presentation.Title
+		}
+		changed = changed || !reflect.DeepEqual(c.views[id], view)
+		c.views[id] = view
+	}
+	if changed {
+		c.catalogRevision++
+	}
+	return c.status(), joined
 }
 
 func readHistoricalCanonicalCatalog(ctx context.Context, sources map[string]historicalSource) []historicalCatalogEntry {
@@ -74,6 +151,7 @@ func readHistoricalCanonicalCatalog(ctx context.Context, sources map[string]hist
 		}
 		rows = append(rows, historicalCatalogEntry{scope: source.scope, node: node})
 	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].node.Key < rows[j].node.Key })
 	return rows
 }
 

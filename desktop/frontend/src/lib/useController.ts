@@ -61,6 +61,7 @@ import { applyLiveSegments, coalesceStreamDeltas, completeLiveReasoning, type St
 import { assistantHasContent, ensureActiveAssistant, ensureAssistant, removeEmptyAssistantItems } from "./assistantItems";
 import { setTranscriptBindingIdentity } from "./canonicalTranscriptBackend";
 import { getTranscriptStore } from "./transcriptStore";
+import { isIsolatedStreamDelta, releaseCachedHistory } from "./transcriptMemory";
 import { TranscriptSessionFollower } from "./transcriptSessionFollower";
 import { historyReplaceAction, historyRevisionIsOlder } from "./sessionTranscriptMode";
 import { matchingSnapshotItem, transcriptPageState, transcriptSnapshotState } from "./transcriptSnapshotState";
@@ -828,6 +829,7 @@ export type Action =
   | { type: "checkpoints"; checkpoints: CheckpointMeta[] } | ForkTurnAction
   | { type: "hydrate_start"; reason: HydrateReason; placeholderItems?: Item[] }
   | { type: "hydrate_done" }
+  | { type: "history_cache_evicted" }
   | { type: "hydrate_error"; reason: HydrateReason; error: string }
   | { type: "backend_activation_start"; backendPendingPrompt?: boolean }
   | { type: "backend_activation_done" }
@@ -2114,6 +2116,7 @@ function reduceState(s: State, a: Action): State {
       hydrateHistoryLoaded: false,
       hydratePlaceholderItems: a.placeholderItems?.length ? a.placeholderItems : undefined,
     };
+    case "history_cache_evicted": return releaseCachedHistory(s);
     case "hydrate_done": return s.hydrating || s.hydrateReason || s.hydrateError || s.hydrateHistoryLoaded || s.hydratePlaceholderItems
       ? { ...s, hydrating: false, hydrateReason: undefined, hydrateError: undefined, hydrateHistoryLoaded: undefined, hydratePlaceholderItems: undefined }
       : s;
@@ -2481,8 +2484,7 @@ export function useController() {
   activeTabIdRef.current = activeTabId;
   stateRef.current = activeState;
 
-  // Dispatch to a specific tab's state. If the tab doesn't have state yet, it's
-  // created. Bumps the version so React re-renders when it becomes active.
+  // Publish per-tab state; only the visible tab invalidates this controller.
   const dispatchTo = useCallback((tabId: string, action: Action) => {
     const states = statesRef.current;
     const prev = getOrCreateState(states, tabId);
@@ -2498,18 +2500,10 @@ export function useController() {
       getTranscriptStore().setPinned(tabId, Boolean(next.running || next.turnActive || next.live));
       uiPerfTracker.onStateCommit();
       notifyLiveListeners(tabId);
-      const streamDeltaOnly =
-        (action.type === "stream_batch" ||
-          (action.type === "event" && (action.e.kind === "text" || action.e.kind === "reasoning"))) &&
-        prev.items === next.items &&
-        prev.currentAssistant === next.currentAssistant &&
-        prev.pendingUser === next.pendingUser &&
-        prev.retry === next.retry;
-      // Text/reasoning-only deltas only update the live stream — which the
-      // frontend reads through its own subscription — so they must not bump the
-      // full controller tree (the run-strip TPS estimate subscribes to the live
-      // stream directly and updates itself).
-      if (!streamDeltaOnly) bump();
+      const streamDeltaOnly = isIsolatedStreamDelta(action, prev, next);
+      // Stream subscribers (including TPS) handle text/reasoning deltas;
+      // only visible structural changes invalidate the full controller tree.
+      if (!streamDeltaOnly && tabId === activeTabIdRef.current) bump();
     }
   }, [bump, notifyLiveListeners]);
   useEffect(() => {
@@ -2636,6 +2630,14 @@ export function useController() {
     if (transcriptSubscriptions.current.has(tabId)) return;
     const unsubscribe = getTranscriptStore().subscribe(tabId, (change) => {
       if (!statesRef.current.has(tabId)) return;
+      if (change.evictedPath !== undefined) {
+        if (statesRef.current.get(tabId)?.meta?.sessionPath !== change.evictedPath) return;
+        followers.current.get(tabId)?.stop();
+        followers.current.delete(tabId);
+        bumpSessionLoadSeq(tabId);
+        dispatchTo(tabId, { type: "history_cache_evicted" });
+        return;
+      }
       dispatchTo(tabId, { type: "history_items_patch", patches: change.patches, expected: change.expected });
       const patchCount = Object.keys(change.patches).length;
       if (patchCount > 0) {
@@ -2646,7 +2648,7 @@ export function useController() {
       }
     });
     transcriptSubscriptions.current.set(tabId, unsubscribe);
-  }, [dispatchTo]);
+  }, [dispatchTo, bumpSessionLoadSeq]);
   const startTranscriptFollow = useCallback(async (tabId: string, path: string) => {
     ensureTranscriptSubscription(tabId, { path, key: sessionIdentityStableKey(statesRef.current.get(tabId)?.meta) });
     followers.current.get(tabId)?.stop();

@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -25,7 +24,7 @@ func (a *App) unifiedProjectTopics(req ProjectTopicPageRequest) (ProjectTopicPag
 	if err != nil {
 		return ProjectTopicPage{Items: []ProjectNode{}}, err
 	}
-	state, err := a.workspaceRegistry().Load(a.bootContext())
+	state, err := a.workspaceRegistry().LoadProjection(a.bootContext())
 	if err != nil {
 		return ProjectTopicPage{Items: []ProjectNode{}}, err
 	}
@@ -80,11 +79,7 @@ func (a *App) unifiedProjectTopics(req ProjectTopicPageRequest) (ProjectTopicPag
 	if saved, err := readHistoricalSidecar(); err == nil {
 		applyHistoricalPresentations(sources, saved)
 	}
-	nodes := a.canonicalTopicNodes(all, state, workspace, infos, sources)
-	filtered := filterWorkspaceSessionNodes(req, org, state, workspaceID, nodes)
-	sort.SliceStable(filtered, func(i, j int) bool {
-		return projectTopicLess(filtered[i], filtered[j], req.SortMode, org.ManualOrderEnabled)
-	})
+	filtered := a.indexedWorkspaceTopics(req, state, workspace, org, infos, sources)
 	// Bind to the exact materialized order and metadata, plus owner revisions.
 	// Runtime decoration is deliberately excluded: opening a tab is not a reorder.
 	identity := []any{state.Generation, org.Revision, legacy.Revision, projectTopicCursorBinding(req, req.GroupFilter, req.GroupID, org.Revision)}
@@ -104,7 +99,7 @@ func (a *App) unifiedProjectTopics(req ProjectTopicPageRequest) (ProjectTopicPag
 			return ProjectTopicPage{Items: []ProjectNode{}}, newSessionOperationError("stale_cursor", "The session list changed. Reload it.")
 		}
 	}
-	after, err := a.workspaceRegistry().Load(a.bootContext())
+	after, err := a.workspaceRegistry().LoadProjection(a.bootContext())
 	if err != nil {
 		return ProjectTopicPage{Items: []ProjectNode{}}, err
 	}
@@ -117,7 +112,12 @@ func (a *App) unifiedProjectTopics(req ProjectTopicPageRequest) (ProjectTopicPag
 	}
 	limit = min(limit, 200)
 	end := min(offset+limit, len(filtered))
-	legacy.Items = append([]ProjectNode{}, filtered[offset:end]...)
+	legacy.Items = cloneTopicPage(filtered[offset:end])
+	for i := range legacy.Items {
+		if ref := legacy.Items[i].Session; ref != nil {
+			_, legacy.Items[i].Open = a.desktopSessionService("").Runtime(*ref)
+		}
+	}
 	legacy.Revision += state.Generation
 	legacy.NextCursor = ""
 	if end < len(filtered) {
@@ -144,7 +144,7 @@ func desktopSessionTimeCutoff(filter string) int64 {
 }
 
 func (a *App) unifiedProjectRevision(catalogRevision uint64) uint64 {
-	state, err := a.workspaceRegistry().Load(a.bootContext())
+	state, err := a.workspaceRegistry().LoadProjection(a.bootContext())
 	if err != nil {
 		return catalogRevision
 	}
@@ -152,7 +152,7 @@ func (a *App) unifiedProjectRevision(catalogRevision uint64) uint64 {
 }
 
 func (a *App) updateCanonicalTopicPresentation(topicID string, title *string, pinned *bool) (bool, error) {
-	state, err := a.workspaceRegistry().Load(a.bootContext())
+	state, err := a.workspaceRegistry().LoadProjection(a.bootContext())
 	if err != nil {
 		return false, err
 	}
@@ -186,7 +186,7 @@ func (a *App) updateCanonicalTopicPresentation(topicID string, title *string, pi
 }
 
 func (a *App) mergeCanonicalWorkspaceShells(projects []ProjectNode) []ProjectNode {
-	state, err := a.workspaceRegistry().Load(a.bootContext())
+	state, err := a.workspaceRegistry().LoadProjection(a.bootContext())
 	if err != nil {
 		return projects
 	}
@@ -232,7 +232,7 @@ func (a *App) mergeCanonicalWorkspaceShells(projects []ProjectNode) []ProjectNod
 		if project.Kind == "global_folder" {
 			scope, root = "global", ""
 		}
-		req := ProjectTopicPageRequest{Scope: scope, WorkspaceRoot: root, Limit: 200}
+		req := ProjectTopicPageRequest{Scope: scope, WorkspaceRoot: root, Limit: 200, pinnedOnly: true}
 		workspace := state.Workspaces[desktopWorkspaceOwnerID(state, scope, root)]
 		if len(workspace.SessionIDs) == 0 {
 			pins, err := a.historicalPinnedShells(req, state)
@@ -318,13 +318,18 @@ func (a *App) unadoptedLegacyTopics(req ProjectTopicPageRequest, adopted, adopte
 	return legacy, nil
 }
 
-func (a *App) canonicalTopicNodes(req ProjectTopicPageRequest, state workspacestate.State, workspace workspacestate.Workspace, infos map[string]session.SessionInfo, initial []ProjectNode) []ProjectNode {
+func (a *App) canonicalTopicNodes(req ProjectTopicPageRequest, state workspacestate.State, workspace workspacestate.Workspace, infos map[string]session.SessionInfo, initial []ProjectNode, created ...map[string]int64) []ProjectNode {
 	workspaceID := workspace.ID
 	service := a.desktopSessionService("")
 	nodes := initial
 	query := strings.ToLower(strings.TrimSpace(req.Query))
 	cutoff := desktopSessionTimeCutoff(req.TimeFilter)
-	createdTopics := loadTopicCreatedAts(topicTitleRoot(req.Scope, req.WorkspaceRoot))
+	var createdTopics map[string]int64
+	if len(created) > 0 {
+		createdTopics = created[0]
+	} else {
+		createdTopics = loadTopicCreatedAts(topicTitleRoot(req.Scope, req.WorkspaceRoot))
+	}
 	for index, id := range workspace.SessionIDs {
 		if state.SessionStates[id].Lifecycle != workspacestate.Active {
 			continue
@@ -380,7 +385,11 @@ func filterWorkspaceSessionNodes(req ProjectTopicPageRequest, org workspacestate
 	seen := map[string]bool{}
 	cutoff := desktopSessionTimeCutoff(req.TimeFilter)
 	query := strings.ToLower(strings.TrimSpace(req.Query))
+	aliases := workspaceSourceAliases(state, workspaceID)
 	for _, n := range nodes {
+		if req.pinnedOnly && !n.Pinned {
+			continue
+		}
 		key := projectNodeSessionKey(n)
 		if seen[key] {
 			continue
@@ -393,7 +402,7 @@ func filterWorkspaceSessionNodes(req ProjectTopicPageRequest, org workspacestate
 			}
 		}
 		if n.Session != nil {
-			n.IdentityAliases = sourceAliases(state, workspaceID, n.Session.SessionID)
+			n.IdentityAliases = aliases[n.Session.SessionID]
 			n.LifecycleGeneration = state.SessionStates[n.Session.SessionID].Generation
 		}
 		if !projectNodeRequestAllows(req, n) || cutoff > 0 && max(n.CreatedAt, n.LastActivityAt) < cutoff {

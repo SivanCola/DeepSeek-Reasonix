@@ -72,6 +72,7 @@ export interface AppendEntriesResult extends TranscriptProjection {
 
 export interface TranscriptContentChange {
   tabId: string;
+  evictedPath?: string;
   /** Re-converted items keyed by their stable item id. */
   patches: Record<string, Item>;
   expected?: Record<string, Item>;

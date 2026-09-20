@@ -48,9 +48,11 @@ export async function readTranscriptContent(
       data += chunk.data ?? "";
       if (chunk.done) break;
     }
+    const preview = rec.previewMessage ?? rec.message;
     if (!applyResolvedField(rec, ref, data)) return undefined;
+    rec.previewMessage = preview;
     const previousBytes = rec.bytes;
-    rec.bytes = recordBytes(rec.message);
+    rec.bytes = recordBytes(rec.message) + recordBytes(preview);
     session.bodyBytes += rec.bytes - previousBytes;
     const value = ref.field === "canonicalMessage" ? resolvedHistoryField(rec.message, field) : data;
     if (value === undefined) return undefined;

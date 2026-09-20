@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -46,16 +47,29 @@ func (a *App) ensureSessionOrganization(scope, root string) (string, workspacest
 	if err != nil {
 		return "", workspacestate.Organization{}, err
 	}
-	id, err := a.ensureDesktopWorkspace(a.bootContext(), scope, root)
+	state, err := a.workspaceRegistry().LoadProjection(a.bootContext())
 	if err != nil {
 		return "", workspacestate.Organization{}, err
 	}
-	state, err := a.workspaceRegistry().Load(a.bootContext())
-	if err != nil {
-		return "", workspacestate.Organization{}, err
+	id, found := workspacestate.FindWorkspace(state, desktopWorkspaceRoot(scope, root))
+	if !found {
+		id, err = a.ensureDesktopWorkspace(a.bootContext(), scope, root)
+		if err != nil {
+			return "", workspacestate.Organization{}, err
+		}
+		state, err = a.workspaceRegistry().LoadProjection(a.bootContext())
+		if err != nil {
+			return "", workspacestate.Organization{}, err
+		}
 	}
 	workspace := state.Workspaces[id]
 	projects := loadProjectsFile()
+	importKey, cacheable := a.organizationImportKey(scope, root, state, id, projects)
+	if cacheable {
+		if organization, ok := a.desktopSessions.organizations.get(importKey); ok {
+			return id, organization, nil
+		}
+	}
 	groups := projects.GlobalGroups
 	order := projects.GlobalSessionOrder
 	topicOrder := projects.GlobalTopics
@@ -68,11 +82,12 @@ func (a *App) ensureSessionOrganization(scope, root string) (string, workspacest
 		}
 	}
 	nodes := []ProjectNode{}
+	aliases := workspaceSourceAliases(state, id)
 	for _, sid := range workspace.SessionIDs {
 		p := state.Presentation[sid]
 		ref := session.SessionRef{HostID: localDesktopHostID, SessionID: sid}
 		node := ProjectNode{Session: &ref, TopicID: p.TopicID, SessionPath: sessionRoute(sid)}
-		node.IdentityAliases = sourceAliases(state, id, sid)
+		node.IdentityAliases = aliases[sid]
 		nodes = append(nodes, node)
 	}
 	req := ProjectTopicPageRequest{Scope: scope, WorkspaceRoot: root, Limit: 200}
@@ -100,7 +115,7 @@ func (a *App) ensureSessionOrganization(scope, root string) (string, workspacest
 			}
 		}
 	}
-	org, _, err := a.workspaceRegistry().UpdateOrganization(a.bootContext(), id, nil, func(o *workspacestate.Organization) error {
+	importSources := func(o *workspacestate.Organization) error {
 		initial := o.MigrationVersion == 0
 		if initial {
 			o.ManualOrderEnabled = manual
@@ -114,8 +129,40 @@ func (a *App) ensureSessionOrganization(scope, root string) (string, workspacest
 		}
 		o.MigrationVersion = 1
 		return nil
-	})
+	}
+	// A settled import is a read. Do not enter the cross-process write lock or
+	// serialize the whole registry merely to discover that nothing changed.
+	if workspace.Organization != nil {
+		candidate := workspace.Organization.Clone()
+		if err := importSources(&candidate); err != nil {
+			return "", workspacestate.Organization{}, err
+		}
+		if reflect.DeepEqual(candidate, *workspace.Organization) {
+			if cacheable {
+				a.desktopSessions.organizations.put(importKey, candidate)
+			}
+			return id, candidate, nil
+		}
+	}
+	org, _, err := a.workspaceRegistry().UpdateOrganization(a.bootContext(), id, nil, importSources)
 	return id, org, err
+}
+
+func workspaceSourceAliases(state workspacestate.State, workspaceID string) map[string][]string {
+	result := map[string][]string{}
+	for _, m := range state.SourceMappings {
+		if m.WorkspaceID != workspaceID {
+			continue
+		}
+		result[m.SessionID] = append(result[m.SessionID], "source\x00local\x00"+m.SourceKey)
+		if sourceMappingHasPathAlias(m) {
+			result[m.SessionID] = append(result[m.SessionID], "path\x00"+m.Path)
+		}
+	}
+	for _, aliases := range result {
+		slices.Sort(aliases)
+	}
+	return result
 }
 
 func sourceAliases(state workspacestate.State, workspaceID, sessionID string) []string {
@@ -213,7 +260,7 @@ func (a *App) replaceSessionOrganizationGroups(ctx context.Context, scope, root 
 	if err = validateSessionGroups(groups); err != nil {
 		return ProjectGroupsSnapshot{}, err
 	}
-	state, err := a.workspaceRegistry().Load(ctx)
+	state, err := a.workspaceRegistry().LoadProjection(ctx)
 	if err != nil {
 		return ProjectGroupsSnapshot{}, err
 	}
