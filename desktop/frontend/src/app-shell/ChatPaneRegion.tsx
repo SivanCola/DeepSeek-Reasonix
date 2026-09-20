@@ -1,6 +1,7 @@
 import { lazy, Suspense, type ReactNode } from "react";
 import { Transcript, type TranscriptProps } from "../components/Transcript";
 import { SessionRecoveryBanner, SessionRecoveryPlaceholder } from "../components/SessionRecoveryBanner";
+import { SessionLoadingIndicator } from "../components/SessionLoadingIndicator";
 import { NoticePreviewPanel, noticePreviewMockEnabled } from "./NoticePreviewPanel";
 import type { SidebarImConnection } from "../app-runtime/sidebarImProjection";
 import type { TabMeta } from "../lib/types";
@@ -131,9 +132,11 @@ export function ChatPaneRegion(props: ChatPaneRegionProps) {
   const localSubmissions = orderedLocalSubmissions(state);
   const recoveringEmpty = !transitioning && transcript.availability.kind !== "ready" && transcript.items.length === 0 && localSubmissions.length === 0
     && !state.live?.text && !state.live?.reasoning;
+  const loading = transcript.availability.kind !== "error" && (transitioning || transcript.transcriptHydrating
+    || (transcript.availability.kind === "loading" && (transcript.availability.source !== "runtime" || recoveringEmpty)));
   return (
     <>
-    {!transitioning && !props.imDetail && !noticePreview && <SessionRecoveryBanner key={transcript.tabId}
+    {!transitioning && !props.imDetail && !noticePreview && <SessionRecoveryBanner key={transcript.geometrySessionKey ?? transcript.tabId}
       availability={transcript.availability} onRetry={props.onRetryHistory} />}
     <main className="main">
       {props.imDetail && !transitioning ? (
@@ -148,7 +151,7 @@ export function ChatPaneRegion(props: ChatPaneRegionProps) {
         <NoticePreviewPanel />
       ) : (
         <>
-          <div className="transcript-navigation-surface" aria-busy={transitioning}>
+          <div className="transcript-navigation-surface" aria-busy={loading}>
             {props.launcher}
             <div
               className="transcript-navigation-content"
@@ -176,6 +179,7 @@ export function ChatPaneRegion(props: ChatPaneRegionProps) {
                 running={state.running || rewind.committing}
                 turnStartAt={state.turnStartAt}
                 hydrating={transcript.transcriptHydrating || (transitioning && !transcript.navigationDataReady)}
+                showLoadingFeedback={false}
                 hasOlderHistory={!transitioning && state.historyHasOlder && !rewind.stateActive}
                 hasNewerHistory={!transitioning && state.historyHasNewer && !rewind.stateActive}
                 historyStartTurn={state.historyStartTurn}
@@ -192,12 +196,10 @@ export function ChatPaneRegion(props: ChatPaneRegionProps) {
                 onSurfacePaintReady={commands.onSurfacePaintReady}
               />}
             </div>
-            {transitioning ? (
-              <div className="transcript-navigation-overlay" role="status" aria-live="polite">
-                <span className="transcript-navigation-overlay__spinner" aria-hidden="true" />
-                <span>{t("common.loading")}</span>
-              </div>
-            ) : null}
+            {transitioning && <div className="transcript-navigation-overlay" aria-hidden="true" />}
+            <SessionLoadingIndicator active={loading}
+              identity={transcript.geometrySessionKey ?? transcript.tabId ?? "local"}
+              source={transcript.availability.source} />
           </div>
         </>
       )}

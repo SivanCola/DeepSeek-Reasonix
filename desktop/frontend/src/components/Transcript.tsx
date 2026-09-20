@@ -21,6 +21,7 @@ import { MarkdownImageTabContext } from "./MarkdownImageContext";
 import { ChatFileScopeProvider } from "./ChatFileLinkContext";
 import { ChatDetails, ChatNodeList, ChatRunning, type ChatActions } from "./ChatNodes";
 import { Welcome } from "./Welcome";
+import { SessionLoadingIndicator } from "./SessionLoadingIndicator";
 import "./ChatTranscript.css";
 const ChatTurnNavigator = lazy(() => import("./ChatTurnNavigator"));
 export { NoticeCard } from "./TranscriptCards";
@@ -45,6 +46,8 @@ export type TranscriptProps = {
   forkBlocked?: ForkBlockReason | null;
   running?: boolean;
   hydrating?: boolean;
+  /** Shell surfaces own one shared loading indicator across empty/content states. */
+  showLoadingFeedback?: boolean;
   hasOlderHistory?: boolean;
   hasNewerHistory?: boolean;
   historyStartTurn?: number;
@@ -243,6 +246,7 @@ function ChatSession(props: TranscriptProps & { sessionKey: string }) {
     <MarkdownImageTabContext.Provider value={tabId ?? ""}>
       <ChatFileScopeProvider scopeKey={source.sessionKey} tabId={tabId} hostId={props.hostId}>
       <section className="chat-transcript">
+        <SessionLoadingIndicator active={hydrating && props.showLoadingFeedback !== false} identity={sessionKey} />
         <div className="chat-surface" inert={Boolean(activeDetails)}>
           <Suspense fallback={null}><ChatTurnNavigator source={source} scroll={scroll} mounts={mounts}
             tabId={tabId} knownTurns={props.totalTurns ?? 0}
@@ -261,7 +265,6 @@ function ChatSession(props: TranscriptProps & { sessionKey: string }) {
             data-transcript-hydrating={hydrating} data-scroll-mode={position.following ? "tail" : "reader"}>
             <div ref={column} className="chat-column">
               <TranscriptConnection tabId={tabId} />
-              {hydrating && <p role="status">{t("chat.loading")}</p>}
               {(hasOlderHistory || hasNewerHistory) && <div className="chat-history-window" role="status">
                 <span>{t("chat.historyRange", { start: Math.max(1, (props.historyStartTurn ?? 0) + 1), end: Math.max(1, props.historyEndTurn ?? props.totalTurns ?? 0), total: props.totalTurns ?? 0 })}</span>
               </div>}
