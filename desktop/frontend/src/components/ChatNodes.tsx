@@ -19,6 +19,7 @@ import { ToolRow } from "./harness-chat/ToolRow";
 import { subjectOf, summarizeFileDiff } from "../lib/tools";
 import { classifyTool, shellDisplayName, toolPresentation } from "../lib/chatToolPresentation";
 import { RESOURCE_BUDGETS } from "../lib/resourceBudgets";
+import type { WireCompletionSummary } from "../lib/types";
 const ChatToolBody = lazy(() => import("./ChatToolBody"));
 const ToolPayload = lazy(() => import("./ChatToolBody").then(module => ({ default: module.ToolPayload })));
 const PresentedFiles = lazy(() => import("./PresentedFiles").then(module => ({ default: module.PresentedFiles })));
@@ -51,6 +52,7 @@ export type ChatActions = {
   /** Absent on surfaces that cannot fork at all; those render no branch entry. */
   fork?: ChatForkAction;
   recover: (id: string) => void;
+  openTurnChanges?: (summary: WireCompletionSummary, initialPath?: string) => void;
 };
 type SeatProps = { source: ChatSource; nodeKey: string; loader: ChatContentLoader; scroll: ChatScrollController; actions: ChatActions; tabId?: string; hostId?: string };
 
@@ -229,7 +231,8 @@ function ChatTurnTail({ node, source, actions, loader, tabId, hostId }: { node: 
   const answer = useChatNode(source, node.answerKey ?? "");
   const t = useT();
   const hasAnswer = answer?.kind === "assistant" && Boolean(answer.item.text.trim());
-  if (!hasAnswer && !node.presentedFiles.length && !node.modifiedFiles.length) return null;
+  const hasRecordedChanges = Boolean(node.completionSummary?.receipt?.diff?.files.length);
+  if (!hasAnswer && !node.presentedFiles.length && !node.modifiedFiles.length && !hasRecordedChanges) return null;
   const fork = actions.fork;
   // A tail with no answer has no message identity, so it can name no boundary.
   const target = hasAnswer ? fork?.targetFor(node.answerKey) : undefined;
@@ -237,11 +240,12 @@ function ChatTurnTail({ node, source, actions, loader, tabId, hostId }: { node: 
   const reasonText = reason ? t(forkReasonKey(reason)) : "";
   const create = fork?.create;
   return <div className="chat-turn-tail">
+    {(node.modifiedFiles.length > 0 || hasRecordedChanges) && <Suspense fallback={null}>
+      <ModifiedFiles files={node.modifiedFiles} summary={node.completionSummary} tabId={tabId} hostId={hostId}
+        onOpenReview={actions.openTurnChanges} />
+    </Suspense>}
     {node.presentedFiles.length > 0 && <Suspense fallback={null}>
       <PresentedFiles files={node.presentedFiles} tabId={tabId} hostId={hostId} />
-    </Suspense>}
-    {node.modifiedFiles.length > 0 && <Suspense fallback={null}>
-      <ModifiedFiles files={node.modifiedFiles} tabId={tabId} hostId={hostId} />
     </Suspense>}
     {hasAnswer && <div className="chat-actions" data-actions-reveal={node.latest ? "always" : "hover"}><CopyButton getText={async () => {
     const text = answer.item.streaming ? answer.item.text : await loader.load(answer.item, "content");

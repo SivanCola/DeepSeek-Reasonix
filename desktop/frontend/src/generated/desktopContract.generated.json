@@ -8624,6 +8624,37 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/file_browser_preview.go",
+      "name": "OpenFileBrowserPreviewForTab",
+      "owner": "App.OpenFileBrowserPreviewForTab",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "object",
+          "ref": "main.FileBrowserPreviewRequest"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.FileBrowserPreviewResult"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID",
+          "request"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.OpenFileBrowserPreviewForTab"
+      },
+      "sources": [
+        "desktop/file_browser_preview.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/tabs.go",
       "name": "OpenGlobalTab",
       "owner": "App.OpenGlobalTab",
@@ -29061,6 +29092,84 @@
           "name": "requireMention",
           "type": {
             "kind": "boolean"
+          }
+        }
+      ]
+    },
+    "main.FileBrowserPreviewRequest": {
+      "fields": [
+        {
+          "name": "source",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "path",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "toolCallId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "operationId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "expectedSessionGeneration",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "userInitiated",
+          "optional": true,
+          "type": {
+            "kind": "boolean"
+          }
+        }
+      ]
+    },
+    "main.FileBrowserPreviewResult": {
+      "fields": [
+        {
+          "name": "tabId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "url",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "status",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "error",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "sessionGeneration",
+          "type": {
+            "kind": "integer"
           }
         }
       ]

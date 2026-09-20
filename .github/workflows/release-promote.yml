@@ -326,15 +326,11 @@ jobs:
           OPERATION: ${{ inputs.operation }}
           VERSION: ${{ needs.preflight.outputs.version }}
         run: |
-          current="$(curl -fsSL https://dl.reasonix.io/latest/latest.json | jq -r .version)"
-          if [ "$current" = "v$VERSION" ]; then
-            echo "update=true" >> "$GITHUB_OUTPUT"
-          elif [ "$OPERATION" = recover ]; then
-            echo "update=false" >> "$GITHUB_OUTPUT"
-            echo "Stable pointers remain on $current; website deployment is preserved." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "::error::Stable manifest serves $current after publishing v$VERSION"
-            exit 1
+          set -euo pipefail
+          update="$(bash scripts/observe-release-site.sh "$VERSION" "$OPERATION")"
+          echo "update=$update" >> "$GITHUB_OUTPUT"
+          if [ "$update" = false ]; then
+            echo "A verified newer Stable release owns the site; its deployment is preserved." >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Dispatch and wait for the owned Pages deployment
         id: pages

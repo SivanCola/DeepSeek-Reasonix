@@ -99,6 +99,14 @@ const deliverableItems: Item[] = [
   { kind: "tool", id: "present-old", name: "present", args: '{"files":[{"path":"game.html"}]}', readOnly: true, status: "done", output: "Presented game.html", presentedFiles: [{ path: "game.html", description: "Old description" }] },
   { kind: "tool", id: "present-doc", name: "present", args: '{"files":[{"path":"README.md"}]}', readOnly: true, status: "done", output: "Presented README.md", presentedFiles: [{ path: "README.md", description: "Instructions" }] },
   { kind: "tool", id: "present-new", name: "present", args: '{"files":[{"path":"game.html"}]}', readOnly: true, status: "done", output: "Presented game.html", presentedFiles: [{ path: "game.html", description: "Playable game" }] },
+  { kind: "notice", id: "turn-result", level: "info", text: "Turn complete", completionSummary: {
+    preset: "balanced", verdict: "complete", mutations: 2, changed_files: 2, checks_passed: 0, checks_failed: 0,
+    checks_suppressed: 0, review: "passed", constraint_degraded: false,
+    receipt: { verdict: "complete", diff: { id: "5:result", turn: 5, coverage: "complete", added: 4, removed: 1, reasons: [], files: [
+      { path: "game.html", kind: "create", added: 3, removed: 0 },
+      { path: "notes.md", kind: "create", added: 1, removed: 1 },
+    ] } },
+  } },
   { kind: "assistant", id: "deliverable-answer", text: "Open `game.html`.", reasoning: "", streaming: false },
 ];
 deliverables.update({ ...input, items: deliverableItems, running: false });
@@ -110,8 +118,10 @@ assert.deepEqual(tail.presentedFiles, [
   { path: "README.md", description: "Instructions", toolCallId: "present-doc" },
 ]);
 assert.deepEqual(tail.modifiedFiles, [
+  { path: "game.html", toolCallId: "write-game", operation: "written" },
   { path: "notes.md", toolCallId: "write-notes", operation: "written" },
-], "presented files suppress duplicate compact mutation entries");
+], "the changed-files review keeps presented files in the same turn inventory");
+assert.equal(tail.completionSummary?.receipt?.diff?.added, 4, "the tail carries the frozen review receipt");
 const presentProcess = deliverables.getNodeSnapshot("deliverable-user:process");
 assert.ok(presentProcess?.kind === "process" && presentProcess.toolCallCount === 6);
 deliverables.dispose();

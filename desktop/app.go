@@ -432,6 +432,12 @@ type App struct {
 	browserExecMu    sync.Mutex
 	browserExecutors map[string]*hostBrowserExecutor
 	browserOps       *browserops.Ledger
+	// fileBrowserPreviews serializes file-to-browser publication and remembers
+	// the task-owned tab for each session-scoped resource. It is deliberately
+	// separate from App.mu: host RPC may wait on Electron and must never hold the
+	// chat runtime lock while doing so.
+	fileBrowserPreviewMu sync.Mutex
+	fileBrowserPreviews  map[string]fileBrowserPreviewBinding
 	// browserControl is the shell-pushed switch that decides whether new
 	// sessions may drive the built-in browser at all.
 	browserControl browserControl
@@ -476,6 +482,7 @@ func NewApp() *App {
 		detachedSessions:        map[string]*WorkspaceTab{},
 		mediaTokens:             newMediaTokenStore(),
 		presentPreview:          newWorkspacePreviewOrigin(),
+		fileBrowserPreviews:     map[string]fileBrowserPreviewBinding{},
 		botInstalls:             map[string]*botInstallSession{},
 		botRuntime:              newDesktopBotRuntime(),
 		remoteWindows:           newRemoteWindowRegistry(),
@@ -10345,9 +10352,15 @@ func (a *App) extendWorkspaceBrowserPreviewToken(resourceURL string) {
 	}
 }
 
-// RevokeWorkspaceBrowserPreview invalidates only URLs minted by this app's
-// unprivileged preview origin. Browser tab close calls this best-effort.
+// RevokeWorkspaceBrowserPreview drops the file binding and invalidates only
+// URLs minted by this app's unprivileged preview origin. Browser tab close
+// calls this best-effort.
 func (a *App) RevokeWorkspaceBrowserPreview(rawURL string) {
+	a.releaseFileBrowserPreviewURL(rawURL)
+	a.revokeWorkspaceBrowserPreview(rawURL)
+}
+
+func (a *App) revokeWorkspaceBrowserPreview(rawURL string) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return

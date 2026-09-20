@@ -399,6 +399,7 @@ export function AppRuntimeView(props: AppRuntimeViewProps) {
             commands={{
               onPrompt: session.transcript.handleTranscriptPrompt,
               onFork: (turnId) => session.sessionUndo.handleForkTurn(turnId),
+              onOpenTurnChanges: session.turnVerificationCommands.openTurnChanges,
               onLoadOlderHistory: session.transcript.handleLoadOlderHistory,
               onLoadNewerHistory: session.transcript.handleLoadNewerHistory,
               onSurfacePaintReady: session.transcript.handleSurfacePaintReady,

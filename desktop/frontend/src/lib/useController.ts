@@ -3350,6 +3350,8 @@ export function useController() {
     const handleWireEvent = (e: WireEvent) => {
       const targetTabId = e.tabId;
       if (!targetTabId) throw new Error("ordered event has no target tab");
+      if (e.kind === "turn_done" || e.tool) void import("./autoHTML")
+        .then((module) => module.default(e, targetTabId, activeTabIdRef, statesRef));
       if (e.kind === "turn_done" || e.kind === "context_maintenance") {
         void app.ContextUsageForTab(targetTabId).then((context) => dispatchTo(targetTabId, { type: "context", context })).catch(() => {});
       }

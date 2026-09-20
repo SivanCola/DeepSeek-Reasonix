@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
 node --test "$repo_root/scripts/verify-manual-desktop-producer.test.mjs"
+node --test "$repo_root/scripts/release-publication-ledger.test.mjs"
 bash "$repo_root/scripts/manual-desktop-exception.test.sh"
 test_root="$(mktemp -d "${TMPDIR:-/tmp}/reasonix-release-workflow-test.XXXXXX")"
 cleanup() {

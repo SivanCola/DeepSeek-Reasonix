@@ -347,9 +347,29 @@ try {
       await page.locator('[data-chat-anchor-key="weather-final"] table').waitFor();
       const presented = page.locator('.presented-files');
       await presented.waitFor();
+      const changed = page.locator('.turn-files');
+      await changed.waitFor();
       assert.equal(await presented.locator('.presented-file').count(), 2, 'trusted present result renders one card per file');
+      assert.equal(await presented.locator('.presented-file__split').count(), 2, 'every presented file exposes one split open control');
       assert.match(await presented.innerText(), /shanghai-weather\.html/);
       assert.match(await presented.innerText(), /weather-notes\.md/);
+      assert.match(await changed.innerText(), /Edited 2 files/);
+      assert.match(await changed.innerText(), /\+5/);
+      assert.match(await changed.innerText(), /−1/);
+      await changed.locator('.turn-files__list button').first().click();
+      assert.match(await changed.locator('[role="status"]').innerText(), /Diff details for this turn are unavailable/, 'disconnected fixture reports missing Diff service instead of swallowing clicks');
+      assert.equal(await page.locator('.chat-older').count(), 0, 'standalone fixture must not offer nonexistent history');
+      await presented.locator('.presented-file__more').first().click();
+      const menu = page.getByRole('menu');
+      assert.match(await menu.innerText(), /Open in built-in browser/);
+      assert.equal(await menu.getByRole('menuitem').last().evaluate(el => {
+        const rect = el.getBoundingClientRect();
+        return el.contains(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2));
+      }), true, 'bottom action remains clickable beyond the transcript scroll area');
+      await page.keyboard.press('End');
+      assert.equal(await menu.getByRole('menuitem').last().evaluate(el => el === document.activeElement), true);
+      await page.keyboard.press('Escape');
+      assert.equal(await presented.locator('.presented-file__more').first().evaluate(el => el === document.activeElement), true, 'Escape restores trigger focus');
       await presented.scrollIntoViewIfNeeded();
       await page.screenshot({ path: path.join(evidence, `${name}-presented-files.png`) });
       await frame();
@@ -359,7 +379,7 @@ try {
       const processToggle = page.locator('.chat-process');
       assert.equal(await processToggle.getAttribute('aria-expanded'), 'false', 'recovered weather turn folds');
       assert.equal(await page.locator('.chat-tool').count(), 0, 'collapsed process does not mount tool bodies');
-      assert.match(await processToggle.innerText(), /4/);
+      assert.match(await processToggle.innerText(), /6/);
       await page.screenshot({ path: path.join(evidence, `${name}-weather-collapsed.png`) });
       await processToggle.click();
       await page.locator('[data-chat-anchor-key="weather-search"]').scrollIntoViewIfNeeded();

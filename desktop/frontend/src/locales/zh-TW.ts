@@ -5,6 +5,7 @@
 import type { DictKey } from "./en";
 
 export const zhTW: Record<DictKey, string> = {
+  "code.plainText": "純文字",
   "chat.syncing": "正在同步會話…",
   "chat.turnCounts": "採樣 {samples} 次 · 工具 {tools} 次",
   "chat.disconnected": "連線中斷，任務狀態等待同步確認。",
@@ -99,6 +100,11 @@ export const zhTW: Record<DictKey, string> = {
   "chat.collapseCode": "收合程式碼",
   "present.files": "檔案成果",
   "present.modifiedFiles": "本輪修改的檔案",
+  "present.editedCount": "已編輯 {count} 個檔案",
+  "present.openReview": "在側邊欄查看本輪變更",
+  "present.openFileReview": "查看 {name} 的變更",
+  "present.binary": "二進位",
+  "present.linesUnknown": "行數未知",
   "present.written": "已寫入",
   "present.modified": "已修改",
   "present.toolTitle": "展示檔案",

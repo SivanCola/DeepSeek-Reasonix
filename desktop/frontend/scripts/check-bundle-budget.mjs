@@ -500,10 +500,10 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // context measure 2075238 B locally (+1111 B, 0.054%). Preserve the same 186 B
 // Linux producer difference (2075424 B) and retain the next one-decimal ceiling;
 // gzip, chunk, CSS, and locale limits remain unchanged.
-// Merging both startup paths measures 2082922 B locally. Preserve the observed
-// 186 B desktop Linux producer difference (2083108 B) with 15 B of headroom at
-// the next decimal. Compressed, chunk, CSS, locale, and resident-history budgets
-// remain fixed.
-const rawInitialBudgetKiB = 2_034.3;
+// Integrating main-v2's HTML delivery and layout changes measures 2083186 B
+// locally (+264 B). Preserve the observed 186 B desktop Linux producer
+// difference (2083372 B) at the next decimal. Compressed, chunk, CSS, locale,
+// and resident-history budgets remain fixed.
+const rawInitialBudgetKiB = 2_034.6;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

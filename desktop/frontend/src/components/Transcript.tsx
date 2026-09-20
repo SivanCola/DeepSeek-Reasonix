@@ -5,6 +5,7 @@ import type { ControllerLiveStore, HistoryLoadOutcome, HistoryLoadTrigger, Item,
 import type { LocalSubmission } from "../lib/localSubmissionState";
 import { forkTargetForAnswer, type ForkBlockReason, type ForkTargetSetView, type ForkTargetView } from "../lib/forkTargets";
 import type { InvocationMetadataMap } from "../lib/invocationDisplay";
+import type { WireCompletionSummary } from "../lib/types";
 import { acquireMarkdownWorkerClient, releaseMarkdownWorkerClient } from "../lib/markdownWorkerClient";
 import { ChatSource } from "../lib/chatViewSource";
 import { ChatScrollController } from "../lib/chatScrollController";
@@ -37,6 +38,7 @@ export type TranscriptProps = {
   footerHeight?: number;
   onPrompt: (displayText: string, submitText?: string) => void;
   onFork?: (target: ForkTargetView) => void;
+  onOpenTurnChanges?: (summary: WireCompletionSummary, initialPath?: string) => void;
   /** Persisted fork boundaries of the shown session; undefined until the first read resolves. */
   forkTargets?: ForkTargetSetView;
   /** Non-null replaces every fork entry's own state, e.g. a surface that cannot create a child. */
@@ -97,14 +99,14 @@ function ChatSession(props: TranscriptProps & { sessionKey: string }) {
   const closeDetails = useCallback(() => { setDetails(undefined); }, []);
   const openDetails = useCallback((key: string, element: HTMLElement) => { trigger.current = element; setDetails(key); }, []);
   const recover = useCallback((id: string) => onPrompt(t("notice.protocolRecoveryAction"), `/recover-context ${id}`), [onPrompt, t]);
-  const actions = useMemo<ChatActions>(() => ({ openDetails, recover,
+  const actions = useMemo<ChatActions>(() => ({ openDetails, recover, openTurnChanges: props.onOpenTurnChanges,
     fork: onFork ? {
       targetFor: (answerKey) => forkTargetForAnswer(props.forkTargets, answerKey),
       loaded: props.forkTargets !== undefined,
       verifiable: props.forkTargets?.verifiable ?? false,
       blocked: props.forkBlocked ?? null,
       create: onFork,
-    } : undefined }), [openDetails, recover, onFork, props.forkTargets, props.forkBlocked]);
+    } : undefined }), [openDetails, recover, onFork, props.forkTargets, props.forkBlocked, props.onOpenTurnChanges]);
   useLayoutEffect(() => {
     source.update({ items, live: props.hasNewerHistory ? undefined : liveStore?.getSnapshot(tabId) ?? live, running, hydrating,
       localSubmissions: props.hasNewerHistory ? [] : props.localSubmissions,

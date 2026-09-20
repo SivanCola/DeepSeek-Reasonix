@@ -10,7 +10,7 @@ import (
 // Names lists the tool names in the order Tools returns them.
 func Names() []string {
 	return []string{
-		"browser_tabs", "browser_open", "browser_navigate", "browser_snapshot", "browser_screenshot",
+		"browser_tabs", "browser_open", "browser_preview", "browser_navigate", "browser_snapshot", "browser_screenshot",
 		"browser_click", "browser_type", "browser_press", "browser_scroll", "browser_select", "browser_upload",
 		"browser_download", "browser_close",
 	}
@@ -20,10 +20,21 @@ func Names() []string {
 // every tool, each reporting ProviderVisible false so it fails closed.
 func Tools(exec Executor) []tool.Tool {
 	return []tool.Tool{
-		tabsTool(exec), openTool(exec), navigateTool(exec), snapshotTool(exec), screenshotTool(exec),
+		tabsTool(exec), openTool(exec), previewTool(exec), navigateTool(exec), snapshotTool(exec), screenshotTool(exec),
 		clickTool(exec), typeTool(exec), pressTool(exec), scrollTool(exec), selectTool(exec), uploadTool(exec),
 		downloadTool(exec), closeTool(exec),
 	}
+}
+
+type previewFileTool struct {
+	writeTool
+}
+
+func (t previewFileTool) ProviderVisible(ctx context.Context) bool {
+	if _, ok := t.exec.(FilePreviewer); !ok {
+		return false
+	}
+	return t.writeTool.ProviderVisible(ctx)
 }
 
 type runFunc func(ctx context.Context, exec Executor, args json.RawMessage) (string, error)

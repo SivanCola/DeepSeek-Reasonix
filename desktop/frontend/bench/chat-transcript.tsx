@@ -30,14 +30,24 @@ function weatherTurn(): Item[] {
     { kind: "notice", id: "weather-permission", level: "info", title: "已记录决策", text: "permission saved to /tmp/weather-fixture/reasonix.toml: curl --max-time 20 https://example.com/weather" },
     { kind: "tool", id: "weather-bash", name: "bash", args: JSON.stringify({ command: "printf '25.5°C 晴\\n'", description: "获取并核对上海天气" }), output: "25.5°C 晴\n", status: "done",
       execution: { kind: "shell", shell: "bash", state: "completed", exitCode: 0, supportsAndAnd: true } },
+    { kind: "tool", id: "weather-write-html", name: "write_file", args: JSON.stringify({ path: "output/shanghai-weather.html" }), output: "wrote output/shanghai-weather.html", readOnly: false, status: "done", fileDiff: { diff: "", added: 4, removed: 0 } },
+    { kind: "tool", id: "weather-write-notes", name: "write_file", args: JSON.stringify({ path: "output/weather-notes.md" }), output: "wrote output/weather-notes.md", readOnly: false, status: "done", fileDiff: { diff: "", added: 1, removed: 1 } },
     { kind: "tool", id: "weather-present", name: "present", args: JSON.stringify({ files: [{ path: "output/shanghai-weather.html", description: "交互式天气报告" }, { path: "output/weather-notes.md", description: "数据来源与说明" }] }), output: "Presented output/shanghai-weather.html\nPresented output/weather-notes.md", status: "done",
       presentedFiles: [{ path: "output/shanghai-weather.html", description: "交互式天气报告" }, { path: "output/weather-notes.md", description: "数据来源与说明" }] },
+    { kind: "notice", id: "weather-result", level: "info", text: "Turn complete", completionSummary: {
+      preset: "balanced", verdict: "complete", mutations: 2, changed_files: 2, checks_passed: 1, checks_failed: 0,
+      checks_suppressed: 0, review: "passed", constraint_degraded: false,
+      receipt: { verdict: "complete", diff: { id: "weather-diff", turn: 0, coverage: "complete", added: 5, removed: 1, reasons: [], files: [
+        { path: "output/shanghai-weather.html", kind: "create", added: 4, removed: 0 },
+        { path: "output/weather-notes.md", kind: "create", added: 1, removed: 1 },
+      ] } },
+    } },
     { ...end, id: "weather-final", text: "今天上海天气如下。以下为界面回放测试数据。\n\n## 上海 · 今日实况\n\n| 项目 | 数值 |\n|---|---|\n| 天气 | 晴 ☀️ |\n| 气温 | **25.5 °C** |\n| 湿度 | 66% |\n\n**全天**：多云转晴，23～30 °C。", reasoning: "" } as Item,
   ];
 }
 declare global { interface Window { chatFixture: { authored(): void; weather(): void; toolAliasRegression(): void; replace(count: number): void; reset(count: number): void; older(): void; tick(index: number): void; settle(): void; switchSession(): void; prepend(): void; ready: number; pending(): number } } }
 function Fixture() {
-  const [items, setItems] = useState(() => makeTurns(20));
+  const [items, setItems] = useState(() => new URLSearchParams(window.location.search).has("deliverables") ? weatherTurn() : makeTurns(20));
   const [session, setSession] = useState(0);
   const [running, setRunning] = useState(false);
   const [ready, setReady] = useState(0);
@@ -106,8 +116,10 @@ function Fixture() {
     };
   }, [ready]);
   return <div style={{ height: "100vh", display: "flex", flexDirection: "column", background: "var(--bg)" }}>
+    {new URLSearchParams(window.location.search).has("deliverables") && <div role="note" style={{ padding: "8px 16px", color: "var(--fg-dim)" }}>组件回放 · 示例数据。此页未连接桌面文件与 Diff 服务；完整交互请在桌面应用中验证。</div>}
     <Transcript items={items} liveStore={liveStore} tabId="chat-bench" geometrySessionKey={`fixture-${session}`} running={running} onPrompt={() => {}}
-      onFork={() => {}} hasOlderHistory={items[0]?.id !== "u0"} onLoadOlderHistory={() => { window.chatFixture.older(); return true; }} />
+      onFork={() => {}}
+      hasOlderHistory={/^u[1-9]\d*$/.test(items[0]?.id ?? "")} onLoadOlderHistory={() => { window.chatFixture.older(); return true; }} />
     <div style={{ flex: "none", maxHeight: "40vh", padding: 16 }}><Composer running={running} collaborationMode="normal" toolApprovalMode="ask" modelLabel="DeepSeek" tabId="chat-bench"
       onSend={() => {}} onCancel={async () => ({ discardedItemIds: [] })} onCycleMode={() => {}} onSetMode={() => {}}
       onSetCollaborationMode={() => {}} onSetToolApprovalMode={() => {}} onToggleYoloApprovalMode={() => {}}

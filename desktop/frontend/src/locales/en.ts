@@ -4,6 +4,7 @@
 // it at compile time), so adding a key here makes the build fail until zh has it.
 
 export const en = {
+  "code.plainText": "Plain text",
   "chat.syncing": "Synchronizing conversation…",
   "chat.turnCounts": "{samples} samples · {tools} tools",
   "chat.disconnected": "Connection interrupted. Task status is awaiting synchronization.",
@@ -98,6 +99,11 @@ export const en = {
   "chat.collapseCode": "Collapse code",
   "present.files": "Presented files",
   "present.modifiedFiles": "Files changed this turn",
+  "present.editedCount": "Edited {count} files",
+  "present.openReview": "Review this turn's changes in the sidebar",
+  "present.openFileReview": "Review changes to {name}",
+  "present.binary": "Binary",
+  "present.linesUnknown": "Lines unknown",
   "present.written": "Written",
   "present.modified": "Modified",
   "present.toolTitle": "Present files",

@@ -12,6 +12,8 @@ import type {
   HistoryWindowPage,
   HistoryWindowRequest,
   LegacyEmptySessionCleanupStatus,
+  FileBrowserPreviewRequest,
+  FileBrowserPreviewResult,
   MarkdownSVGView,
   MessageFieldPage,
   MessageHistoryPage,
@@ -35,6 +37,7 @@ import type {
   WorkspaceSessionPage,
   WorkspaceSnapshot,
 } from "../generated/desktopContract.generated";
+export type { FileBrowserPreviewRequest, FileBrowserPreviewResult } from "../generated/desktopContract.generated";
 import type { ExactInteractionBindings } from "./exactInteractionBindings";
 import type { InvocationRequest } from "./invocationDisplay";
 import type { FollowupBindings } from "./pendingFollowup";
@@ -599,6 +602,7 @@ export interface AppBindings extends AttachmentBindings, SessionExportBindings, 
   SanitizeMarkdownSVG(content: string): Promise<MarkdownSVGView>;
   CreateWorkspaceBrowserPreviewForTab(tabID: string, rel: string): Promise<string>;
   CreatePresentedBrowserPreviewForTab(tabID: string, toolCallID: string, path: string): Promise<string>;
+  OpenFileBrowserPreviewForTab?(tabID: string, request: FileBrowserPreviewRequest): Promise<FileBrowserPreviewResult>;
   RevokeWorkspaceBrowserPreview(url: string): Promise<void>;
   RevokeWorkspaceMediaPreview(url: string): Promise<void>;
   ResolveMarkdownImageForTab(tabID: string, source: string): Promise<MarkdownImageView>;

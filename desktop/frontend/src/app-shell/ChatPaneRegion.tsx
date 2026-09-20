@@ -68,6 +68,7 @@ export type ChatPaneRegionProps = {
   commands: {
     onPrompt: TranscriptProps["onPrompt"];
     onFork: TranscriptProps["onFork"];
+    onOpenTurnChanges?: TranscriptProps["onOpenTurnChanges"];
     onLoadOlderHistory: TranscriptProps["onLoadOlderHistory"];
     onLoadNewerHistory: TranscriptProps["onLoadNewerHistory"];
     onSurfacePaintReady: TranscriptProps["onSurfacePaintReady"];
@@ -169,6 +170,7 @@ export function ChatPaneRegion(props: ChatPaneRegionProps) {
                 footerHeight={transcript.footerHeight}
                 onPrompt={commands.onPrompt}
                 onFork={commands.onFork}
+                onOpenTurnChanges={commands.onOpenTurnChanges}
                 forkTargets={state.forkTargets}
                 forkBlocked={forkBlocked}
                 running={state.running || rewind.committing}
