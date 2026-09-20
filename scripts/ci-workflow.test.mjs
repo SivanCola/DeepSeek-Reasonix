@@ -348,7 +348,8 @@ test("reuse skips only build work and still gates every publisher on validation"
 test("Certum signing preserves native builds and gates publication and attestation", () => {
   const packageJob = job(ci, "desktop-windows-package");
   assert.match(packageJob, /test-windows-installer-startup\.ps1/);
-  assert.match(packageJob, /ExpectedVersion v0\.0\.0-ci/);
+  assert.match(packageJob, /ExpectedVersion v1\.38\.10-3/);
+  assert.match(packageJob, /Reasonix-windows-arm64-installer\.exe/);
   const windowsBuild = job(release, "windows-build");
   const signer = job(release, "windows-sign");
   assert.match(windowsBuild, /runner: windows-latest, platform: windows\/amd64/);
@@ -422,12 +423,16 @@ test("all desktop consumers verify the prepared build and reject a failed prepar
     assert.equal(condition(body, context), true);
     assert.equal(condition(body, { ...context, needs: { ...context.needs, "desktop-prepare": { result: "failure" } } }), false);
   }
-  for (const name of ["desktop-windows", "desktop-windows-package"]) {
-    const body = job(ci, name);
-    assert.match(body, /REASONIX_PACKAGE_REUSE_FRONTEND: "1"/);
-    assert.match(body, /REASONIX_FRONTEND_PNPM_VERSION="\$\(pnpm --version\)"\n\s+export REASONIX_FRONTEND_PNPM_VERSION/);
-    assert.match(body, /canary_artifact_name/);
-  }
+  const windows = job(ci, "desktop-windows");
+  assert.match(windows, /REASONIX_PACKAGE_REUSE_FRONTEND: "1"/);
+  assert.match(windows, /REASONIX_FRONTEND_PNPM_VERSION="\$\(pnpm --version\)"\n\s+export REASONIX_FRONTEND_PNPM_VERSION/);
+  assert.match(windows, /canary_artifact_name/);
+  const windowsPackage = job(ci, "desktop-windows-package");
+  assert.match(windowsPackage, /runs-on: windows-11-arm/);
+  assert.match(windowsPackage, /ref: ec82bb3251550b03b43b83418a716f73fe758ffd/);
+  assert.match(windowsPackage, /desktop-build\.sh windows\/arm64 v1\.38\.10-3 stable/);
+  assert.doesNotMatch(windowsPackage, /REASONIX_PACKAGE_REUSE_FRONTEND/);
+  assert.doesNotMatch(windowsPackage, /(?:stable|canary)_artifact_name/);
   assert.match(job(ci, "desktop-macos"), /REASONIX_FRONTEND_PNPM_VERSION="\$\(pnpm --version\)"\n\s+export REASONIX_FRONTEND_PNPM_VERSION/);
   const prepare = job(ci, "desktop-prepare");
   assert.match(prepare, /producer_attempt: \$\{\{ steps\.artifact-identity\.outputs\.attempt \}\}/);

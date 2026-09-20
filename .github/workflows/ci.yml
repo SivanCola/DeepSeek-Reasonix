@@ -1336,7 +1336,7 @@ jobs:
   desktop-windows-package:
     needs: [changes, desktop-prepare]
     if: ${{ !cancelled() && needs.desktop-prepare.result == 'success' && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.packaging != 'false') }}
-    runs-on: windows-latest
+    runs-on: windows-11-arm
     # Bound packaging hangs; diagnostic measurement has its own workflow.
     timeout-minutes: 45
     defaults:
@@ -1345,6 +1345,11 @@ jobs:
         working-directory: desktop
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Build the requested main-v2 revision itself. The workflow is carried
+          # by this temporary PR, but its merge ref must not become the product
+          # identity embedded in the installer.
+          ref: ec82bb3251550b03b43b83418a716f73fe758ffd
 
       - uses: actions/setup-go@v7
         with:
@@ -1379,18 +1384,6 @@ jobs:
             }
           }
 
-      - uses: actions/download-artifact@v8
-        with:
-          name: ${{ needs.desktop-prepare.outputs.canary_artifact_name }}
-          path: desktop/frontend
-      - name: Verify canary frontend artifact
-        run: |
-          test -n "${{ needs.desktop-prepare.outputs.producer_attempt }}"
-          node frontend/scripts/artifact-identity.mjs verify \
-            --shell electron --channel canary \
-            --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "${{ needs.desktop-prepare.outputs.producer_attempt }}" \
-            --pnpm-version "$(pnpm --version)"
-
       - name: Install NSIS
         run: pwsh -NoProfile -File ../scripts/install-nsis.ps1
 
@@ -1399,16 +1392,11 @@ jobs:
 
       - name: Build Windows installer and portable archive
         timeout-minutes: 20
-        env:
-          REASONIX_PACKAGE_REUSE_FRONTEND: "1"
-        run: |
-          REASONIX_FRONTEND_PNPM_VERSION="$(pnpm --version)"
-          export REASONIX_FRONTEND_PNPM_VERSION
-          ../scripts/desktop-build.sh windows/amd64 v0.0.0-ci canary
+        run: ../scripts/desktop-build.sh windows/arm64 v1.38.10-3 stable
 
       - name: Verify packaged Windows artifacts
         run: |
-          node packaging/verify.mjs ../dist/Reasonix-windows-amd64.zip
+          node packaging/verify.mjs ../dist/Reasonix-windows-arm64.zip
           node packaging/signing-files.mjs build/windows/signing-payload --check
 
       - name: Install and smoke-test Windows installer identity
@@ -1416,16 +1404,34 @@ jobs:
         run: |
           go build -o "$env:RUNNER_TEMP/windows-upgrade-fixture.exe" ./cmd/windows-upgrade-fixture
           ../scripts/test-windows-installer-startup.ps1 `
-            -InstallerPath ../dist/Reasonix-windows-amd64-installer.exe `
-            -ExpectedVersion v0.0.0-ci `
+            -InstallerPath ../dist/Reasonix-windows-arm64-installer.exe `
+            -ExpectedVersion v1.38.10-3 `
             -FixtureBuilderPath "$env:RUNNER_TEMP/windows-upgrade-fixture.exe" `
             -EvidenceDirectory "$env:RUNNER_TEMP/reasonix-installer-acceptance"
+
+      - name: Checksum Windows ARM64 installer
+        shell: pwsh
+        run: |
+          $installer = "../dist/Reasonix-windows-arm64-installer.exe"
+          $digest = (Get-FileHash -Algorithm SHA256 $installer).Hash.ToLowerInvariant()
+          "$digest  Reasonix-windows-arm64-installer.exe" |
+            Set-Content -Encoding ascii ../dist/Reasonix-windows-arm64-installer.exe.sha256
+
+      - name: Upload Windows ARM64 installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: Reasonix-windows-arm64-v1.38.10-3
+          path: |
+            dist/Reasonix-windows-arm64-installer.exe
+            dist/Reasonix-windows-arm64-installer.exe.sha256
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Upload Windows installer acceptance evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: windows-installer-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          name: windows-installer-acceptance-${{ github.run_id }}-${{ github.run_attempt }}-arm64
           path: |
             ${{ runner.temp }}/reasonix-installer-acceptance/**/*.json
             ${{ runner.temp }}/reasonix-installer-acceptance/**/*.png
