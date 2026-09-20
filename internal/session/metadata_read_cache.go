@@ -90,7 +90,10 @@ func (p *FilesystemPersistence) readSessionMetadata(id string) (sessionMetadataI
 	h := sha256.New()
 	_, _ = fmt.Fprintf(h, "root:%s\x00", dir)
 	var manifest Manifest
-	paths := []string{filepath.Join(dir, "manifest.json"), filepath.Join(dir, sessionHeaderName), catalogMetadataPath(filepath.Join(p.Root, ".query-cache", filepath.Base(id)))}
+	// Derive cache identity from the confined directory, as the store writer does.
+	// Keep protocol input out of filesystem paths after sessionDir resolves it.
+	cacheDir := filepath.Join(filepath.Dir(dir), ".query-cache", filepath.Base(dir))
+	paths := []string{filepath.Join(dir, "manifest.json"), filepath.Join(dir, sessionHeaderName), catalogMetadataPath(cacheDir)}
 	for index, path := range paths {
 		body, readErr := os.ReadFile(path)
 		if index == 0 {
