@@ -404,7 +404,13 @@ function bootstrap(dataHome: string): void {
         if (lifecycle.isQuitting) return Promise.reject(new Error("Reasonix is shutting down"));
         return dispatchHostCall(hostCalls, method, params);
       },
-      onEvent: (frame) => mainWindow.send(IPC.event, frame),
+      onEvent: (frame) => {
+        if (frame.name === "topic:activation") {
+          const phase = (frame.args[0] as { phase?: unknown } | undefined)?.phase;
+          if (["starting", "ready", "failed", "cancelled"].includes(String(phase))) log.info(`session activation phase=${phase}`);
+        }
+        mainWindow.send(IPC.event, frame);
+      },
       onState: (state) => {
         shellLifecycle.mark(`service_${state.phase}`);
         log.info(`startup ${status.generation}: service=${state.phase} generation=${state.generation}`);
@@ -586,8 +592,22 @@ function bootstrap(dataHome: string): void {
         window: mainWindow,
         invoke: async (method, args) => {
           const generation = service.generation;
+          const recovery = ["PrepareSession", "GetSessionPreparation", "StartTopicActivation"].includes(method);
+          if (recovery) log.info(`session recovery method=${method} stage=request`);
           const result = await service.invoke(method, args);
           if (generation !== service.generation || lifecycle.isQuitting) return result;
+          if (recovery) {
+            const state = result as { status?: unknown; meta?: { ready?: boolean } } | undefined;
+            const phase = ["queued", "preparing", "ready", "blocked", "failed", "cancelled"].includes(String(state?.status)) ? state?.status : "ticket";
+            log.info(`session recovery method=${method} stage=response phase=${phase} ready=${state?.meta?.ready === true}`);
+          }
+          // Keep recovery evidence content-free: distinguish an empty producer
+          // cut from rows lost later in renderer hydration. Poll replies have
+          // no snapshot and do not produce a log entry.
+          if (method === "TranscriptFollowForTab" && result && typeof result === "object") {
+            const cut = result as { snapshot?: { totalRecords?: number; coveredThroughSeq?: number }; history?: { status?: string; messages?: unknown[] } };
+            if (cut.snapshot) log.info(`transcript baseline records=${cut.snapshot.totalRecords ?? 0} sequence=${cut.snapshot.coveredThroughSeq ?? 0} history_status=${cut.history?.status ?? "missing"} history_messages=${cut.history?.messages?.length ?? 0}`);
+          }
           if (method === "Version" && typeof result === "string") status.rendererVersion = result;
           if (method === "ReportDesktopWebViewReady") {
             if (!firstHeartbeat) firstHeartbeat = Date.now();

@@ -190,7 +190,7 @@ export class ChatSource implements ChatViewSource {
         const call = proxyAuditCall(item);
         return call && current.items.some(tool => tool.kind === "tool" && tool.id === call);
       }).map(item => item.id));
-      const members = current.items.flatMap(item => mergedAudits.has(item.id) ? [] : item.kind === "assistant"
+      const members = current.items.flatMap(item => mergedAudits.has(item.id) || item.kind === "compaction" ? [] : item.kind === "assistant"
         ? [...(item !== answer ? [item.id] : []), `${item.id}:reasoning`]
         : item.kind === "notice" && (item.level === "warn" || item.action === "recover_context")
           || item.kind === "extension" && item.card.actions?.length ? [] : [item.id]);

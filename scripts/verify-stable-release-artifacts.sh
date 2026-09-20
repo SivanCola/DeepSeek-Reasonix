@@ -32,6 +32,10 @@ if [ -z "$cli_sha" ] || [ "$cli_sha" != "$npm_sha" ] || [ "$cli_sha" != "$deskto
 	echo "::error::release tags are missing or do not identify one immutable commit" >&2
 	exit 1
 fi
+if [ -n "${RELEASE_EXPECTED_SHA:-}" ] && [ "$cli_sha" != "$RELEASE_EXPECTED_SHA" ]; then
+	echo "::error::public release identity differs from the verified source SHA" >&2
+	exit 1
+fi
 
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/reasonix-release-postflight.XXXXXX")"
 cleanup() {

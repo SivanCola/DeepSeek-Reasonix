@@ -64,7 +64,7 @@ try {
       await page.addInitScript(() => { window.chatWrites = []; window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = write => { window.chatWrites.push(write); if (window.chatWrites.length > 100) window.chatWrites.shift(); }; });
       await installTranscriptPerformanceObserver(page);
       page.on("pageerror", error => { errors.push(error.message); console.error(error.stack); });
-      page.on("console", message => { if (/Maximum update depth|ResizeObserver loop/.test(message.text())) errors.push(message.text()); });
+      page.on("console", message => { if (/Maximum update depth|ResizeObserver loop|Encountered two children with the same key/.test(message.text())) errors.push(message.text()); });
       await page.goto(url);
       await page.locator(".chat-column .md h3").last().waitFor();
       await page.evaluate(() => document.fonts.ready);
@@ -343,6 +343,25 @@ try {
       assert.match(authoredText, /<response-language>用户引用的 XML<\/response-language>/);
       assert.doesNotMatch(authoredText, /private environment|internal policy|legacy internal route|session-context|capability-route/);
       await page.screenshot({ path: path.join(evidence, `${name}-authored-chat.png`) });
+      await page.evaluate(() => window.chatFixture.maintenance("start"));
+      const maintenanceCard = page.locator('[data-entrance="maintenance:bench-maintenance"]');
+      await maintenanceCard.waitFor();
+      assert.match(await maintenanceCard.innerText(), /Compacting conversation/);
+      assert.equal(await page.locator('.chat-process').getAttribute('aria-expanded'), 'false', 'maintenance remains visible outside the previous folded process');
+      await maintenanceCard.evaluate(el => { window.maintenanceCardNode = el; });
+      await page.evaluate(() => window.chatFixture.maintenance("refresh")); await frame();
+      assert.match(await maintenanceCard.innerText(), /Compacting conversation/);
+      assert.doesNotMatch(await maintenanceCard.innerText(), /interrupted/i);
+      assert.equal(await maintenanceCard.count(), 1, 'history and runtime restore one operation card');
+      await page.evaluate(() => window.chatFixture.maintenance("completed")); await frame();
+      assert.equal(await page.evaluate(() => window.maintenanceCardNode.isConnected), true, 'terminal update preserves the card host');
+      await maintenanceCard.getByRole('button').click();
+      assert.match(await maintenanceCard.innerText(), /Durable compression summary/);
+      await page.screenshot({ path: path.join(evidence, `${name}-maintenance-restored.png`) });
+      await page.evaluate(() => window.chatFixture.maintenance("unknown")); await frame();
+      assert.match(await maintenanceCard.innerText(), /could not be fully restored/);
+      assert.doesNotMatch(await maintenanceCard.innerText(), /Context compacted/);
+      report.maintenance = { restored: true, uniqueCard: true, summaryExpanded: true, unknownSafe: true };
       await page.evaluate(() => window.chatFixture.weather());
       await page.locator('[data-chat-anchor-key="weather-final"] table').waitFor();
       const presented = page.locator('.presented-files');
@@ -398,6 +417,13 @@ try {
       await page.locator('[data-web="search"]').waitFor();
       assert.equal(await page.locator('[data-web="search"] a').count(), 1, 'web sources retain safe host links');
       report.weatherRows = weatherRows;
+      await page.evaluate(() => window.chatFixture.toolAliasRegression()); await frame();
+      const aliasProcess = page.locator('.chat-process');
+      assert.equal(await aliasProcess.getAttribute('aria-expanded'), 'false', 'recovered alias regression folds after completion');
+      await aliasProcess.click(); await frame();
+      assert.equal(await page.locator('[data-chat-anchor-key="alias-call"]').count(), 1, 'formal result and event alias mount one tool DOM node');
+      const aliasOrder = await page.locator('[data-chat-anchor-key]').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-chat-anchor-key')));
+      assert.ok(aliasOrder.indexOf('alias-call') < aliasOrder.indexOf('alias-final'), 'tool DOM node remains before the final answer');
       assert.deepEqual(errors, []);
       Object.assign(report, { complete: true, expanded, switches, switchP95: percentile(switches), heapGrowth, anchorDrift: topAfter - anchor.top, prependDrift: topPrepended - anchor.top });
       console.log(JSON.stringify({

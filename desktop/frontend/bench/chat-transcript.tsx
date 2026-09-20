@@ -8,6 +8,8 @@ import { Composer } from "../src/components/Composer";
 import { canonicalMessage } from "../src/lib/canonicalTranscriptBackend";
 import { historyMessagesToItems } from "../src/lib/historyItems";
 import type { ControllerLiveStore, Item, LiveStream } from "../src/lib/useController";
+import { initialState, reducer } from "../src/lib/useController";
+import type { RuntimeState } from "../src/lib/runtimeStateStore";
 import "../src/styles.css";
 
 function makeTurns(count: number, start = 0): Item[] {
@@ -45,13 +47,14 @@ function weatherTurn(): Item[] {
     { ...end, id: "weather-final", text: "今天上海天气如下。以下为界面回放测试数据。\n\n## 上海 · 今日实况\n\n| 项目 | 数值 |\n|---|---|\n| 天气 | 晴 ☀️ |\n| 气温 | **25.5 °C** |\n| 湿度 | 66% |\n\n**全天**：多云转晴，23～30 °C。", reasoning: "" } as Item,
   ];
 }
-declare global { interface Window { chatFixture: { authored(): void; weather(): void; replace(count: number): void; reset(count: number): void; older(): void; tick(index: number): void; settle(): void; switchSession(): void; prepend(): void; ready: number; pending(): number } } }
+declare global { interface Window { chatFixture: { maintenance(stage: "start" | "refresh" | "completed" | "unknown"): void; authored(): void; toolAliasRegression(): void; weather(): void; replace(count: number): void; reset(count: number): void; older(): void; tick(index: number): void; settle(): void; switchSession(): void; prepend(): void; ready: number; pending(): number } } }
 function Fixture() {
   const [items, setItems] = useState(() => new URLSearchParams(window.location.search).has("deliverables") ? weatherTurn() : makeTurns(20));
   const [session, setSession] = useState(0);
   const [running, setRunning] = useState(false);
   const [ready, setReady] = useState(0);
   const itemsRef = useRef(items);
+  const maintenanceState = useRef(initialState);
   itemsRef.current = items;
   const liveRef = useRef<LiveStream>();
   const liveListeners = useRef(new Set<() => void>());
@@ -70,6 +73,24 @@ function Fixture() {
   useLayoutEffect(() => {
     window.chatFixture = {
       ready, pending: () => getMarkdownWorkerClient().stats().pending,
+      maintenance: stage => {
+        const op = { operationId: "bench-maintenance", kind: "compact", status: "running", activity: "running", operationRevision: 1, runtimeEpoch: "bench-runtime" };
+        const idle: RuntimeState = { schemaVersion: 1, projectionEpoch: "bench-projection", runtimeEpoch: "bench-runtime", activityRevision: 1, revision: 1,
+          phase: "idle", running: false, turnId: "", turnStatus: "", turnEventSeq: 0, pendingPrompt: false, cancelRequested: false, cancellable: false, backgroundJobs: 0, activity: "" };
+        let state = maintenanceState.current;
+        if (stage === "start" || stage === "unknown") {
+          state = reducer({ ...initialState, items: makeTurns(1) }, { type: "runtime_snapshot", snapshot: idle });
+          state = reducer(state, { type: "event", e: { kind: "session_operation", sessionOperation: { ...op, ...(stage === "unknown" ? { status: "future_state", activity: "" } : {}) } } });
+          clearLive(); setSession(value => value + 1);
+        } else if (stage === "refresh") {
+          const message = canonicalMessage({ messageId: `maintenance:${op.operationId}`, position: 3, version: 1, role: "compaction" }, { role: "compaction", content: JSON.stringify(op) });
+          state = reducer(state, { type: "history", messages: [{ role: "user", messageId: "u0", content: "Question 1" }, { role: "assistant", messageId: "a0", content: "Existing answer" }, message] });
+          state = reducer(state, { type: "runtime_snapshot", snapshot: { ...idle, revision: 2, phase: "executing", running: true, maintenance: op } });
+        } else {
+          state = reducer(state, { type: "event", e: { kind: "session_operation", sessionOperation: { ...op, status: "completed", activity: "finalizing", operationRevision: 2, summary: "Durable compression summary", inputTokens: 1200, resultTokens: 400, applied: true } } });
+        }
+        maintenanceState.current = state; setItems(state.items); setRunning(false);
+      },
       authored: () => {
         const messages = [
           { role: "user", origin: "host", content: '<session-context version="1">private environment</session-context>' },
@@ -81,6 +102,17 @@ function Fixture() {
         clearLive(); setItems(historyMessagesToItems(messages, "authored").items); setRunning(false); setSession(value => value + 1);
       },
       weather: () => { clearLive(); setItems(weatherTurn()); setRunning(false); setSession(value => value + 1); },
+      toolAliasRegression: () => {
+        const user: Item = { kind: "user", id: "alias-user", text: "创建文件", checkpointTurn: 1 };
+        const tool: Item = { kind: "tool", id: "alias-call", name: "bash", args: "printf ok", readOnly: false, status: "done", output: "ok",
+          execution: { kind: "shell", shell: "bash", state: "completed", exitCode: 0, supportsAndAnd: true } };
+        const final: Item = { kind: "assistant", id: "alias-final", text: "已完成。", reasoning: "", streaming: false };
+        const projected = reducer({ ...initialState, items: [user, final, tool, { ...tool }] }, { type: "transcript_records", confirmedUsers: [], projection: {
+          items: [user, tool, final], removeIds: [], startTurn: 1, endTurn: 1, totalTurns: 1, hasOlder: false, hasNewer: false,
+          revision: 1, revisionKnown: true, digest: "alias-regression",
+        } });
+        clearLive(); setItems(projected.items); setRunning(false); setSession(value => value + 1);
+      },
       replace: count => { clearLive(); setItems(makeTurns(count)); setRunning(false); setReady(value => value + 1); },
       reset: count => { clearLive(); setItems(makeTurns(Math.min(60, count), Math.max(0, count - 60))); setRunning(false); setSession(value => value + 1); setReady(value => value + 1); },
       older: () => setItems(previous => { const start = Number(previous[0].id.slice(1)); return [...makeTurns(Math.min(60, start), Math.max(0, start - 60)), ...previous]; }),

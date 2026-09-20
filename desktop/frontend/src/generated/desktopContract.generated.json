@@ -22989,6 +22989,91 @@
         }
       ]
     },
+    "event.MaintenanceState": {
+      "fields": [
+        {
+          "name": "operationId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "operationRevision",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "runtimeEpoch",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "kind",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "activity",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "status",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "errorCode",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "detail",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "applied",
+          "optional": true,
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "inputTokens",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "resultTokens",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "messages",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        }
+      ]
+    },
     "event.PendingInteraction": {
       "fields": [
         {
@@ -23305,6 +23390,115 @@
         },
         {
           "name": "goalError",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "maintenance",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "event.MaintenanceState"
+            },
+            "kind": "nullable"
+          }
+        }
+      ]
+    },
+    "event.SessionOperationInfo": {
+      "fields": [
+        {
+          "name": "operationId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "operationRevision",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "runtimeEpoch",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "kind",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "activity",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "status",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "errorCode",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "detail",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "applied",
+          "optional": true,
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "inputTokens",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "resultTokens",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "messages",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "summary",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "archive",
           "optional": true,
           "type": {
             "kind": "string"
@@ -24169,6 +24363,17 @@
             "elem": {
               "kind": "object",
               "ref": "eventwire.ContextMaintenance"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "sessionOperation",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "event.SessionOperationInfo"
             },
             "kind": "nullable"
           }
@@ -41755,6 +41960,13 @@
           }
         },
         {
+          "name": "operationId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
           "name": "runtimeEpoch",
           "optional": true,
           "type": {
@@ -45403,6 +45615,76 @@
           "optional": true,
           "type": {
             "kind": "string"
+          }
+        },
+        {
+          "name": "operationId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "operationRevision",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "runtimeEpoch",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "operationKind",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "operationStatus",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "operationActivity",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "errorCode",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "applied",
+          "optional": true,
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "inputTokens",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "resultTokens",
+          "optional": true,
+          "type": {
+            "kind": "integer"
           }
         },
         {

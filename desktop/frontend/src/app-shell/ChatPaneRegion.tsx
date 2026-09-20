@@ -176,7 +176,7 @@ export function ChatPaneRegion(props: ChatPaneRegionProps) {
                 onOpenTurnChanges={commands.onOpenTurnChanges}
                 forkTargets={state.forkTargets}
                 forkBlocked={forkBlocked}
-                running={state.running || rewind.committing}
+                running={(state.running && !state.runtimeStateSnapshot?.maintenance) || rewind.committing}
                 turnStartAt={state.turnStartAt}
                 hydrating={transcript.transcriptHydrating || (transitioning && !transcript.navigationDataReady)}
                 showLoadingFeedback={false}

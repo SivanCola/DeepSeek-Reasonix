@@ -34,4 +34,27 @@ store.subscribe("background", change => {
 await store.loadLatest("other", "/other");
 assert.ok(released, "LRU eviction notifies the controller to release its references");
 assert.ok(!store.isResident("background", "/background"));
+
+// Canonical bodies can reveal tool rows, so reclamation must also remove their
+// structural projection rather than publishing only field patches.
+const canonical = JSON.stringify({ role: "assistant", content: "expanded", tool_calls: [
+  { id: "revealed-call", name: "bash", arguments: "x".repeat(4000) },
+] });
+const canonicalBackend = new FakeBackend([], new Map([["owner:canonicalMessage", canonical]]));
+const canonicalStore = new TranscriptStore(canonicalBackend, { historyBodyBudgetBytes: 1024 });
+canonicalStore.noteActiveTab("canonical");
+canonicalStore.setPinned("canonical", true);
+canonicalStore.installSlice("canonical", "/canonical", {
+  entries: [{ entryId: "owner", turn: 1, order: 0, message: { role: "assistant", content: "preview" },
+    refs: [{ entryId: "owner", field: "canonicalMessage", size: canonical.length, chunks: 2, revision: 1, digest: "body" }] }],
+  nextCursor: "", hasOlder: false, totalTurns: 1, startTurn: 1, endTurn: 1, stale: false, revision: 1, digest: "body",
+});
+let removedTool = false;
+canonicalStore.subscribe("canonical", change => {
+  if (change.projection?.removeIds?.includes("revealed-call")) removedTool = true;
+});
+await canonicalStore.requestFullContent("canonical", "owner", "content");
+canonicalStore.noteActiveTab("other", "canonical");
+assert.ok(removedTool, "reclamation publishes removal of tool rows revealed by an expanded canonical body");
+assert.ok(canonicalStore.isResident("canonical", "/canonical"), "structural reclamation preserves the live session");
 console.log("transcript memory pressure: passed");

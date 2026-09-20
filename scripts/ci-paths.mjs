@@ -14,7 +14,7 @@ const FRONTEND = /^desktop\/frontend\//;
 const DESKTOP_MANIFEST = /^(?:desktop\/(?:package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|\.npmrc)|desktop\/frontend\/(?:package\.json|pnpm-lock\.yaml|vite\.config\.[cm]?[jt]s|tsconfig[^/]*\.json))$/;
 const ELECTRON = /^(?:desktop\/electron\/|desktop\/(?:package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$)/;
 const PACKAGING = /^(?:desktop\/(?:packaging\/|build\/)|scripts\/(?:desktop-build|package-windows-desktop|install-nsis|check-windows-uninstaller|finalize-windows-signed-candidate)\b)/;
-const RELEASE_CONTROL = /^(?:\.github\/workflows\/(?:release[^/]*|prepare-release-notes|pages)\.yml|scripts\/(?:release|resolve-release-candidate|validate-release-candidate|build-release-cli-candidate|publish-homebrew-cask|desktop-release-artifacts|finalize-windows-signed-candidate|verify-release-artifact-archive|verify-stable-release-artifacts)[^/]*|npm\/publish(?:-candidate)?(?:\.test)?\.mjs)$/;
+const RELEASE_CONTROL = /^(?:\.github\/workflows\/(?:release[^/]*|prepare-release-notes|pages)\.yml|scripts\/(?:release|resolve-release-candidate|validate-release-candidate|build-release-cli-candidate|publish-homebrew-cask|desktop-release-artifacts|finalize-windows-signed-candidate|verify-release-artifact-archive|verify-release-tag-identity|verify-stable-release-artifacts)[^/]*|npm\/publish(?:-candidate)?(?:\.test)?\.mjs)$/;
 const DESKTOP_GO = /^(?:desktop\/(?:[^/]+\.go|go\.(?:mod|sum)|cmd\/|internal\/)|internal\/|cmd\/|go\.(?:mod|sum)$)/;
 const SDK = /^(?:sdk\/|internal\/extension\/)/;
 const WINDOWS_BUILTIN = /^(?:internal\/(?:tool\/builtin\/|tool\/tool\.go$|sandbox\/|permission\/|permissionpreset\/)|scripts\/windows-pr-contract-tests(?:\.test)?\.mjs$)/;
@@ -56,7 +56,8 @@ export function classifyPaths(input, { full = false } = {}) {
       flags.site = true;
       setReason(reasons, "site", path, "site source");
     }
-    if (RELEASE_CONTROL.test(path)) {
+    const releaseControl = RELEASE_CONTROL.test(path) || /^scripts\/(?:sync-release-site|observe-release-site|fetch-stable-release-manifest|check-release-public-access|test-release-control-contracts|validate-release-control-plane)[^/]*$/.test(path);
+    if (releaseControl) {
       flags.release_control = true;
       setReason(reasons, "release_control", path, "release control plane");
       if (path === ".github/workflows/pages.yml") {
@@ -87,7 +88,7 @@ export function classifyPaths(input, { full = false } = {}) {
         setReason(reasons, flag, path, "memory workflow or shared routing contract");
       }
     }
-    if (!RELEASE_CONTROL.test(path) && !ROOT_UNRELATED.test(path) && !ROOT_DOC.test(path)) {
+    if (!releaseControl && !ROOT_UNRELATED.test(path) && !ROOT_DOC.test(path)) {
       flags.code = true;
       setReason(reasons, "code", path, "root module input");
     }

@@ -26,6 +26,11 @@ func TestMetadataReadCacheObservesExternalHeaderReplacementAndCorruption(t *test
 	if len(p.metadataReads.entries) != 1 {
 		t.Fatal("metadata read was not cached")
 	}
+	for _, invalid := range []string{"../cached", `..\cached`, "/cached", "cached/../cached", "."} {
+		if _, err := p.Stat(t.Context(), invalid); err == nil {
+			t.Fatalf("metadata lookup admitted path-shaped identity %q", invalid)
+		}
+	}
 	path := filepath.Join(p.Root, "cached", sessionHeaderName)
 	body, err := os.ReadFile(path)
 	if err != nil {

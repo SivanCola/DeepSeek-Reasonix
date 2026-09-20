@@ -90,7 +90,7 @@ func (p *FilesystemPersistence) readSessionMetadata(id string) (sessionMetadataI
 	h := sha256.New()
 	_, _ = fmt.Fprintf(h, "root:%s\x00", dir)
 	var manifest Manifest
-	paths := []string{filepath.Join(dir, "manifest.json"), filepath.Join(dir, sessionHeaderName), catalogMetadataPath(filepath.Join(p.Root, ".query-cache", id))}
+	paths := []string{filepath.Join(dir, "manifest.json"), filepath.Join(dir, sessionHeaderName), catalogMetadataPath(filepath.Join(p.Root, ".query-cache", filepath.Base(id)))}
 	for index, path := range paths {
 		body, readErr := os.ReadFile(path)
 		if index == 0 {
