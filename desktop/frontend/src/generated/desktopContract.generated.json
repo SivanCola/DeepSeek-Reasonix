@@ -42029,6 +42029,13 @@
           }
         },
         {
+          "name": "managementErrorCode",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
           "name": "runtimeEpoch",
           "optional": true,
           "type": {

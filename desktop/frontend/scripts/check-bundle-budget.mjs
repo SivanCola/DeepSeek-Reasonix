@@ -535,6 +535,9 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // local startup path: 2099087 B versus 2098700 B on main-v2. Preserve the
 // measured 186 B Linux producer difference (2099273 B) at the next one-decimal
 // ceiling; all other bundle budgets remain unchanged.
-const rawInitialBudgetKiB = 2_050.1;
+// Typed compaction receipts and their local notice path measure 2099980 B on
+// this base (+893 B / 0.043%). Preserve the same 186 B producer difference at
+// the next decimal; the compressed, chunk, CSS, and locale gates stay fixed.
+const rawInitialBudgetKiB = 2_051.0;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
