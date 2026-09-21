@@ -800,7 +800,7 @@ export const zhTW: Record<DictKey, string> = {
   "composer.inputActions": "訊息輸入框操作",
   "composer.resize": "拖動調整輸入區高度，雙擊重置",
   "composer.send": "傳送（{combo}）",
-  "composer.queueGuidance": "加入引導佇列（{combo}）",
+  "composer.queueGuidance": "加入下一輪佇列（{combo}）",
   "composer.steer": "追加到目前任務（Enter）",
   "composer.steerPlaceholder": "正在執行——輸入補充指示，{combo} 加入佇列",
   "composer.runWaitingApproval": "等待你核准 — {tool}",

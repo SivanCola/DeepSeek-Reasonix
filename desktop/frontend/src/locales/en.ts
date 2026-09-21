@@ -982,7 +982,7 @@ export const en = {
   "composer.sessionContextReadFailed": "Note: This session could not be read and was skipped.",
   "composer.resize": "Drag to resize composer, double-click to reset",
   "composer.send": "Send ({combo})",
-  "composer.queueGuidance": "Add to guidance queue ({combo})",
+  "composer.queueGuidance": "Queue for the next turn ({combo})",
   "composer.steer": "Add guidance to current turn (Enter)",
   "composer.steerPlaceholder": "Running — type guidance, {combo} adds it to the queue",
   "composer.runWaitingApproval": "Waiting for your approval — {tool}",

@@ -983,7 +983,7 @@ export const zh: Record<DictKey, string> = {
   "composer.sessionContextReadFailed": "注意：该会话读取失败，已跳过。",
   "composer.resize": "拖动调整输入区高度，双击重置",
   "composer.send": "发送（{combo}）",
-  "composer.queueGuidance": "加入引导队列（{combo}）",
+  "composer.queueGuidance": "加入下一轮队列（{combo}）",
   "composer.steer": "追加到当前任务（Enter）",
   "composer.steerPlaceholder": "正在运行——输入补充指示，{combo} 加入队列",
   "composer.runWaitingApproval": "等待你批准 — {tool}",

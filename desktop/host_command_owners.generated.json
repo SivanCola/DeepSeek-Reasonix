@@ -3480,6 +3480,21 @@
       ]
     }
   },
+  "InboxQueueForTarget": {
+    "domain": "desktop/inbox_queue.go",
+    "owner": "App.InboxQueueForTarget",
+    "sources": [
+      "desktop/inbox_queue.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.InboxQueueForTarget",
+      "inputs": [
+        "target",
+        "request"
+      ]
+    }
+  },
   "InboxSnapshot": {
     "domain": "desktop/inbox_app.go",
     "owner": "App.InboxSnapshot",

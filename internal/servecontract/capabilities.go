@@ -24,3 +24,6 @@ const SessionForkTargetsV1 = "session-fork-targets-v1"
 
 // SessionExportV1 provides identity-bound complete display snapshots.
 const SessionExportV1 = "session-export-v1"
+
+// InboxMutationsV1 provides session-fenced full-body edits and anchored moves.
+const InboxMutationsV1 = "inbox-mutations-v1"
