@@ -253,7 +253,7 @@
       "kind": "command",
       "name": "AppendSessionExportPage",
       "detail": "(id string, page SessionExportPage) error",
-      "location": "desktop/session_export.go:244",
+      "location": "desktop/session_export.go:245",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -453,7 +453,7 @@
       "kind": "command",
       "name": "BeginSessionExportForTarget",
       "detail": "(selector SessionSelector, tabID string, format string, title string, observation string) (SessionExportHandle, error)",
-      "location": "desktop/session_export.go:80",
+      "location": "desktop/session_export.go:81",
       "class": "migrate-host",
       "owner": "business in Go; native step through nativeHost host/*"
     },
@@ -525,7 +525,7 @@
       "kind": "command",
       "name": "CancelSessionExport",
       "detail": "(id string) error",
-      "location": "desktop/session_export.go:380",
+      "location": "desktop/session_export.go:381",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1381,7 +1381,7 @@
       "kind": "command",
       "name": "FinishSessionExport",
       "detail": "(id string) (SessionExportResult, error)",
-      "location": "desktop/session_export.go:315",
+      "location": "desktop/session_export.go:316",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -3045,7 +3045,7 @@
       "kind": "command",
       "name": "ReadSessionExportChunk",
       "detail": "(id string, offset int64) (SessionExportChunk, error)",
-      "location": "desktop/session_export.go:207",
+      "location": "desktop/session_export.go:208",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -6229,7 +6229,7 @@
     {
       "kind": "event",
       "name": "session_export_progress",
-      "location": "desktop/session_export.go:150",
+      "location": "desktop/session_export.go:151",
       "class": "keep-business",
       "owner": "desktop/event frame (seq + generation), same payload"
     },
@@ -6488,7 +6488,7 @@
     {
       "kind": "persistence",
       "name": "operations-v1.json",
-      "location": "desktop/browser_executor.go:309",
+      "location": "desktop/browser_diagnostic_export.go:47",
       "class": "keep-business",
       "owner": "format unchanged; read by both shells"
     },

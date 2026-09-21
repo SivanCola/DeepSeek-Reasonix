@@ -145,7 +145,7 @@ func (e *httpExecutor) BrowserCapability(ctx context.Context, name string, args 
 	err := e.call(ctx, "capability", in, &out)
 	write := name == "pointer" || name == "viewport" && params.Action != "get" || name == "record" && params.Action != "status"
 	if write && err != nil && !errors.Is(err, errCapabilityUnsupported) && !errors.Is(err, ErrStaleReference) && !errors.Is(err, ErrTakenOver) && !errors.Is(err, ErrNoGrant) && !errors.Is(err, ErrUnknownOutcome) {
-		err = fmt.Errorf("%w: %s", ErrUnknownOutcome, err)
+		err = fmt.Errorf("%w: %w", ErrUnknownOutcome, err)
 	}
 	return out, err
 }

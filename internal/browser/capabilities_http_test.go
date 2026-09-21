@@ -46,3 +46,33 @@ func TestCapabilityRemoteNegotiationAndNoReplay(t *testing.T) {
 		}
 	}
 }
+
+func TestCapabilityCancelledWritePreservesUnknownAndTransportCause(t *testing.T) {
+	for _, name := range []string{"pointer", "viewport", "record"} {
+		t.Run(name, func(t *testing.T) {
+			entered := make(chan struct{})
+			release := make(chan struct{})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				close(entered)
+				<-release
+			}))
+			defer server.Close()
+			defer close(release)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			remote := NewHTTPExecutor(server.URL, "token", server.Client()).(CapabilityExecutor)
+			done := make(chan error, 1)
+			go func() {
+				_, err := remote.BrowserCapability(ctx, name, json.RawMessage(`{"action":"start"}`))
+				done <- err
+			}()
+			<-entered // The write reached the server; cancellation cannot prove no effect.
+			cancel()
+			err := <-done
+			var transport *transportError
+			if !errors.Is(err, ErrUnknownOutcome) || !errors.Is(err, context.Canceled) || !errors.As(err, &transport) {
+				t.Fatalf("lost unknown outcome or underlying cancellation: %v", err)
+			}
+		})
+	}
+}
