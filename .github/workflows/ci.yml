@@ -1026,7 +1026,27 @@ jobs:
 
       - name: Test bounded Electron diagnostics
         timeout-minutes: 3
-        run: node electron/scripts/performance-smoke.mjs
+        run: |
+          # @electron/get downloads the platform binary lazily. GitHub's
+          # release endpoint occasionally returns a transient 504; retry only
+          # that dependency fetch and keep all product/test failures fatal.
+          set +e
+          for attempt in 1 2 3; do
+            output="$(node electron/scripts/performance-smoke.mjs 2>&1)"
+            status=$?
+            printf '%s\n' "$output"
+            if [ "$status" -eq 0 ]; then
+              exit 0
+            fi
+            if ! printf '%s\n' "$output" | grep -Eq 'HTTPError: Response code (429|5[0-9][0-9])|Electron failed to install correctly'; then
+              exit "$status"
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "Electron binary fetch failed transiently; retrying ($attempt/3)"
+              sleep 5
+            fi
+          done
+          exit "$status"
 
       # The production desktop build uses CGO. Keep the explicit unavailable
       # backend buildable as a fail-closed portability contract instead of
