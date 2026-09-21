@@ -1,0 +1,117 @@
+name: QA desktop v1.38.11-2
+
+on:
+  push:
+    branches: [chore/qa-desktop-v1.38.11-2]
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_SHA: 0d7a103fdd6fbeff3b8d69e31f0d395eef6b6666
+  QA_VERSION: v1.38.11-2
+
+jobs:
+  windows:
+    name: Windows x64 installer and native acceptance
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          fetch-depth: 1
+
+      - name: Verify exact product source
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: desktop/go.mod
+          cache: true
+          cache-dependency-path: desktop/go.sum
+
+      - uses: pnpm/action-setup@v6.1.0
+        with:
+          version: 10
+          run_install: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
+
+      - name: Exclude build directories from Defender scanning
+        shell: pwsh
+        run: |
+          $paths = @($env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, $env:TEMP, (go env GOCACHE)) |
+            Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+          foreach ($p in $paths) {
+            try { Add-MpPreference -ExclusionPath $p -ErrorAction Stop }
+            catch { Write-Host "::warning::Defender exclusion failed: $($_.Exception.Message)" }
+          }
+
+      - name: Install NSIS
+        run: pwsh -NoProfile -File scripts/install-nsis.ps1
+
+      - name: Build Windows x64 test installer
+        timeout-minutes: 30
+        run: scripts/desktop-build.sh windows/amd64 "$QA_VERSION" canary
+
+      - name: Verify packaged payload
+        run: |
+          node desktop/packaging/verify.mjs dist/Reasonix-windows-amd64.zip
+          node desktop/packaging/signing-files.mjs desktop/build/windows/signing-payload --check
+
+      - name: Install and verify startup, repair, and old-data upgrade
+        shell: pwsh
+        run: |
+          go -C desktop build -o "$env:RUNNER_TEMP/windows-upgrade-fixture.exe" ./cmd/windows-upgrade-fixture
+          if ($LASTEXITCODE -ne 0) { throw 'Upgrade fixture build failed' }
+          ./scripts/test-windows-installer-startup.ps1 `
+            -InstallerPath dist/Reasonix-windows-amd64-installer.exe `
+            -ExpectedVersion $env:QA_VERSION `
+            -FixtureBuilderPath "$env:RUNNER_TEMP/windows-upgrade-fixture.exe" `
+            -EvidenceDirectory "$env:RUNNER_TEMP/reasonix-installer-acceptance"
+
+      - name: Prepare installer handoff
+        run: |
+          mkdir -p handoff
+          cp dist/Reasonix-windows-amd64-installer.exe "handoff/Reasonix-${QA_VERSION}-windows-x64-installer.exe"
+          cp desktop/build/windows/signing-payload/app/resources/build.json handoff/windows-build.json
+          (cd handoff && sha256sum *.exe > SHA256SUMS.txt)
+          {
+            echo "version=$QA_VERSION"
+            echo "source_sha=$SOURCE_SHA"
+            echo "platform=windows/amd64"
+            echo "channel=canary"
+            echo "unsigned=true"
+            echo "native_installer_acceptance=passed"
+            echo "Test package only; no release or updater publication."
+          } > handoff/QA-HANDOFF.txt
+
+      - name: Upload acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: Reasonix-v1.38.11-2-windows-x64-acceptance
+          path: |
+            ${{ runner.temp }}/reasonix-installer-acceptance/**/*.json
+            ${{ runner.temp }}/reasonix-installer-acceptance/**/*.png
+            ${{ runner.temp }}/reasonix-installer-acceptance/**/*.log
+            !${{ runner.temp }}/reasonix-installer-acceptance/installed/**
+            !${{ runner.temp }}/reasonix-installer-acceptance/**/cache/**
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload test installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: Reasonix-v1.38.11-2-windows-x64
+          path: handoff/*
+          if-no-files-found: error
+          retention-days: 14
