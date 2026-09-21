@@ -8,8 +8,8 @@ export const isolatedGroups = ["acp", "agent", "boot", "bot", "control", "serve"
 const smokeRoots = internalRoots(
   "appidentity", "checkpoint", "cli", "desktoplauncher", "extension/sidecar",
   "filelock", "fileops", "fileutil", "hook", "instruction", "mcplaunch", "notify",
-  // persistentshell drives a real ConPTY and a PowerShell wrapper that no other
-  // platform exercises, so Windows is the only lane that can prove it.
+  // persistentshell exercises native Git Bash pipes and PowerShell named pipes;
+  // Windows is the only lane that can prove the actual Windows runtimes.
   "persistentshell", "proc",
   "lsp", "pathidentity", "projectiondb", "remote", "repair", "sandbox", "sessioncatalog", "sqliteuri", "sysproxy",
   "topicstate", "winaclresidue", "workspacelease",

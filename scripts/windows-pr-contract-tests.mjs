@@ -15,6 +15,7 @@ export const windowsPRContractGroups = [
       "TestWorkspacePassesBashTimeout",
       "TestBashSchemaUnchangedWithSessionTemp",
       "TestBashUnsupportedOSSandboxUsesToolLayerPermissionBoundary",
+      "TestBashPersistentWindowsUnicodeAndState",
     ],
   },
   { package: "./internal/sandbox", tests: ["TestOSSandboxSupportedPerPlatform"] },

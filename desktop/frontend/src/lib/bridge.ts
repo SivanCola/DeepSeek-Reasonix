@@ -200,7 +200,7 @@ import type {
   SessionClearResult,
 } from "./types";
 import { editMockGoalTab } from "./mockGoalLifecycle";
-import { browserPreviewShellSupport } from "./shellSupportPreview";
+import { browserPreviewShellSupport, reloadBrowserPreviewShell } from "./shellSupportPreview";
 import { desktopHost } from "./desktopHost";
 export * from "./remoteTabEvents";
 export const COMPACT_RATIO_MIN_PERCENT = 30, COMPACT_RATIO_MAX_PERCENT = 85;
@@ -1463,7 +1463,7 @@ function makeMockApp(): MockAppBindings {
   // escape prompts stay pending and visible.
   let pendingApprovalPreviewPrompt: { id: string; tool: string } | undefined;
   const globalWorkspaceRoot = "~/Library/Application Support/reasonix/global-workspace";
-  let cwd = freshMock ? globalWorkspaceRoot : "~/projects/joyquant-db"; // mutable so PickWorkspace is visible in dev
+  let cwd = freshMock ? globalWorkspaceRoot : browserPlatformOverride() === "windows" ? "C:\\Projects\\joyquant-db" : "~/projects/joyquant-db"; // mutable so PickWorkspace is visible in dev
   let workspaces = freshMock ? [] : ["~/projects/joyquant-db", "~/projects/joyquant-sys", "~/projects/reasonix", "~/projects/blade"];
   let mockEffort = "auto";
   let mockDesktopZoomFactor = 1.0;
@@ -5002,13 +5002,13 @@ function makeMockApp(): MockAppBindings {
       const k = list as "allow" | "ask" | "deny";
       settings.permissions[k] = settings.permissions[k].filter((r) => r !== rule);
     },
-        async ReloadSettings() {},
+        async ReloadSettings() { reloadBrowserPreviewShell(settings.sandbox); },
         async SetShellPreference(prefer: string) {
           const sb = settings.sandbox;
           if (!sb) return;
           sb.shell = prefer;
           sb.resolvedShell = browserPreviewEffectiveShell(prefer);
-          sb.shellReloadRequired = sb.resolvedShell !== sb.effectiveShell;
+          reloadBrowserPreviewShell(sb);
         },
         async InstallShellSupport(id: string): Promise<ShellInstallResult> {
           if (id !== "git-for-windows") throw new Error(`unknown shell support action ${id}`);
