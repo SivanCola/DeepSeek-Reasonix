@@ -1147,10 +1147,10 @@ export const app: AppBindings = new Proxy({} as AppBindings, {
   get(_t, prop) {
     const host = desktopHost().app, target = host ?? getMock();
     let v = (target as unknown as Record<string, unknown>)[String(prop)];
-    // Queue commands are an optional capability. A synthesized mock method
-    // would make old/ordinary browser mocks render controls they cannot use.
+    // Inbox commands are optional. A synthesized attachment fallback would
+    // make ordinary browser mocks claim support for absent queue methods.
     if (!host && v === undefined && typeof prop === "string" &&
-        !["CaptureInboxTarget", "InboxQueueForTarget", "EnqueueInboxFollowupForTarget", "LookupInboxFollowupForTarget"].includes(prop)) v = (...args: unknown[]) => import("./attachmentBindings").then(
+        !prop.includes("Inbox")) v = (...args: unknown[]) => import("./attachmentBindings").then(
       module => module.callMockAttachment(target, prop as keyof AttachmentBindings, args));
     if (typeof v !== "function") return v;
     return (...args: unknown[]) => {
