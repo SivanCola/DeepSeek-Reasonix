@@ -383,3 +383,31 @@ the native scale matrix pass; macOS also completes 100 mixed-frame lifecycle cyc
 The diagnostic fixture now uses the same leases as the host tool. Historical CDP
 domain/world stalls remain a separate investigation gate; these results do not
 claim that an unrelated successful rerun resolves them.
+
+### 连接级 iframe session 所有权 / Connection-owned iframe sessions
+
+后续修复移除了每次快照、引用解析、点击和上传之间的 OOPIF detach/attach 及重复 domain
+初始化。`FrameSessionPool` 由根 debugger 的连接代际持有；相邻操作共享目标 attachment，
+各自重新获取文档 context、各自释放对象组。空闲断开清理整代资源，外部 debugger 保留。
+失败 session 在最后一个借用者退出后回收；取消一个等待者不会拆掉另一等待者的 session，
+迟到 attachment 只清理自己的 ID，不覆盖新目标。产品预算仍为 1 秒，没有重放写操作。
+
+原生 fixture 增加机制断言：跨域快照、ref、点击和上传整条链只 attach 一次；真实空闲断开
+后的观察恰好再 attach 一次。确定性测试覆盖共享初始化、单方取消、迟到 attachment、
+目标自行断开、外部连接保留、对象清理与空闲释放顺序，以及已派发写操作的 unknown 语义。
+287 项 Electron 测试与类型检查通过。macOS 最终源码完成扩展缩放矩阵和 100 轮混合
+frame 生命周期，包含上述 attachment 次数断言，最终 `remainingWebContents=0`。
+Windows ARM64、Linux ARM64/Xvfb 的新 session 所有权原生 fixture 也通过。
+
+这解决了连接生命周期反复拆建的机制，历史超时日志继续保留；不把所有未来 CDP 超时
+都归为同一原因。当前提交仍须通过 CI 和完整包链路后才满足合并门槛，正式发布的其他
+环境限制仍以本文所列范围为准。
+
+English: Target sessions now belong to the root debugger generation, while context
+lookups and object groups remain operation-scoped. Adjacent snapshot/ref/input/upload
+calls share one attachment; idle reconnect creates exactly one new attachment.
+Deterministic interleavings cover shared initialization, cancellation, late results,
+detachment, external connection ownership and unknown write receipts. All 287 tests
+and the native macOS 100-cycle fixture pass, as do Windows ARM64 and Linux ARM64/Xvfb
+fixtures. Historical timeout evidence is retained; final CI and packaged validation
+are still required, and unrelated release qualification limits remain unchanged.

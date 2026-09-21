@@ -57,6 +57,12 @@ if (process.env.REASONIX_BROWSER_TRACE_RPC === "1") {
   };
 }
 const view = factory.create("native-browser-test");
+let targetAttachments = 0;
+const originalSend = view.page.debugger.sendCommand.bind(view.page.debugger);
+view.page.debugger.sendCommand = async (method, params, sessionId) => {
+  if (method === "Target.attachToTarget") targetAttachments++;
+  return originalSend(method, params, sessionId);
+};
 try {
   view.setBounds({ x: 0, y: 0, width: 800, height: 600 });
   view.setVisible(!background);
@@ -94,12 +100,14 @@ try {
   assert.equal((await uploadFiles(view.page, upload.value, [uploadPath], () => {}, () => { uploadDispatches++; })).executed, true);
   assert.equal(uploadDispatches, 1);
   assert.equal(await clickedFrame.executeJavaScript("window.uploaded"), "fixture.txt");
+  assert.equal(targetAttachments, 1, "snapshot, ref resolution, input and upload must share one OOPIF session");
   console.log("cross-origin file upload through bounded frame runtime: passed");
   const idleBy = Date.now() + 4000;
   while (view.page.debugger.isAttached() && Date.now() < idleBy) await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(view.page.debugger.isAttached(), false, "idle connection must be released");
   const afterIdle = await takeSnapshot(view.page, "test", 1, "", new DocumentRegistry());
   assert.equal((afterIdle.tree.match(/Child action/g) ?? []).length, 2, afterIdle.tree);
+  assert.equal(targetAttachments, 2, "idle release must initialize one fresh OOPIF session");
   console.log("CDP idle release and new observation: passed");
   frameLease();
   console.log("same-origin and cross-origin isolated snapshots: passed");

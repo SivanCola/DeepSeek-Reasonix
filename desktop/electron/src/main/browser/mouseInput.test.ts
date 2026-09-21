@@ -44,7 +44,8 @@ test("mouse input selects its renderer and applies native zoom and display scale
           { type: "mousePressed", x: 40 * scale / zoom, y: 20 * scale / zoom, button: "left", buttons: 1, clickCount: 1 },
           { type: "mouseReleased", x: 40 * scale / zoom, y: 20 * scale / zoom, button: "left", buttons: 0, clickCount: 1 },
         ]);
-        assert.equal(f.page.debugger.commands.filter(row => row.method === "Target.detachFromTarget").length, 3);
+        assert.equal(f.page.debugger.commands.filter(row => row.method === "Target.attachToTarget").length, 1, "move, press and release share the owning target session");
+        assert.equal(f.page.debugger.commands.filter(row => row.method === "Target.detachFromTarget").length, 0);
       } else {
         assert.equal(f.routed.length, 0);
         assert.deepEqual(f.page.inputs.map(event => "x" in event ? [event.x, event.y] : []), [[100, 120], [100, 120], [100, 120]]);

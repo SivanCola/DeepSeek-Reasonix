@@ -4,6 +4,7 @@ import type { GuestFrame, GuestPage } from "./guestView.js";
 import { acquireDebugger, type DebuggerRelease, type DebuggerSender } from "./debuggerLease.js";
 import { browserFailure } from "./errors.js";
 import { abortable } from "./captureQueue.js";
+import { FrameSessionPool, type FrameSessionLease } from "./frameSessionPool.js";
 
 const operationSignals = new AsyncLocalStorage<AbortSignal>();
 export function frameOperationSignal(): AbortSignal | undefined { return operationSignals.getStore(); }
@@ -14,22 +15,26 @@ export function withFrameOperationSignal<T>(signal: AbortSignal, work: () => Pro
 interface Context { frameId: string; sessionId?: string; executionContextId: number }
 type Execute = (contextId: number, sessionId: string | undefined, send: DebuggerSender) => Promise<unknown>;
 
-// One operation owns its frame contexts and child sessions; the page's root
-// connection is owned by debuggerLease. No context survives an operation.
+// One operation owns its frame contexts and object groups. Root connections
+// and target sessions have a single page-level owner; contexts are never shared.
 export class FrameRuntime {
   private readonly release: DebuggerRelease;
+  private readonly pool: FrameSessionPool;
   private readonly main: GuestFrame;
   private readonly sessions = new Map<string, string>();
+  private readonly borrowed = new Map<string, FrameSessionLease>();
   private readonly contexts = new Map<string, Promise<Context>>();
   private readonly objectSessions = new Set<string | undefined>();
   private readonly group = `reasonix-frame-owner-${randomUUID()}`;
   private root?: Promise<Context>;
   private closed = false;
+  private failed = false;
   private readonly signal = operationSignals.getStore();
 
   constructor(private readonly page: GuestPage, private readonly deadline = Date.now() + 1000) {
     this.main = page.mainFrame;
     this.release = acquireDebugger(page.debugger);
+    this.pool = FrameSessionPool.for(page.debugger, this.release);
   }
 
   private assertLive(): void {
@@ -40,13 +45,10 @@ export class FrameRuntime {
 
   private async send(method: string, params?: unknown, sessionId?: string): Promise<unknown> {
     this.assertLive();
-    const command = this.release.send(method, params, sessionId);
-    // A timed-out attach can still allocate a session. Consume and release its
-    // late result without allowing it back into the completed operation.
-    if (method === "Target.attachToTarget") void command.then(result => {
-      const attached = result as { sessionId?: string };
-      if ((this.closed || this.signal?.aborted || Date.now() >= this.deadline) && attached.sessionId) void this.release.send("Target.detachFromTarget", { sessionId: attached.sessionId }).catch(() => {});
-    }).catch(() => {});
+    return this.wait(this.release.send(method, params, sessionId), method);
+  }
+
+  private async wait<T>(command: Promise<T>, method: string): Promise<T> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const result = await Promise.race([this.signal ? abortable(command, this.signal) : command, new Promise<never>((_resolve, reject) => {
@@ -69,6 +71,13 @@ export class FrameRuntime {
       this.contexts.set(key, existing);
     }
     return existing;
+  }
+
+  private async attach(frameId: string): Promise<string> {
+    this.assertLive();
+    let lease = this.borrowed.get(frameId);
+    if (!lease) { lease = this.pool.borrow(frameId); this.borrowed.set(frameId, lease); }
+    return this.wait(lease.ready, "Target.attachToTarget/domain initialization");
   }
 
   private rootContext(): Promise<Context> {
@@ -103,8 +112,8 @@ export class FrameRuntime {
     if (!targets.targetInfos.some(target => target.targetId === frameId && target.type === "iframe")) return this.context(frameId, parent.sessionId);
     let sessionId = this.sessions.get(frameId);
     if (!sessionId) {
-      let attached: { sessionId: string };
-      try { attached = await this.send("Target.attachToTarget", { targetId: frameId, flatten: true }) as { sessionId: string }; }
+      let attached: string;
+      try { attached = await this.attach(frameId); }
       catch (error) {
         // Refresh only a failed read-only target attachment. The same retained
         // DOM object and native frame must still identify the original owner.
@@ -113,19 +122,21 @@ export class FrameRuntime {
         const refreshed = await describe();
         if (original.backendNodeId === undefined || original.backendNodeId !== refreshed.backendNodeId || refreshed.frameId === frameId) throw error;
         frameId = refreshed.frameId;
-        attached = await this.send("Target.attachToTarget", { targetId: frameId, flatten: true }) as { sessionId: string };
+        attached = await this.attach(frameId);
       }
-      sessionId = attached.sessionId;
+      sessionId = attached;
       this.sessions.set(frameId, sessionId);
-      await this.send("Page.enable", {}, sessionId);
-      await this.send("Runtime.enable", {}, sessionId);
-      await this.send("DOM.enable", {}, sessionId);
     }
     verify();
     return this.context(frameId, sessionId);
   }
 
   async run(frame: GuestFrame, code: string, execute?: Execute): Promise<unknown> {
+    try { return await this.runFrame(frame, code, execute); }
+    catch (error) { this.failed = true; throw error; }
+  }
+
+  private async runFrame(frame: GuestFrame, code: string, execute?: Execute): Promise<unknown> {
     this.assertLive();
     const url = frame.url;
     const path: GuestFrame[] = [];
@@ -162,8 +173,9 @@ export class FrameRuntime {
     return result.result?.value;
   }
 
-  async close(): Promise<void> {
+  async close(failed = false): Promise<void> {
     if (this.closed) return;
+    this.failed ||= failed;
     this.closed = true;
     // Cleanup commands are tracked by the connection owner even after this
     // operation's deadline. Their eventual replies cannot resurrect contexts.
@@ -171,14 +183,23 @@ export class FrameRuntime {
       const targets: Array<string | undefined> = [...this.sessions.values()].reverse();
       targets.push(undefined);
       for (const sessionId of targets) {
-        // Never detach while releaseObjectGroup is still using that session.
+        // The shared target stays attached for adjacent operations. Only this
+        // operation's object group is released here.
         if (this.objectSessions.has(sessionId)) await this.release.send("Runtime.releaseObjectGroup", { objectGroup: this.group }, sessionId).catch(() => {});
-        if (sessionId) await this.release.send("Target.detachFromTarget", { sessionId }).catch(() => {});
       }
     })();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try { await Promise.race([cleanup, new Promise<void>(resolve => { timer = setTimeout(resolve, 100); })]); }
-    finally { clearTimeout(timer); this.contexts.clear(); this.sessions.clear(); this.release(); }
+    finally {
+      clearTimeout(timer);
+      // Cleanup may still be using the target's objects. Release borrowed
+      // sessions only after those commands finish, even when our waiter expires.
+      void cleanup.finally(() => {
+        for (const lease of this.borrowed.values()) lease.release(this.failed || Boolean(this.signal?.aborted));
+        this.borrowed.clear(); this.release();
+      });
+      this.contexts.clear(); this.sessions.clear();
+    }
   }
 }
 

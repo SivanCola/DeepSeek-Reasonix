@@ -53,5 +53,6 @@ export async function dispatchMouseInput(page: GuestPage, event: MouseInputEvent
       const displayScale = scale / (zoom || 1);
       await send("Input.dispatchMouseEvent", { type: event.type === "mouseDown" ? "mousePressed" : event.type === "mouseUp" ? "mouseReleased" : "mouseMoved", x: point.x * displayScale, y: point.y * displayScale, button: event.button ?? "none", buttons, clickCount: event.clickCount ?? 0 }, sessionId);
     });
-  } finally { await runtime?.close(); }
+  } catch (error) { await runtime?.close(true); throw error; }
+  finally { await runtime?.close(); }
 }

@@ -2,9 +2,10 @@ import type { GuestDebugger } from "./guestView.js";
 import { traceBrowserCommand } from "./diagnosticContext.js";
 
 export const DEBUGGER_IDLE_MS = 1500;
-interface Lease { users: number; pending: number; owned: boolean; timer?: ReturnType<typeof setTimeout> }
+interface SharedResource { dispose(transportAvailable: boolean): void }
+interface Lease { users: number; pending: number; owned: boolean; resources: Map<object, SharedResource>; timer?: ReturnType<typeof setTimeout> }
 export type DebuggerSender = (method: string, params?: unknown, sessionId?: string) => Promise<unknown>;
-export type DebuggerRelease = (() => void) & { send: DebuggerSender; owned: boolean };
+export type DebuggerRelease = (() => void) & { send: DebuggerSender; owned: boolean; shared<T extends SharedResource>(key: object, create: () => T): T };
 const leases = new WeakMap<GuestDebugger, Lease>();
 
 function idle(debuggerAPI: GuestDebugger, lease: Lease): void {
@@ -23,7 +24,7 @@ export function acquireDebugger(debuggerAPI: GuestDebugger): DebuggerRelease {
   if (!lease) {
     const owned = !debuggerAPI.isAttached();
     if (owned) debuggerAPI.attach("1.3");
-    lease = { users: 0, pending: 0, owned };
+    lease = { users: 0, pending: 0, owned, resources: new Map() };
     leases.set(debuggerAPI, lease);
   }
   clearTimeout(lease.timer);
@@ -35,7 +36,12 @@ export function acquireDebugger(debuggerAPI: GuestDebugger): DebuggerRelease {
     lease.users--;
     idle(debuggerAPI, lease);
   };
-  return Object.assign(release, { owned: lease.owned, send: (method: string, params?: unknown, sessionId?: string) => sendDebuggerCommand(debuggerAPI, method, params, sessionId, lease) });
+  return Object.assign(release, { owned: lease.owned, send: (method: string, params?: unknown, sessionId?: string) => sendDebuggerCommand(debuggerAPI, method, params, sessionId, lease), shared: <T extends SharedResource>(key: object, create: () => T): T => {
+    if (leases.get(debuggerAPI) !== lease) throw new Error("browser debugger lease is unavailable");
+    let resource = lease.resources.get(key);
+    if (!resource) { resource = create(); lease.resources.set(key, resource); }
+    return resource as T;
+  } });
 }
 
 // Count the underlying command, not its deadline-limited waiter. Timing out a
@@ -66,5 +72,7 @@ export function disposeDebugger(debuggerAPI: GuestDebugger, detach = true): void
   if (!lease) return;
   leases.delete(debuggerAPI);
   clearTimeout(lease.timer);
+  for (const resource of lease.resources.values()) resource.dispose(detach);
+  lease.resources.clear();
   if (detach && lease.owned && debuggerAPI.isAttached()) debuggerAPI.detach();
 }

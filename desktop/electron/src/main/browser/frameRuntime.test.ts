@@ -4,6 +4,7 @@ import { FakeFrame, FakePage } from "./fakeGuestViews.js";
 import { FrameRuntime, runChildFrame, withFrameOperationSignal } from "./frameRuntime.js";
 import { uploadFiles } from "./upload.js";
 import type { LocatedRef } from "./refResolver.js";
+import { DEBUGGER_IDLE_MS, disposeDebugger } from "./debuggerLease.js";
 
 function fixture() {
   const page = new FakePage(1);
@@ -27,13 +28,19 @@ function fixture() {
   return { page, parent, child, sessions };
 }
 
-test("one operation reuses parent and child contexts and releases all owned sessions", async () => {
+test("operations own contexts while adjacent calls reuse the page's target sessions", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const f = fixture(), runtime = new FrameRuntime(f.page);
   assert.equal(await runtime.run(f.child, "read"), "observed");
   assert.equal(await runtime.run(f.parent, "read"), "observed");
   assert.equal(f.page.debugger.commands.filter(c => c.method === "Page.createIsolatedWorld").length, 3);
   assert.equal(f.page.debugger.commands.filter(c => c.method === "Target.detachFromTarget").length, 0, "parents stay available until the operation ends");
   await runtime.close(); await runtime.close();
+  assert.equal(f.sessions.size, 2, "targets stay attached across successful adjacent calls");
+  assert.equal(await runChildFrame(f.page, f.child, "read"), "observed");
+  assert.equal(f.page.debugger.commands.filter(c => c.method === "Target.attachToTarget").length, 2);
+  assert.equal(f.page.debugger.commands.filter(c => c.method === "Page.createIsolatedWorld").length, 6, "contexts remain operation-scoped");
+  t.mock.timers.tick(DEBUGGER_IDLE_MS);
   assert.deepEqual([...f.sessions], []);
   assert.equal(f.page.debugger.isAttached(), true, "external root attachment is preserved");
 });
@@ -45,6 +52,7 @@ test("child cleanup failure does not skip releasing the parent session", async (
     return respond(method, raw);
   };
   assert.equal(await runChildFrame(f.page, f.child, "read"), "observed");
+  disposeDebugger(f.page.debugger);
   assert.equal(f.sessions.has("session-parent"), false);
   assert.equal(f.page.debugger.commands.filter(c => c.method === "Target.detachFromTarget").length, 2);
 });
@@ -62,6 +70,7 @@ test("a failed attachment re-resolves only the retained owner, once, before eval
   assert.deepEqual(attachments, ["parent", "new-parent"]);
   const descriptions = f.page.debugger.commands.filter(c => c.method === "DOM.describeNode").map(c => c.params);
   assert.deepEqual(descriptions, [{ objectId: "owner-1" }, { objectId: "owner-1" }]);
+  disposeDebugger(f.page.debugger);
   assert.deepEqual([...f.sessions], []);
 });
 
@@ -80,7 +89,8 @@ test("a changed owner or detached native frame never refreshes into another docu
   }
 });
 
-test("session detach waits for its object cleanup and does not interrupt that reply", async () => {
+test("connection release waits for operation object cleanup without detaching adjacent sessions", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const f = fixture(), respond = f.page.debugger.respond;
   let entered!: () => void, finish!: () => void;
   const cleaning = new Promise<void>(resolve => { entered = resolve; });
@@ -93,10 +103,14 @@ test("session detach waits for its object cleanup and does not interrupt that re
   const closing = runtime.close();
   await cleaning;
   assert.equal(f.sessions.has("session-parent"), true);
-  assert.equal(f.sessions.has("session-child"), false);
+  assert.equal(f.sessions.has("session-child"), true);
+  t.mock.timers.tick(DEBUGGER_IDLE_MS);
+  assert.equal(f.sessions.size, 2, "pending object cleanup keeps the connection alive");
   // Complete the parent object release, then allow the root release to settle.
   f.page.debugger.respond = respond;
   finish(); await closing;
+  await new Promise<void>(resolve => setImmediate(resolve));
+  t.mock.timers.tick(DEBUGGER_IDLE_MS);
   assert.deepEqual([...f.sessions], []);
 });
 
