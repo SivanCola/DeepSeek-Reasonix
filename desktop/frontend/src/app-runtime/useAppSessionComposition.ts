@@ -192,6 +192,7 @@ export function useAppSessionComposition(input: AppSessionCompositionInput) {
   const insertCommands = useComposerInsertCommands({
     activeTabId,
     sessionKey: activeSessionIdentity,
+    browserSessionPath: activeTab?.sessionPath ?? state.meta?.sessionPath,
     approval: state.approval,
     operations: sessionOperations,
     t,

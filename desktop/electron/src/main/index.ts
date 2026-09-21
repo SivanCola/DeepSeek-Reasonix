@@ -1,16 +1,24 @@
-import { app, clipboard, dialog, ipcMain, net, protocol, screen, session, shell } from "electron";
+import { app, clipboard, dialog, ipcMain, nativeImage, net, protocol, screen, session, shell } from "electron";
 import { readdirSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { IPC, type BrowserTakeoverKind } from "../shared/ipc.js";
 import { ActionExecutor } from "./browser/actions.js";
-import { DocumentRegistry } from "./browser/documents.js";
+import { DocumentRegistry, randomToken } from "./browser/documents.js";
 import { DownloadTracker } from "./browser/downloads.js";
 import { ElectronGuestViewFactory } from "./browser/electronGuestViews.js";
 import { GrantRegistry } from "./browser/grants.js";
 import { buildBrowserHostCalls } from "./browser/hostCalls.js";
 import { browserLayoutInDIP } from "./browser/layout.js";
 import { BrowserSurfaceManager, SHARED_PARTITION, type BrowserTab } from "./browser/surfaceManager.js";
+import { BrowserDiagnosticExport } from "./browser/diagnosticExport.js";
+import { BrowserRecoveryStore } from "./browser/recoveryStore.js";
+import { BrowserRecorder } from "./browser/recorder.js";
+import { captureScreenshot } from "./browser/screenshot.js";
+import { CaptureQueue } from "./browser/captureQueue.js";
+import { scriptCall as browserScriptCall } from "./browser/pageScripts.js";
+import { ISOLATED_WORLD as BROWSER_WORLD, REGISTRY_KEY as BROWSER_REGISTRY } from "./browser/snapshot.js";
 import { BrowserControlStore, loadBrowserControlBootstrap, type BrowserSession } from "./browserControl.js";
 import { BrowserControlHost } from "./browserControlHost.js";
 import { applyAppUserModelId, registerTaskbarRelaunch } from "./appIdentity.js";
@@ -253,7 +261,13 @@ function bootstrap(dataHome: string): void {
     log,
   });
   browser.subscribe((tabs) => mainWindow.send(IPC.browserTabs, tabs));
+  const browserRecovery = new BrowserRecoveryStore(join(app.getPath("userData"), "browser-tabs-v1.json"), message => log.warn(message));
+  browser.restore(browserRecovery.tabs);
+  const stopBrowserRecovery = browser.subscribe(() => browserRecovery.save(browser.recoveryTabs()));
   const grants = new GrantRegistry({ generation: () => service.generation });
+  const browserDiagnosticExport = new BrowserDiagnosticExport(browser, grants, { build: shellBuild.commit, version: shellBuild.version, platform: process.platform });
+  const browserRecorder = new BrowserRecorder(browser, grants, __dirname);
+  const browserCaptureQueue = new CaptureQueue();
   const documents = new DocumentRegistry();
   const actions = new ActionExecutor({ surfaces: browser, documents });
 
@@ -324,7 +338,7 @@ function bootstrap(dataHome: string): void {
     // gone is the ordering that left orphaned renderers in the prototype.
     onCloseAllowed: () => mainWindow.allowClose(),
     cleanup: [
-      { name: "browser views", run: () => browser.destroyAll() },
+      { name: "browser views", run: async () => { await browserRecorder.close(); stopBrowserRecovery(); browserRecovery.save(browser.recoveryTabs()); browser.destroyAll(); browserDiagnosticExport.dispose(); } },
       { name: "remote windows", run: () => remote.closeAll() },
       { name: "main window", run: () => mainWindow.close() },
       { name: "tray", run: () => tray.destroy() },
@@ -366,6 +380,11 @@ function bootstrap(dataHome: string): void {
       documents,
       actions,
       downloads,
+      recorder: browserRecorder,
+      captureQueue: browserCaptureQueue,
+      diagnosticExport: browserDiagnosticExport,
+      trace: event => log.info(`browser operation ${JSON.stringify({ ...event, build: shellBuild.commit, version: shellBuild.version, platform: process.platform })}`),
+      screenshotDeps: { decodePNG: (data) => nativeImage.createFromBuffer(data).getSize() },
     }),
   });
 
@@ -634,6 +653,69 @@ function bootstrap(dataHome: string): void {
             await browser.navigate(tabId, target);
           },
           setZoom: (tabId, factor) => browser.setZoom(tabId, factor),
+          setViewport: (tabId, viewport) => browser.setViewport(tabId, viewport),
+          record: async (tabId, action) => {
+            const tab = browser.require(tabId);
+            if (action === "start") { browser.takeover(tabId, "user recording"); await tab.view.ensureLoaded?.(); }
+            const directory = join(app.getPath("userData"), "browser-recordings");
+            await mkdir(directory, { recursive: true });
+            return browserRecorder.userRequest(tab, action, directory);
+          },
+          diagnostics: tabId => browser.require(tabId).view.diagnostics?.read() ?? { available: false },
+          restorePreview: async tabId => {
+            const tab = browser.require(tabId), generation = service.generation;
+            if (!tab.fileReference || !tab.view.isPlaceholder?.()) throw new Error("not a restored file preview");
+            const tasks = await service.invoke("ListTabs", []) as { id: string; sessionPath?: string; sessionGeneration?: number }[];
+            const task = tasks.find(task => task.id === tab.taskId && task.sessionPath === tab.sessionId);
+            if (!task?.sessionGeneration || service.generation !== generation) throw new Error("open the original task and session before restoring its preview");
+            const result = await service.invoke("OpenFileBrowserPreviewForTab", [tab.taskId, { ...tab.fileReference, expectedSessionGeneration: task.sessionGeneration, operationId: `restore-${randomToken()}`, userInitiated: true }]) as { tabId?: string; error?: string };
+            if (service.generation !== generation || browser.get(tabId) !== tab) throw new Error("preview recovery was interrupted");
+            if (!result.tabId || result.error) throw new Error(result.error || "preview recovery failed");
+            browser.close(tabId); browser.activate(result.tabId);
+          },
+          screenshot: async tabId => {
+            const tab = browser.require(tabId);
+            browser.takeover(tabId, "user screenshot");
+            await tab.view.ensureLoaded?.();
+            const epoch = tab.epoch, revision = tab.viewportRevision;
+            const controller = new AbortController();
+            const verify = () => { controller.signal.throwIfAborted(); if (browser.get(tabId) !== tab || tab.epoch !== epoch || tab.viewportRevision !== revision) throw new Error("page changed during screenshot"); };
+            const off = browser.subscribe(() => { try { verify(); } catch { controller.abort(); } });
+            const timer = setTimeout(() => controller.abort(), 9000);
+            let release: (() => void) | undefined;
+            try {
+              const directory = join(app.getPath("userData"), "browser-captures");
+              await mkdir(directory, { recursive: true });
+              return await browserCaptureQueue.run(controller.signal, async () => {
+                verify();
+                release = await tab.view.prepareCapture?.(controller.signal);
+                try {
+                  return await captureScreenshot(tab.view.page, null, tab.view.inputScale?.() ?? 1, { directory, ref: "", fullPage: false }, { viewport: tab.viewport, pixelRatio: tab.view.capturePixelRatio?.(), verify, decodePNG: data => nativeImage.createFromBuffer(data).getSize() });
+                } finally { release?.(); release = undefined; }
+              });
+            } finally { clearTimeout(timer); off(); release?.(); }
+          },
+          pickElement: async tabId => {
+            const tab = browser.require(tabId);
+            browser.takeover(tabId, "element picker");
+            await tab.view.ensureLoaded?.();
+            const identity = { taskId: tab.taskId, sessionId: tab.sessionId, tabId, epoch: tab.epoch, url: tab.view.page.getURL(), time: Date.now() };
+            const operation = randomToken(8);
+            if (!browser.view(tab).active) throw new Error("show the original page before selecting an element");
+            browser.setOperation(tab, { id: operation, phase: "picking" });
+            // This focus is only for the explicit user picker action. Without
+            // it Escape remains in the application renderer and cannot cancel.
+            tab.view.page.focus();
+            const offPicker = browser.subscribe(() => {
+              if ((browser.get(tabId) !== tab || !browser.view(tab).active) && !tab.view.page.isDestroyed()) {
+                void tab.view.page.executeJavaScriptInIsolatedWorld(BROWSER_WORLD, [{ code: browserScriptCall("pageCancelPicker", {}) }]).catch(() => {});
+              }
+            });
+            try {
+              const element = await tab.view.page.executeJavaScriptInIsolatedWorld(BROWSER_WORLD, [{ code: browserScriptCall("pagePickElement", { key: BROWSER_REGISTRY }) }]);
+              return element ? { ...identity, element } : null;
+            } finally { offPicker(); if (tab.operation?.id === operation) browser.setOperation(tab, { id: operation, phase: "completed" }); }
+          },
           toggleDevTools: (tabId) => browser.toggleDevTools(tabId),
           resume: (tabId) => browser.resume(tabId),
           takeover: (tabId) => browser.takeover(tabId, "user takeover"),
@@ -654,6 +736,7 @@ function bootstrap(dataHome: string): void {
         openSettings: () => mainWindow.sendShellEvent("app:open-settings", service.generation),
         toggleDevTools: () => mainWindow.toggleDevTools(),
         showWindow: () => mainWindow.show("menu"),
+        stopBrowserRecording: () => { void browserRecorder.stopCurrent().catch(error => log.warn(`Stop browser recording failed: ${String(error)}`)); },
         quit: () => lifecycle.requestQuit(),
         zoomIn: () => {
           void mainWindow.stepAppZoom(1);

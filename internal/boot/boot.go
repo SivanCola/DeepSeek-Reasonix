@@ -761,6 +761,9 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		for _, t := range browser.Tools(browserExec) {
 			reg.Add(t)
 		}
+		for _, t := range browser.CapabilityTools(browserExec) {
+			reg.Add(t)
+		}
 	}
 	// Use the caller-supplied shared host when set, so controllers for the same
 	// workspace root reuse running MCP processes (e.g. one CodeGraph daemon

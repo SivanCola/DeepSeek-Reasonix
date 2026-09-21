@@ -4530,6 +4530,8 @@ export function Composer({
                 ? t("composer.selectedCode")
                 : reference.source === "terminal"
                   ? t("composer.selectedTerminal")
+                  : reference.source === "browser"
+                    ? (locale === "en" ? "Page element" : "页面元素")
                   : t("composer.selectedText")}
               icon={reference.path
                 ? <FileText size={20} />
