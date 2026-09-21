@@ -89,7 +89,7 @@ node --import ./scripts/css-stub-register.mjs --import tsx src/__tests__/compose
 ```
 
 复现入口：`cd desktop/frontend && pnpm dev --host 127.0.0.1 --port 5191`，打开 `http://127.0.0.1:5191/?mock=guidance`。
-浏览器预览仅用于开发，生产构建会移除该 fixture。视觉检查见项目根目录 `design-qa.md`。
+浏览器预览仅用于开发，生产构建会移除该 fixture。视觉检查见 `docs/INBOX_QUEUE_DESIGN_QA.md`。
 
 ## 明确边界
 

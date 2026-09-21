@@ -1147,7 +1147,10 @@ export const app: AppBindings = new Proxy({} as AppBindings, {
   get(_t, prop) {
     const host = desktopHost().app, target = host ?? getMock();
     let v = (target as unknown as Record<string, unknown>)[String(prop)];
-    if (!host && v === undefined && typeof prop === "string") v = (...args: unknown[]) => import("./attachmentBindings").then(
+    // Queue commands are an optional capability. A synthesized mock method
+    // would make old/ordinary browser mocks render controls they cannot use.
+    if (!host && v === undefined && typeof prop === "string" &&
+        !["CaptureInboxTarget", "InboxQueueForTarget", "EnqueueInboxFollowupForTarget", "LookupInboxFollowupForTarget"].includes(prop)) v = (...args: unknown[]) => import("./attachmentBindings").then(
       module => module.callMockAttachment(target, prop as keyof AttachmentBindings, args));
     if (typeof v !== "function") return v;
     return (...args: unknown[]) => {
@@ -1428,8 +1431,9 @@ function makeMockApp(): MockAppBindings {
     },
   });
   const freshMock = scenario === "fresh";
-  const guidanceMock = scenario === "guidance", recoveryMock = typeof import.meta.env !== "undefined" && import.meta.env.DEV && scenario === "recovery";
-  const inboxQueuePreview = import.meta.env.DEV && guidanceMock ? import("./inboxQueuePreview").then(module => module.createInboxQueuePreviewBindings()) : undefined;
+  const devPreview = typeof import.meta.env !== "undefined" && import.meta.env.DEV;
+  const guidanceMock = scenario === "guidance", recoveryMock = devPreview && scenario === "recovery";
+  const inboxQueuePreview = devPreview && guidanceMock ? import("./inboxQueuePreview").then(module => module.createInboxQueuePreviewBindings()) : undefined;
   const runningMock = scenario === "running" || guidanceMock;
   const sandboxEscapeMock = scenario === "sandbox_escape";
   const noticePreviewMock = scenario === "notice";

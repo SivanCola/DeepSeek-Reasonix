@@ -565,7 +565,7 @@
       "kind": "command",
       "name": "CancelTabWithInboxItems",
       "detail": "(tabID string, itemIDs []string) error",
-      "location": "desktop/inbox_app.go:269",
+      "location": "desktop/inbox_app.go:273",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -573,7 +573,7 @@
       "kind": "command",
       "name": "CancelTabWithInboxItemsResult",
       "detail": "(tabID string, itemIDs []string) (InboxCancelResultView, error)",
-      "location": "desktop/inbox_app.go:283",
+      "location": "desktop/inbox_app.go:287",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1045,7 +1045,7 @@
       "kind": "command",
       "name": "DeleteInboxItem",
       "detail": "(tabID string, id string) error",
-      "location": "desktop/inbox_app.go:400",
+      "location": "desktop/inbox_app.go:404",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1221,7 +1221,7 @@
       "kind": "command",
       "name": "EnqueueInboxFollowup",
       "detail": "(tabID string, display string, submit string, idempotency string) (InboxReceiptView, error)",
-      "location": "desktop/inbox_app.go:177",
+      "location": "desktop/inbox_app.go:181",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1237,7 +1237,7 @@
       "kind": "command",
       "name": "EnqueueInboxFollowupWithInvocations",
       "detail": "(tabID string, display string, submit string, invocations []InvocationRequest, idempotency string) (InboxReceiptView, error)",
-      "location": "desktop/inbox_app.go:183",
+      "location": "desktop/inbox_app.go:187",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1245,7 +1245,7 @@
       "kind": "command",
       "name": "EnqueueInboxSteer",
       "detail": "(tabID string, display string, submit string, idempotency string) (InboxReceiptView, error)",
-      "location": "desktop/inbox_app.go:188",
+      "location": "desktop/inbox_app.go:192",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1253,7 +1253,7 @@
       "kind": "command",
       "name": "EnqueueInboxSteerForTurn",
       "detail": "(tabID string, turnID string, display string, submit string, idempotency string) (InboxReceiptView, error)",
-      "location": "desktop/inbox_app.go:196",
+      "location": "desktop/inbox_app.go:200",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1941,7 +1941,15 @@
       "kind": "command",
       "name": "InboxHasItems",
       "detail": "(tabID string) (bool, error)",
-      "location": "desktop/inbox_app.go:474",
+      "location": "desktop/inbox_app.go:478",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
+      "name": "InboxQueueForTarget",
+      "detail": "(target InboxTargetView, request control.InboxQueueRequest) (InboxQueueResultView, error)",
+      "location": "desktop/inbox_queue.go:23",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1949,7 +1957,7 @@
       "kind": "command",
       "name": "InboxSnapshot",
       "detail": "(tabID string) (InboxSnapshotView, error)",
-      "location": "desktop/inbox_app.go:165",
+      "location": "desktop/inbox_app.go:169",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2477,7 +2485,7 @@
       "kind": "command",
       "name": "MoveInboxItem",
       "detail": "(tabID string, id string, toIndex int) error",
-      "location": "desktop/inbox_app.go:413",
+      "location": "desktop/inbox_app.go:417",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2965,7 +2973,7 @@
       "kind": "command",
       "name": "ReadInboxItem",
       "detail": "(tabID string, id string) (InboxEnvelopeView, error)",
-      "location": "desktop/inbox_app.go:369",
+      "location": "desktop/inbox_app.go:373",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -3125,7 +3133,7 @@
       "kind": "command",
       "name": "RefreshInboxItem",
       "detail": "(tabID string, id string) error",
-      "location": "desktop/inbox_app.go:452",
+      "location": "desktop/inbox_app.go:456",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -4029,7 +4037,7 @@
       "kind": "command",
       "name": "RetryInboxItem",
       "detail": "(tabID string, id string) error",
-      "location": "desktop/inbox_app.go:439",
+      "location": "desktop/inbox_app.go:443",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -4901,7 +4909,7 @@
       "kind": "command",
       "name": "SetInboxPaused",
       "detail": "(tabID string, paused bool) error",
-      "location": "desktop/inbox_app.go:426",
+      "location": "desktop/inbox_app.go:430",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -5477,7 +5485,7 @@
       "kind": "command",
       "name": "SteerInboxItem",
       "detail": "(tabID string, itemID string) (InboxReceiptView, error)",
-      "location": "desktop/inbox_app.go:214",
+      "location": "desktop/inbox_app.go:218",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -5485,7 +5493,7 @@
       "kind": "command",
       "name": "SteerInboxItemForTurn",
       "detail": "(tabID string, turnID string, itemID string) (InboxReceiptView, error)",
-      "location": "desktop/inbox_app.go:236",
+      "location": "desktop/inbox_app.go:240",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -5933,7 +5941,7 @@
       "kind": "command",
       "name": "UpdateInboxItem",
       "detail": "(tabID string, id string, display string, submit string) error",
-      "location": "desktop/inbox_app.go:387",
+      "location": "desktop/inbox_app.go:391",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
