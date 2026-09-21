@@ -855,6 +855,8 @@ export interface AppBindings extends AttachmentBindings, SessionExportBindings, 
   RenameTopic(topicID: string, title: string): Promise<void>;
   DeleteTopic(topicID: string): Promise<void>;
   TrashTopic(topicID: string): Promise<void>;
+  InspectTopicRemoval(target: import("../generated/desktopContract.generated").TopicRemovalTarget): Promise<import("../generated/desktopContract.generated").TopicRemovalInspection>;
+  RemoveTopic(request: import("../generated/desktopContract.generated").TopicRemovalRequest): Promise<import("../generated/desktopContract.generated").TopicRemovalResult>;
   SetTopicPinned(topicID: string, pinned: boolean): Promise<void>;
   ContextPanel(tabID: string): Promise<ContextPanelInfo>;
   // New native-feel bindings (added with the desktop native-feel plan).
@@ -2484,7 +2486,7 @@ function makeMockApp(): MockAppBindings {
     async RetryLegacyEmptySessionCleanup() {
       return { version: 1, state: "complete", removed: 0, pending: 0, busy: 0, unknown: 0, protected: 0, hasContent: 0, items: [] };
     },
-    ...makeMockSessionLifecycleBindings(mockWorkspaceSnapshot, mockArchivedSessionIDs, mockPurgedSessionIDs, notifyMockProjectTreeChanged),
+    ...makeMockSessionLifecycleBindings(mockWorkspaceSnapshot, mockArchivedSessionIDs, mockPurgedSessionIDs, notifyMockProjectTreeChanged, mockProjectTree),
     async CreateSession(_workspaceId: string) { return { hostId: "local", sessionId: `mock-${Date.now()}` }; },
     async ForkSession(_ref: SessionRef, _turnBoundary: string) { return { hostId: "local", sessionId: `mock-fork-${Date.now()}` }; },
     async ForkSessionTarget(_selector: SessionSelector, _turnBoundary: string) { return { hostId: "local", sessionId: `mock-fork-${Date.now()}` }; },
@@ -5733,9 +5735,11 @@ function makeMockApp(): MockAppBindings {
           createdAt: now,
         }, ...projectChildren(parent)];
       }
+      (await import("./topicRemovalMock")).markTopic(mockProjectTree, id, !title.trim());
       return { id, title: topicTitle, createdAt: now };
     },
     async RenameTopic(topicID: string, title: string) {
+      (await import("./topicRemovalMock")).markTopic(mockProjectTree, topicID, false);
       const topic = findMockTopic(topicID);
       const nextTitle = title.trim();
       if (!topic || !nextTitle) return;

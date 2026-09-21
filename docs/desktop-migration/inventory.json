@@ -1963,6 +1963,14 @@
     },
     {
       "kind": "command",
+      "name": "InspectTopicRemoval",
+      "detail": "(target TopicRemovalTarget) (TopicRemovalInspection, error)",
+      "location": "desktop/topic_removal.go:185",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
       "name": "InspectWorktreeMerge",
       "detail": "(tabID string) (worktree.MergeInspection, error)",
       "location": "desktop/delivery_worktree.go:134",
@@ -3510,6 +3518,14 @@
       "name": "RemoveSkillPath",
       "detail": "(path string) error",
       "location": "desktop/app.go:8013",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
+      "name": "RemoveTopic",
+      "detail": "(req TopicRemovalRequest) (TopicRemovalResult, error)",
+      "location": "desktop/topic_removal.go:254",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },

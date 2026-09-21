@@ -6587,6 +6587,33 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/topic_removal.go",
+      "name": "InspectTopicRemoval",
+      "owner": "App.InspectTopicRemoval",
+      "params": [
+        {
+          "kind": "object",
+          "ref": "main.TopicRemovalTarget"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.TopicRemovalInspection"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "target"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.InspectTopicRemoval"
+      },
+      "sources": [
+        "desktop/topic_removal.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/delivery_worktree.go",
       "name": "InspectWorktreeMerge",
       "owner": "App.InspectWorktreeMerge",
@@ -11783,6 +11810,33 @@
       },
       "sources": [
         "desktop/app.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/topic_removal.go",
+      "name": "RemoveTopic",
+      "owner": "App.RemoveTopic",
+      "params": [
+        {
+          "kind": "object",
+          "ref": "main.TopicRemovalRequest"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.TopicRemovalResult"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "req"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.RemoveTopic"
+      },
+      "sources": [
+        "desktop/topic_removal.go"
       ]
     },
     {
@@ -42149,6 +42203,124 @@
           "name": "createdAt",
           "type": {
             "kind": "integer"
+          }
+        }
+      ]
+    },
+    "main.TopicRemovalInspection": {
+      "fields": [
+        {
+          "name": "target",
+          "type": {
+            "kind": "object",
+            "ref": "main.TopicRemovalTarget"
+          }
+        },
+        {
+          "name": "disposition",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "allowed",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "reason",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "token",
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
+    "main.TopicRemovalRequest": {
+      "fields": [
+        {
+          "name": "operationId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "target",
+          "type": {
+            "kind": "object",
+            "ref": "main.TopicRemovalTarget"
+          }
+        },
+        {
+          "name": "expectedToken",
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
+    "main.TopicRemovalResult": {
+      "fields": [
+        {
+          "name": "committed",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "disposition",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "recoveryEntryId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "errorCode",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "errorMessage",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "retryable",
+          "type": {
+            "kind": "boolean"
+          }
+        }
+      ]
+    },
+    "main.TopicRemovalTarget": {
+      "fields": [
+        {
+          "name": "workspaceId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "topicId",
+          "type": {
+            "kind": "string"
           }
         }
       ]

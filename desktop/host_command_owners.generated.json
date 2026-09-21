@@ -3509,6 +3509,20 @@
       ]
     }
   },
+  "InspectTopicRemoval": {
+    "domain": "desktop/topic_removal.go",
+    "owner": "App.InspectTopicRemoval",
+    "sources": [
+      "desktop/topic_removal.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.InspectTopicRemoval",
+      "inputs": [
+        "target"
+      ]
+    }
+  },
   "InspectWorktreeMerge": {
     "domain": "desktop/delivery_worktree.go",
     "owner": "App.InspectWorktreeMerge",
@@ -6271,6 +6285,20 @@
       "resolver": "App.RemoveSkillPath",
       "inputs": [
         "path"
+      ]
+    }
+  },
+  "RemoveTopic": {
+    "domain": "desktop/topic_removal.go",
+    "owner": "App.RemoveTopic",
+    "sources": [
+      "desktop/topic_removal.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.RemoveTopic",
+      "inputs": [
+        "req"
       ]
     }
   },

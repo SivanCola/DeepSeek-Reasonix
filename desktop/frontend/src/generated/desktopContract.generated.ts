@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 11;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:0ff34d06dab06e4427ac0ecaed6615c553db28b8277bd7fda1364a9ad45911a7";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:fb73147f33984717d24177baadcbb8173d87e1bccbecdfe76ea6e92ddb0f1167";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -251,6 +251,7 @@ export const DESKTOP_COMMANDS = [
   "InboxHasItems",
   "InboxQueueForTarget",
   "InboxSnapshot",
+  "InspectTopicRemoval",
   "InspectWorktreeMerge",
   "InstallMCPServer",
   "InstallPlugin",
@@ -445,6 +446,7 @@ export const DESKTOP_COMMANDS = [
   "RemoveRemoteHost",
   "RemoveRemoteProject",
   "RemoveSkillPath",
+  "RemoveTopic",
   "RemoveWorkspace",
   "RenameCanonicalSession",
   "RenameProject",
@@ -4746,6 +4748,34 @@ export interface TopicMeta {
   createdAt: number;
 }
 
+export interface TopicRemovalInspection {
+  target: TopicRemovalTarget;
+  disposition: string;
+  allowed: boolean;
+  reason?: string;
+  token: string;
+}
+
+export interface TopicRemovalRequest {
+  operationId: string;
+  target: TopicRemovalTarget;
+  expectedToken: string;
+}
+
+export interface TopicRemovalResult {
+  committed: boolean;
+  disposition: string;
+  recoveryEntryId?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  retryable: boolean;
+}
+
+export interface TopicRemovalTarget {
+  workspaceId: string;
+  topicId: string;
+}
+
 export interface TrashEntry {
   id: string;
   ref?: SessionRef | null;
@@ -6006,6 +6036,7 @@ export interface GeneratedDesktopCommands {
   InboxHasItems(arg0: string): Promise<boolean>;
   InboxQueueForTarget(arg0: InboxTargetView, arg1: InboxQueueRequest): Promise<InboxQueueResultView>;
   InboxSnapshot(arg0: string): Promise<InboxSnapshotView>;
+  InspectTopicRemoval(arg0: TopicRemovalTarget): Promise<TopicRemovalInspection>;
   InspectWorktreeMerge(arg0: string): Promise<MergeInspection>;
   InstallMCPServer(arg0: MCPServerInput): Promise<MCPInstallResult>;
   InstallPlugin(arg0: string, arg1: PluginInstallOptions): Promise<string>;
@@ -6200,6 +6231,7 @@ export interface GeneratedDesktopCommands {
   RemoveRemoteHost(arg0: string): Promise<void>;
   RemoveRemoteProject(arg0: string, arg1: string): Promise<void>;
   RemoveSkillPath(arg0: string): Promise<void>;
+  RemoveTopic(arg0: TopicRemovalRequest): Promise<TopicRemovalResult>;
   RemoveWorkspace(arg0: string): Promise<void>;
   RenameCanonicalSession(arg0: SessionRef, arg1: string): Promise<void>;
   RenameProject(arg0: string, arg1: string): Promise<void>;

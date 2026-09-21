@@ -181,7 +181,7 @@ export function ProjectTree({
   topicRequestContextRef.current = { query: query.trim(), sortMode: creationTopics ? "updated" : workbenchSortMode };
   const activeSummaryRequestRef = useRef("");
   const refreshRef = useRef<ProjectTreeRefresh>(async () => {});
-  const { trashingTopics, trashingSessions, currentArchiveTombstones, trashTopic, trashSession } = useProjectTreeArchiveController({
+  const { trashingTopics, trashingSessions, currentArchiveTombstones, trashTopic, trashSession, inspectTopicRemoval, topicRemovalInspections } = useProjectTreeArchiveController({
     treeRef, topicLoadSeqRef, topicLoadPendingRef, topicPageStateRef, updateTopicPageState, refreshRef,
     optimisticallyRemoveTopic: (topicId) => setTree((current) => projectTreeWithoutTopic(current, topicId)),
     optimisticallyRemoveSession: (node) => setTree((current) => projectTreeWithoutSession(current, node)),
@@ -1224,6 +1224,7 @@ export function ProjectTree({
         setMenuPoint(contextMenuPointFromEvent(event));
         setMenuNodeKey(key);
         setConfirmArchiveTarget(null);
+        if (!node.sessionPath && !node.remoteSession && (!node.session?.hostId || node.session.hostId === "local") && node.topicId) void inspectTopicRemoval(node.topicId).catch(() => undefined);
       };
       const topicMenuItems: ContextMenuItem[] = [
         ...organization.topicMenuItems(node, t),
@@ -1253,11 +1254,12 @@ export function ProjectTree({
         {
           key: "trash",
           icon: <Archive className={topicTrashing || sessionTrashing ? "project-tree__archive-spinner" : undefined} size={13} />,
-          label: confirmArchiveTarget === archiveTargetKey ? t("history.confirmMoveToTrash") : t("history.moveToTrash"),
+          label: topicRemovalInspections[node.topicId ?? ""]?.disposition === "discard_placeholder" ? t("projectTree.removeEmptyTopic") : confirmArchiveTarget === archiveTargetKey ? t("history.confirmMoveToTrash") : t("history.moveToTrash"),
           disabled: archiveBlocked || topicTrashing || sessionTrashing || remoteSessionArchiveBlocked(node.remoteSession),
           danger: true,
           onSelect: () => {
-            if (confirmArchiveTarget === archiveTargetKey) void trashTopicAny(node);
+            if (!node.sessionPath && !node.remoteSession && (!node.session?.hostId || node.session.hostId === "local")) void trashTopicAny(node);
+            else if (confirmArchiveTarget === archiveTargetKey) void trashTopicAny(node);
             else setConfirmArchiveTarget(archiveTargetKey);
           },
         },
@@ -1532,6 +1534,7 @@ export function ProjectTree({
       setConfirmArchiveTarget(null);
       setMenuPoint(contextMenuPointFromEvent(event));
       setMenuProject({ key, root: projectRoot, path: projectPath, scope, label: projectLabel });
+      if (activeTopicId) void inspectTopicRemoval(activeTopicId).catch(() => undefined);
       setConfirmRemoveProject(null);
       if (scope === "project" && projectRoot) {
         void app.IsolatedWorktreeAvailability(projectRoot).then((availability) => {
@@ -1543,7 +1546,6 @@ export function ProjectTree({
       }
     };
     const isolationAvailability = worktreeAvailability[projectRoot];
-    const activeTopicArchiveTarget = activeTopicId ? projectTreeTopicArchiveTargetKey(scope, projectRoot, activeTopicId) : "";
     const isolatedWorkspaceItems: ContextMenuItem[] = scope === "project"
       ? [{
           key: "isolated-delivery-workspace",
@@ -1658,15 +1660,12 @@ export function ProjectTree({
       {
         key: "archive-active-topic",
         icon: <Archive className={activeTopicId && trashingTopics.has(activeTopicId) ? "project-tree__archive-spinner" : undefined} size={13} />,
-        label: activeTopicArchiveTarget && confirmArchiveTarget === activeTopicArchiveTarget
-          ? t("history.confirmMoveToTrash")
-          : t("projectTree.archiveConversation"),
+        label: topicRemovalInspections[activeTopicId ?? ""]?.disposition === "discard_placeholder" ? t("projectTree.removeEmptyTopic") : t("projectTree.archiveConversation"),
         disabled: !activeTopicInProject || !activeTopicId || activeTopicArchiveBlocked || Boolean(activeTopicId && trashingTopics.has(activeTopicId)),
         danger: true,
         onSelect: () => {
           if (!activeTopicId) return;
-          if (confirmArchiveTarget === activeTopicArchiveTarget) void trashTopic(activeTopicId);
-          else setConfirmArchiveTarget(activeTopicArchiveTarget);
+          void trashTopic(activeTopicId);
         },
       },
       ...(scope === "project"

@@ -193,6 +193,7 @@ func (a *App) materializeProjectTopics(req ProjectTopicPageRequest, reader works
 	if err != nil {
 		return legacy, nil, err
 	}
+	legacy.Items = a.withRemovablePlaceholderTopics(req, state, legacy.Items, adoptedTopics)
 	sources := append(legacy.Items, a.historicalCanonicalTopicsFromProjection(req.Scope, req.WorkspaceRoot, state, workspaceIndex)...)
 	if saved, err := readHistoricalSidecar(); err == nil {
 		applyHistoricalPresentations(sources, saved)
