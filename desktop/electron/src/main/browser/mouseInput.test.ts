@@ -40,9 +40,9 @@ test("mouse input selects its renderer and applies native zoom and display scale
       if (kind === "remote") {
         assert.equal(f.page.inputs.length, 0);
         assert.deepEqual(f.routed.map(row => row.params), [
-          { type: "mouseMoved", x: 40 * scale / zoom, y: 20 * scale / zoom, button: "none", buttons: 0, clickCount: 0 },
-          { type: "mousePressed", x: 40 * scale / zoom, y: 20 * scale / zoom, button: "left", buttons: 1, clickCount: 1 },
-          { type: "mouseReleased", x: 40 * scale / zoom, y: 20 * scale / zoom, button: "left", buttons: 0, clickCount: 1 },
+          { type: "mouseMoved", x: 40, y: 20, button: "none", buttons: 0, clickCount: 0 },
+          { type: "mousePressed", x: 40, y: 20, button: "left", buttons: 1, clickCount: 1 },
+          { type: "mouseReleased", x: 40, y: 20, button: "left", buttons: 0, clickCount: 1 },
         ]);
         assert.equal(f.page.debugger.commands.filter(row => row.method === "Target.attachToTarget").length, 1, "move, press and release share the owning target session");
         assert.equal(f.page.debugger.commands.filter(row => row.method === "Target.detachFromTarget").length, 0);
@@ -65,6 +65,27 @@ test("cancelled render preparation consumes late results without dispatching", a
   finish(true); await new Promise<void>(resolve => setImmediate(resolve));
   assert.equal(f.page.inputs.length, 0); assert.equal(f.routed.length, 0);
   assert.equal(f.page.debugger.commands.length, 0);
+});
+
+test("same-process descendants of an OOPIF use their renderer owner's coordinates", async () => {
+  const f = fixture("remote"), respond = f.page.debugger.respond;
+  const inner = new FakeFrame(3, f.child.url, () => undefined);
+  inner.parent = f.child; f.child.children.push(inner);
+  f.page.debugger.respond = (method, raw) => {
+    const params = raw as Record<string, unknown>;
+    if (method === "Page.createIsolatedWorld") return { executionContextId: params.frameId === "root" ? 1 : params.frameId === "child" ? 2 : 3 };
+    if (method === "Runtime.evaluate") {
+      if (!params.returnByValue) return { result: { objectId: `owner-${params.contextId}` } };
+      return { result: { value: params.contextId === 2 ? { index: 0, x: 4, y: 5 } : null } };
+    }
+    if (method === "DOM.describeNode") return { node: { frameId: params.objectId === "owner-1" ? "child" : "inner", backendNodeId: params.objectId === "owner-1" ? 10 : 11 } };
+    return respond(method, raw);
+  };
+  try {
+    await dispatchMouseInput(f.page, { type: "mouseDown", x: 100, y: 120, button: "left" }, () => 0.5);
+    assert.equal(f.page.inputs.length, 0);
+    assert.deepEqual(f.routed, [{ sessionId: "child-session", params: { type: "mousePressed", x: 40, y: 20, button: "left", buttons: 1, clickCount: 0 } }]);
+  } finally { disposeDebugger(f.page.debugger); }
 });
 
 test("frame replacement and viewport changes during routing refuse input without fallback", async () => {

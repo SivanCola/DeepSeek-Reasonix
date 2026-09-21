@@ -361,7 +361,7 @@ real remote/model, recording-size, recovery and signed-package gates remain open
 消除该错路由，未保留焦点模拟、额外截图或延时重试作为修复。
 
 `mouseInput.ts` 现在在隔离 DOM 环境逐级解析命中的 frame：同进程目标直接发送到主
-renderer，OOPIF 发送到其所属 CDP session，并在局部坐标只应用一次显示比例。每个
+renderer，保留原生显示坐标；OOPIF 发送到其所属 CDP session，使用所属 renderer 的 CSS 局部坐标。每个
 异步边界重新验证 frame 身份、视口和任务授权；取消后迟到结果不能派发输入。移动前
 有界检查连续动画帧的目标/视口稳定性，失败要求重新观察，不自动重放点击。
 
@@ -411,3 +411,25 @@ detachment, external connection ownership and unknown write receipts. All 287 te
 and the native macOS 100-cycle fixture pass, as do Windows ARM64 and Linux ARM64/Xvfb
 fixtures. Historical timeout evidence is retained; final CI and packaged validation
 are still required, and unrelated release qualification limits remain unchanged.
+
+### 精确落点与嵌套框架 / Exact pointer coordinates and nested frames
+
+进一步检查实际事件坐标发现：较宽按钮会掩盖重复缩放，Fit 比例 0.625 时点击虽成功，
+实际位置约 `(31,11)`，偏离观察中心 `(50.828,18.75)`。子 CDP session 接受其 renderer
+的 CSS 坐标，不应再乘外层 Fit 比例。若命中 OOPIF 内的同进程子框架，输入仍属于
+OOPIF 的 renderer，不能使用最内层 frame 的局部坐标。运行时现在显式携带 session
+所属 frame，输入分发从逐级遍历保存的坐标中选择该 owner 的坐标。
+
+新增确定性嵌套框架回归，原生矩阵同时断言事件落点与观察中心相差不超过 2 CSS px。
+288 项 Electron 测试、类型检查通过；macOS 三次缩放矩阵及 100 轮生命周期、Windows
+ARM64 和 Linux ARM64/Xvfb 原生矩阵均通过，包含自然 125% zoom、Fit/50%/75%、同进程、
+OOPIF 及 OOPIF 内同进程子框架。macOS 最新完整生产包通过 Go → Electron 跨域点击、
+关闭面板后台截图、provider PNG 交付及正常退出验证。历史失败和正式发布环境缺口保留。
+
+English: A broad button concealed duplicate scaling: child-session dispatch now uses
+renderer-local CSS coordinates without reapplying outer Fit. Same-process descendants
+inside an OOPIF use their owning OOPIF renderer's coordinates. All 288 unit tests,
+typechecking, the macOS 100-cycle fixture, Windows/Linux native matrices and the latest
+complete macOS package pass. Native checks assert the received point is within 2 CSS
+pixels of the observed centre, including nested frames and natural zoom. These results
+do not extend the release qualification scope documented above.

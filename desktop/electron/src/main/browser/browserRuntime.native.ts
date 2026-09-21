@@ -102,11 +102,13 @@ try {
   assert.equal(await clickedFrame.executeJavaScript("window.uploaded"), "fixture.txt");
   assert.equal(targetAttachments, 1, "snapshot, ref resolution, input and upload must share one OOPIF session");
   console.log("cross-origin file upload through bounded frame runtime: passed");
+  await clickedFrame.executeJavaScript(`new Promise(resolve => { const frame = document.createElement('iframe'); frame.style.cssText = 'display:block;width:180px;height:70px;margin:8px'; frame.onload = resolve; frame.src = 'http://localhost:${address.port}/child'; document.body.append(frame); }).then(() => true)`);
+  for (const frame of clickedFrame.framesInSubtree) await frame.executeJavaScript(`window.fixtureEvents = []; for (const type of ['mousedown', 'mouseup', 'click']) document.addEventListener(type, e => window.fixtureEvents.push({type, x:e.clientX, y:e.clientY, tag:e.target.tagName}));`);
   const idleBy = Date.now() + 4000;
   while (view.page.debugger.isAttached() && Date.now() < idleBy) await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(view.page.debugger.isAttached(), false, "idle connection must be released");
   const afterIdle = await takeSnapshot(view.page, "test", 1, "", new DocumentRegistry());
-  assert.equal((afterIdle.tree.match(/Child action/g) ?? []).length, 2, afterIdle.tree);
+  assert.equal((afterIdle.tree.match(/Child action/g) ?? []).length, 3, afterIdle.tree);
   assert.equal(targetAttachments, 2, "idle release must initialize one fresh OOPIF session");
   console.log("CDP idle release and new observation: passed");
   frameLease();
@@ -147,10 +149,9 @@ try {
       if (!zoomClicked) console.error(JSON.stringify({ zoomPoint, zoomedPoint, frames: await Promise.all(view.page.mainFrame.framesInSubtree.map(frame => frame.executeJavaScript("({width:innerWidth,events:window.fixtureEvents,rect:document.querySelector('button').getBoundingClientRect().toJSON()})"))) }));
       assert.equal(zoomClicked, true, "browser zoom must be converted exactly once");
       console.log("natural viewport page zoom input: passed");
-      view.page.setZoomFactor(1);
-      for (const displayScale of ["fit", 0.5, 0.75] as const) {
-        view.setViewport({ width: 1280, height: 720, scale: displayScale });
-        for (const prefix of ["f1", "f2"]) {
+      for (const displayScale of [null, "fit", 0.5, 0.75] as const) {
+        if (displayScale !== null) view.setViewport({ width: 1280, height: 720, scale: displayScale });
+        for (const prefix of ["f1", "f2", "f3"]) {
           const docs = new DocumentRegistry();
           const observed = await takeSnapshot(view.page, "test", 1, "", docs);
           const ref = observed.tree.match(new RegExp(`"Child action"[^\\n]*ref=(${prefix}e\\d+)`))?.[1];
@@ -171,6 +172,8 @@ try {
           }
           if (!fitClicked) console.error(JSON.stringify({ prefix, point, scale, element: resolved.value.element, frames: await Promise.all(view.page.mainFrame.framesInSubtree.map(frame => frame.executeJavaScript(`({events:window.fixtureEvents,width:innerWidth,height:innerHeight,rects:[...document.querySelectorAll('iframe,button')].map(e=>({tag:e.tagName,rect:e.getBoundingClientRect().toJSON()}))})`))) }));
           assert.equal(fitClicked, true, `foreground Fit must hit ${prefix}, scale=${scale}, point=${JSON.stringify(point)}`);
+          const receipt = await resolved.value.frame.executeJavaScript(`(() => { const event = window.fixtureEvents.filter(e => e.type === 'click').at(-1); const rect = document.querySelector('button').getBoundingClientRect(); return {event, x:rect.x+rect.width/2, y:rect.y+rect.height/2}; })()`) as { event: { x: number; y: number }; x: number; y: number };
+          assert.ok(Math.abs(receipt.event.x - receipt.x) <= 2 && Math.abs(receipt.event.y - receipt.y) <= 2, `pointer must hit the observed centre, not merely the same large button: ${JSON.stringify({ prefix, scale, receipt })}`);
         }
       }
     }

@@ -12,8 +12,8 @@ export function withFrameOperationSignal<T>(signal: AbortSignal, work: () => Pro
   return operationSignals.run(signal, work);
 }
 
-interface Context { frameId: string; sessionId?: string; executionContextId: number }
-type Execute = (contextId: number, sessionId: string | undefined, send: DebuggerSender) => Promise<unknown>;
+interface Context { frameId: string; sessionId?: string; executionContextId: number; sessionFrame?: GuestFrame }
+type Execute = (contextId: number, sessionId: string | undefined, send: DebuggerSender, sessionFrame?: GuestFrame) => Promise<unknown>;
 
 // One operation owns its frame contexts and object groups. Root connections
 // and target sessions have a single page-level owner; contexts are never shared.
@@ -59,14 +59,14 @@ export class FrameRuntime {
     } finally { clearTimeout(timer); }
   }
 
-  private context(frameId: string, sessionId?: string): Promise<Context> {
+  private context(frameId: string, sessionId?: string, sessionFrame?: GuestFrame): Promise<Context> {
     const key = `${sessionId ?? "root"}:${frameId}`;
     let existing = this.contexts.get(key);
     if (!existing) {
       existing = this.send("Page.createIsolatedWorld", { frameId, worldName: "reasonix-browser-v1", grantUniveralAccess: false }, sessionId).then(world => {
         const { executionContextId } = world as { executionContextId: number };
         if (!Number.isInteger(executionContextId)) throw browserFailure("script_runtime_error", "isolated world returned no context");
-        return { frameId, sessionId, executionContextId };
+        return { frameId, sessionId, executionContextId, sessionFrame };
       });
       this.contexts.set(key, existing);
     }
@@ -109,7 +109,7 @@ export class FrameRuntime {
     const original = await describe();
     let frameId = original.frameId;
     const targets = await this.send("Target.getTargets") as { targetInfos: { targetId: string; type: string }[] };
-    if (!targets.targetInfos.some(target => target.targetId === frameId && target.type === "iframe")) return this.context(frameId, parent.sessionId);
+    if (!targets.targetInfos.some(target => target.targetId === frameId && target.type === "iframe")) return this.context(frameId, parent.sessionId, parent.sessionFrame);
     let sessionId = this.sessions.get(frameId);
     if (!sessionId) {
       let attached: string;
@@ -128,7 +128,7 @@ export class FrameRuntime {
       this.sessions.set(frameId, sessionId);
     }
     verify();
-    return this.context(frameId, sessionId);
+    return this.context(frameId, sessionId, nativeChild);
   }
 
   async run(frame: GuestFrame, code: string, execute?: Execute): Promise<unknown> {
@@ -163,7 +163,7 @@ export class FrameRuntime {
         assertFrame();
         return result;
       };
-      const result = await execute(context.executionContextId, context.sessionId, send);
+      const result = await execute(context.executionContextId, context.sessionId, send, context.sessionFrame);
       assertFrame();
       return result;
     }

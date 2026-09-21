@@ -31,7 +31,9 @@ export async function dispatchMouseInput(page: GuestPage, event: MouseInputEvent
   };
   try {
     let frame = main, point = { x: event.x / scale, y: event.y / scale };
+    const points = new Map<GuestFrame, { x: number; y: number }>();
     for (;;) {
+      points.set(frame, point);
       if (event.type === "mouseMove" && !event.button && await evaluate(frame, "pageInputReady", point) !== true) throw browserFailure("page_not_ready", "input target has not reached a stable rendered frame; observe the page again");
       const child = await evaluate(frame, "pageInputFrame", point) as { index: number; x: number; y: number; unsupported?: boolean } | null;
       if (!child) break;
@@ -44,14 +46,16 @@ export async function dispatchMouseInput(page: GuestPage, event: MouseInputEvent
     }
     checkpoint();
     if (frame === main) { page.sendInputEvent(event); return; }
-    await runtime!.run(frame, "", async (_context, sessionId, send) => {
+    await runtime!.run(frame, "", async (_context, sessionId, send, sessionFrame) => {
       checkpoint();
       if (!sessionId) { page.sendInputEvent(event); return; }
+      const ownerPoint = sessionFrame ? points.get(sessionFrame) : undefined;
+      if (!ownerPoint) throw browserFailure("stale_document", "pointer no longer belongs to the resolved renderer");
       const buttons = event.type === "mouseUp" ? 0 : event.button === "left" ? 1 : event.button === "right" ? 2 : event.button === "middle" ? 4 : 0;
-      // CDP applies browser zoom. Electron's emulation display scale remains
-      // our responsibility, including when dispatching into a child widget.
-      const displayScale = scale / (zoom || 1);
-      await send("Input.dispatchMouseEvent", { type: event.type === "mouseDown" ? "mousePressed" : event.type === "mouseUp" ? "mouseReleased" : "mouseMoved", x: point.x * displayScale, y: point.y * displayScale, button: event.button ?? "none", buttons, clickCount: event.clickCount ?? 0 }, sessionId);
+      // A target session takes CSS pixels local to its renderer. The outer
+      // Electron display scale has already been removed during frame traversal;
+      // applying it again can hit the same large button at the wrong point.
+      await send("Input.dispatchMouseEvent", { type: event.type === "mouseDown" ? "mousePressed" : event.type === "mouseUp" ? "mouseReleased" : "mouseMoved", x: ownerPoint.x, y: ownerPoint.y, button: event.button ?? "none", buttons, clickCount: event.clickCount ?? 0 }, sessionId);
     });
   } catch (error) { await runtime?.close(true); throw error; }
   finally { await runtime?.close(); }
