@@ -3,6 +3,7 @@ package browser
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"reasonix/internal/tool"
 )
@@ -37,6 +38,13 @@ func (t previewFileTool) ProviderVisible(ctx context.Context) bool {
 	return t.writeTool.ProviderVisible(ctx)
 }
 
+func (t previewFileTool) UnavailableReason(ctx context.Context) string {
+	if _, ok := t.exec.(FilePreviewer); !ok {
+		return "the attached browser does not support local file previews"
+	}
+	return t.writeTool.UnavailableReason(ctx)
+}
+
 type runFunc func(ctx context.Context, exec Executor, args json.RawMessage) (string, error)
 
 // base carries one tool's identity and its availability check.
@@ -62,12 +70,24 @@ func (b base) ProviderVisible(ctx context.Context) bool {
 	return true
 }
 
+func (b base) UnavailableReason(ctx context.Context) string {
+	if b.exec == nil {
+		return strings.TrimPrefix(noBrowserText, "blocked: ")
+	}
+	if diagnostic, ok := b.exec.(tool.ContextualAvailabilityReason); ok {
+		if reason := diagnostic.UnavailableReason(ctx); reason != "" {
+			return reason
+		}
+	}
+	return strings.TrimPrefix(noGrantText, "blocked: ")
+}
+
 func (b base) ready(ctx context.Context) error {
 	if b.exec == nil {
 		return tool.Blocked(noBrowserText)
 	}
 	if !b.ProviderVisible(ctx) {
-		return tool.Blocked(noGrantText)
+		return tool.Blocked("blocked: " + b.UnavailableReason(ctx))
 	}
 	return ctx.Err()
 }

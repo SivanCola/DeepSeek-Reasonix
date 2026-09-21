@@ -758,6 +758,11 @@ func applyRuntimeTab(target, source *WorkspaceTab, path string, appCtx context.C
 	if target == nil || source == nil {
 		return
 	}
+	if app != nil && target.ID != source.ID {
+		// Detached owners can acquire browser grants too. Retire the previous
+		// surface's grant before publishing the runtime's new binding.
+		app.forgetBrowserExecutorLocked(source.ID)
+	}
 	source.telemMu.Lock()
 	readTelemetry := append([]readFileRecord(nil), source.readTelemetry...)
 	usageTelemetry := cloneSessionUsageStats(source.usageTelemetry)
@@ -3751,7 +3756,7 @@ func (a *App) buildTabControllerWithContextCore(tab *WorkspaceTab, loadedSession
 		WorkspaceRoot:        root,
 		SessionDir:           sessionDir,
 		EffortOverride:       cloneStringPtr(buildEffort),
-		SharedHost:           sharedHost, BrowserExecutor: a.browserExecutorForTab(tab),
+		SharedHost:           sharedHost, BrowserExecutor: a.browserExecutorForRuntime(tab.ID, buildSink),
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SubagentParentLive:       a.subagentParentProbeForBuild(tab),
 		SessionRecoveryMeta:      a.tabSessionRecoveryMeta(tab),

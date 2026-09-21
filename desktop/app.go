@@ -2099,7 +2099,7 @@ func (a *App) clearLegacySessionRuntimeLocked(tab *WorkspaceTab, oldCtrl control
 		SessionDir:           sessionDirForSnapshot(snap),
 		EffortOverride:       cloneStringPtr(snap.effort),
 		EffortModel:          snap.model,
-		SharedHost:           sharedHost, BrowserExecutor: a.browserExecutorForTab(tab),
+		SharedHost:           sharedHost, BrowserExecutor: a.browserExecutorForRuntime(tab.ID, newSink),
 		MCPHostProfile:           plugin.HostProfileDesktopApps,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SubagentParentLive:       a.subagentParentProbeForBuild(tab),
@@ -3108,6 +3108,11 @@ func (a *App) closeRemovedSessionRuntime(item removedSessionRuntime, closed map[
 			if releasedTabs != nil {
 				releasedTabs[item.tab] = true
 			}
+			a.mu.Lock()
+			if owner := a.tabByEventSinkIDLocked(item.tab.ID); owner == nil || owner == item.tab {
+				a.forgetBrowserExecutorLocked(item.tab.ID)
+			}
+			a.mu.Unlock()
 			a.releaseTabSharedHost(item.tab)
 			item.tab.releaseSessionLease()
 		}
@@ -4049,7 +4054,7 @@ func (a *App) buildSessionRebindCandidate(
 		SessionDir:           sessionDir,
 		EffortOverride:       cloneStringPtr(source.effort),
 		EffortModel:          source.model,
-		SharedHost:           sharedHost, BrowserExecutor: a.browserExecutorForTab(tab),
+		SharedHost:           sharedHost, BrowserExecutor: a.browserExecutorForRuntime(tab.ID, sink),
 		MCPHostProfile:           plugin.HostProfileDesktopApps,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SubagentParentLive:       a.subagentParentProbeForBuild(tab),
@@ -9352,7 +9357,7 @@ func (a *App) SetModelForTab(tabID, name string) (retErr error) {
 		SessionDir:           sessionDirForSnapshot(snap),
 		SessionService:       a.desktopSessionService(sessionDirForSnapshot(snap)),
 		EffortOverride:       cloneStringPtr(effortOverride),
-		SharedHost:           sharedHost, BrowserExecutor: a.browserExecutorForTab(tab),
+		SharedHost:           sharedHost, BrowserExecutor: a.browserExecutorForRuntime(tab.ID, snap.sink),
 		MCPHostProfile:           plugin.HostProfileDesktopApps,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SubagentParentLive:       a.subagentParentProbeForBuild(tab),
@@ -9558,7 +9563,7 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 		SessionDir:           sessionDirForSnapshot(snap),
 		SessionService:       a.desktopSessionService(sessionDirForSnapshot(snap)),
 		EffortOverride:       &effort,
-		SharedHost:           sharedHost, BrowserExecutor: a.browserExecutorForTab(tab),
+		SharedHost:           sharedHost, BrowserExecutor: a.browserExecutorForRuntime(tab.ID, snap.sink),
 		MCPHostProfile:           plugin.HostProfileDesktopApps,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SubagentParentLive:       a.subagentParentProbeForBuild(tab),

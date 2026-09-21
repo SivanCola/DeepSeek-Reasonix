@@ -130,11 +130,11 @@ func (a *Agent) applyContextualToolGate(ctx context.Context, plan *toolCallPlan)
 }
 
 func contextualToolGateOutcome(ctx context.Context, target tool.Tool, name string) (toolOutcome, bool) {
-	contextual, ok := target.(tool.ContextualTool)
-	if !ok || contextual.ProviderVisible(ctx) {
+	reason := tool.ContextualUnavailableReason(ctx, target)
+	if reason == "" {
 		return toolOutcome{}, false
 	}
-	msg := fmt.Sprintf("blocked: tool %q is unavailable in the current workflow context", name)
+	msg := "blocked: " + reason
 	switch name {
 	case "get_goal", "create_goal", "update_goal":
 		msg = "goal tools require the current top-level host-attested goal context — no goal state was changed"
