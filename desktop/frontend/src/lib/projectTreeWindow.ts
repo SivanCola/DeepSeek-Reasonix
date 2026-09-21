@@ -49,6 +49,12 @@ export function resetProjectTreeRuntimeWindowLimits(projectKey?: string): void {
 
 export type ProjectTreeRequestLimiter = {
   run<T>(task: () => Promise<T>): Promise<T>;
+  stats(): ProjectTreeRequestLimiterStats;
+};
+
+export type ProjectTreeRequestLimiterStats = {
+  active: number;
+  queued: number;
 };
 
 type ProjectTreePage<T> = {
@@ -110,6 +116,9 @@ export function createProjectTreeRequestLimiter(maxConcurrent = 4): ProjectTreeR
         if (active < limit) start();
         else pending.push(start);
       });
+    },
+    stats(): ProjectTreeRequestLimiterStats {
+      return { active, queued: pending.length };
     },
   };
 }

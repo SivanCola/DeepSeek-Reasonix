@@ -35,19 +35,17 @@ import type { ProjectTreeProps } from "./ProjectTreeProps";
 import { PROJECT_TREE_SEARCH_PAGE, PROJECT_TREE_WINDOW_INITIAL, PROJECT_TREE_WINDOW_STEP, forgetProjectTreeWindowLimits, loadProjectTreePageWindow, projectTreeListKey, projectTreeListNeedsInitialization, projectTreeProjectsNeedingInitialLoad, projectTreeWindowRows, reloadProjectTreeTopicLists, rememberProjectTreeWindowLimit, type ProjectTreeListPageState } from "../lib/projectTreeWindow";
 import { useProjectTreeReadActivity } from "./useProjectTreeReadActivity";
 import { useProjectTreeListRuntime } from "../lib/useProjectTreeListRuntime";
-
+import { createProjectTreeRequestDiagnostic } from "../lib/projectTreeRequestDiagnostics";
 function projectNodeKey(node: ProjectNode, depth: number): string {
   if (node.session || node.sessionPath || node.source || node.remoteSession || node.tabId) return projectSessionRowKey(node);
   return node.key || `${node.kind}-${node.root ?? ""}-${node.topicId ?? ""}-${node.sessionPath ?? ""}-${depth}`;
 }
-
 type WorkbenchHeaderMenu = "more" | "add" | null;
 
 type CollapseSnapshot = {
   expanded: Set<string>;
   manuallyCollapsed: Set<string>;
 };
-
 function collapsibleFolderKeys(nodes: ProjectNode[], depth = 0): string[] {
   const keys: string[] = [];
   for (const node of nodes) {
@@ -278,7 +276,6 @@ export function ProjectTree({
     };
   }, []);
   const manuallyCollapsedRef = useRef(manuallyCollapsed);
-
   const updateManuallyCollapsed = useCallback((updater: (prev: Set<string>) => Set<string>) => {
     setManuallyCollapsed((prev) => {
       const next = updater(prev);
@@ -286,9 +283,7 @@ export function ProjectTree({
       return next;
     });
   }, []);
-
   const loadProjectTopicsRef = useRef<(project: ProjectNode, append?: boolean, groupID?: string) => Promise<void>>(async () => {});
-
   const loadProjectTopics = useCallback(async (project: ProjectNode, append = false, groupID = "") => {
     if ((project.kind !== "project" && project.kind !== "global_folder") || project.remote) return;
     const key = project.key;
@@ -321,10 +316,12 @@ export function ProjectTree({
     topicLoadSeqRef.current[listKey] = seq;
     topicLoadPendingRef.current[listKey] = seq;
     updateTopicPageState(listKey, { ...pageState, loading: true, error: undefined });
+    const emitRequest = createProjectTreeRequestDiagnostic({ projectKind: project.kind, creationTopics, sequence: seq, stats: () => topicRequestLimiterRef.current.stats() });
     try {
       const page = await topicRequestLimiterRef.current.run(() => {
+        emitRequest("started");
         const context = topicRequestContextRef.current;
-        if (topicLoadSeqRef.current[listKey] !== seq || context.query !== normalizedQuery || context.sortMode !== sortMode) return Promise.resolve(null);
+        if (topicLoadSeqRef.current[listKey] !== seq || context.query !== normalizedQuery || context.sortMode !== sortMode) return (emitRequest("discarded", { status: "stale" }), Promise.resolve(null));
         return loadProjectTreePageWindow(cursor, limit, (pageCursor, pageLimit) => app.ListProjectTopics({
           scope: project.kind === "global_folder" ? "global" : "project",
           workspaceRoot: project.kind === "global_folder" ? "" : project.root ?? "",
@@ -341,12 +338,13 @@ export function ProjectTree({
         }));
       });
       if (!page) return;
-      if (topicLoadSeqRef.current[listKey] !== seq) return;
+      if (topicLoadSeqRef.current[listKey] !== seq) return void emitRequest("discarded", { status: "stale" });
       const currentContext = topicRequestContextRef.current;
-      if (currentContext.query !== normalizedQuery || currentContext.sortMode !== sortMode) return;
+      if (currentContext.query !== normalizedQuery || currentContext.sortMode !== sortMode) return void emitRequest("discarded", { status: "stale" });
       delete topicLoadErrorRef.current[listKey];
       if (!projectTreeTopicPageIsFresh(topicRevisionRef.current, listKey, page.revision)) {
         updateTopicPageState(listKey, { ...topicPageStateRef.current[listKey], loading: false });
+        emitRequest("discarded", { status: "stale", itemCount: page.items.length });
         return;
       }
       topicRevisionRef.current[listKey] = Math.max(topicRevisionRef.current[listKey] ?? 0, page.revision);
@@ -372,14 +370,16 @@ export function ProjectTree({
       updateTopicPageState(listKey, preserveCompletePage
         ? { ...topicPageStateRef.current[listKey], itemKeys, loading: false, initialized: true }
         : { itemKeys, nextCursor: page.nextCursor, loading: false, initialized: true });
+      emitRequest("completed", { status: "ok", itemCount: items.length });
     } catch (error) {
-      if (topicLoadSeqRef.current[listKey] !== seq) return;
+      if (topicLoadSeqRef.current[listKey] !== seq) return void emitRequest("discarded", { status: "stale" });
       const message = error instanceof Error ? error.message : String(error);
       if (cursor && ((error as { code?: string })?.code === "stale_cursor" || (error as { data?: { sessionCode?: string } })?.data?.sessionCode === "stale_cursor" || message.includes("stale_cursor"))) {
         delete topicCompletePageRef.current[listKey];
         delete topicRevisionRef.current[listKey];
         updateTopicPageState(listKey, { itemKeys: [], loading: false, initialized: false });
         if (topicLoadPendingRef.current[listKey] === seq) delete topicLoadPendingRef.current[listKey];
+        emitRequest("failed", { status: "stale_cursor" });
         void loadProjectTopicsRef.current(project, false, groupID);
         return;
       }
@@ -388,12 +388,12 @@ export function ProjectTree({
         topicLoadErrorRef.current[listKey] = message;
         showToast(message, "error", { durationMs: 6000 });
       }
+      emitRequest("failed", { status: "error" });
     } finally {
       if (topicLoadPendingRef.current[listKey] === seq) delete topicLoadPendingRef.current[listKey];
     }
   }, [applyRuntimeProjection, creationTopics, currentArchiveTombstones, query, showToast, updateTopicPageState]);
   loadProjectTopicsRef.current = loadProjectTopics;
-
   const topicListState = useCallback((project: ProjectNode, groupID = "") => (
     topicPageState[projectTreeListKey(project.key, groupID, query)]
   ), [query, topicPageState]);
