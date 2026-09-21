@@ -113,18 +113,18 @@ func TestHistoryOutlinePreviewsVersionsAndCompatibleIndexes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		plan := ""
+		var plan strings.Builder
 		for rows.Next() {
 			var a, b, c int
 			var detail string
 			if err := rows.Scan(&a, &b, &c, &detail); err != nil {
 				t.Fatal(err)
 			}
-			plan += detail
+			plan.WriteString(detail)
 		}
 		rows.Close()
-		if !strings.Contains(plan, "messages_outline_") || strings.Contains(plan, "SCAN messages") {
-			t.Fatalf("unindexed directory query: %s", plan)
+		if !strings.Contains(plan.String(), "messages_outline_") || strings.Contains(plan.String(), "SCAN messages") {
+			t.Fatalf("unindexed directory query: %s", plan.String())
 		}
 	}
 	// Interrupted additive installation can be retried with no data migration.

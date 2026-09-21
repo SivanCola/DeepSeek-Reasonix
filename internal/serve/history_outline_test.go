@@ -18,7 +18,7 @@ func TestHistoryOutlineHTTPIdentityAndFixedWindow(t *testing.T) {
 	}
 	defer response.Body.Close()
 	var page session.HistoryOutlinePage
-	if err := json.NewDecoder(response.Body).Decode(&page); err != nil || response.StatusCode != 200 || page.Status != "ready" || page.TotalTurns != 8 || len(page.Entries) != 2 || page.Entries[0].MessageID != "m1" {
+	if err := json.NewDecoder(response.Body).Decode(&page); err != nil || response.StatusCode != http.StatusOK || page.Status != "ready" || page.TotalTurns != 8 || len(page.Entries) != 2 || page.Entries[0].MessageID != "m1" {
 		t.Fatalf("outline: %+v %v", page, err)
 	}
 	getWindow(t, server, fmt.Sprintf("anchor=message&messageId=m1&direction=newer&limit=1&generation=%s&snapshotSequence=%d", page.Generation, page.SnapshotSequence), &window)
@@ -35,7 +35,7 @@ func TestHistoryOutlineHTTPIdentityAndFixedWindow(t *testing.T) {
 			t.Fatal(err)
 		}
 		response.Body.Close()
-		if response.StatusCode == 200 {
+		if response.StatusCode == http.StatusOK {
 			t.Fatalf("accepted invalid request: %s", query)
 		}
 	}

@@ -15,7 +15,7 @@ func ensureHistoryOutlineIndexes(ctx context.Context, db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS messages_outline_users ON messages(visible_user,visible_turn,position,event_sequence,valid_to); CREATE INDEX IF NOT EXISTS messages_outline_answers ON messages(visible_turn,role,position DESC,event_sequence,valid_to)`); err != nil {
 		return err
 	}
@@ -90,7 +90,7 @@ func (q *Query) ReadHistoryOutline(ctx context.Context, ref SessionRef, req Hist
 	if err != nil {
 		return page, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var generation string
 	var durable uint64
 	if err := tx.QueryRowContext(ctx, `SELECT (SELECT value FROM metadata WHERE key='generation'),(SELECT value FROM metadata WHERE key='durable_sequence')`).Scan(&generation, &durable); err != nil {
