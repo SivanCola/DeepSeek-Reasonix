@@ -53,7 +53,10 @@ export default function ChatTurnNavigator({ source, scroll, mounts, tabId, hostI
   const complete = Boolean(tabId) && outline.mode !== "unsupported";
   const count = complete ? Math.max(outline.totalTurns, knownTurns, ...loaded.map(item => item.ordinal), 0) : loaded.length;
   const getItem = useCallback((index: number): TurnRailItem => {
-    if (!complete) return loaded[index];
+    // A legacy host only promises the order of its resident turns. Its
+    // projected history numbers can overlap during submission handoff, so use
+    // the resident order as the fallback rail position and React identity.
+    if (!complete) return { ...loaded[index], ordinal: index + 1 };
     const ordinal = index + 1;
     const entry = outline.entries.get(ordinal);
     const mounted = entry ? byId.get(`m:${entry.messageId}`) : byTurn.get(ordinal);
