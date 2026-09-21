@@ -6,6 +6,7 @@ import { browserFailure } from "./errors.js";
 import { abortable } from "./captureQueue.js";
 
 const operationSignals = new AsyncLocalStorage<AbortSignal>();
+export function frameOperationSignal(): AbortSignal | undefined { return operationSignals.getStore(); }
 export function withFrameOperationSignal<T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> {
   return operationSignals.run(signal, work);
 }

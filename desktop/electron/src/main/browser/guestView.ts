@@ -73,7 +73,7 @@ export interface GuestView {
   presentForUser?(): void;
   captureSurfaceSize?(): { width: number; height: number };
   prepareObservation?(): () => void;
-  sendMouseInput?(event: MouseInputEvent): Promise<void>;
+  sendMouseInput?(event: MouseInputEvent, verify?: () => void): Promise<void>;
   diagnostics?: DiagnosticBuffer;
   setViewport?(viewport: BrowserViewport | null): void;
   inputScale?(): number;

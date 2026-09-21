@@ -73,6 +73,7 @@ try {
   assert.ok(located.ok, JSON.stringify(located));
   for (const frame of view.page.mainFrame.framesInSubtree) await frame.executeJavaScript(`window.fixtureEvents = []; for (const type of ['mousedown', 'mouseup', 'click']) document.addEventListener(type, e => window.fixtureEvents.push({type, x:e.clientX, y:e.clientY, tag:e.target.tagName}));`);
   const point = { x: Math.round(located.value.element.x + located.value.element.width / 2), y: Math.round(located.value.element.y + located.value.element.height / 2) };
+  await view.sendMouseInput!({ type: "mouseMove", ...point });
   await view.sendMouseInput!({ type: "mouseDown", button: "left", clickCount: 1, ...point });
   await view.sendMouseInput!({ type: "mouseUp", button: "left", clickCount: 1, ...point });
   const clickedFrame = located.value.frame;
@@ -121,46 +122,48 @@ try {
   view.setVisible(true);
   const releaseFitObservation = view.prepareObservation?.();
   try {
-    view.setViewport(null);
-    view.page.setZoomFactor(1.25);
-    const zoomPoint = await view.page.mainFrame.executeJavaScript(`(() => { const button = document.querySelector('button'); button.onclick = () => { window.fixtureZoomClicked = true; }; button.scrollIntoView(); const r = button.getBoundingClientRect(); return {x:r.x+r.width/2,y:r.y+r.height/2}; })()`) as { x: number; y: number };
-    const zoomedPoint = { x: Math.round(zoomPoint.x * 1.25), y: Math.round(zoomPoint.y * 1.25) };
-    view.page.sendInputEvent({ type: "mouseMove", ...zoomedPoint });
-    await view.sendMouseInput!({ type: "mouseDown", button: "left", clickCount: 1, ...zoomedPoint });
-    await view.sendMouseInput!({ type: "mouseUp", button: "left", clickCount: 1, ...zoomedPoint });
-    let zoomClicked = false;
-    const zoomDeadline = Date.now() + 1000;
-    while (!zoomClicked && Date.now() < zoomDeadline) {
-      zoomClicked = await view.page.mainFrame.executeJavaScript("Boolean(window.fixtureZoomClicked)") as boolean;
-      if (!zoomClicked) await new Promise(resolve => setTimeout(resolve, 16));
-    }
-    if (!zoomClicked) console.error(JSON.stringify({ zoomPoint, zoomedPoint, events: await view.page.mainFrame.executeJavaScript("({width:innerWidth,events:window.fixtureEvents,rect:document.querySelector('button').getBoundingClientRect().toJSON()})") }));
-    assert.equal(zoomClicked, true, "browser zoom must be converted exactly once");
-    console.log("natural viewport page zoom input: passed");
-    view.page.setZoomFactor(1);
-    for (const displayScale of ["fit", 0.5, 0.75] as const) {
-      view.setViewport({ width: 1280, height: 720, scale: displayScale });
-      for (const prefix of ["f1", "f2"]) {
-        const docs = new DocumentRegistry();
-        const observed = await takeSnapshot(view.page, "test", 1, "", docs);
-        const ref = observed.tree.match(new RegExp(`"Child action"[^\\n]*ref=(${prefix}e\\d+)`))?.[1];
-        assert.ok(ref, observed.tree);
-        const resolved = await resolveRef(view.page, docs.lookup(observed.documentToken)!, ref, true);
-        assert.ok(resolved.ok, JSON.stringify(resolved));
-        await resolved.value.frame.executeJavaScript("window.clicked = false");
-        const scale = view.inputScale?.() ?? 1;
-        const point = { x: Math.round((resolved.value.element.x + resolved.value.element.width / 2) * scale), y: Math.round((resolved.value.element.y + resolved.value.element.height / 2) * scale) };
-        view.page.sendInputEvent({ type: "mouseMove", ...point });
-        await view.sendMouseInput!({ type: "mouseDown", button: "left", clickCount: 1, ...point });
-        await view.sendMouseInput!({ type: "mouseUp", button: "left", clickCount: 1, ...point });
-        const clickDeadline = Date.now() + 1000;
-        let fitClicked = false;
-        while (!fitClicked && Date.now() < clickDeadline) {
-          fitClicked = await resolved.value.frame.executeJavaScript("Boolean(window.clicked)") as boolean;
-          if (!fitClicked) await new Promise(resolve => setTimeout(resolve, 16));
+    for (let transition = 0; transition < 3; transition++) {
+      view.setViewport(null);
+      view.page.setZoomFactor(1.25);
+      const zoomPoint = await view.page.mainFrame.executeJavaScript(`(() => { window.fixtureZoomClicked = false; const button = document.querySelector('button'); button.onclick = () => { window.fixtureZoomClicked = true; }; button.scrollIntoView(); const r = button.getBoundingClientRect(); return {x:r.x+r.width/2,y:r.y+r.height/2}; })()`) as { x: number; y: number };
+      const zoomedPoint = { x: Math.round(zoomPoint.x * 1.25), y: Math.round(zoomPoint.y * 1.25) };
+      await view.sendMouseInput!({ type: "mouseMove", ...zoomedPoint });
+      await view.sendMouseInput!({ type: "mouseDown", button: "left", clickCount: 1, ...zoomedPoint });
+      await view.sendMouseInput!({ type: "mouseUp", button: "left", clickCount: 1, ...zoomedPoint });
+      let zoomClicked = false;
+      const zoomDeadline = Date.now() + 1000;
+      while (!zoomClicked && Date.now() < zoomDeadline) {
+        zoomClicked = await view.page.mainFrame.executeJavaScript("Boolean(window.fixtureZoomClicked)") as boolean;
+        if (!zoomClicked) await new Promise(resolve => setTimeout(resolve, 16));
+      }
+      if (!zoomClicked) console.error(JSON.stringify({ zoomPoint, zoomedPoint, frames: await Promise.all(view.page.mainFrame.framesInSubtree.map(frame => frame.executeJavaScript("({width:innerWidth,events:window.fixtureEvents,rect:document.querySelector('button').getBoundingClientRect().toJSON()})"))) }));
+      assert.equal(zoomClicked, true, "browser zoom must be converted exactly once");
+      console.log("natural viewport page zoom input: passed");
+      view.page.setZoomFactor(1);
+      for (const displayScale of ["fit", 0.5, 0.75] as const) {
+        view.setViewport({ width: 1280, height: 720, scale: displayScale });
+        for (const prefix of ["f1", "f2"]) {
+          const docs = new DocumentRegistry();
+          const observed = await takeSnapshot(view.page, "test", 1, "", docs);
+          const ref = observed.tree.match(new RegExp(`"Child action"[^\\n]*ref=(${prefix}e\\d+)`))?.[1];
+          assert.ok(ref, observed.tree);
+          const resolved = await resolveRef(view.page, docs.lookup(observed.documentToken)!, ref, true);
+          assert.ok(resolved.ok, JSON.stringify(resolved));
+          await resolved.value.frame.executeJavaScript("window.clicked = false");
+          const scale = view.inputScale?.() ?? 1;
+          const point = { x: Math.round((resolved.value.element.x + resolved.value.element.width / 2) * scale), y: Math.round((resolved.value.element.y + resolved.value.element.height / 2) * scale) };
+          await view.sendMouseInput!({ type: "mouseMove", ...point });
+          await view.sendMouseInput!({ type: "mouseDown", button: "left", clickCount: 1, ...point });
+          await view.sendMouseInput!({ type: "mouseUp", button: "left", clickCount: 1, ...point });
+          const clickDeadline = Date.now() + 1000;
+          let fitClicked = false;
+          while (!fitClicked && Date.now() < clickDeadline) {
+            fitClicked = await resolved.value.frame.executeJavaScript("Boolean(window.clicked)") as boolean;
+            if (!fitClicked) await new Promise(resolve => setTimeout(resolve, 16));
+          }
+          if (!fitClicked) console.error(JSON.stringify({ prefix, point, scale, element: resolved.value.element, frames: await Promise.all(view.page.mainFrame.framesInSubtree.map(frame => frame.executeJavaScript(`({events:window.fixtureEvents,width:innerWidth,height:innerHeight,rects:[...document.querySelectorAll('iframe,button')].map(e=>({tag:e.tagName,rect:e.getBoundingClientRect().toJSON()}))})`))) }));
+          assert.equal(fitClicked, true, `foreground Fit must hit ${prefix}, scale=${scale}, point=${JSON.stringify(point)}`);
         }
-        if (!fitClicked) console.error(JSON.stringify({ prefix, point, scale, element: resolved.value.element, frames: await Promise.all(view.page.mainFrame.framesInSubtree.map(frame => frame.executeJavaScript(`({events:window.fixtureEvents,width:innerWidth,height:innerHeight,rects:[...document.querySelectorAll('iframe,button')].map(e=>({tag:e.tagName,rect:e.getBoundingClientRect().toJSON()}))})`))) }));
-        assert.equal(fitClicked, true, `foreground Fit must hit ${prefix}, scale=${scale}, point=${JSON.stringify(point)}`);
       }
     }
   } finally { releaseFitObservation?.(); }
@@ -187,7 +190,17 @@ try {
   diagnosticExport.bind(grants.install({ grantId: "native-grant", taskId: tab.taskId, sessionId: tab.sessionId, diagnosticScope }));
   await tab.view.page.mainFrame.executeJavaScript('console.error("HTTPS://user:NATIVE-SECRET@example.test/path?code=NATIVE-SECRET#NATIVE-SECRET HtTp://example.test/path?signature=NATIVE-SECRET")');
   await tab.view.page.mainFrame.executeJavaScript(`new Promise(resolve => { const frame = document.createElement("iframe"); frame.onload = resolve; frame.src = "http://localhost:${address.port}/child"; document.body.append(frame); }).then(() => true)`);
-  await withBrowserDiagnosticRequest({ requestId: "native-request", operationId: "native-operation", method: "host/browser.snapshot", tabId: tab.id }, event => diagnosticExport.trace(diagnosticScope, event), () => takeSnapshot(tab.view.page, tab.id, tab.epoch, "", new DocumentRegistry()));
+  // Match host/browser.snapshot's observation lease. Calling the DOM runtime
+  // directly on an unleased hidden tab exercises Chromium's throttled state,
+  // not the tool path being qualified.
+  const releaseDiagnosticObservation = tab.view.prepareObservation?.();
+  try {
+    const releaseDiagnosticSurface = await tab.view.prepareCapture!(new AbortController().signal);
+    try {
+      const result = await withBrowserDiagnosticRequest({ requestId: "native-request", operationId: "native-operation", method: "host/browser.snapshot", tabId: tab.id }, event => diagnosticExport.trace(diagnosticScope, event), () => takeSnapshot(tab.view.page, tab.id, tab.epoch, "", new DocumentRegistry()));
+      assert.match(result.tree, /Child action/, "diagnostic fixture must actually observe its cross-origin child");
+    } finally { releaseDiagnosticSurface(); }
+  } finally { releaseDiagnosticObservation?.(); }
   const recorder = new BrowserRecorder(surfaces, grants, __dirname);
   try {
     const recording = await recorder.request(tab, "native-grant", "start", "", directory, recordingSeconds);
@@ -217,9 +230,9 @@ try {
     console.log("user recording: input preserved recording and stop published a WebM");
   } finally { await recorder.close(); surfaces.destroyAll(); console.log("native browser: recording resources released"); }
   const diagnosticResult = diagnosticExport.read(diagnosticScope);
-  assert.ok(diagnosticResult.entries.some(row => row.kind === "page"));
-  assert.ok(diagnosticResult.entries.some(row => row.command === "Page.createIsolatedWorld" && row.requestId === "native-request"));
-  assert.ok(diagnosticResult.entries.some(row => row.event === "tab_closed"));
+  assert.ok(diagnosticResult.entries.some(row => row.kind === "page"), "native console event must reach the session export");
+  assert.ok(diagnosticResult.entries.some(row => row.command === "Page.createIsolatedWorld" && row.requestId === "native-request"), "isolated-world command must retain its diagnostic request attribution");
+  assert.ok(diagnosticResult.entries.some(row => row.event === "tab_closed"), "closed tab must remain in the export");
   assert.equal(JSON.stringify(diagnosticResult).includes("NATIVE-SECRET"), false);
   assert.equal(diagnosticResult.tabs.length, 0);
   await writeFile(join(__dirname, "browser-diagnostics.json"), JSON.stringify(diagnosticResult, null, 2));

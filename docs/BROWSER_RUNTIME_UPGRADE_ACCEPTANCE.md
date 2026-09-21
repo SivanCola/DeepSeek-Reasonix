@@ -5,7 +5,8 @@
 webview/CSS 截图宿主，也未实际运行完整 ZCode 应用。
 
 代码按 P0、P1、语义运行时、增强能力/UI、日志/交付边界及选择器修正分阶段提交；
-功能代码检查点为 `8de8bf84d`。没有推送、创建 PR、发布或修改用户的已安装应用。
+功能代码检查点为 `8de8bf84d`。后续集成至 `feature/browser-runtime-observability`，
+已创建草稿 PR #10635；没有发布或修改用户的已安装应用。
 
 本文区分代码实现、本地自动化、原生运行和发布验收。macOS 原生测试通过不代表
 Windows/Linux 或已签名安装包通过。当前不应宣布三平台发布门槛全部完成。
@@ -351,3 +352,34 @@ still stalls, and the expanded emulation matrix can deliver input to the embeddi
 IFRAME instead of the child document. Passing earlier fixtures are bounded evidence,
 not a resolution of either failure. Windows/Linux background capture remains disabled;
 real remote/model, recording-size, recovery and signed-package gates remain open.
+
+### 输入所属进程修复 / Renderer-owned input follow-up
+
+扩展矩阵确认：缩放和原生表面迁移之后，根 CDP 的跨进程命中路由可能使用上一帧信息。
+同一次点击曾在父页面 IFRAME 收到 mousedown，却在子页面按钮收到 mouseup；普通 125%
+缩放也曾丢失按下事件。统一 CDP mouseMove、模拟焦点、等待动画帧或先截图均不能单独
+消除该错路由，未保留焦点模拟、额外截图或延时重试作为修复。
+
+`mouseInput.ts` 现在在隔离 DOM 环境逐级解析命中的 frame：同进程目标直接发送到主
+renderer，OOPIF 发送到其所属 CDP session，并在局部坐标只应用一次显示比例。每个
+异步边界重新验证 frame 身份、视口和任务授权；取消后迟到结果不能派发输入。移动前
+有界检查连续动画帧的目标/视口稳定性，失败要求重新观察，不自动重放点击。
+
+确定性测试覆盖主文档、同进程子框架、OOPIF、取消、frame 替换、缩放变化与撤权。
+页面稳定性测试执行真实压缩 bundle，并检查移动、替换、脱离及无法绘制时清理回调。
+284 项 Electron 测试、类型检查和生产构建通过；macOS 最终源码完成三次完整缩放矩阵
+及 100 轮混合 frame 生命周期，退出前页面数量归零。Windows ARM64 与 Linux ARM64/Xvfb
+也通过了该输入路由的原生矩阵；CI 对最终提交的跨平台结果另行记录。
+
+还修正了诊断原生 fixture 绕过观察/渲染租约直接读取隐藏页的问题，并增加明确的跨域
+子树断言。该问题曾使 `Page.getFrameTree` 超过 1 秒；不能据此认定历史 `DOM.enable` /
+`Page.createIsolatedWorld` 间歇超时属于同一原因，后者仍保留为合并前需核实的门槛。
+
+English: Root CDP hit testing could route one click's press and release to different
+renderers after zoom or native surface changes. Input now resolves frame ownership
+in isolated DOM contexts and dispatches directly to the owning renderer, with
+bounded stability checks and cancellation/identity fences. Deterministic tests and
+the native scale matrix pass; macOS also completes 100 mixed-frame lifecycle cycles.
+The diagnostic fixture now uses the same leases as the host tool. Historical CDP
+domain/world stalls remain a separate investigation gate; these results do not
+claim that an unrelated successful rerun resolves them.

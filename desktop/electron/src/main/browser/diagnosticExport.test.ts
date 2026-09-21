@@ -130,7 +130,10 @@ test("host export serializes sanitized console URLs for every protocol casing", 
   const exported = await s.calls["host/browser.exportDiagnostics"]({ scope: a });
   const json = JSON.stringify(exported);
   for (const secret of ["review-user", "REVIEW-PASSWORD", "REVIEW-OAUTH-CODE", "REVIEW-SIGNATURE", "REVIEW-FRAGMENT"]) assert.equal(json.includes(secret), false, secret);
-  assert.ok(json.includes("https://example.test/callback"));
-  assert.ok(json.includes("http://example.test/callback"));
+  const entries = (exported as ReturnType<BrowserDiagnosticExport["read"]>).entries;
+  assert.deepEqual(entries.filter(row => row.kind === "page").map(row => ({ message: row.message, url: row.url })), [
+    ...Array.from({ length: 3 }, () => ({ message: "Request failed https://example.test/callback", url: "https://example.test/source" })),
+    { message: "Request failed http://example.test/callback", url: "http://example.test/source" },
+  ]);
   s.surfaces.destroyAll(); s.diagnostics.dispose();
 });

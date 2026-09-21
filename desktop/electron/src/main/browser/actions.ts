@@ -141,11 +141,12 @@ export class ActionExecutor {
   private async mouseClick(tab: BrowserTab, at: Point, verify: () => void): Promise<void> {
     const page = tab.view.page;
     this.deps.surfaces.markAgentInput(tab);
-    page.sendInputEvent({ type: "mouseMove", x: at.x, y: at.y });
+    const move = { type: "mouseMove" as const, x: at.x, y: at.y };
+    if (tab.view.sendMouseInput) await tab.view.sendMouseInput(move, verify); else page.sendInputEvent(move);
     for (const type of ["mouseDown", "mouseUp"] as const) {
       verify();
       const event = { type, x: at.x, y: at.y, button: "left" as const, clickCount: 1 };
-      if (tab.view.sendMouseInput) await tab.view.sendMouseInput(event); else page.sendInputEvent(event);
+      if (tab.view.sendMouseInput) await tab.view.sendMouseInput(event, verify); else page.sendInputEvent(event);
     }
   }
 

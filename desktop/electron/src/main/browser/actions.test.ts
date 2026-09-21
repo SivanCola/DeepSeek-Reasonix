@@ -5,7 +5,7 @@ import { ActionExecutor, type ActRequest } from "./actions.js";
 import { DocumentRegistry } from "./documents.js";
 import { BROWSER_ERR_NO_GRANT, BROWSER_ERR_STALE_REFERENCE, BROWSER_ERR_TAKEN_OVER, noGrant } from "./errors.js";
 import { FakeGuestView, FakeViewFactory, silentLog } from "./fakeGuestViews.js";
-import type { ResolveOutput } from "./pageScripts.js";
+import type { ResolveOutput, ResolvedElement } from "./pageScripts.js";
 import { BrowserSurfaceManager } from "./surfaceManager.js";
 import { DEBUGGER_IDLE_MS } from "./debuggerLease.js";
 
@@ -133,6 +133,30 @@ test("a navigation or document replacement during the act completes it without a
   const token = s.documents.issue({ tabId: s.tab.id, epoch: s.tab.epoch, snapshotId: "snap2", frames: [{ prefix: "", frameTreeNodeId: s.page.mainFrame.frameTreeNodeId, docId: "doc-2" }] });
   s.answers.identity = false;
   assert.deepEqual(await s.actions.act(s.tab, s.request({ documentToken: token }), s.verify), { executed: true });
+});
+
+test("click and editable focus await mouse movement and recheck the grant before pressing", async () => {
+  for (const action of ["click", "type", "press"] as const) {
+    const s = await setup();
+    s.answers.resolve = { ...s.answers.resolve as ResolvedElement, editable: true };
+    let entered!: () => void, release!: () => void;
+    const preparing = new Promise<void>(resolve => { entered = resolve; });
+    const ready = new Promise<void>(resolve => { release = resolve; });
+    const events: string[] = [];
+    s.tab.view.sendMouseInput = async (event, verify) => {
+      events.push(event.type);
+      if (event.type === "mouseMove") { entered(); await ready; }
+      verify?.();
+    };
+    const result = s.actions.act(s.tab, s.request({ action, text: "new text", keys: "Enter" }), s.verify);
+    await preparing;
+    assert.deepEqual(events, ["mouseMove"]);
+    assert.equal(s.page.inputs.length, 0, "the native and CDP channels must not be mixed");
+    s.revoke(); release();
+    assert.equal((await result).outcome, "unknown");
+    assert.deepEqual(events, ["mouseMove"], "no button press or replay after revocation");
+    assert.equal(s.page.inputs.length, 0);
+  }
 });
 
 test("non-interactable targets report executed:false with the same token", async () => {

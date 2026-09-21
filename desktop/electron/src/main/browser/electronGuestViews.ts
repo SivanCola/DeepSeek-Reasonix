@@ -1,9 +1,10 @@
 import { WebContentsView, session as electronSession, BrowserWindow, screen, type Session, type WebContents, type WebPreferences, type MouseInputEvent } from "electron";
-import { acquireDebugger, disposeDebugger } from "./debuggerLease.js";
+import { disposeDebugger } from "./debuggerLease.js";
 import { browserFailure } from "./errors.js";
 import { abortable } from "./captureQueue.js";
 import { DiagnosticBuffer } from "./diagnostics.js";
 import { viewportScale, type BrowserViewport } from "./viewport.js";
+import { dispatchMouseInput } from "./mouseInput.js";
 import type { Logger } from "../log.js";
 import { isBlockedNavigation, isPopupURL, type GuestView, type GuestViewEvents, type GuestViewFactory } from "./guestView.js";
 
@@ -176,16 +177,8 @@ class ElectronGuestView implements GuestView {
 
   presentForUser(): void { this.releaseCapture?.(); }
   captureSurfaceSize(): { width: number; height: number } { return this.view.getBounds(); }
-  async sendMouseInput(event: MouseInputEvent): Promise<void> {
-    const release = acquireDebugger(this.page.debugger);
-    try {
-      const buttons = event.type === "mouseUp" ? 0 : event.button === "left" ? 1 : event.button === "right" ? 2 : event.button === "middle" ? 4 : 0;
-      // Callers supply displayed-surface coordinates. CDP applies browser
-      // zoom itself, but its InputHandler does not apply Electron's emulation
-      // display scale. Undo only page zoom; preserve the Fit conversion.
-      const zoom = this.page.getZoomFactor() || 1;
-      await release.send("Input.dispatchMouseEvent", { type: event.type === "mouseDown" ? "mousePressed" : event.type === "mouseUp" ? "mouseReleased" : "mouseMoved", x: event.x / zoom, y: event.y / zoom, button: event.button ?? "none", buttons, clickCount: event.clickCount ?? 0 });
-    } finally { release(); }
+  async sendMouseInput(event: MouseInputEvent, verify?: () => void): Promise<void> {
+    await dispatchMouseInput(this.page, event, () => this.inputScale(), verify);
   }
   prepareObservation(): () => void {
     this.observations++;

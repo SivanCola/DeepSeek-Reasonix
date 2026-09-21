@@ -216,7 +216,7 @@ export function buildBrowserHostCalls(deps: BrowserHostDeps): HostCallTable {
       verify();
       surfaces.markAgentInput(tab);
       observations.delete(tab);
-      const mouse = async (event: Electron.MouseInputEvent) => { verify(); if (tab.view.sendMouseInput) await tab.view.sendMouseInput(event); else tab.view.page.sendInputEvent(event); };
+      const mouse = async (event: Electron.MouseInputEvent) => { verify(); if (tab.view.sendMouseInput) await tab.view.sendMouseInput(event, verify); else tab.view.page.sendInputEvent(event); };
       try {
         await mouse({ type: "mouseMove", ...from });
         if (action !== "hover") {

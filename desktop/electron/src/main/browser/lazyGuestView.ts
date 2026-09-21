@@ -58,7 +58,7 @@ export class LazyGuestView implements GuestView {
   capturePixelRatio(): number { return this.live?.capturePixelRatio?.() ?? 1; }
   presentForUser(): void { this.live?.presentForUser?.(); }
   prepareObservation(): () => void { return this.materialize().prepareObservation?.() ?? (() => {}); }
-  async sendMouseInput(event: MouseInputEvent): Promise<void> { const view = this.materialize(); if (view.sendMouseInput) await view.sendMouseInput(event); else view.page.sendInputEvent(event); }
+  async sendMouseInput(event: MouseInputEvent, verify?: () => void): Promise<void> { const view = this.materialize(); if (view.sendMouseInput) await view.sendMouseInput(event, verify); else { verify?.(); view.page.sendInputEvent(event); } }
   captureSurfaceSize(): { width: number; height: number } { return this.live?.captureSurfaceSize?.() ?? this.bounds ?? { width: 1280, height: 720 }; }
   get diagnostics() { return this.live?.diagnostics; }
   async prepareCapture(signal: AbortSignal, recording = false): Promise<() => void> { return await this.materialize().prepareCapture?.(signal, recording) ?? (() => {}); }
