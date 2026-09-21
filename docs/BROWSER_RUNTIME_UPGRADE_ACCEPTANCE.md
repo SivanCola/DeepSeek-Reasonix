@@ -433,3 +433,16 @@ typechecking, the macOS 100-cycle fixture, Windows/Linux native matrices and the
 complete macOS package pass. Native checks assert the received point is within 2 CSS
 pixels of the observed centre, including nested frames and natural zoom. These results
 do not extend the release qualification scope documented above.
+
+### 录制终态发布 / Recording terminal-state publication
+
+CI 的 macOS 原生用例暴露收尾竞态：WebM 已校验并移动到目标路径，状态提前标为
+`completed`，但异步清理尚未释放全局录制占用；紧接着启动下一次录制被拒绝。
+现在清理期间保持 `finalizing`，清理完成后在同一同步边界释放占用并发布终态和产物。
+取消和中断也沿用同一边界。确定性测试阻塞真实文件清理，验证清理前不发布产物、
+清理后立即允许下一次录制；该测试在修复前失败，未添加等待重试。
+
+English: macOS CI exposed completed status before asynchronous cleanup released the
+global recording slot. Cleanup now stays finalizing; slot release, terminal status
+and artifact publication happen together. A controlled file-cleanup barrier reproduces
+the failure before the fix and covers both completion and cancellation.

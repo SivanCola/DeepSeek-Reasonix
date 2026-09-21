@@ -75,9 +75,12 @@ export class BrowserRecorder {
       if (this.surfaces.get(tab.id) !== tab || controlChanged || tab.view.page.isDestroyed() || tab.lifecycleEpoch !== lifecycleEpoch || tab.viewportRevision !== revision || changedSurface) void cancel("target closed, changed, crashed or taken over");
     });
     const offGrant = this.grants.onRevoke(grant => { if (!userInitiated && grant.grantId === grantId) void cancel("grant revoked"); });
-    const cleanup = async (discard: boolean) => {
+    const cleanup = async (discard: boolean, outcome: Partial<Recording>) => {
       if (finished) return;
       finished = true;
+      // Terminal status promises the global slot and all temporary resources
+      // are released. Keep cleanup visible as finalizing until that is true.
+      info.state = "finalizing";
       clearTimeout(stopTimer); clearTimeout(finalizationTimer);
       offSurfaces(); offGrant(); controller.abort();
       captureSession.setDisplayMediaRequestHandler(null);
@@ -88,15 +91,17 @@ export class BrowserRecorder {
       try {
         await rm(html, { force: true });
         if (discard) { await rm(temporary, { force: true }); await rm(target, { force: true }); }
-      } catch { info.state = "interrupted"; info.error = "recording cleanup failed"; delete info.path; }
-      finally { if (this.job?.info.id === id) this.job = null; finishResolve({ ...info }); }
+      } catch { outcome = { state: "interrupted", error: "recording cleanup failed", path: undefined }; }
+      finally {
+        if (this.job?.info.id === id) this.job = null;
+        Object.assign(info, outcome);
+        finishResolve({ ...info });
+      }
     };
     const cancel = async (reason: string, failure = false) => {
       if (finished) { await completion; return; }
-      info.state = failure ? "failed" : reason === "cancelled by user" ? "cancelled" : "interrupted";
-      info.error = reason;
       port1.postMessage({ type: "cancel" });
-      await cleanup(true);
+      await cleanup(true, { state: failure ? "failed" : reason === "cancelled by user" ? "cancelled" : "interrupted", error: reason });
     };
     const stop = async () => {
       if (finished) return completion;
@@ -160,8 +165,7 @@ export class BrowserRecorder {
                 if (bytes.length !== info.bytes || bytes.length < 32 || bytes.readUInt32BE(0) !== 0x1a45dfa3 || data.width !== geometry.width || data.height !== geometry.height || !Number.isFinite(data.durationMs) || data.durationMs <= 0) throw new Error("invalid WebM result");
                 await rename(temporary, target);
                 if (finished) { await rm(target, { force: true }); return; }
-                Object.assign(info, { state: "completed", width: data.width, height: data.height, durationMs: data.durationMs, path: target });
-                await cleanup(false);
+                await cleanup(false, { state: "completed", width: data.width, height: data.height, durationMs: data.durationMs, path: target });
               } catch { await cancel("WebM validation failed", true); }
             })();
           }
