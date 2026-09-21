@@ -38,6 +38,7 @@ import { PROJECT_TREE_SEARCH_PAGE, PROJECT_TREE_WINDOW_INITIAL, PROJECT_TREE_WIN
 import { useProjectTreeReadActivity } from "./useProjectTreeReadActivity";
 import { useProjectTreeListRuntime } from "../lib/useProjectTreeListRuntime";
 import { activeSessionAncestorKeys, collapsibleProjectTreeFolderKeys, defaultExpandedProjectTreeKeys, projectTreeNodeKey as projectNodeKey } from "../lib/projectTreeExpansion";
+import { createProjectTreeRequestDiagnostic } from "../lib/projectTreeRequestDiagnostics";
 export { activeSessionAncestorKeys, defaultExpandedProjectTreeKeys } from "../lib/projectTreeExpansion";
 
 type WorkbenchHeaderMenu = "more" | "add" | null;
@@ -300,9 +301,9 @@ export function ProjectTree({
         }), append ? Math.max(limit, (pageState?.itemKeys?.length ?? 0) + limit) : limit);
       });
       if (!page) return;
-      if (topicLoadSeqRef.current[listKey] !== seq) { if (!append || page.replacedSnapshot) releaseReadSnapshot(page.snapshotId); return; }
+      if (topicLoadSeqRef.current[listKey] !== seq) { if (!append || page.replacedSnapshot) releaseReadSnapshot(page.snapshotId); emitRequest("discarded", { status: "stale", itemCount: page.items.length }); return; }
       const currentContext = topicRequestContextRef.current;
-      if (currentContext.query !== normalizedQuery || currentContext.sortMode !== sortMode) { if (!append || page.replacedSnapshot) releaseReadSnapshot(page.snapshotId); return; }
+      if (currentContext.query !== normalizedQuery || currentContext.sortMode !== sortMode) { if (!append || page.replacedSnapshot) releaseReadSnapshot(page.snapshotId); emitRequest("discarded", { status: "stale", itemCount: page.items.length }); return; }
       const appendPage = append && !page.replacedSnapshot;
       if (appendPage && pageState?.snapshotId && page.snapshotId !== pageState.snapshotId) throw new Error("Mixed read snapshots in one list");
       delete topicLoadErrorRef.current[listKey];
@@ -320,6 +321,7 @@ export function ProjectTree({
       if (preserveCompletePage && !appendPage) {
         releaseReadSnapshot(page.snapshotId);
         updateTopicPageState(listKey, { ...topicPageStateRef.current[listKey], loading: false });
+        emitRequest("completed", { status: "ok", itemCount: items.length });
         return;
       }
       const incomingKeys = items.map((item) => item.key);
@@ -349,6 +351,7 @@ export function ProjectTree({
         : { itemKeys, nextCursor: page.nextCursor, snapshotId: page.snapshotId, loading: false, initialized: true });
       if (preserveCompletePage && !appendPage) releaseReadSnapshot(page.snapshotId);
       else if (!appendPage && pageState?.snapshotId !== page.snapshotId) releaseReadSnapshot(pageState?.snapshotId);
+      emitRequest("completed", { status: "ok", itemCount: items.length });
     } catch (error) {
       if (topicLoadSeqRef.current[listKey] !== seq) return void emitRequest("discarded", { status: "stale" });
       const message = error instanceof Error ? error.message : String(error);
