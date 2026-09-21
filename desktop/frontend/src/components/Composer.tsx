@@ -1,5 +1,6 @@
 import { recoveryStatusText, type RecoveryRetry } from "../lib/recoveryStatus";
 import { useRuntimeSession } from "../lib/useRuntimeState";
+import { isCompactCommand } from "../lib/sessionMaintenanceOperation";
 import { pendingFollowups, confirmFollowup, followupNotSubmitted, followupSessionKey, type PendingFollowup } from "../lib/pendingFollowup";
 import { useAppNavigationStore } from "../store/appNavigation";
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
@@ -2206,7 +2207,9 @@ export function Composer({
 				attachmentSubmissionId = prepared.submissionId;
 				structured = prepared.structured;
 			}
-      if (running) {
+      // Repeated compaction asks the owner for its current operation receipt;
+      // queueing it would unexpectedly start another compaction after this one.
+      if (running && !(maintenanceActive && !structured && isCompactCommand(submitText))) {
         // An entity-only submit has an empty displayText (entities live
         // outside the text model); fall back to the serialized slash form so
         // the queue shows the invocation instead of silently dropping it

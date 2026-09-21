@@ -1810,7 +1810,7 @@ const LanguagePolicy = `Reply in the same language the user is using in their mo
 // Default returns the built-in default configuration.
 func Default() *Config {
 	return &Config{
-		ConfigVersion:    10,
+		ConfigVersion:    deepSeekCatalogUpgradeVersion,
 		DefaultModel:     "deepseek-flash",
 		CredentialsStore: CredentialsStoreAuto,
 		UI:               UIConfig{Theme: "auto", ShowTurnUsage: true},
@@ -1872,7 +1872,7 @@ func Default() *Config {
 		Providers: []ProviderEntry{
 			{
 				Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com",
-				Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY",
+				Model: "deepseek-flash", APIKeyEnv: "DEEPSEEK_API_KEY",
 				BalanceURL: "https://api.deepseek.com/user/balance", Thinking: "enabled",
 				WebSearch: boolPointer(true), SupportedEfforts: []string{"disabled", "low", "high", "max"}, DefaultEffort: "high",
 				ContextWindow: 1_000_000, Price: deepSeekV4FlashPriceUSD(),
@@ -1941,7 +1941,7 @@ func (c *Config) resolveCurrentModel(ref string) (*ProviderEntry, bool) {
 	}
 	// "provider/model"
 	if prov, model, ok := strings.Cut(ref, "/"); ok {
-		if e, found := c.Provider(prov); found && e.HasModel(model) {
+		if e, found := c.Provider(prov); found && acceptsDeepSeekModelReference(e, model) {
 			cp := *e
 			cp.Model = model
 			cp.applyModelPrice()
@@ -1959,7 +1959,7 @@ func (c *Config) resolveCurrentModel(ref string) (*ProviderEntry, bool) {
 	}
 	// a bare model name → the provider that lists it
 	for i := range c.Providers {
-		if c.Providers[i].HasModel(ref) {
+		if acceptsDeepSeekModelReference(&c.Providers[i], ref) {
 			cp := c.Providers[i]
 			cp.Model = ref
 			cp.applyModelPrice()

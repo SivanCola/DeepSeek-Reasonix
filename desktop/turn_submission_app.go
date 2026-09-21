@@ -56,6 +56,14 @@ type turnSubmissionState struct {
 	submissionID string
 }
 
+type managementAdmissionError struct {
+	result control.SubmitResult
+	cause  error
+}
+
+func (e *managementAdmissionError) Error() string { return e.cause.Error() }
+func (e *managementAdmissionError) Unwrap() error { return e.cause }
+
 func (t *WorkspaceTab) recordTurnStarted(now int64) int64 {
 	t.telemMu.Lock()
 	defer t.telemMu.Unlock()
@@ -349,13 +357,19 @@ func (a *App) submitToTabResult(tabID, input string, fromBridge, classifyManagem
 			managementRoute = classifier.ClassifySubmitRoute(input) == control.SubmitManagementHandled
 		}
 		if managementRoute {
-			if result, err := control.MaintenanceCommandConflict(ctrl, trimmed); err != nil {
-				return result, err
-			}
 			// Management commands still take the tab admission lock so they cannot
 			// race an active turn or a controller replacement.
-			admission, admittedCtrl, err := a.beginTabTurn(tabID, !fromBridge, submissionID...)
+			admission, admittedCtrl, err := a.beginRuntimeTurnChecked(tabID, !fromBridge, false, func(owner control.SessionAPI) error {
+				if result, err := control.MaintenanceCommandConflict(owner, trimmed); err != nil {
+					return &managementAdmissionError{result: result, cause: err}
+				}
+				return nil
+			}, submissionID...)
 			if err != nil {
+				var conflict *managementAdmissionError
+				if errors.As(err, &conflict) {
+					return conflict.result, conflict.cause
+				}
 				return control.SubmitResult{}, err
 			}
 			defer admission.abort()

@@ -1682,30 +1682,6 @@ func stringSlicesEqual(a, b []string) bool {
 	return true
 }
 
-func normalizeOfficialDeepSeekModels(c *Config) {
-	if c == nil {
-		return
-	}
-	for i := range c.Providers {
-		p := &c.Providers[i]
-		if officialProviderHost(p.BaseURL) != "api.deepseek.com" {
-			continue
-		}
-		switch strings.TrimSpace(p.Name) {
-		case "deepseek":
-			ensureProviderModels(p, []string{"deepseek-v4-flash", "deepseek-v4-pro"}, "deepseek-v4-flash")
-		case "deepseek-flash":
-			ensureProviderModels(p, []string{"deepseek-v4-flash"}, "deepseek-v4-flash")
-		case "deepseek-pro":
-			ensureProviderModels(p, []string{"deepseek-v4-pro"}, "deepseek-v4-pro")
-		case "deepseek-responses":
-			ensureProviderModels(p, []string{"deepseek-v4-flash", "deepseek-v4-pro"}, "deepseek-v4-flash")
-		}
-		backfillOfficialDeepSeekResponsesModels(p)
-		backfillDeepSeekAnthropicCapabilities(p)
-	}
-}
-
 func backfillDeepSeekAnthropicCapabilities(p *ProviderEntry) {
 	if p == nil || !strings.EqualFold(strings.TrimSpace(p.Kind), "anthropic") ||
 		!IsOfficialDeepSeekWebSearchEndpoint(p) {
@@ -2066,8 +2042,8 @@ func ensureDeepSeekOfficialProvider(c *Config) {
 		Name:          "deepseek",
 		Kind:          "anthropic",
 		BaseURL:       deepSeekAnthropicBaseURL,
-		Models:        []string{"deepseek-v4-flash", "deepseek-v4-pro"},
-		Default:       "deepseek-v4-flash",
+		Models:        append([]string(nil), deepSeekOfficialModels...),
+		Default:       "deepseek-flash",
 		APIKeyEnv:     "DEEPSEEK_API_KEY",
 		BalanceURL:    "https://api.deepseek.com/user/balance",
 		Thinking:      "enabled",
