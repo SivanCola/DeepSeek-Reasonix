@@ -10,12 +10,7 @@ import (
 
 // Run after controllers and lifecycle barriers release their bindings.
 func (a *App) closeSessionServices() {
-	if err := a.closeSessionServicesResult(); err != nil {
-		slog.Warn("desktop: close session service", "err", err)
-	}
-}
-
-func (a *App) closeSessionServicesResult() error {
+	a.desktopSessions.readSnapshots.close()
 	a.sessionServicesMu.Lock()
 	services := make([]*session.Service, 0, len(a.sessionServices))
 	for _, service := range a.sessionServices {

@@ -6529,6 +6529,38 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/inbox_queue.go",
+      "name": "InboxQueueForTarget",
+      "owner": "App.InboxQueueForTarget",
+      "params": [
+        {
+          "kind": "object",
+          "ref": "main.InboxTargetView"
+        },
+        {
+          "kind": "object",
+          "ref": "control.InboxQueueRequest"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.InboxQueueResultView"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "target",
+          "request"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.InboxQueueForTarget"
+      },
+      "sources": [
+        "desktop/inbox_queue.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/inbox_app.go",
       "name": "InboxSnapshot",
       "owner": "App.InboxSnapshot",
@@ -6551,6 +6583,33 @@
       },
       "sources": [
         "desktop/inbox_app.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/topic_removal.go",
+      "name": "InspectTopicRemoval",
+      "owner": "App.InspectTopicRemoval",
+      "params": [
+        {
+          "kind": "object",
+          "ref": "main.TopicRemovalTarget"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.TopicRemovalInspection"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "target"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.InspectTopicRemoval"
+      },
+      "sources": [
+        "desktop/topic_removal.go"
       ]
     },
     {
@@ -6972,7 +7031,7 @@
     },
     {
       "cancellation": "before-dispatch",
-      "domain": "desktop/history_catalog.go",
+      "domain": "desktop/history_read_snapshots.go",
       "name": "ListHistorySessions",
       "owner": "App.ListHistorySessions",
       "params": [
@@ -6993,7 +7052,7 @@
         "resolver": "App.ListHistorySessions"
       },
       "sources": [
-        "desktop/history_catalog.go"
+        "desktop/history_read_snapshots.go"
       ]
     },
     {
@@ -7069,6 +7128,7 @@
         },
         "kind": "array"
       },
+      "returnsError": true,
       "scope": {
         "inputs": [],
         "kind": "owner-state",
@@ -10602,6 +10662,27 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/read_snapshot_store.go",
+      "name": "ReleaseReadSnapshot",
+      "owner": "App.ReleaseReadSnapshot",
+      "params": [
+        {
+          "kind": "string"
+        }
+      ],
+      "scope": {
+        "inputs": [
+          "id"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.ReleaseReadSnapshot"
+      },
+      "sources": [
+        "desktop/read_snapshot_store.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/app.go",
       "name": "ReloadCommands",
       "owner": "App.ReloadCommands",
@@ -11729,6 +11810,33 @@
       },
       "sources": [
         "desktop/app.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/topic_removal.go",
+      "name": "RemoveTopic",
+      "owner": "App.RemoveTopic",
+      "params": [
+        {
+          "kind": "object",
+          "ref": "main.TopicRemovalRequest"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.TopicRemovalResult"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "req"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.RemoveTopic"
+      },
+      "sources": [
+        "desktop/topic_removal.go"
       ]
     },
     {
@@ -15229,7 +15337,7 @@
     },
     {
       "cancellation": "before-dispatch",
-      "domain": "desktop/history_catalog.go",
+      "domain": "desktop/history_read_snapshots.go",
       "name": "SearchHistoryContent",
       "owner": "App.SearchHistoryContent",
       "params": [
@@ -15250,7 +15358,7 @@
         "resolver": "App.SearchHistoryContent"
       },
       "sources": [
-        "desktop/history_catalog.go"
+        "desktop/history_read_snapshots.go"
       ]
     },
     {
@@ -22402,6 +22510,112 @@
           "name": "recoveryRequired",
           "type": {
             "kind": "boolean"
+          }
+        }
+      ]
+    },
+    "control.InboxQueueEdit": {
+      "fields": [
+        {
+          "name": "id",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "text",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "contentVersion",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "references",
+          "type": {
+            "elem": {
+              "kind": "string"
+            },
+            "kind": "array"
+          }
+        }
+      ]
+    },
+    "control.InboxQueueRequest": {
+      "fields": [
+        {
+          "name": "kind",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "itemId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "text",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "contentVersion",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "beforeItemId",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "string"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "queueRevision",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "paused",
+          "optional": true,
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "turnId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "display",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "idempotencyKey",
+          "optional": true,
+          "type": {
+            "kind": "string"
           }
         }
       ]
@@ -30453,6 +30667,13 @@
     "main.HistorySearchContextRequest": {
       "fields": [
         {
+          "name": "contentDigest",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
           "name": "sessionPath",
           "type": {
             "kind": "string"
@@ -30480,6 +30701,20 @@
     },
     "main.HistorySearchHit": {
       "fields": [
+        {
+          "name": "partIndex",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "contentDigest",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
         {
           "name": "sessionPath",
           "type": {
@@ -30584,6 +30819,31 @@
     },
     "main.HistorySearchPage": {
       "fields": [
+        {
+          "name": "snapshotId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "snapshotExpiresAt",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "readError",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "main.ReadError"
+            },
+            "kind": "nullable"
+          }
+        },
         {
           "name": "items",
           "type": {
@@ -30691,6 +30951,31 @@
     },
     "main.HistorySessionPage": {
       "fields": [
+        {
+          "name": "snapshotId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "snapshotExpiresAt",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "readError",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "main.ReadError"
+            },
+            "kind": "nullable"
+          }
+        },
         {
           "name": "items",
           "type": {
@@ -31150,6 +31435,52 @@
         }
       ]
     },
+    "main.InboxQueueResultView": {
+      "fields": [
+        {
+          "name": "outcome",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "reason",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "snapshot",
+          "type": {
+            "kind": "object",
+            "ref": "main.InboxSnapshotView"
+          }
+        },
+        {
+          "name": "edit",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "control.InboxQueueEdit"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "receipt",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "sessioninbox.InboxReceipt"
+            },
+            "kind": "nullable"
+          }
+        }
+      ]
+    },
     "main.InboxReceiptView": {
       "fields": [
         {
@@ -31194,6 +31525,19 @@
     },
     "main.InboxSnapshotView": {
       "fields": [
+        {
+          "name": "readonly",
+          "optional": true,
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "mutationsSupported",
+          "type": {
+            "kind": "boolean"
+          }
+        },
         {
           "name": "revision",
           "type": {
@@ -34313,6 +34657,20 @@
     "main.ProjectTopicPage": {
       "fields": [
         {
+          "name": "snapshotId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "snapshotExpiresAt",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
           "name": "items",
           "type": {
             "elem": {
@@ -35385,6 +35743,62 @@
               "kind": "string"
             },
             "kind": "array"
+          }
+        }
+      ]
+    },
+    "main.ReadError": {
+      "fields": [
+        {
+          "name": "code",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "reason",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "message",
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
+    "main.ReadSnapshotDiagnostics": {
+      "fields": [
+        {
+          "name": "handles",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "activeBuilders",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "pendingBuilders",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "residentBytes",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "reservedDiskBytes",
+          "type": {
+            "kind": "integer"
           }
         }
       ]
@@ -37575,6 +37989,17 @@
     },
     "main.SessionArchitectureDiagnostics": {
       "fields": [
+        {
+          "name": "readSnapshots",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "main.ReadSnapshotDiagnostics"
+            },
+            "kind": "nullable"
+          }
+        },
         {
           "name": "pending_operations",
           "type": {
@@ -41782,6 +42207,124 @@
         }
       ]
     },
+    "main.TopicRemovalInspection": {
+      "fields": [
+        {
+          "name": "target",
+          "type": {
+            "kind": "object",
+            "ref": "main.TopicRemovalTarget"
+          }
+        },
+        {
+          "name": "disposition",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "allowed",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "reason",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "token",
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
+    "main.TopicRemovalRequest": {
+      "fields": [
+        {
+          "name": "operationId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "target",
+          "type": {
+            "kind": "object",
+            "ref": "main.TopicRemovalTarget"
+          }
+        },
+        {
+          "name": "expectedToken",
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
+    "main.TopicRemovalResult": {
+      "fields": [
+        {
+          "name": "committed",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "disposition",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "recoveryEntryId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "errorCode",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "errorMessage",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "retryable",
+          "type": {
+            "kind": "boolean"
+          }
+        }
+      ]
+    },
+    "main.TopicRemovalTarget": {
+      "fields": [
+        {
+          "name": "workspaceId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "topicId",
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
     "main.TrashEntry": {
       "fields": [
         {
@@ -44703,6 +45246,82 @@
           "optional": true,
           "type": {
             "kind": "integer"
+          }
+        }
+      ]
+    },
+    "sessioninbox.Capacity": {
+      "fields": [
+        {
+          "name": "items",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "maxItems",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "bytes",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "maxBytes",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "maxItemBytes",
+          "type": {
+            "kind": "integer"
+          }
+        }
+      ]
+    },
+    "sessioninbox.InboxReceipt": {
+      "fields": [
+        {
+          "name": "itemId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "disposition",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "position",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "paused",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "capacity",
+          "type": {
+            "kind": "object",
+            "ref": "sessioninbox.Capacity"
+          }
+        },
+        {
+          "name": "idempotent",
+          "optional": true,
+          "type": {
+            "kind": "boolean"
           }
         }
       ]

@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 11;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:469b869ff7365e43b060861f5ea5a37262b06c0d9914f31d75db132935b2d783";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:fb73147f33984717d24177baadcbb8173d87e1bccbecdfe76ea6e92ddb0f1167";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -249,7 +249,9 @@ export const DESKTOP_COMMANDS = [
   "ImportHistoricalSession",
   "ImportThemePack",
   "InboxHasItems",
+  "InboxQueueForTarget",
   "InboxSnapshot",
+  "InspectTopicRemoval",
   "InspectWorktreeMerge",
   "InstallMCPServer",
   "InstallPlugin",
@@ -402,6 +404,7 @@ export const DESKTOP_COMMANDS = [
   "ReleaseAttachmentTarget",
   "ReleaseDraftImageForTab",
   "ReleaseDraftImageForTarget",
+  "ReleaseReadSnapshot",
   "ReloadCommands",
   "ReloadRuntime",
   "ReloadSettings",
@@ -443,6 +446,7 @@ export const DESKTOP_COMMANDS = [
   "RemoveRemoteHost",
   "RemoveRemoteProject",
   "RemoveSkillPath",
+  "RemoveTopic",
   "RemoveWorkspace",
   "RenameCanonicalSession",
   "RenameProject",
@@ -1100,6 +1104,26 @@ export interface CancelReceipt {
   accepted: boolean;
   alreadyIdle: boolean;
   recoveryRequired: boolean;
+}
+
+export interface InboxQueueEdit {
+  id: string;
+  text: string;
+  contentVersion: string;
+  references: string[];
+}
+
+export interface InboxQueueRequest {
+  kind: string;
+  itemId?: string;
+  text?: string;
+  contentVersion?: string;
+  beforeItemId?: string | null;
+  queueRevision: number;
+  paused?: boolean;
+  turnId?: string;
+  display?: string;
+  idempotencyKey?: string;
 }
 
 export interface control_InvocationRequest {
@@ -2569,6 +2593,7 @@ export interface HistorySearchContextLine {
 }
 
 export interface HistorySearchContextRequest {
+  contentDigest?: string;
   sessionPath: string;
   messageIndex: number;
   before: number;
@@ -2576,6 +2601,8 @@ export interface HistorySearchContextRequest {
 }
 
 export interface HistorySearchHit {
+  partIndex?: number;
+  contentDigest?: string;
   sessionPath: string;
   sessionId: string;
   source: string;
@@ -2595,6 +2622,9 @@ export interface HistorySearchHit {
 }
 
 export interface HistorySearchPage {
+  snapshotId?: string;
+  snapshotExpiresAt?: number;
+  readError?: ReadError | null;
   items: HistorySearchHit[];
   nextCursor: string;
   revision: number;
@@ -2616,6 +2646,9 @@ export interface HistorySearchRequest {
 }
 
 export interface HistorySessionPage {
+  snapshotId?: string;
+  snapshotExpiresAt?: number;
+  readError?: ReadError | null;
   items: SessionMeta[];
   nextCursor: string;
   revision: number;
@@ -2710,6 +2743,14 @@ export interface InboxItemView {
   position: number;
 }
 
+export interface InboxQueueResultView {
+  outcome: string;
+  reason?: string;
+  snapshot: InboxSnapshotView;
+  edit?: InboxQueueEdit | null;
+  receipt?: InboxReceipt | null;
+}
+
 export interface InboxReceiptView {
   itemId: string;
   disposition: string;
@@ -2720,6 +2761,8 @@ export interface InboxReceiptView {
 }
 
 export interface InboxSnapshotView {
+  readonly?: boolean;
+  mutationsSupported: boolean;
   revision: number;
   paused: boolean;
   recovered: boolean;
@@ -3298,6 +3341,8 @@ export interface ProjectTopicKey {
 }
 
 export interface ProjectTopicPage {
+  snapshotId?: string;
+  snapshotExpiresAt?: number;
   items: ProjectNode[];
   nextCursor?: string;
   revision: number;
@@ -3487,6 +3532,20 @@ export interface QQBotView {
 export interface QuestionAnswer {
   questionId: string;
   selected: string[];
+}
+
+export interface ReadError {
+  code: string;
+  reason: string;
+  message: string;
+}
+
+export interface ReadSnapshotDiagnostics {
+  handles: number;
+  activeBuilders: number;
+  pendingBuilders: number;
+  residentBytes: number;
+  reservedDiskBytes: number;
 }
 
 export interface RecoveryCleanupItem {
@@ -3901,6 +3960,7 @@ export interface SessionActivityBaseline {
 }
 
 export interface SessionArchitectureDiagnostics {
+  readSnapshots?: ReadSnapshotDiagnostics | null;
   pending_operations: number;
   missing_members: number;
   identity_mismatches: number;
@@ -4688,6 +4748,34 @@ export interface TopicMeta {
   createdAt: number;
 }
 
+export interface TopicRemovalInspection {
+  target: TopicRemovalTarget;
+  disposition: string;
+  allowed: boolean;
+  reason?: string;
+  token: string;
+}
+
+export interface TopicRemovalRequest {
+  operationId: string;
+  target: TopicRemovalTarget;
+  expectedToken: string;
+}
+
+export interface TopicRemovalResult {
+  committed: boolean;
+  disposition: string;
+  recoveryEntryId?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  retryable: boolean;
+}
+
+export interface TopicRemovalTarget {
+  workspaceId: string;
+  topicId: string;
+}
+
 export interface TrashEntry {
   id: string;
   ref?: SessionRef | null;
@@ -5253,6 +5341,23 @@ export interface Ref {
   name?: string;
   indexDigest?: string;
   integrityBlockBytes?: number;
+}
+
+export interface Capacity {
+  items: number;
+  maxItems: number;
+  bytes: number;
+  maxBytes: number;
+  maxItemBytes: number;
+}
+
+export interface InboxReceipt {
+  itemId: string;
+  disposition: string;
+  position: number;
+  paused: boolean;
+  capacity: Capacity;
+  idempotent?: boolean;
 }
 
 export interface Diagnostics {
@@ -5929,7 +6034,9 @@ export interface GeneratedDesktopCommands {
   ImportHistoricalSession(arg0: string): Promise<SessionRestoreResult>;
   ImportThemePack(arg0: string, arg1: boolean): Promise<ThemeImportResult>;
   InboxHasItems(arg0: string): Promise<boolean>;
+  InboxQueueForTarget(arg0: InboxTargetView, arg1: InboxQueueRequest): Promise<InboxQueueResultView>;
   InboxSnapshot(arg0: string): Promise<InboxSnapshotView>;
+  InspectTopicRemoval(arg0: TopicRemovalTarget): Promise<TopicRemovalInspection>;
   InspectWorktreeMerge(arg0: string): Promise<MergeInspection>;
   InstallMCPServer(arg0: MCPServerInput): Promise<MCPInstallResult>;
   InstallPlugin(arg0: string, arg1: PluginInstallOptions): Promise<string>;
@@ -6082,6 +6189,7 @@ export interface GeneratedDesktopCommands {
   ReleaseAttachmentTarget(arg0: string): Promise<void>;
   ReleaseDraftImageForTab(arg0: string, arg1: string): Promise<void>;
   ReleaseDraftImageForTarget(arg0: string, arg1: string): Promise<void>;
+  ReleaseReadSnapshot(arg0: string): Promise<void>;
   ReloadCommands(): Promise<void>;
   ReloadRuntime(arg0: string): Promise<void>;
   ReloadSettings(): Promise<void>;
@@ -6123,6 +6231,7 @@ export interface GeneratedDesktopCommands {
   RemoveRemoteHost(arg0: string): Promise<void>;
   RemoveRemoteProject(arg0: string, arg1: string): Promise<void>;
   RemoveSkillPath(arg0: string): Promise<void>;
+  RemoveTopic(arg0: TopicRemovalRequest): Promise<TopicRemovalResult>;
   RemoveWorkspace(arg0: string): Promise<void>;
   RenameCanonicalSession(arg0: SessionRef, arg1: string): Promise<void>;
   RenameProject(arg0: string, arg1: string): Promise<void>;
