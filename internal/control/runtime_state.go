@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"reflect"
 	"sync"
+	"sync/atomic"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/event"
@@ -21,6 +22,7 @@ type RuntimeStateReader interface {
 
 type controllerRuntimeState struct {
 	mu             sync.Mutex // serializes sampling, commit and publication order; never held by observers
+	published      atomic.Pointer[event.RuntimeStateSnapshot]
 	snapshot       event.RuntimeStateSnapshot
 	ledger         *turnevent.Ledger
 	path           string
@@ -230,7 +232,7 @@ func (c *Controller) refreshRuntimeStateAttempt(e event.Event, attempt int) {
 		return
 	}
 	next.Revision++
-	r.snapshot = cloneRuntimeState(next)
+	r.commitSnapshot(next)
 	r.path, r.ledger, r.activity = path, ledger, activity
 	defer slog.Debug("runtime state committed", "source", "controller", "epoch", next.RuntimeEpoch[:8], "revision", next.Revision, "phase", next.Phase)
 	if !initialized {

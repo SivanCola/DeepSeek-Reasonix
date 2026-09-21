@@ -33,6 +33,8 @@ Desktop、Serve 和远程会话使用控制器提交的运行状态快照。正�
 
 Desktop 的 `GetRuntimeStateSnapshot` 和 `runtime-state:changed` 使用相同完整投影，包含投影 epoch/revision、sessions 和 topics。本地采样离开 App 锁读取控制器后，复验标签、控制器、会话代次、路径及打开/分离身份。旧项目树接口由同一投影适配。
 
+Desktop 状态观察优先使用 `PublishedRuntimeStateSnapshot`，取得控制器最近一次已提交状态的不可变副本。读取不会刷新状态来源，也不等待 controller 或采样锁，避免一个运行时卡住后通过状态汇总阻塞其他项目列表。生产者在每次语义提交（包括初始化）时替换快照，随后异步发送通知。原有即时采样接口继续供既有嵌入者和调用方使用；不改变传输协议或持久化格式。
+
 标签 metadata 暴露 `sessionGeneration` 和同一次 controller 采样得到的 `runtimeStateSnapshot`；兼容字段 `canonicalTodos` 也从该快照转换。通过绑定校验的 metadata 可以建立新的 `projectionEpoch` 基线；普通晚到 runtime 帧只能在当前 epoch 内推进 `revision`，不能替换生产者。有版本的空待办数组表示有效清空，缺失快照只表示尚未取得基线。前端按 `hostId + sessionId` 保存快照，因此切换标签只改变可见内容，不会转移或清空其他会话的状态。
 
 Serve 的 `GET /runtime-states` 仅读取前台及 detached 控制器的内存快照；`/status` 增加 `runtimeState`。指定 session 时优先匹配真实拥有该 session 的实例。SSE 的 `runtime_state` 使用既有 session tagging，新的会话状态不会越过 `session_changed` 屏障。外部接管和只读镜像继续遵守原 ownership 规则。
