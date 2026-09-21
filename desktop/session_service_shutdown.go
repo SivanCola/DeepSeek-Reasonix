@@ -50,5 +50,5 @@ func onlyReleasedBindingErrors(err error) bool {
 	if wrapped := errors.Unwrap(err); wrapped != nil {
 		return onlyReleasedBindingErrors(wrapped)
 	}
-	return err == session.ErrRuntimeBound
+	return errors.Is(err, session.ErrRuntimeBound)
 }
