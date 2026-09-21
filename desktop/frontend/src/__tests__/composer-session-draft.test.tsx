@@ -338,8 +338,7 @@ console.log("\ncomposer session draft");
   });
   const { root, rerender } = await renderComposer({
     running: true,
-    tabId: "tab-a",
-    inboxSessionPath: "/repo/session-a.jsonl",
+    tabId: "tab-a", inboxSessionPath: "/repo/session-a.jsonl",
     sessionKey: "session:project:/repo:topic-a:session-a",
     onSend: (text, _submit, targetTabId) => {
       sent.push({ tab: targetTabId ?? "", text });
@@ -353,8 +352,7 @@ console.log("\ncomposer session draft");
   ok(document.querySelector(".composer-guidance-item") !== null, "session A shows its queued guidance before switching");
   await rerender({
     running: false,
-    tabId: "tab-b",
-    inboxSessionPath: "/repo/session-b.jsonl",
+    tabId: "tab-b", inboxSessionPath: "/repo/session-b.jsonl",
     sessionKey: "session:project:/repo:topic-b:session-b",
     onSend: (text, _submit, targetTabId) => {
       sent.push({ tab: targetTabId ?? "", text });
@@ -365,8 +363,7 @@ console.log("\ncomposer session draft");
 
   await rerender({
     running: true,
-    tabId: "tab-a",
-    inboxSessionPath: "/repo/session-a.jsonl",
+    tabId: "tab-a", inboxSessionPath: "/repo/session-a.jsonl",
     sessionKey: "session:project:/repo:topic-a:session-a",
     onSend: (text, _submit, targetTabId) => {
       sent.push({ tab: targetTabId ?? "", text });
