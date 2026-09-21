@@ -1,4 +1,5 @@
 import { reduceCompactionEvent, reduceMaintenanceRuntimeSnapshot, reconcileMaintenanceState } from "./sessionMaintenanceReducer";
+import { isCompactSubmission } from "./sessionMaintenanceOperation";
 import { isShellToolName } from "./shellToolIdentity";
 // useController is the frontend's state machine over the agent event stream. It keeps
 // per-tab output, tool state, and approvals while the user switches tabs; components
@@ -829,7 +830,8 @@ export type Action =
   | { type: "user"; text: string; submitText?: string; seq: number; submissionId: string; deliveryRecovery?: boolean }
   | { type: "unsend" }
   | { type: "send_confirmed"; submissionId: string }
-  | { type: "management_confirmed"; submissionId: string }
+  | { type: "management_confirmed"; submissionId: string; receipt?: import("./turnSubmit").ManagementReceipt }
+  | { type: "management_requested" }
   | { type: "turn_admitted"; turnId: string; submissionId: string }
   | { type: "turn_submit_rejected"; submissionId: string; error: string }
   | { type: "turn_submit_unknown"; submissionId: string; error: string }
@@ -1975,7 +1977,8 @@ function reduceState(s: State, a: Action): State {
       });
     }
     case "send_confirmed": return confirmPendingUser(s, a.submissionId);
-    case "management_confirmed": return reduceManagementConfirmation(s, a.submissionId, promptEventClock());
+    case "management_requested": return { ...s, seq: s.seq + 1 };
+    case "management_confirmed": return reduceManagementConfirmation(s, a.submissionId, promptEventClock(), a.receipt);
     case "turn_admitted":
       return s.localSubmissions[a.submissionId] && a.turnId
         ? updateLocalSubmission(s.pendingSubmissionId === a.submissionId ? { ...s, activeTurnId: a.turnId } : s, a.submissionId,
@@ -3615,7 +3618,13 @@ export function useController() {
     const original = originalText?.trim() ?? "";
     bumpCancelHydrateSeq(tabId);
     if (currentState.hydrateReason === "rewind") dispatchTo(tabId, { type: "hydrate_done" });
-    dispatchTo(tabId, { type: "user", text: displayText, submitText: display !== submit ? submit : undefined, seq, submissionId });
+    // A compact request never starts a conversational turn. Runtime snapshots
+    // own its busy/Stop state; a late receipt must not mutate chat lifecycle.
+    if (isCompactSubmission(submit, structured, initialGoal)) {
+      dispatchTo(tabId, { type: "management_requested" });
+    } else {
+      dispatchTo(tabId, { type: "user", text: displayText, submitText: display !== submit ? submit : undefined, seq, submissionId });
+    }
     invalidateCache();
     try {
       const [outcome, detail] = await import("./turnSubmit").then(module => module.submitTurn(app, tabId, submissionId, display, submit, original, structured, initialGoal));
@@ -3627,7 +3636,7 @@ export function useController() {
         return;
       }
       if (outcome === 2) {
-        dispatchTo(tabId, { type: "management_confirmed", submissionId });
+        dispatchTo(tabId, { type: "management_confirmed", submissionId, receipt: detail });
         return;
       }
       if (outcome === 3) dispatchTo(tabId, { type: "turn_admitted", turnId: detail as string, submissionId });
