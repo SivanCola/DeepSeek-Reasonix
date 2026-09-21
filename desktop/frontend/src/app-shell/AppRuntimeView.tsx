@@ -402,6 +402,7 @@ export function AppRuntimeView(props: AppRuntimeViewProps) {
               onOpenTurnChanges: session.turnVerificationCommands.openTurnChanges,
               onLoadOlderHistory: session.transcript.handleLoadOlderHistory,
               onLoadNewerHistory: session.transcript.handleLoadNewerHistory,
+              onNavigateToTurn: session.transcript.handleNavigateToTurn,
               onSurfacePaintReady: session.transcript.handleSurfacePaintReady,
             }}
           />

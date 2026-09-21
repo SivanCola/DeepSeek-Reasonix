@@ -85,6 +85,7 @@ import { activeTabHydrationPlan, canAdoptUnboundLiveSurface, hasCachedLiveTurn, 
 import { useSessionCatalogActions } from "./useSessionCatalogActions";
 import { hydrateIdentityCurrent, sessionIdentityFields, sessionIdentityStableKey, type SessionHydrationOptions } from "./sessionIdentity";
 import { loadHistoryWindow } from "./historyWindowController";
+import { useHistoryTurnNavigation } from "./useHistoryTurnNavigation";
 import { reduceHistoryWindowState } from "./historyWindowState";
 import { withRemoteProviderUnreachable, withRemoteTurnInterrupted } from "./remoteTurnState";
 import type { NavigationResult, SurfaceDataCommit, SurfaceDataOutcome } from "./navigationSurfaceTransition";
@@ -2945,10 +2946,7 @@ export function useController() {
     }
   }, [bumpSessionLoadSeq, dispatchTo, ensureTranscriptSubscription, sessionLoadCurrent]);
 
-  // On-demand full content for a ref-replaced history field (entries carrying
-  // refs[] ship a ≤4KiB preview inline). Resolves through the transcript
-  // store, which patches the projected items by stable id on completion. The
-  // rendering layer calls this when a truncated entry scrolls into view.
+  // Resolve a visible truncated field through the store's stable message id.
   const requestHistoryFullContent = useCallback(async (entryId: string, field: string): Promise<string | undefined> => {
     const tabId = activeTabIdRef.current;
     if (!tabId) return undefined;
@@ -2956,6 +2954,7 @@ export function useController() {
     return getTranscriptStore().requestFullContent(tabId, entryId, field);
   }, [ensureTranscriptSubscription]);
 
+  const navigateToTurn = useHistoryTurnNavigation(statesRef, historyWindowSeq, dispatchTo);
   const loadOlderHistory = useCallback(async (tabId?: string, targetTurn?: number, trigger: HistoryLoadType = "retry"): Promise<HistoryLoadOutcome> => {
     const targetTabId = tabId || activeTabIdRef.current;
     if (!targetTabId) return "empty";
@@ -2975,7 +2974,7 @@ export function useController() {
     });
   }, [dispatchTo, ensureTranscriptSubscription, startTranscriptFollow]);
 
-  const loadNewerHistory = useCallback(async (tabId?: string, latest = false): Promise<HistoryLoadOutcome> => {
+  const loadNewerHistory = useCallback(async (tabId?: string, latest = false, readerCurrent?: () => boolean): Promise<HistoryLoadOutcome> => {
     const targetTabId = tabId || activeTabIdRef.current;
     if (!targetTabId) return "empty";
     const state = statesRef.current.get(targetTabId);
@@ -2985,7 +2984,7 @@ export function useController() {
     ensureTranscriptSubscription(targetTabId);
     return loadHistoryWindow({
       tabId: targetTabId, direction: latest ? "latest" : "newer", trigger: latest ? "return-latest" : "viewport-user",
-      state, requestSeq,
+      state, requestSeq, readerCurrent,
       isCurrent: (seq) => historyWindowSeq.current.get(targetTabId) === seq,
       currentState: () => statesRef.current.get(targetTabId),
       dispatch: (action) => dispatchTo(targetTabId, action),
@@ -4872,7 +4871,7 @@ export function useController() {
     dismissExtensionForm, drainExtensionNotifications,
     setCollaborationMode, setCollaborationModeForTab, setToolApprovalMode, setToolApprovalModeForTab, setQualityFloor, setComposerProfileForTab, setGoal, setGoalForTab, editGoalForTab, clearGoal, clearGoalForTab, resumeGoal, resumeGoalForTab, pauseGoal, pauseGoalForTab,
     newSession, clearSession, listSessions, listTrashedSessions, retrySessionHistory, resumeSession, openChannelSession, previewSession, deleteSession, restoreSession, purgeTrashedSession, renameSession,
-    loadOlderHistory, loadNewerHistory,
+    loadOlderHistory, loadNewerHistory, navigateToTurn,
     requestHistoryFullContent,
     refreshMeta, pickWorkspace, switchWorkspace, compact, rewind, rewindForTab, rewindForTabDetailed, undoRewindForTab, forkTurnForTab, setModel, setModelForTab, setEffort, setEffortForTab, cancelJob,
     fetchMemory, remember, forget, saveDoc,

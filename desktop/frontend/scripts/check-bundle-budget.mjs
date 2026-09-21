@@ -526,6 +526,11 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // Localized sandbox runtime, status, and write-scope labels add 1873 B (0.089%)
 // to the local startup path: 2095890 B versus 2094017 B. Retain the next
 // one-decimal ceiling; compressed, chunk, CSS, and locale limits stay fixed.
-const rawInitialBudgetKiB = 2_047.0;
+// Complete turn navigation keeps its directory and target coordinator lazy.
+// On the localized-sandbox base, shared request fencing, Follow invalidation,
+// and local/remote callbacks measure 2098700 B (+2810 B, 0.134%). Retain the
+// established 186 B producer difference (2098886 B) at the next decimal;
+// compressed, chunk, CSS, locale, and body-residency budgets stay unchanged.
+const rawInitialBudgetKiB = 2_049.7;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

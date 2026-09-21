@@ -11039,6 +11039,37 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/remote_history_outline.go",
+      "name": "RemoteSessionHistoryOutlineForTab",
+      "owner": "App.RemoteSessionHistoryOutlineForTab",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "object",
+          "ref": "session.HistoryOutlineRequest"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "session.HistoryOutlinePage"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID",
+          "req"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.RemoteSessionHistoryOutlineForTab"
+      },
+      "sources": [
+        "desktop/remote_history_outline.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/remote_transcript_api.go",
       "name": "RemoteSessionHistoryPageForTab",
       "owner": "App.RemoteSessionHistoryPageForTab",
@@ -15404,6 +15435,37 @@
         ],
         "kind": "owner-inputs",
         "resolver": "App.SessionHistoryContentForTarget"
+      },
+      "sources": [
+        "desktop/session_history_service.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/session_history_service.go",
+      "name": "SessionHistoryOutlineForTab",
+      "owner": "App.SessionHistoryOutlineForTab",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "object",
+          "ref": "session.HistoryOutlineRequest"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "session.HistoryOutlinePage"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID",
+          "req"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.SessionHistoryOutlineForTab"
       },
       "sources": [
         "desktop/session_history_service.go"
@@ -43761,6 +43823,132 @@
           "name": "title",
           "type": {
             "kind": "string"
+          }
+        }
+      ]
+    },
+    "session.HistoryOutlineEntry": {
+      "fields": [
+        {
+          "name": "messageId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "turn",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "position",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "prompt",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "answer",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
+    "session.HistoryOutlinePage": {
+      "fields": [
+        {
+          "name": "status",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "generation",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "snapshotSequence",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "coverageSequence",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "totalTurns",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "entries",
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "session.HistoryOutlineEntry"
+            },
+            "kind": "array"
+          }
+        },
+        {
+          "name": "nextTurn",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "done",
+          "type": {
+            "kind": "boolean"
+          }
+        }
+      ]
+    },
+    "session.HistoryOutlineRequest": {
+      "fields": [
+        {
+          "name": "generation",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "snapshotSequence",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "integer"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "startTurn",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "limit",
+          "optional": true,
+          "type": {
+            "kind": "integer"
           }
         }
       ]

@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 11;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:4834c0e613010e6104b461f33ca8ddd31d407adbc5977b8e221269abfbbfb936";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:0c5cf9a4867c1488f6e96760120e4f8f182ab05ad22ec7649d57a51875ebf9c5";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -418,6 +418,7 @@ export const DESKTOP_COMMANDS = [
   "RemoteServerLogs",
   "RemoteServerStatus",
   "RemoteSessionHistoryContentForTab",
+  "RemoteSessionHistoryOutlineForTab",
   "RemoteSessionHistoryPageForTab",
   "RemoteSessionHistoryWindowForTab",
   "RemoteSessionMessageFieldForTab",
@@ -572,6 +573,7 @@ export const DESKTOP_COMMANDS = [
   "SearchSessionHistoryForTarget",
   "SessionHistoryContentForTab",
   "SessionHistoryContentForTarget",
+  "SessionHistoryOutlineForTab",
   "SessionHistoryPageForTab",
   "SessionHistoryPageForTarget",
   "SessionHistoryWindowForTab",
@@ -5085,6 +5087,32 @@ export interface ExportSnapshot {
   title: string;
 }
 
+export interface HistoryOutlineEntry {
+  messageId: string;
+  turn: number;
+  position: number;
+  prompt: string;
+  answer?: string;
+}
+
+export interface HistoryOutlinePage {
+  status: string;
+  generation: string;
+  snapshotSequence: number;
+  coverageSequence: number;
+  totalTurns: number;
+  entries: HistoryOutlineEntry[];
+  nextTurn: number;
+  done: boolean;
+}
+
+export interface HistoryOutlineRequest {
+  generation?: string;
+  snapshotSequence?: number | null;
+  startTurn?: number;
+  limit?: number;
+}
+
 export interface HistoryWindowPage {
   messages: PersistentMessage[];
   status: string;
@@ -6069,6 +6097,7 @@ export interface GeneratedDesktopCommands {
   RemoteServerLogs(arg0: string, arg1: string, arg2: number): Promise<string>;
   RemoteServerStatus(arg0: string, arg1: string): Promise<RemoteServerView>;
   RemoteSessionHistoryContentForTab(arg0: string, arg1: Ref, arg2: number): Promise<SessionHistoryContentChunk>;
+  RemoteSessionHistoryOutlineForTab(arg0: string, arg1: HistoryOutlineRequest): Promise<HistoryOutlinePage>;
   RemoteSessionHistoryPageForTab(arg0: string, arg1: string, arg2: number): Promise<MessageHistoryPage>;
   RemoteSessionHistoryWindowForTab(arg0: string, arg1: HistoryWindowRequest): Promise<HistoryWindowPage>;
   RemoteSessionMessageFieldForTab(arg0: string, arg1: string, arg2: number, arg3: string, arg4: number, arg5: number): Promise<MessageFieldPage>;
@@ -6223,6 +6252,7 @@ export interface GeneratedDesktopCommands {
   SearchSessionHistoryForTarget(arg0: SessionSelector, arg1: string, arg2: string, arg3: number): Promise<SearchHistoryPage>;
   SessionHistoryContentForTab(arg0: string, arg1: Ref, arg2: number): Promise<SessionHistoryContentChunk>;
   SessionHistoryContentForTarget(arg0: SessionSelector, arg1: Ref, arg2: number): Promise<SessionHistoryContentChunk>;
+  SessionHistoryOutlineForTab(arg0: string, arg1: HistoryOutlineRequest): Promise<HistoryOutlinePage>;
   SessionHistoryPageForTab(arg0: string, arg1: string, arg2: number): Promise<MessageHistoryPage>;
   SessionHistoryPageForTarget(arg0: SessionSelector, arg1: string, arg2: number): Promise<MessageHistoryPage>;
   SessionHistoryWindowForTab(arg0: string, arg1: HistoryWindowRequest): Promise<HistoryWindowPage>;

@@ -5877,6 +5877,21 @@
       ]
     }
   },
+  "RemoteSessionHistoryOutlineForTab": {
+    "domain": "desktop/remote_history_outline.go",
+    "owner": "App.RemoteSessionHistoryOutlineForTab",
+    "sources": [
+      "desktop/remote_history_outline.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.RemoteSessionHistoryOutlineForTab",
+      "inputs": [
+        "tabID",
+        "req"
+      ]
+    }
+  },
   "RemoteSessionHistoryPageForTab": {
     "domain": "desktop/remote_transcript_api.go",
     "owner": "App.RemoteSessionHistoryPageForTab",
@@ -8168,6 +8183,21 @@
         "selector",
         "ref",
         "offset"
+      ]
+    }
+  },
+  "SessionHistoryOutlineForTab": {
+    "domain": "desktop/session_history_service.go",
+    "owner": "App.SessionHistoryOutlineForTab",
+    "sources": [
+      "desktop/session_history_service.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.SessionHistoryOutlineForTab",
+      "inputs": [
+        "tabID",
+        "req"
       ]
     }
   },
