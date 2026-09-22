@@ -6260,16 +6260,11 @@ body > .mermaid-diagram--fullscreen {
   font-weight: 560;
   border-radius: 6px;
 }
-.compaction--pending {
-  color: var(--fg-dim);
-}
 .compaction__spinner {
-  flex: none;
   animation: spin 0.9s linear infinite;
 }
 .compaction__hint {
   margin-inline-start: 8px;
-  font-size: var(--text-sm);
   color: var(--fg-faint);
 }
 @media (prefers-reduced-motion: reduce) {

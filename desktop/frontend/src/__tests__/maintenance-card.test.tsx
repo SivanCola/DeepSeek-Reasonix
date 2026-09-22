@@ -18,7 +18,7 @@ const render = (value: CompactionItem) => renderToStaticMarkup(
 const running = render(item("running", true));
 assert.match(running, /class="compaction compaction--pending"/);
 assert.match(running, /Compacting conversation/);
-assert.match(running, /Generating a summary/);
+assert.match(running, /Generating summary/);
 assert.match(running, /compaction__spinner/);
 assert.match(running, /role="status"/);
 assert.doesNotMatch(running, /<button/);

@@ -2,7 +2,7 @@
 // decision receipts, and compaction cards.
 
 import { useState } from "react";
-import { CheckCheck, ChevronRight, CirclePlay, ClipboardCheck, FileSearch, Info, LoaderCircle, TriangleAlert } from "lucide-react";
+import { CheckCheck, ChevronRight, CirclePlay, ClipboardCheck, FileSearch, Info, TriangleAlert } from "lucide-react";
 import { useT } from "../lib/i18n";
 import type { Item } from "../lib/useController";
 import { sessionOperationStatus } from "../lib/sessionMaintenanceOperation";
@@ -143,7 +143,7 @@ export function CompactionCard({ item }: { item: CompactionItem }) {
     : item.pending ? t("compaction.working") : t("compaction.title");
   if (item.pending || status === "noop" || status === "cancelled" || status === "interrupted" || status === "unavailable") {
     return <div className={`compaction${item.pending ? " compaction--pending" : ""}`} data-entrance={item.id} data-transcript-layout-variant="static" role="status">
-      {item.pending ? <LoaderCircle className="compaction__spinner" size={14} aria-hidden="true" /> : <ProcessCompactIcon size={12} />}
+      <ProcessCompactIcon className={item.pending ? "compaction__spinner" : undefined} size={item.pending ? 14 : 12} />
       <span>{stateLabel}{status === "running" || (!status && item.pending) ? <span className="compaction__hint">{t("compaction.workingHint")}</span> : null}</span>
     </div>;
   }

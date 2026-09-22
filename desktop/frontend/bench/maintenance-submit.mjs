@@ -42,7 +42,7 @@ try {
   await page.getByRole("button", { name: "Switch session" }).click();
   assert.equal(await input.inputValue(), "Next message draft", "admission must preserve edits made while submitting");
   await page.locator(".compaction__spinner").waitFor();
-  assert.match(await page.locator(".compaction--pending").innerText(), /Generating a summary/);
+  assert.match(await page.locator(".compaction--pending").innerText(), /Generating summary/);
   assert.equal(await page.locator(".compaction--pending").getAttribute("role"), "status");
   await page.locator(".composer-run-strip__state").filter({ hasText: "Compacting conversation" }).waitFor();
   assert.equal(await page.locator(".composer-run-strip__metrics").count(), 0);
