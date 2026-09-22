@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"reflect"
 	"slices"
 	"strings"
@@ -241,7 +242,10 @@ func (a *App) UpdateSessionOrganization(workspace SessionOrganizationWorkspace, 
 	if workspace.HostID != "" && workspace.HostID != localDesktopHostID {
 		return a.remoteSessionOrganization(workspace, &expectedRevision, &mutation)
 	}
-	id, _, err := a.ensureSessionOrganizationSources(workspace.Scope, workspace.WorkspaceRoot, true)
+	// Group edits address either a group or one explicit source. Only moving
+	// in a manual order needs the complete relative order of other sources.
+	// Old source-dependent preferences still take their normal import path.
+	id, _, err := a.ensureSessionOrganizationSources(workspace.Scope, workspace.WorkspaceRoot, mutation.Kind == "move")
 	if err != nil {
 		return SessionOrganizationSnapshot{}, err
 	}
@@ -261,12 +265,26 @@ func (a *App) UpdateSessionOrganization(workspace SessionOrganizationWorkspace, 
 		if targetWorkspaceID != id {
 			return "", newSessionOperationError("target_changed", "The session moved to another workspace.")
 		}
-		resolved = append(resolved, target)
 		var ref *session.SessionRef
 		if target.SessionRef.SessionID != "" {
 			ref = &target.SessionRef
+		} else {
+			if _, err := os.Stat(target.SessionPath); err != nil {
+				return "", newSessionOperationError("target_not_found", "The historical source is unavailable.")
+			}
+			// Both path-only compatibility selectors and explicit source refs
+			// must name the same physical member used by the sidebar.
+			head := ""
+			if target.Source != nil {
+				head = target.Source.HeadID
+			} else if selector.Source != nil {
+				head = selector.Source.HeadID
+			}
+			target.Source = &SessionSourceRef{HostID: localDesktopHostID, Path: target.SessionPath,
+				HeadID: head, SourceKey: desktopSourceKey(target.SessionPath, head)}
 		}
-		return projectNodeSessionKey(ProjectNode{Session: ref, SessionPath: target.SessionPath, Source: selector.Source}), nil
+		resolved = append(resolved, target)
+		return projectNodeSessionKey(ProjectNode{Session: ref, SessionPath: target.SessionPath, Source: target.Source}), nil
 	}
 	key, anchor := "", ""
 	if mutation.Kind == "move" || mutation.Kind == "set-group" {
@@ -282,21 +300,41 @@ func (a *App) UpdateSessionOrganization(workspace SessionOrganizationWorkspace, 
 		}
 	}
 	o, applied, err := a.workspaceRegistry().UpdateOrganizationWithState(a.bootContext(), id, &expectedRevision, func(state *workspacestate.State, o *workspacestate.Organization) error {
-		for _, target := range resolved {
-			if target.SessionRef.SessionID == "" {
-				continue
-			}
-			current := state.SessionStates[target.SessionRef.SessionID]
-			if current.Lifecycle != workspacestate.Active || current.Generation != target.LifecycleGeneration || !slices.Contains(state.Workspaces[id].SessionIDs, target.SessionRef.SessionID) {
-				return workspacestate.ErrMutationConflict
-			}
-		}
-		return applyOrganizationMutation(o, mutation, key, anchor)
+		return applyResolvedOrganizationMutation(state, id, o, resolved, mutation, key, anchor)
 	})
 	if err == nil && applied {
 		a.emitProjectTreeMetadataChanged()
 	}
 	return organizationSnapshot(o, applied), err
+}
+
+// Run inside the registry transaction: resolution precedes the write lock, so
+// source adoption and lifecycle changes must be checked again at commit time.
+func applyResolvedOrganizationMutation(state *workspacestate.State, workspaceID string, o *workspacestate.Organization, resolved []SessionTarget, mutation SessionOrganizationMutation, key, anchor string) error {
+	for _, target := range resolved {
+		if target.SessionRef.SessionID == "" {
+			if target.Source == nil || target.Source.SourceKey == "" {
+				return workspacestate.ErrMutationConflict
+			}
+			if _, adopted := state.SourceMappings[target.Source.SourceKey]; adopted {
+				return workspacestate.ErrMutationConflict
+			}
+			continue
+		}
+		current := state.SessionStates[target.SessionRef.SessionID]
+		if current.Lifecycle != workspacestate.Active || current.Generation != target.LifecycleGeneration || !slices.Contains(state.Workspaces[workspaceID].SessionIDs, target.SessionRef.SessionID) {
+			return workspacestate.ErrMutationConflict
+		}
+	}
+	if mutation.Kind == "set-group" && !o.Imported[key] {
+		// Imported also records explicit ungrouping so later preference
+		// discovery cannot restore an older assignment.
+		o.Imported[key] = true
+		if !slices.Contains(o.Order, key) {
+			o.Order = append(o.Order, key)
+		}
+	}
+	return applyOrganizationMutation(o, mutation, key, anchor)
 }
 
 // replaceSessionOrganizationGroups retains old RPC signatures while moving their
