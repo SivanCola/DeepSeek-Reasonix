@@ -2,6 +2,7 @@ package sessioncatalog
 
 import (
 	"context"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -26,6 +27,23 @@ func (c *Catalog) ScheduleReconcile(target DirectoryTarget) (<-chan struct{}, bo
 		return nil, false
 	}
 	target.mutationSeq = c.mutationSeq.Add(1)
+	if c.opts.OnDiscovery != nil {
+		// Keep the function symbol, never runtime file names or stack arguments.
+		// Skip only the two public queue wrappers to identify the real owner.
+		var pcs [4]uintptr
+		n := runtime.Callers(2, pcs[:])
+		frames := runtime.CallersFrames(pcs[:n])
+		for {
+			frame, more := frames.Next()
+			if !strings.HasSuffix(frame.Function, ".(*Catalog).RequestReconcile") {
+				c.observeDiscovery(target, "requested", frame.Function, "")
+				break
+			}
+			if !more {
+				break
+			}
+		}
+	}
 	if c.opts.MetadataOnly {
 		// A saturated path queue has already committed its authoritative save.
 		// Persist the root invalidation before acknowledging maintenance so a

@@ -23,6 +23,8 @@ type Catalog struct {
 	opts         Options
 	pathIdentity func(string) string
 	mutationSeq  atomic.Uint64
+	discoveryIDs sync.Map
+	discoverySeq atomic.Uint64
 	revision     atomic.Uint64
 	statusMu     sync.RWMutex
 	status       Status

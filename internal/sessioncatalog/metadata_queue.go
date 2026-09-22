@@ -102,6 +102,7 @@ func (c *Catalog) metadataReconcileLoop() {
 				continue
 			}
 			next.target = target
+			c.observeDiscovery(next.target, "started", "", "")
 			if c.testReconcileStartHook != nil {
 				c.testReconcileStartHook(next.target)
 			}
@@ -117,6 +118,18 @@ func (c *Catalog) metadataReconcileLoop() {
 			continue
 		}
 		if done || err != nil {
+			phase, failure := "completed", ""
+			if err != nil {
+				phase, failure = "failed", "io_or_database"
+				if errors.Is(err, context.Canceled) {
+					failure = "canceled"
+				} else if os.IsPermission(err) {
+					failure = "permission"
+				} else if os.IsNotExist(err) {
+					failure = "missing"
+				}
+			}
+			c.observeDiscovery(next.target, phase, "", failure)
 			c.observeDatabaseError(err)
 			if next.scan != nil {
 				next.scan.close(c.workerCtx, err)

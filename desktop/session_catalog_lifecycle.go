@@ -40,6 +40,10 @@ func (a *App) runSessionCatalog(ctx context.Context, initialReconcileDone chan s
 			Path: path, MetadataOnly: true, StartPaused: true,
 			DeferredMetadataIntegrity: deferredIntegrity, RevisionFloor: revisionFloor,
 			Maintenance: &a.historyMaintenance,
+			OnDiscovery: func(event sessioncatalog.DiscoveryEvent) {
+				slog.Info("desktop: history discovery", "root", event.Root, "sequence", event.Sequence,
+					"phase", event.Phase, "origin", event.Origin, "failure", event.Failure)
+			},
 			OnRevision: func(revision uint64, roots []string, reason string) {
 				a.emitProjectTreeChangedV2(revision, roots, reason)
 			},

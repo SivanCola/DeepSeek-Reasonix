@@ -102,6 +102,9 @@ type Options struct {
 	QueueCapacity             int
 	Now                       func() time.Time
 	OnRevision                func(uint64, []string, string)
+	// OnDiscovery observes root admission and scan boundaries without source
+	// paths or content. It must return promptly and must not call the catalog.
+	OnDiscovery func(DiscoveryEvent)
 	// repairSession replaces the filesystem repair. Open installs it before
 	// starting repairLoop, so scheduler tests can drive the real wake path
 	// without racing the hook assignment.
