@@ -137,6 +137,9 @@ func TestWindowsNativePathSpelling(t *testing.T) {
 		if got := extendedWindowsPath(pair[0]); got != pair[1] {
 			t.Errorf("extend %q = %q", pair[0], got)
 		}
+		if got, want := ntPhysicalPath(pair[0]), `\??\`+pair[1][4:]; got != want {
+			t.Errorf("NT path %q = %q, want %q", pair[0], got, want)
+		}
 		if got := stripExtendedPrefix(pair[1]); got != pair[0] {
 			t.Errorf("strip %q = %q", pair[1], got)
 		}

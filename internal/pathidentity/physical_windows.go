@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -22,15 +23,7 @@ func platformLinkLoop(err error) bool {
 // it can return the alias unchanged for a leaf and ENOTDIR for its descendants.
 // This must be the primary resolver, not merely a fallback after an error.
 func resolveExistingPath(path string) (string, error) {
-	name, err := windows.UTF16PtrFromString(extendedWindowsPath(path))
-	if err != nil {
-		return "", err
-	}
-	// Zero access follows reparse points without requiring read permission;
-	// credential ACL recovery must resolve its edit lock before repairing ACLs.
-	handle, err := windows.CreateFile(name, 0,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
-		nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
+	handle, err := openPhysicalPath(path)
 	if err != nil {
 		return "", fmt.Errorf("open physical path: %w", err)
 	}
@@ -50,6 +43,33 @@ func resolveExistingPath(path string) (string, error) {
 		size = n + 1
 	}
 	return "", fmt.Errorf("final physical path exceeds 65536 UTF-16 units")
+}
+
+// CreateFile implicitly requests read attributes and synchronization even
+// with zero desired access. NtCreateFile keeps this a pure identity query,
+// including when a credential read-deny ACL has not yet been repaired.
+func openPhysicalPath(path string) (windows.Handle, error) {
+	name, err := windows.NewNTUnicodeString(ntPhysicalPath(path))
+	if err != nil {
+		return 0, err
+	}
+	oa := windows.OBJECT_ATTRIBUTES{ObjectName: name, Attributes: windows.OBJ_CASE_INSENSITIVE}
+	oa.Length = uint32(unsafe.Sizeof(oa))
+	var handle windows.Handle
+	var iosb windows.IO_STATUS_BLOCK
+	err = windows.NtCreateFile(&handle, 0, &oa, &iosb, nil, 0,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		windows.FILE_OPEN, windows.FILE_OPEN_FOR_BACKUP_INTENT, 0, 0)
+	var status windows.NTStatus
+	if errors.As(err, &status) {
+		err = status.Errno()
+	}
+	return handle, err
+}
+
+func ntPhysicalPath(path string) string {
+	extended := extendedWindowsPath(path)
+	return `\??\` + extended[4:]
 }
 
 // Native Windows calls do not apply the long-path handling performed by os.
