@@ -34,7 +34,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v7
         with:
-          node-version: "24"
+          node-version-file: .node-version
       - id: paths
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -73,8 +73,6 @@ jobs:
   prepare:
     needs: changes
     if: needs.changes.outputs.memory == 'true'
-    outputs:
-      node_version: ${{ steps.memory-toolchain.outputs.node_version }}
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     env:
@@ -92,14 +90,11 @@ jobs:
           run_install: false
       - uses: actions/setup-node@v7
         with:
-          node-version: "24"
+          node-version-file: .node-version
           cache: pnpm
           cache-dependency-path: desktop/pnpm-lock.yaml
       - name: Install memory dependencies
-        id: memory-toolchain
-        run: |
-          echo "node_version=$(node --version)" >> "$GITHUB_OUTPUT"
-          pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
       - run: node --test bench/app-memory-shards.test.mjs bench/app-memory-paths.test.mjs bench/app-memory-timing.test.mjs
       - name: Build memory frontend
         run: pnpm build
@@ -135,7 +130,7 @@ jobs:
           run_install: false
       - uses: actions/setup-node@v7
         with:
-          node-version: ${{ needs.prepare.outputs.node_version }}
+          node-version-file: .node-version
           cache: pnpm
           cache-dependency-path: desktop/pnpm-lock.yaml
       - name: Install memory dependencies
@@ -193,7 +188,7 @@ jobs:
       - uses: actions/setup-node@v7
         if: needs.changes.outputs.memory == 'true'
         with:
-          node-version: ${{ needs.prepare.outputs.node_version }}
+          node-version-file: .node-version
       - uses: actions/download-artifact@v8
         if: needs.changes.outputs.memory == 'true'
         with:

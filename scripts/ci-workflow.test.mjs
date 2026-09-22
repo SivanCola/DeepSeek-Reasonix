@@ -27,6 +27,28 @@ const release = workflow("release-desktop");
 const promote = workflow("release-promote");
 const appMemory = workflow("app-memory");
 
+test("frontend artifact workflows share one exact Node runtime", () => {
+  const version = readFileSync(new URL("../.node-version", import.meta.url), "utf8").trim();
+  assert.match(version, /^\d+\.\d+\.\d+$/);
+  for (const [name, source] of [["ci", ci], ["app-memory", appMemory], ["release-desktop", release]]) {
+    assert.doesNotMatch(source, /node-version: ["']?24(?:["']|\s)/, name);
+    assert.match(source, /node-version-file: \.node-version/, name);
+  }
+  const names = [...ci.matchAll(/^  ([a-z][a-z0-9-]*):$/gm)].map(match => match[1]);
+  const participants = names.map(name => [name, job(ci, name)])
+    .filter(([, body]) => /artifact-identity\.mjs (create|verify)/.test(body));
+  assert.ok(participants.length > 1, "cover both producer and consumers");
+  for (const [name, body] of participants) {
+    assert.match(body, /uses: actions\/setup-node@[^\n]+\n\s+with:\n\s+node-version-file: \.node-version/, name);
+    assert.doesNotMatch(body, /node-version:/, `${name} must not override the shared runtime`);
+  }
+  for (const name of ["prepare", "shard", "app-memory"]) {
+    const body = job(appMemory, name);
+    assert.match(body, /node-version-file: \.node-version/, name);
+    assert.doesNotMatch(body, /node-version:/, name);
+  }
+});
+
 test("Windows PR verifies credential aliases before full push CI", () => {
   assert.match(ci, /name: test \(Windows credential ACL identity\)[\s\S]*?runner\.os == 'Windows' && github\.event_name == 'pull_request'[\s\S]*?go test -timeout=2m -run '\^TestCredentialAccessRepairsLegacyCredentialDeny\|\^TestRepairLegacyCredentialDenyMatchesFileAcrossPathAliases\$' \.\/internal\/config \.\/internal\/winaclresidue/);
 });
@@ -449,32 +471,7 @@ test("all desktop consumers verify the prepared build and reject a failed prepar
   assert.equal(prepare.match(/desktop\/frontend\/sourcemaps\/\$\{\{ github\.sha \}\}/g)?.length, 2);
 });
 
-test("every prepared frontend consumer uses the producer's exact Node runtime", () => {
-  const prepare = job(ci, "desktop-prepare");
-  assert.match(prepare, /node_version: \$\{\{ steps\.frontend-toolchain\.outputs\.node_version \}\}/);
-  assert.match(prepare, /id: frontend-toolchain\n\s+run: echo "node_version=\$\(node --version\)" >> "\$GITHUB_OUTPUT"/);
-  assert.ok(prepare.indexOf("actions/setup-node@") < prepare.indexOf("id: frontend-toolchain"));
-  const consumers = [...ci.matchAll(/\n  ([a-z][a-z0-9-]*):\n/g)]
-    .map(([, name]) => [name, job(ci, name)])
-    .filter(([, body]) => body.includes("artifact-identity.mjs verify"));
-  assert.equal(consumers.length, 8);
-  for (const [name, body] of consumers) {
-    assert.match(body, /node-version: \$\{\{ needs\.desktop-prepare\.outputs\.node_version \}\}/, name);
-    assert.equal(body.match(/node-version:/g)?.length, 1, name);
-  }
-});
 
-test("memory shards and aggregation use their build producer's exact Node runtime", () => {
-  const prepare = job(appMemory, "prepare");
-  assert.match(prepare, /node_version: \$\{\{ steps\.memory-toolchain\.outputs\.node_version \}\}/);
-  assert.match(prepare, /echo "node_version=\$\(node --version\)" >> "\$GITHUB_OUTPUT"/);
-  assert.ok(prepare.indexOf("actions/setup-node@") < prepare.indexOf("id: memory-toolchain"));
-  for (const name of ["shard", "app-memory"]) {
-    const body = job(appMemory, name);
-    assert.match(body, /node-version: \$\{\{ needs\.prepare\.outputs\.node_version \}\}/, name);
-    assert.equal(body.match(/node-version:/g)?.length, 1, name);
-  }
-});
 
 test("browser matrix preserves five entry points and fails closed through desktop-browser", () => {
   const groups = job(ci, "desktop-browser-group");
