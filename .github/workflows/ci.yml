@@ -9,11 +9,6 @@ on:
 permissions:
   contents: read
 
-env:
-  # Artifact identity requires the same exact runtime on producers and consumers.
-  # A floating major can resolve differently across hosted-runner cache images.
-  DESKTOP_NODE_VERSION: "24.20.0"
-
 concurrency:
   # Push cancellation is handled by Supersede CI, which preserves the code
   # ancestor still required by a release-notes-only candidate.
@@ -53,7 +48,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v7
         with:
-          node-version: ${{ env.DESKTOP_NODE_VERSION }}
+          node-version-file: .node-version
       - id: filter
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -579,7 +574,7 @@ jobs:
           run_install: false
       - uses: actions/setup-node@v7
         with:
-          node-version: ${{ env.DESKTOP_NODE_VERSION }}
+          node-version-file: .node-version
           cache: pnpm
           cache-dependency-path: desktop/pnpm-lock.yaml
       - name: Install frontend dependencies
@@ -628,7 +623,7 @@ jobs:
           run_install: false
       - uses: actions/setup-node@v7
         with:
-          node-version: ${{ env.DESKTOP_NODE_VERSION }}
+          node-version-file: .node-version
           cache: pnpm
           cache-dependency-path: desktop/pnpm-lock.yaml
       - name: Install frontend dependencies
@@ -765,7 +760,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: ${{ env.DESKTOP_NODE_VERSION }}
+          node-version-file: .node-version
           cache: pnpm
           cache-dependency-path: desktop/pnpm-lock.yaml
 
@@ -880,7 +875,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: ${{ env.DESKTOP_NODE_VERSION }}
+          node-version-file: .node-version
           cache: pnpm
           cache-dependency-path: desktop/pnpm-lock.yaml
 
@@ -957,7 +952,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: ${{ env.DESKTOP_NODE_VERSION }}
+          node-version-file: .node-version
           cache: pnpm
           cache-dependency-path: desktop/pnpm-lock.yaml
 
@@ -1017,7 +1012,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: ${{ env.DESKTOP_NODE_VERSION }}
+          node-version-file: .node-version
           cache: pnpm
           cache-dependency-path: desktop/pnpm-lock.yaml
 
@@ -1188,7 +1183,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: ${{ env.DESKTOP_NODE_VERSION }}
+          node-version-file: .node-version
           cache: pnpm
           cache-dependency-path: desktop/pnpm-lock.yaml
 
@@ -1325,7 +1320,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: ${{ env.DESKTOP_NODE_VERSION }}
+          node-version-file: .node-version
 
       # Same Defender hazard as the Electron leg: exclusions keep Go test
       # binaries from crashing mid-syscall and freshly written files readable.
@@ -1437,7 +1432,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: ${{ env.DESKTOP_NODE_VERSION }}
+          node-version-file: .node-version
           cache: pnpm
           cache-dependency-path: desktop/pnpm-lock.yaml
 
@@ -1629,7 +1624,7 @@ jobs:
           cache: false
       - uses: actions/setup-node@v7
         with:
-          node-version: ${{ env.DESKTOP_NODE_VERSION }}
+          node-version-file: .node-version
       - name: Validate release workflows and executable contracts
         run: |
           go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 \
@@ -1751,7 +1746,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: ${{ env.DESKTOP_NODE_VERSION }}
+          node-version-file: .node-version
 
       - name: test
         run: npm test
