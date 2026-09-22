@@ -27,7 +27,8 @@ func (c *Catalog) SyncMetadata(ctx context.Context, projects []ProjectRecord, to
 		_ = tx.Rollback()
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE catalog_topics SET metadata_present=0`); err != nil {
+	previousMetadata, err := c.beginMetadataTopicRefresh(ctx, tx)
+	if err != nil {
 		_ = tx.Rollback()
 		return err
 	}
@@ -64,11 +65,7 @@ func (c *Catalog) SyncMetadata(ctx context.Context, projects []ProjectRecord, to
 		}
 		roots[topic.WorkspaceRoot] = struct{}{}
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM catalog_topics
-        WHERE metadata_present=0 AND NOT EXISTS (
-            SELECT 1 FROM catalog_sessions s WHERE s.scope=catalog_topics.scope
-			AND s.workspace_root_key=catalog_topics.workspace_root_key AND s.topic_id=catalog_topics.topic_id
-        )`); err != nil {
+	if err := c.finishMetadataTopicRefresh(ctx, tx, previousMetadata); err != nil {
 		_ = tx.Rollback()
 		return err
 	}

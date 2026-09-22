@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,6 +22,9 @@ func TestStartupReservationReadinessPrecedesRestoredShell(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	app.tabsRestored = make(chan struct{})
+	var scans, notifications atomic.Int32
+	app.projectTreeCatalogRefreshHook = func() { scans.Add(1) }
+	app.projectTreeChangedHook = func() { notifications.Add(1) }
 	app.startDesktopSessionMigration(ctx)
 	select {
 	case <-app.desktopMigrationDone:
@@ -36,6 +40,9 @@ func TestStartupReservationReadinessPrecedesRestoredShell(t *testing.T) {
 	}
 	app.markTabsRestored()
 	app.historicalImports.workers.Wait()
+	if scans.Load() != 0 || notifications.Load() == 0 {
+		t.Fatalf("startup must notify without scheduling duplicate root scans: scans=%d notifications=%d", scans.Load(), notifications.Load())
+	}
 	app.closeSessionServices()
 }
 

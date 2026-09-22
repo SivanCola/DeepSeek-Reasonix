@@ -106,7 +106,9 @@ func (a *App) startDesktopSessionMigration(ctx context.Context) {
 		c.discoveryPending = false
 		c.mu.Unlock()
 		a.requestHistoricalCatalog()
-		a.emitProjectTreeChanged()
+		// The watcher owns initial discovery. Recovery changes the registry;
+		// invalidating every legacy root here queues a duplicate full scan.
+		a.emitProjectTreeMetadataChanged()
 	}()
 }
 

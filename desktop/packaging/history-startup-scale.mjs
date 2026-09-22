@@ -24,6 +24,7 @@ const { _electron } = require("playwright");
 const home = await mkdtemp(join(tmpdir(), "reasonix-history-scale-"));
 const resultPath = `${home}.results.json`;
 const records = [];
+const warmups = [];
 const build = JSON.parse(await readFile(join(bundle, "Contents/Resources/build.json"), "utf8"));
 let application, expectedSessionID, seeded = 0, providerCalls = 0;
 const server = createServer(async (req, res) => {
@@ -57,12 +58,20 @@ async function close() {
   application = undefined;
 }
 async function settleCatalog(page, count) {
+  const started = now();
+  let nextProgress = 0;
   await waitForSmokeCondition(async () => {
     const snapshot = await invoke(page, "GetProjectTreeSnapshot");
+    if (now() >= nextProgress) {
+      nextProgress = now() + 10000;
+      console.log(JSON.stringify({ phase: "warm_progress", sessions: count, elapsedMs: now() - started,
+        indexed: snapshot.catalog.indexed, total: snapshot.catalog.total, state: snapshot.catalog.state }));
+    }
     if (snapshot.catalog.indexed < count) return false;
     const first = await invoke(page, "ListProjectTopics", [{ scope: "global", limit: 50 }]);
     return first.complete === true && first.items.length === 50;
   }, { timeout: 300000, interval: 1000 });
+  warmups.push({ sessions: count, elapsedMs: now() - started });
 }
 function summary() {
   const p95 = values => [...values].sort((a, b) => a - b)[Math.ceil(values.length * .95) - 1];
@@ -75,7 +84,7 @@ function summary() {
   const thresholdPass = qualifiedSample && ["interactiveMs", "firstPageMs"].every(key => cohorts.at(-1).p95[key] <= cohorts[0].p95[key] + Math.max(200, cohorts[0].p95[key] * .2));
   return { build, machine: { platform: platform(), arch: arch(), cpu: cpus()[0]?.model, logicalCPUs: cpus().length, memoryBytes: totalmem() },
     measurement: "elapsed from package launch; existing catalog; fixed active session/project; progressively added inactive legacy files",
-    qualifiedSample, thresholdPass, cohorts, records };
+    qualifiedSample, thresholdPass, warmups, cohorts, records };
 }
 try {
   const { page } = await launch();
