@@ -23,9 +23,16 @@ type historicalCatalogEntry struct {
 // Discovery publishes metadata only; ordinary pagination never visits source
 // directories or replays a historical log. Refreshes share one bounded worker.
 func (a *App) requestHistoricalCatalog() {
+	a.requestHistoricalCatalogWithContext(a.bootContext())
+}
+
+// requestHistoricalCatalogWithContext lets lifecycle owners pass the context
+// that already governs their worker. Background catalog callbacks must not
+// reread App.ctx while tests or the shell are replacing that field.
+func (a *App) requestHistoricalCatalogWithContext(baseCtx context.Context) {
 	c := &a.historicalImports
 	c.mu.Lock()
-	c.initialize(a.bootContext())
+	c.initialize(baseCtx)
 	if !c.catalogEnabled || c.stopped || a.shuttingDown.Load() || c.discoveryPending || time.Since(c.catalogAt) < 5*time.Minute {
 		c.mu.Unlock()
 		return

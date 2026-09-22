@@ -2447,6 +2447,7 @@ export function useController() {
   const runtimeState = useRuntimeSession(activeTabId, activeState.meta);
   const stateRef = useRef(activeState);
   const backendActiveTabIdRef = useRef<string | undefined>(undefined);
+  const previousStoreActiveTabRef = useRef<string | undefined>(undefined);
   const backendActivationPromises = useRef(new Map<string, Promise<boolean>>());
   // The latest ticketed topic activation (StartTopicActivation). Registered
   // before the backend call returns so synchronously-emitted lifecycle events
@@ -2469,6 +2470,9 @@ export function useController() {
     if (action.type === "user") lastTurnActivityAtByTab.current.delete(tabId);
     const next = reducer(prev, action);
     if (prev !== next) {
+      if (tabId === activeTabIdRef.current) {
+        getTranscriptStore().noteActiveTab(tabId, previousStoreActiveTabRef.current); previousStoreActiveTabRef.current = tabId;
+      }
       getTranscriptStore().setState(tabId, next);
       // A tab with a live or in-flight turn is pinned out of transcript-store
       // eviction; its cached rows must survive until the turn settles.
@@ -3487,7 +3491,6 @@ export function useController() {
   // out of LRU eviction. (In-flight loads of background tabs still complete
   // into their own per-tab state; store generations move on session switch,
   // evict, and unload — not on visible-tab changes.)
-  const previousStoreActiveTabRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     getTranscriptStore().noteActiveTab(activeTabId, previousStoreActiveTabRef.current);
     previousStoreActiveTabRef.current = activeTabId;

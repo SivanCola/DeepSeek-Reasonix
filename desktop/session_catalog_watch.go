@@ -91,7 +91,7 @@ func (a *App) watchSessionCatalog(ctx context.Context, catalog *sessioncatalog.C
 			// whole-root pass. Queries are already admitted.
 			catchUpCatalogWatch(watcher, events, failures, targets, watched, dirty)
 			refreshMetadata()
-			a.requestHistoricalCatalog()
+			a.requestHistoricalCatalogWithContext(ctx)
 			armBatch()
 		case event, ok := <-events:
 			if !ok {
