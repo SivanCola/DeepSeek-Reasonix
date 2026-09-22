@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -52,45 +51,24 @@ func readDisplayDAGMessage(ctx context.Context, file *os.File, loc displayDAGLoc
 	return m, ctx.Err()
 }
 
-func buildDAGDisplayPager(ctx context.Context, db *sql.DB, source, fingerprint, requestedHead string, checkpointSize int64) (result error) {
-	// This is a private rebuild database with one connection. One transaction
-	// avoids a durable fsync for each graph edge; SQLite spills its page cache.
-	if _, err := db.ExecContext(ctx, "BEGIN"); err != nil {
-		return err
-	}
-	defer func() {
-		if result == nil {
-			_, result = db.ExecContext(ctx, "COMMIT")
-		}
-		if result != nil {
-			_, _ = db.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
-		}
-	}()
-	_, err := db.ExecContext(ctx, `CREATE TABLE dag_nodes(id TEXT PRIMARY KEY,parent TEXT NOT NULL,location BLOB NOT NULL);
-	CREATE TABLE dag_overlays(kind TEXT NOT NULL,id TEXT NOT NULL,location BLOB NOT NULL,PRIMARY KEY(kind,id));
-	CREATE TABLE dag_chain(position INTEGER PRIMARY KEY,id TEXT UNIQUE NOT NULL);
-	CREATE TABLE dag_locations(position INTEGER PRIMARY KEY,location BLOB NOT NULL);`)
-	if err != nil {
-		return err
-	}
+func buildDAGDisplayPager(ctx context.Context, db *sql.DB, source, fingerprint, requestedHead string, checkpointSize int64) error {
+	return buildDAGDisplayPagerObserved(ctx, db, source, fingerprint, requestedHead, checkpointSize, nil)
+}
+
+func buildDAGDisplayPagerObserved(ctx context.Context, db *sql.DB, source, fingerprint, requestedHead string, checkpointSize int64, observed func(string, int)) error {
 	f, err := os.Open(store.SessionEventLog(source))
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	state, err := scanDisplayDAGLocations(ctx, db, f, source)
+	if err := validateDAGPagerFile(source, f, fingerprint, requestedHead); err != nil {
+		return err
+	}
+	p, err := restoreDAGPagerProgress(ctx, db, source, fingerprint, checkpointSize)
 	if err != nil {
 		return err
 	}
-	headID := requestedHead
-	if headID == "" {
-		headID = state.selectedHead()
-	}
-	head := state.heads[headID]
-	if head == nil {
-		return fmt.Errorf("history head not found")
-	}
-	idx, err := projectDisplayDAGView(ctx, db, f, head, checkpointSize)
+	idx, headID, err := resumeDAGDisplayPager(ctx, db, f, p, source, requestedHead, observed)
 	if err != nil {
 		return err
 	}
@@ -108,11 +86,19 @@ func buildDAGDisplayPager(ctx context.Context, db *sql.DB, source, fingerprint, 
 	if err != nil {
 		return err
 	}
-	_, err = db.ExecContext(ctx, `INSERT INTO metadata VALUES('source',?),('header',?),('kind','dag'),('head',?)`, fingerprint, body, headID)
-	return err
+	if _, err = db.ExecContext(ctx, `INSERT OR REPLACE INTO metadata VALUES('source',?),('header',?),('kind','dag'),('head',?)`, fingerprint, body, headID); err != nil {
+		return err
+	}
+	return validateDAGPagerFile(source, f, fingerprint, requestedHead)
 }
 
-func storeDisplayDAGOverlay(ctx context.Context, db *sql.DB, f *os.File, kind, id string, loc displayDAGLocation) error {
+// Both ordinary reads and private rebuild transactions use this interface.
+type displayDAGQueries interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func storeDisplayDAGOverlay(ctx context.Context, db displayDAGQueries, f *os.File, kind, id string, loc displayDAGLocation) error {
 	if _, err := readDisplayDAGMessage(ctx, f, loc); err != nil {
 		return err
 	}
@@ -124,7 +110,7 @@ func storeDisplayDAGOverlay(ctx context.Context, db *sql.DB, f *os.File, kind, i
 	return err
 }
 
-func displayDAGSystem(ctx context.Context, db *sql.DB, key string) (displayDAGLocation, error) {
+func displayDAGSystem(ctx context.Context, db displayDAGQueries, key string) (displayDAGLocation, error) {
 	var loc displayDAGLocation
 	var raw []byte
 	if err := db.QueryRowContext(ctx, `SELECT location FROM dag_overlays WHERE kind='system' AND id=?`, key).Scan(&raw); err != nil {
@@ -177,94 +163,76 @@ func (p *DisplayPager) DAGMessages(lo, hi int) ([]provider.Message, error) {
 	return result, p.Validate()
 }
 
-func scanDisplayDAGLocations(ctx context.Context, db *sql.DB, f *os.File, source string) (*sessionDAGState, error) {
-	decoder := json.NewDecoder(&historywork.Reader{Context: ctx, Source: f})
-	state := newSessionDAGState(source)
-	for {
-		if err := ctx.Err(); err != nil {
-			return nil, err
+func applyDisplayDAGLocation(ctx context.Context, db displayDAGQueries, f *os.File, state *sessionDAGState, e sessionDAGEntry, start, end int64) error {
+	loc := displayDAGLocation{Offset: start, Length: end - start, ID: e.ID, At: e.At}
+	switch e.Type {
+	case sessionDAGTypeMessage:
+		if e.ID == "" {
+			return ErrSessionDisplayReadModelDamaged
 		}
-		start := decoder.InputOffset()
-		var e sessionDAGEntry
-		if err := decoder.Decode(&e); errors.Is(err, io.EOF) {
-			break
-		} else if err != nil {
-			return nil, fmt.Errorf("DAG history: %w", ErrSessionDisplayReadModelDamaged)
+		// Validate each record, including branches outside the selected view.
+		if _, err := readDisplayDAGMessage(ctx, f, loc); err != nil {
+			return err
 		}
-		if e.SchemaVersion != sessionDAGSchemaVersion {
-			return nil, fmt.Errorf("unsupported DAG schema %d", e.SchemaVersion)
+		encoded, err := json.Marshal(loc)
+		if err != nil {
+			return err
 		}
-		end := decoder.InputOffset()
-		loc := displayDAGLocation{Offset: start, Length: end - start, ID: e.ID, At: e.At}
-		switch e.Type {
-		case sessionDAGTypeMessage:
-			if e.ID == "" {
-				return nil, ErrSessionDisplayReadModelDamaged
+		res, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO dag_nodes VALUES(?,?,?)`, e.ID, e.Parent, encoded)
+		if err != nil {
+			return err
+		}
+		if count, _ := res.RowsAffected(); count == 0 {
+			return nil
+		}
+		h := state.headFor(e.Head, e.At)
+		h.leaf, h.lastActivity, h.lastOffset = e.ID, e.At, end
+	case sessionDAGTypePatch, sessionDAGTypeSystem, sessionDAGTypeRedact:
+		if e.Type == sessionDAGTypePatch {
+			var exists int
+			if err := db.QueryRowContext(ctx, `SELECT 1 FROM dag_nodes WHERE id=?`, e.Target).Scan(&exists); errors.Is(err, sql.ErrNoRows) {
+				return nil
+			} else if err != nil {
+				return err
 			}
-			// Validate each record, including branches outside the selected view.
-			if _, err := readDisplayDAGMessage(ctx, f, loc); err != nil {
-				return nil, err
+			loc.ID = e.Target
+		}
+		if e.Type == sessionDAGTypeSystem {
+			// Fork copies this immutable locator key, matching the native
+			// replay's inherited system override without retaining its body.
+			loc.ID = ""
+			key := fmt.Sprint(start)
+			state.headFor(e.Head, e.At).system = &provider.Message{ID: key}
+			if err := storeDisplayDAGOverlay(ctx, db, f, "system", key, loc); err != nil {
+				return err
 			}
-			encoded, err := json.Marshal(loc)
-			if err != nil {
-				return nil, err
-			}
-			res, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO dag_nodes VALUES(?,?,?)`, e.ID, e.Parent, encoded)
-			if err != nil {
-				return nil, err
-			}
-			if count, _ := res.RowsAffected(); count == 0 {
-				continue
-			}
-			h := state.headFor(e.Head, e.At)
-			h.leaf, h.lastActivity, h.lastOffset = e.ID, e.At, end
-		case sessionDAGTypePatch, sessionDAGTypeSystem, sessionDAGTypeRedact:
-			if e.Type == sessionDAGTypePatch {
-				var exists int
-				if err := db.QueryRowContext(ctx, `SELECT 1 FROM dag_nodes WHERE id=?`, e.Target).Scan(&exists); errors.Is(err, sql.ErrNoRows) {
-					continue
-				} else if err != nil {
-					return nil, err
+		} else if e.Type == sessionDAGTypeRedact {
+			for id := range e.Targets {
+				loc.ID, loc.Target = id, id
+				if err := storeDisplayDAGOverlay(ctx, db, f, "redact", id, loc); err != nil {
+					return err
 				}
-				loc.ID = e.Target
 			}
-			if e.Type == sessionDAGTypeSystem {
-				// Fork copies this immutable locator key, matching the native
-				// replay's inherited system override without retaining its body.
-				loc.ID = ""
-				key := fmt.Sprint(start)
-				state.headFor(e.Head, e.At).system = &provider.Message{ID: key}
-				if err := storeDisplayDAGOverlay(ctx, db, f, "system", key, loc); err != nil {
-					return nil, err
-				}
-			} else if e.Type == sessionDAGTypeRedact {
-				for id := range e.Targets {
-					loc.ID, loc.Target = id, id
-					if err := storeDisplayDAGOverlay(ctx, db, f, "redact", id, loc); err != nil {
-						return nil, err
-					}
-				}
-			} else if err := storeDisplayDAGOverlay(ctx, db, f, "patch", e.Target, loc); err != nil {
-				return nil, err
-			}
-		case sessionDAGTypeFork, sessionDAGTypeRewind, sessionDAGTypeSelect, sessionDAGTypeRename, sessionDAGTypeRetire,
-			sessionDAGTypeTurnBegin, sessionDAGTypeTurnEnd, sessionDAGTypeCompaction:
-			if !state.applyHeadMarker(e, end) {
-				return nil, ErrSessionDisplayReadModelDamaged
-			}
-		case sessionDAGTypeLog:
-			state.generation = e.Generation
-		case sessionDAGTypeWriter, sessionDAGTypeCheckpoint:
-		default:
-			return nil, fmt.Errorf("unsupported DAG entry type %q", e.Type)
+		} else if err := storeDisplayDAGOverlay(ctx, db, f, "patch", e.Target, loc); err != nil {
+			return err
 		}
+	case sessionDAGTypeFork, sessionDAGTypeRewind, sessionDAGTypeSelect, sessionDAGTypeRename, sessionDAGTypeRetire,
+		sessionDAGTypeTurnBegin, sessionDAGTypeTurnEnd, sessionDAGTypeCompaction:
+		if !state.applyHeadMarker(e, end) {
+			return ErrSessionDisplayReadModelDamaged
+		}
+	case sessionDAGTypeLog:
+		state.generation = e.Generation
+	case sessionDAGTypeWriter, sessionDAGTypeCheckpoint:
+	default:
+		return fmt.Errorf("unsupported DAG entry type %q", e.Type)
 	}
-	return state, nil
+	return nil
 }
 
 type displayDAGProjectionWriter struct {
 	ctx    context.Context
-	db     *sql.DB
+	db     displayDAGQueries
 	file   *os.File
 	index  SessionDisplayIndex
 	hasher hash.Hash
@@ -308,66 +276,4 @@ func (w *displayDAGProjectionWriter) append(loc displayDAGLocation) error {
 	}
 	idx.MessageCount++
 	return nil
-}
-
-func projectDisplayDAGView(ctx context.Context, db *sql.DB, f *os.File, head *sessionDAGHead, checkpointSize int64) (SessionDisplayIndex, error) {
-	count := 0
-	for id := head.leaf; id != ""; {
-		var parent string
-		if err := db.QueryRowContext(ctx, `SELECT parent FROM dag_nodes WHERE id=?`, id).Scan(&parent); err != nil {
-			return SessionDisplayIndex{}, fmt.Errorf("DAG history missing ancestor: %w", ErrSessionDisplayReadModelDamaged)
-		}
-		if _, err := db.ExecContext(ctx, `INSERT INTO dag_chain VALUES(?,?)`, count, id); err != nil {
-			return SessionDisplayIndex{}, fmt.Errorf("DAG history cycle: %w", err)
-		}
-		count++
-		id = parent
-	}
-	writer := &displayDAGProjectionWriter{ctx: ctx, db: db, file: f,
-		index: SessionDisplayIndex{SchemaVersion: SessionDisplayIndexSchemaVersion, TranscriptSize: checkpointSize, ListingPreviewKnown: true}, hasher: sha256.New()}
-	idx, hasher := &writer.index, writer.hasher
-
-	for position := count - 1; position >= 0; position-- {
-		var id string
-		var raw []byte
-		if err := db.QueryRowContext(ctx, `SELECT n.id,COALESCE(r.location,p.location,n.location) FROM dag_chain c JOIN dag_nodes n ON n.id=c.id
-		LEFT JOIN dag_overlays p ON p.kind='patch' AND p.id=n.id LEFT JOIN dag_overlays r ON r.kind='redact' AND r.id=n.id WHERE c.position=?`, position).Scan(&id, &raw); err != nil {
-			return SessionDisplayIndex{}, err
-		}
-		var loc displayDAGLocation
-		if err := json.Unmarshal(raw, &loc); err != nil {
-			return SessionDisplayIndex{}, err
-		}
-		loc.ID = id
-		if position == count-1 && head.system != nil {
-			m, err := readDisplayDAGMessage(ctx, f, loc)
-			if err != nil {
-				return SessionDisplayIndex{}, err
-			}
-			sys, err := displayDAGSystem(ctx, db, head.system.ID)
-			if err != nil {
-				return SessionDisplayIndex{}, err
-			}
-			if m.Role == provider.RoleSystem {
-				sys.ID = id
-				loc = sys
-			} else if err := writer.append(sys); err != nil {
-				return SessionDisplayIndex{}, err
-			}
-		}
-		if err := writer.append(loc); err != nil {
-			return SessionDisplayIndex{}, err
-		}
-	}
-	if count == 0 && head.system != nil {
-		loc, err := displayDAGSystem(ctx, db, head.system.ID)
-		if err != nil {
-			return SessionDisplayIndex{}, err
-		}
-		if err := writer.append(loc); err != nil {
-			return SessionDisplayIndex{}, err
-		}
-	}
-	idx.ContentDigest = fmt.Sprintf("%x", hasher.Sum(nil))
-	return *idx, nil
 }

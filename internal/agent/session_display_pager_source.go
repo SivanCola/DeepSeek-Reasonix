@@ -129,6 +129,8 @@ func (s *displayPagerEventSource) rebuild(ctx context.Context, opts projectiondb
 		opts.ResumeKey = "checkpoint-v1:" + s.fingerprint
 	} else if s.schemaOne {
 		opts.ResumeKey = "event-v1:" + s.fingerprint
+	} else if s.dag {
+		opts.ResumeKey = "dag-v1:" + s.fingerprint
 	} else if !s.dag && !s.schemaOne {
 		opts.ResumeKey = "display-import-v1:" + s.fingerprint
 	}
