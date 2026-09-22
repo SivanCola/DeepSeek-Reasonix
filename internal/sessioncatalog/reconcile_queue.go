@@ -153,8 +153,18 @@ func (c *Catalog) reconcileLoop() {
 }
 
 // ResumeDiscovery separates a queryable projection from background discovery.
-func (c *Catalog) ResumeDiscovery() {
+// Initial watched roots must join restored journal entries before dispatch;
+// admitting them after resume would turn the same startup discovery into a
+// second scan whenever an interrupted root was already pending on disk.
+// Rejected roots remain the caller's responsibility until admission succeeds.
+func (c *Catalog) ResumeDiscovery(initial ...DirectoryTarget) (rejected []DirectoryTarget) {
+	for _, target := range initial {
+		if !c.RequestReconcile(target) {
+			rejected = append(rejected, target)
+		}
+	}
 	c.discoveryOnce.Do(func() { close(c.discoveryStart) })
+	return rejected
 }
 
 func (c *Catalog) runQueuedReconcile(target DirectoryTarget) {

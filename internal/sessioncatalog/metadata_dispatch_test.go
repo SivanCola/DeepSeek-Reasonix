@@ -8,6 +8,55 @@ import (
 	"testing"
 )
 
+func TestMetadataResumeCoalescesWatchedRootsWithInterruptedJournal(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "one.jsonl"), []byte("unread body"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{Path: filepath.Join(t.TempDir(), "catalog.sqlite"), MetadataOnly: true, StartPaused: true}
+	c, err := Open(t.Context(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.RequestReconcile(DirectoryTarget{Path: root, Scope: "project", WorkspaceRoot: root}) {
+		t.Fatal("initial journal entry rejected")
+	}
+	if err := c.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	c, err = Open(t.Context(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close(context.Background()) })
+	// Attach to the restored completion before dispatch. The watcher then
+	// supplies a newer scope, as it does after restoring project identities.
+	done, accepted := c.ScheduleReconcile(DirectoryTarget{Path: root, Scope: "project", WorkspaceRoot: root})
+	if !accepted {
+		t.Fatal("restored task rejected")
+	}
+	var starts []DirectoryTarget
+	c.testReconcileStartHook = func(target DirectoryTarget) { starts = append(starts, target) }
+	if rejected := c.ResumeDiscovery(DirectoryTarget{Path: root, Scope: "global"}); len(rejected) != 0 {
+		t.Fatalf("watched root rejected: %+v", rejected)
+	}
+	select {
+	case <-done:
+	case <-t.Context().Done():
+		t.Fatal("resumed scan did not settle")
+	}
+	var pending int
+	if err := c.db.QueryRow(`SELECT COUNT(*) FROM catalog_pending_roots`).Scan(&pending); err != nil || pending != 0 {
+		t.Fatalf("completed journal=%d: %v", pending, err)
+	}
+	if err := c.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(starts) != 1 || starts[0].Scope != "global" {
+		t.Fatalf("startup must dispatch latest watched identity once: %+v", starts)
+	}
+}
+
 // Both roots have queue jobs while the first holds a slice. The second's
 // invalidation precedes dispatch and must not become a redundant follow-up.
 func TestMetadataQueueCoalescesUpdatesWhileWaitingForDispatch(t *testing.T) {

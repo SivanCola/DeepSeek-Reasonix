@@ -33,8 +33,9 @@ func (a *App) watchSessionCatalog(ctx context.Context, catalog *sessioncatalog.C
 	dirty := map[string]bool{}
 	var batch *time.Timer
 	var batchReady <-chan time.Time
+	discoveryPending := false
 	armBatch := func() {
-		if len(dirty) > 0 && batchReady == nil {
+		if (len(dirty) > 0 || discoveryPending) && batchReady == nil {
 			batch = time.NewTimer(250 * time.Millisecond)
 			batchReady = batch.C
 		}
@@ -80,7 +81,9 @@ func (a *App) watchSessionCatalog(ctx context.Context, catalog *sessioncatalog.C
 			refreshTargets()
 			history.RegisterCatalogRoots(historyCatalogRoots(a.sessionCatalogTargets()))
 			a.indexRestoredSessionPaths(ctx, catalog)
-			catalog.ResumeDiscovery()
+			// Query/UI admission must not wait for journal writes. The first
+			// batch admits watched roots before releasing restored scan jobs.
+			discoveryPending = true
 			admitted = true
 			onAdmitted()
 			refreshMetadata()
@@ -122,14 +125,29 @@ func (a *App) watchSessionCatalog(ctx context.Context, catalog *sessioncatalog.C
 			armBatch()
 		case <-batchReady:
 			batchReady = nil
+			initial := []sessioncatalog.DirectoryTarget{}
 			for key := range dirty {
 				delete(dirty, key)
 				target, exists := targets[key]
 				if !exists || ctx.Err() != nil {
 					continue
 				}
-				catalog.RequestReconcile(target)
+				if discoveryPending {
+					initial = append(initial, target)
+				} else {
+					if !catalog.RequestReconcile(target) {
+						dirty[key] = true
+					}
+				}
 			}
+			if discoveryPending {
+				for _, target := range catalog.ResumeDiscovery(initial...) {
+					dirty[canonicalWorkspaceRoot(target.Path)] = true
+				}
+				discoveryPending = false
+			}
+			// Failed journal writes must retain the invalidation for retry.
+			armBatch()
 		}
 	}
 }
