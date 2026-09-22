@@ -65,6 +65,8 @@ func (a *App) watchSessionCatalog(ctx context.Context, catalog *sessioncatalog.C
 		select {
 		case <-ctx.Done():
 			return
+		case <-catalog.Invalidated():
+			return
 		case <-metadataRequests:
 			if admitted {
 				refreshMetadata()

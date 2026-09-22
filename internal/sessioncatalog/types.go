@@ -91,17 +91,23 @@ type Options struct {
 	DisableRepair bool
 	// MetadataOnly never reads transcripts or repairs content as a side effect
 	// of discovering sessions. Explicit content readers own that work.
-	MetadataOnly  bool
-	StartPaused   bool // Desktop resumes discovery after the shell and watchers are ready.
-	Maintenance   *historywork.Coordinator
-	MissingGrace  time.Duration
-	QueueCapacity int
-	Now           func() time.Time
-	OnRevision    func(uint64, []string, string)
+	MetadataOnly bool
+	// DeferredMetadataIntegrity is restricted to advisory metadata catalogs.
+	// The owner must replace the catalog after Invalidated closes.
+	DeferredMetadataIntegrity bool
+	RevisionFloor             uint64
+	StartPaused               bool // Desktop resumes discovery after the shell and watchers are ready.
+	Maintenance               *historywork.Coordinator
+	MissingGrace              time.Duration
+	QueueCapacity             int
+	Now                       func() time.Time
+	OnRevision                func(uint64, []string, string)
 	// repairSession replaces the filesystem repair. Open installs it before
 	// starting repairLoop, so scheduler tests can drive the real wake path
 	// without racing the hook assignment.
-	repairSession func(context.Context, string) (agent.SessionListingRepairResult, error)
+	repairSession     func(context.Context, string) (agent.SessionListingRepairResult, error)
+	verifyMetadata    func(context.Context) error
+	waitMetadataRetry func(context.Context, time.Duration) error
 }
 
 type DirectoryTarget struct {

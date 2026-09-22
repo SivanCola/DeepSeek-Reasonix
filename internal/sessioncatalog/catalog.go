@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"reasonix/internal/agent"
-	"reasonix/internal/projectiondb"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -60,6 +59,13 @@ type Catalog struct {
 	workers           sync.WaitGroup
 	closeDone         chan struct{}
 	closeErr          error
+	invalidated       chan struct{}
+	invalidReason     error
+	invalidateOnce    sync.Once
+	integrityDone     chan struct{}
+	readLeasesMu      sync.Mutex
+	readLeases        map[*ReadLease]struct{}
+	readLeasesClosed  bool
 	// testReconcileBatchHook deterministically pauses an uncommitted directory
 	// projection. Production catalogs leave it nil.
 	testReconcileBatchHook func(int)
@@ -96,6 +102,9 @@ type pageCursor struct {
 }
 
 func Open(ctx context.Context, opts Options) (*Catalog, error) {
+	if opts.DeferredMetadataIntegrity && !opts.MetadataOnly {
+		return nil, errors.New("deferred integrity requires an advisory metadata catalog")
+	}
 	if opts.MetadataOnly {
 		opts.DisableRepair = true
 	}
@@ -136,21 +145,21 @@ func Open(ctx context.Context, opts Options) (*Catalog, error) {
 		directoryLocks: map[string]*sync.Mutex{},
 		stop:           make(chan struct{}),
 		closeDone:      make(chan struct{}),
+		invalidated:    make(chan struct{}),
+		integrityDone:  make(chan struct{}),
+		readLeases:     map[*ReadLease]struct{}{},
 		discoveryStart: make(chan struct{}),
 		status:         Status{State: StateOpening, Path: opts.Path},
 	}
-	handle, err := projectiondb.Open(ctx, projectiondb.OpenOptions{
-		Path:         opts.Path,
-		MemoryName:   "session-catalog",
-		Migrations:   sessionMigrations(),
-		InMemory:     opts.InMemory,
-		MaxOpenConns: 4,
-		Now:          opts.Now,
-	})
+	handle, err := openCatalogProjection(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
 	c.db = handle.DB
+	if err := setCatalogRevisionFloor(ctx, c.db, opts.RevisionFloor); err != nil {
+		_ = c.db.Close()
+		return nil, err
+	}
 	c.status.Mode = Mode(handle.Status.Mode)
 	c.status.State = State(handle.Status.State)
 	if c.status.State == "" {
@@ -166,6 +175,10 @@ func Open(ctx context.Context, opts Options) (*Catalog, error) {
 	if err := c.loadStatus(ctx); err != nil {
 		_ = c.db.Close()
 		return nil, err
+	}
+	if c.readable() != nil {
+		_ = c.db.Close()
+		return nil, c.invalidReason
 	}
 	if !opts.DisableRepair {
 		if err := c.resetRepairSchedule(ctx); err != nil {
@@ -196,6 +209,12 @@ func Open(ctx context.Context, opts Options) (*Catalog, error) {
 		c.workers.Add(1)
 		go c.repairLoop()
 		c.enqueuePersistedRepairs(ctx)
+	}
+	if opts.DeferredMetadataIntegrity {
+		c.workers.Add(1)
+		go c.verifyMetadataIntegrity()
+	} else {
+		close(c.integrityDone)
 	}
 	return c, nil
 }
@@ -513,6 +532,9 @@ func bumpRevision(ctx context.Context, tx *sql.Tx) (uint64, error) {
 
 func (c *Catalog) publishRevision(revision uint64, roots []string, reason string) {
 	c.rememberRevision(revision)
+	if c.readable() != nil {
+		return
+	}
 	if c.opts.OnRevision != nil {
 		c.opts.OnRevision(revision, c.registeredRevisionRoots(roots), reason)
 	}
@@ -756,30 +778,4 @@ func timeFilterCutoff(filter string, now time.Time) int64 {
 		duration = parsed
 	}
 	return now.Add(-duration).UnixMilli()
-}
-
-func (c *Catalog) Close(ctx context.Context) error {
-	if c == nil {
-		return nil
-	}
-	c.stopOnce.Do(func() {
-		if c.workerCancel != nil {
-			c.workerCancel()
-		}
-		close(c.stop)
-		go func() {
-			c.workers.Wait()
-			c.closeErr = c.db.Close()
-			c.statusMu.Lock()
-			c.status.State = StateClosed
-			c.statusMu.Unlock()
-			close(c.closeDone)
-		}()
-	})
-	select {
-	case <-c.closeDone:
-		return c.closeErr
-	case <-ctx.Done():
-		return ctx.Err()
-	}
 }

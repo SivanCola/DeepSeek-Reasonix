@@ -36,7 +36,11 @@ type ReadLease struct {
 
 var ErrReadLeaseUnavailable = errors.New("persistent catalog read lease unavailable")
 
-func (c *Catalog) OpenReadLease(ctx context.Context) (*ReadLease, error) {
+func (c *Catalog) OpenReadLease(ctx context.Context) (_ *ReadLease, result error) {
+	defer func() { c.observeDatabaseError(result) }()
+	if err := c.readable(); err != nil {
+		return nil, err
+	}
 	status := c.Status()
 	if status.Mode != ModeDisk || status.Path == "" {
 		return nil, ErrReadLeaseUnavailable
@@ -67,7 +71,12 @@ func (c *Catalog) OpenReadLease(ctx context.Context) (*ReadLease, error) {
 		db.Close()
 		return nil, err
 	}
-	return &ReadLease{view: &readView{c, tx, revision, c.opts.Now()}, db: db, cancel: cancel, stop: stop}, nil
+	lease := &ReadLease{view: &readView{c, tx, revision, c.opts.Now()}, db: db, cancel: cancel, stop: stop}
+	if !c.registerReadLease(lease) {
+		lease.Close()
+		return nil, ErrCatalogInvalidated
+	}
+	return lease, nil
 }
 
 func (l *ReadLease) Context(ctx context.Context) context.Context {
@@ -75,7 +84,16 @@ func (l *ReadLease) Context(ctx context.Context) context.Context {
 }
 
 func (l *ReadLease) Close() {
-	l.once.Do(func() { l.stop(); l.cancel(); l.view.tx.Rollback(); l.db.Close() })
+	l.once.Do(func() {
+		l.stop()
+		l.cancel()
+		l.view.tx.Rollback()
+		l.db.Close()
+		c := l.view.owner
+		c.readLeasesMu.Lock()
+		delete(c.readLeases, l)
+		c.readLeasesMu.Unlock()
+	})
 }
 
 // WithReadView pins all nested list reads to one SQLite read transaction. No
@@ -98,11 +116,11 @@ func (c *Catalog) WithReadView(ctx context.Context, visit func(context.Context) 
 	return visit(context.WithValue(ctx, readViewKey{}, v))
 }
 
-func (c *Catalog) readDB(ctx context.Context) queryReader {
+func (c *Catalog) readDB(ctx context.Context) catalogReader {
 	if v, _ := ctx.Value(readViewKey{}).(*readView); v != nil && v.owner == c {
-		return v.tx
+		return catalogReader{c, v.tx}
 	}
-	return c.db
+	return catalogReader{c, c.db}
 }
 func (c *Catalog) readRevision(ctx context.Context) uint64 {
 	if v, _ := ctx.Value(readViewKey{}).(*readView); v != nil && v.owner == c {

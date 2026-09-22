@@ -23,5 +23,9 @@ func (c *Catalog) Status() Status {
 	}
 	c.statusMu.RLock()
 	defer c.statusMu.RUnlock()
-	return c.status
+	status := c.status
+	if c.readable() != nil && status.State != StateClosed {
+		status.State, status.LastError = StateDegraded, c.invalidReason.Error()
+	}
+	return status
 }

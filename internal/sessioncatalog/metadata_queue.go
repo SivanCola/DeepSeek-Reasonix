@@ -108,6 +108,7 @@ func (c *Catalog) metadataReconcileLoop() {
 			continue
 		}
 		if done || err != nil {
+			c.observeDatabaseError(err)
 			if next.scan != nil {
 				next.scan.close(c.workerCtx, err)
 				next.scan = nil

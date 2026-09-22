@@ -11,10 +11,11 @@ import (
 // removes session-derived topics: an older CLI or a concurrently running
 // Reasonix process may have written authoritative sidecars not yet reflected in
 // desktop-projects.json.
-func (c *Catalog) SyncMetadata(ctx context.Context, projects []ProjectRecord, topics []TopicMetadata) error {
+func (c *Catalog) SyncMetadata(ctx context.Context, projects []ProjectRecord, topics []TopicMetadata) (result error) {
 	if c == nil || c.db == nil {
 		return nil
 	}
+	defer func() { c.observeDatabaseError(result) }()
 	c.mutationMu.Lock()
 	defer c.mutationMu.Unlock()
 	tx, err := c.db.BeginTx(ctx, nil)

@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"os"
 	"strings"
-	"time"
 
 	"reasonix/internal/history"
+	"reasonix/internal/projectiondb"
 	"reasonix/internal/sessioncatalog"
 	"reasonix/internal/taskcatalog"
 )
@@ -33,33 +33,59 @@ func (a *App) runSessionCatalog(ctx context.Context, initialReconcileDone chan s
 	for _, project := range projects.Projects {
 		taskcatalog.RegisterSharedProject(project.Root, projectDisplayName(project))
 	}
-	catalog, err := sessioncatalog.Open(ctx, sessioncatalog.Options{
-		Path:         path,
-		MetadataOnly: true,
-		StartPaused:  true,
-		Maintenance:  &a.historyMaintenance,
-		OnRevision: func(revision uint64, roots []string, reason string) {
-			a.emitProjectTreeChangedV2(revision, roots, reason)
-		},
-	})
-	if err != nil {
-		slog.Warn("desktop: open session catalog", "err", err)
-		return
+	var revisionFloor uint64
+	deferredIntegrity := true
+	for ctx.Err() == nil {
+		catalog, err := sessioncatalog.Open(ctx, sessioncatalog.Options{
+			Path: path, MetadataOnly: true, StartPaused: true,
+			DeferredMetadataIntegrity: deferredIntegrity, RevisionFloor: revisionFloor,
+			Maintenance: &a.historyMaintenance,
+			OnRevision: func(revision uint64, roots []string, reason string) {
+				a.emitProjectTreeChangedV2(revision, roots, reason)
+			},
+		})
+		if err != nil {
+			if deferredIntegrity && projectiondb.IsCorruptionError(err) {
+				deferredIntegrity = false
+				continue
+			}
+			slog.Warn("desktop: open session catalog", "err", err)
+			return
+		}
+		// Pair publication with stopSessionCatalog's lifecycle lock. A stopped
+		// owner cannot publish a replacement after shutdown removed its pointer.
+		a.catalogLifecycleMu.Lock()
+		stopped := ctx.Err() != nil || a.shuttingDown.Load()
+		if !stopped {
+			a.sessionCatalog.Store(catalog)
+		}
+		a.catalogLifecycleMu.Unlock()
+		if stopped {
+			_ = catalog.Close(context.Background())
+			return
+		}
+		if freshGeneration {
+			catalog.MarkRepairReason("generation_upgrade")
+		}
+		a.watchSessionCatalog(ctx, catalog, metadataRequests, func() {
+			if !initialReconcileFinished {
+				close(initialReconcileDone)
+				initialReconcileFinished = true
+			}
+		})
+		select {
+		case <-catalog.Invalidated():
+			// Invalidate the published owner before closing every read lease.
+			// Only then may the normal validating open quarantine the database.
+			a.sessionCatalog.CompareAndSwap(catalog, nil)
+			if err := catalog.Close(context.Background()); err != nil {
+				slog.Warn("desktop: close invalid catalog", "err", err)
+				return
+			}
+			revisionFloor = catalog.Status().Revision + 1
+			deferredIntegrity, freshGeneration = false, true
+		default:
+			return
+		}
 	}
-	if ctx.Err() != nil || a.shuttingDown.Load() {
-		closeCtx, closeCancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
-		_ = catalog.Close(closeCtx)
-		closeCancel()
-		return
-	}
-	a.sessionCatalog.Store(catalog)
-	if freshGeneration {
-		catalog.MarkRepairReason("generation_upgrade")
-	}
-	// Watch immediately, including while restored identities are pending. The
-	// watcher publishes admission without waiting for metadata synchronization.
-	a.watchSessionCatalog(ctx, catalog, metadataRequests, func() {
-		close(initialReconcileDone)
-		initialReconcileFinished = true
-	})
 }

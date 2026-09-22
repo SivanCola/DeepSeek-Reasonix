@@ -21,7 +21,19 @@ type lazyTopicPageReader struct {
 	fence       *readSourceFence
 }
 
-func (r *lazyTopicPageReader) page(readCtx context.Context, offset, limit int) ([][]byte, bool, error) {
+func (r *lazyTopicPageReader) page(readCtx context.Context, offset, limit int) (result [][]byte, hasMore bool, resultErr error) {
+	select {
+	case <-r.catalog.Invalidated():
+		return nil, false, snapshotStale("catalog_replaced")
+	default:
+	}
+	defer func() {
+		select {
+		case <-r.catalog.Invalidated():
+			result, hasMore, resultErr = nil, false, snapshotStale("catalog_replaced")
+		default:
+		}
+	}()
 	a, catalog, lease, req := r.app, r.catalog, r.lease, r.req
 	query, extras, positions := r.query, r.extras, r.positions
 	match, recordTitle, less := r.match, r.recordTitle, r.less

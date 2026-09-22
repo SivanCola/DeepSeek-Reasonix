@@ -73,7 +73,7 @@ type OpenOptions struct {
 	// RetainBackup keeps the previous database at its generated .replaced-
 	// timestamp path so disposable projections can offer a rollback point.
 	RetainBackup bool
-	// QuickCheck uses SQLite's bounded quick_check for a disposable projection.
+	// QuickCheck uses SQLite's quick_check for a disposable projection.
 	// Authoritative stores keep the full integrity_check default.
 	QuickCheck bool
 }
@@ -93,6 +93,17 @@ func (e *FutureSchemaError) Error() string {
 }
 
 func Open(ctx context.Context, opts OpenOptions) (*Handle, error) {
+	return openProjection(ctx, opts, true)
+}
+
+// OpenAdvisory opens disposable metadata before a full integrity audit. The
+// owner must call CheckIntegrity in its maintenance lifecycle and invalidate
+// all readers on corruption. This must never certify content or execution.
+func OpenAdvisory(ctx context.Context, opts OpenOptions) (*Handle, error) {
+	return openProjection(ctx, opts, false)
+}
+
+func openProjection(ctx context.Context, opts OpenOptions, checkIntegrity bool) (*Handle, error) {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
@@ -132,7 +143,7 @@ func Open(ctx context.Context, opts OpenOptions) (*Handle, error) {
 		mode = ModeMemory
 	}
 
-	db, err := open(ctx, opts, mode)
+	db, err := open(ctx, opts, mode, checkIntegrity)
 	if err != nil && mode == ModeDisk {
 		var future *FutureSchemaError
 		switch {
@@ -146,11 +157,11 @@ func Open(ctx context.Context, opts OpenOptions) (*Handle, error) {
 			status.State = StateDegraded
 			status.LastError = err.Error()
 			mode = ModeMemory
-			db, err = open(ctx, opts, mode)
+			db, err = open(ctx, opts, mode, checkIntegrity)
 		case isCorruptionError(err):
 			// Only integrity-level failures may rename the on-disk projection.
 			status.QuarantinedPath = Quarantine(opts.Path, opts.Now())
-			db, err = open(ctx, opts, mode)
+			db, err = open(ctx, opts, mode, checkIntegrity)
 			if err != nil {
 				if opts.RequireDisk {
 					return nil, err
@@ -158,7 +169,7 @@ func Open(ctx context.Context, opts OpenOptions) (*Handle, error) {
 				status.State = StateDegraded
 				status.LastError = err.Error()
 				mode = ModeMemory
-				db, err = open(ctx, opts, mode)
+				db, err = open(ctx, opts, mode, checkIntegrity)
 			}
 		default:
 			// Busy, permission, IO, or transient open errors must never rename
@@ -169,7 +180,7 @@ func Open(ctx context.Context, opts OpenOptions) (*Handle, error) {
 			status.State = StateDegraded
 			status.LastError = err.Error()
 			mode = ModeMemory
-			db, err = open(ctx, opts, mode)
+			db, err = open(ctx, opts, mode, checkIntegrity)
 		}
 	}
 	if err != nil {
@@ -182,7 +193,7 @@ func Open(ctx context.Context, opts OpenOptions) (*Handle, error) {
 	return &Handle{DB: db, Status: status}, nil
 }
 
-func open(ctx context.Context, opts OpenOptions, mode Mode) (*sql.DB, error) {
+func open(ctx context.Context, opts OpenOptions, mode Mode, checkIntegrity bool) (*sql.DB, error) {
 	var dsn string
 	if mode == ModeMemory {
 		// time.Now has coarse resolution on some platforms, notably Windows.
@@ -241,16 +252,10 @@ func open(ctx context.Context, opts OpenOptions, mode Mode) (*sql.DB, error) {
 		// on already-initialized files so open does not degrade to memory.
 		_, _ = db.ExecContext(ctx, `PRAGMA auto_vacuum=INCREMENTAL`)
 	}
-	check := `PRAGMA integrity_check`
-	if opts.QuickCheck {
-		check = `PRAGMA quick_check(1)`
-	}
-	var integrity string
-	if err := db.QueryRowContext(ctx, check).Scan(&integrity); err != nil {
-		return fail(err)
-	}
-	if integrity != "ok" {
-		return fail(fmt.Errorf("projection integrity check: %s", integrity))
+	if checkIntegrity {
+		if err := checkDatabaseIntegrity(ctx, db, opts.QuickCheck); err != nil {
+			return fail(err)
+		}
 	}
 	if err := ApplyMigrations(ctx, db, opts.Migrations, opts.Now); err != nil {
 		return fail(err)
@@ -392,6 +397,8 @@ func isCorruptionError(err error) bool {
 		switch se.Code() & 0xff {
 		case sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB:
 			return true
+		default:
+			return false
 		}
 	}
 	msg := strings.ToLower(err.Error())
