@@ -27,6 +27,19 @@ const release = workflow("release-desktop");
 const promote = workflow("release-promote");
 const appMemory = workflow("app-memory");
 
+test("frontend artifact producer and consumers share one exact Node runtime", () => {
+  assert.match(ci, /^  DESKTOP_NODE_VERSION: "\d+\.\d+\.\d+"$/m);
+  const names = [...ci.matchAll(/^  ([a-z][a-z0-9-]*):$/gm)].map(match => match[1]);
+  const participants = names.map(name => [name, job(ci, name)])
+    .filter(([, body]) => /artifact-identity\.mjs (create|verify)/.test(body));
+  assert.ok(participants.length > 1, "cover both producer and consumers");
+  for (const [name, body] of participants) {
+    const setup = body.match(/uses: actions\/setup-node@[^\n]+\n\s+with:\n\s+node-version: ([^\n]+)/);
+    assert.equal(setup?.[1], "${{ env.DESKTOP_NODE_VERSION }}", name);
+    assert.doesNotMatch(body, /^      DESKTOP_NODE_VERSION:/m, `${name} must not shadow the shared runtime`);
+  }
+});
+
 test("Windows PR verifies credential aliases before full push CI", () => {
   assert.match(ci, /name: test \(Windows credential ACL identity\)[\s\S]*?runner\.os == 'Windows' && github\.event_name == 'pull_request'[\s\S]*?go test -timeout=2m -run '\^TestCredentialAccessRepairsLegacyCredentialDeny\|\^TestRepairLegacyCredentialDenyMatchesFileAcrossPathAliases\$' \.\/internal\/config \.\/internal\/winaclresidue/);
 });
