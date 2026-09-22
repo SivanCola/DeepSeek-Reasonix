@@ -6,6 +6,8 @@ Object.defineProperty(globalThis, "window", { configurable: true, value: {} });
 const commands: Record<string, unknown> = {};
 installDesktopHostStub(commands);
 const { readBoundHistoryWindow, searchBoundHistory, releaseHistoryRead } = await import("../lib/historyReadBinding");
+const { TranscriptStore } = await import("../lib/transcriptStore");
+const { FakeBackend } = await import("./helpers/transcriptFakeBackend");
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>(done => { resolve = done; });
@@ -116,4 +118,39 @@ test("bound search negotiates native support and fences a late reply after navig
   commands.SearchSessionHistoryRead = () => ({ ...result, hits: [], status: "stale_cursor" });
   assert.equal((await searchBoundHistory("search", "needle"))?.status, "stale_cursor");
   releaseHistoryRead("search");
+});
+
+test("cache eviction releases its pending read without releasing a rebound tab", async () => {
+  const released: string[] = [];
+  const first = deferred<ReturnType<typeof handle>>(), began = deferred<void>();
+  let begins = 0;
+  commands.BeginSessionHistoryReadForTab = () => {
+    if (++begins === 1) { began.resolve(); return first.promise; }
+    return handle(`read-${begins}`);
+  };
+  commands.ReleaseSessionHistoryRead = (id: string) => { released.push(id); };
+  commands.ReadSessionHistoryWindow = () => page;
+  const backend = new FakeBackend([{ role: "user", content: "history" }]);
+  const store = new TranscriptStore(backend, { maxResidentSessions: 1 });
+  store.noteSessionBinding("evicted", "/old", "s\0old");
+  await store.loadLatest("evicted", "/old");
+  const oldRead = readBoundHistoryWindow("evicted", { anchor: "newest" });
+  await began.promise;
+  store.noteSessionBinding("other", "/other", "s\0other");
+  await store.loadLatest("other", "/other");
+  assert.equal(store.isResident("evicted", "/old"), false);
+  first.resolve(handle("late-evicted"));
+  assert.equal((await oldRead)?.status, "stale_cursor");
+  assert.deepEqual(released, ["late-evicted"], "eviction releases even a late Begin response");
+
+  store.noteSessionBinding("other", "/replacement", "s\0replacement");
+  assert.equal((await readBoundHistoryWindow("other", { anchor: "newest" }))?.status, "ready");
+  await store.loadLatest("other", "/replacement");
+  assert.equal(store.isResident("other", "/other"), false);
+  assert.equal((await readBoundHistoryWindow("other", { anchor: "newest" }))?.status, "ready");
+  assert.equal(begins, 2, "evicting the old cached source must retain the replacement binding");
+  assert.deepEqual(released, ["late-evicted"]);
+  releaseHistoryRead("other");
+  await Promise.resolve();
+  assert.deepEqual(released, ["late-evicted", "read-2"]);
 });

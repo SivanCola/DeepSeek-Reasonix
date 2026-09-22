@@ -24,6 +24,11 @@ export function boundSessionKey(
   return binding?.sessionPath === sessionPath ? binding.key : legacySessionKeyFor(tabId, sessionPath);
 }
 
+/** Eviction may retire an old canonical cache after its tab has been rebound. */
+export function releaseTranscriptSessionRead(bindings: Map<string, TranscriptTabBinding>, session: SessionTranscript): void {
+  if (bindings.get(session.tabId)?.key === session.key) releaseHistoryRead(session.tabId);
+}
+
 export function bindTranscriptSession(
   bindings: Map<string, TranscriptTabBinding>,
   sessions: Map<string, SessionTranscript>,
