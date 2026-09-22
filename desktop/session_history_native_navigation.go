@@ -106,8 +106,8 @@ func (a *App) readNativeHistoryOutline(r *desktopHistoryReader, req session.Hist
 		// Only requested prompt positions are read, one at a time. Never retain
 		// the entire transcript or decode tool/attachment records between turns.
 		var prompt string
-		if p.DAG {
-			messages, readErr := p.DAGMessages(entry.Index, entry.Index+1)
+		if p.DAG || p.SchemaOne {
+			messages, readErr := p.EventMessages(entry.Index, entry.Index+1)
 			err = readErr
 			if err == nil && len(messages) == 1 {
 				prompt = agent.UserMessageText(messages[0])

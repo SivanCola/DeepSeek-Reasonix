@@ -240,6 +240,11 @@ func (a *App) ReadSessionHistorySlice(id string, req HistorySliceRequest) (Sessi
 	if page.Stale {
 		status = "stale_cursor"
 	}
+	for i := range page.Entries {
+		for j := range page.Entries[i].Refs {
+			page.Entries[i].Refs[j].ReadHandleID = id
+		}
+	}
 	return SessionHistoryReadSlice{Status: status, Page: page}, nil
 }
 

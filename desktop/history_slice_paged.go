@@ -54,6 +54,22 @@ func (a *App) pagedColdHistorySlice(ctx context.Context, sessionDir, path string
 }
 
 func (a *App) historySliceFromPager(ctx context.Context, pager *agent.DisplayPager, sessionDir, path string, req HistorySliceRequest, sourceID string) (HistorySlice, bool, error) {
+	src := historySourceFromPager(ctx, pager, path, sourceID)
+	page, err := a.pageHistorySliceSource(src, req, sessionDisplayResolver(sessionDir, path), sessionPlannerDisplayTurns(sessionDir, path), nil, path)
+	if src.readErr != nil {
+		return emptyHistorySlice(), true, src.readErr
+	}
+	page.Source = "index"
+	if pager.Built {
+		page.Source = "scan"
+	}
+	if pager.DAG || pager.SchemaOne {
+		page.Source = "event-log"
+	}
+	return page, true, err
+}
+
+func historySourceFromPager(ctx context.Context, pager *agent.DisplayPager, path, sourceID string) *historySliceSource {
 	pager = pager.WithContext(ctx)
 	idx := &pager.Header
 	src := &historySliceSource{sessionID: strings.TrimSuffix(filepath.Base(path), ".jsonl"), total: idx.MessageCount,
@@ -69,8 +85,8 @@ func (a *App) historySliceFromPager(ctx context.Context, pager *agent.DisplayPag
 		if err := pager.Validate(); err != nil {
 			return nil, err
 		}
-		if pager.DAG {
-			return pager.DAGMessages(lo, hi)
+		if pager.DAG || pager.SchemaOne {
+			return pager.EventMessages(lo, hi)
 		}
 		entries, err := pager.Entries(lo, hi)
 		if err != nil {
@@ -86,7 +102,7 @@ func (a *App) historySliceFromPager(ctx context.Context, pager *agent.DisplayPag
 		if hi <= lo {
 			return 0
 		}
-		if pager.DAG {
+		if pager.DAG || pager.SchemaOne {
 			entries, err := pager.Entries(lo, hi)
 			if err != nil {
 				src.readErr = err
@@ -110,16 +126,5 @@ func (a *App) historySliceFromPager(ctx context.Context, pager *agent.DisplayPag
 		}
 		return last.Offset + last.Length - first.Offset
 	}
-	page, err := a.pageHistorySliceSource(src, req, sessionDisplayResolver(sessionDir, path), sessionPlannerDisplayTurns(sessionDir, path), nil, path)
-	if src.readErr != nil {
-		return emptyHistorySlice(), true, src.readErr
-	}
-	page.Source = "index"
-	if pager.Built {
-		page.Source = "scan"
-	}
-	if pager.DAG {
-		page.Source = "event-log"
-	}
-	return page, true, err
+	return src
 }

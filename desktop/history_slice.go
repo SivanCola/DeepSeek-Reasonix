@@ -107,10 +107,12 @@ type HistorySliceRequest struct {
 // The field carries a rune-safe preview prefix; the full value is retrievable
 // in chunks via HistoryContentForTab.
 type HistoryContentRef struct {
-	EntryID string `json:"entryId"`
-	Field   string `json:"field"` // "content", "reasoning", "submitText", "detail", "code", "summary", "archive", "toolResultError", "toolArguments", "toolSubject", "toolSummary", "toolDiff"
-	Size    int    `json:"size"`
-	Chunks  int    `json:"chunks"`
+	// Bound native windows keep content reads on the same cancellable owner.
+	ReadHandleID string `json:"readHandleId,omitempty"`
+	EntryID      string `json:"entryId"`
+	Field        string `json:"field"` // "content", "reasoning", "submitText", "detail", "code", "summary", "archive", "toolResultError", "toolArguments", "toolSubject", "toolSummary", "toolDiff"
+	Size         int    `json:"size"`
+	Chunks       int    `json:"chunks"`
 	// ToolCallID identifies the tool call for tool* fields.
 	ToolCallID string `json:"toolCallId,omitempty"`
 	// Revision/RevKnown/Digest bind the ref to the session state it was cut
@@ -1275,6 +1277,9 @@ func historyContentChunkAt(s string, index int) (string, int) {
 // session's revision/digest moved past the ref, Stale is set so the frontend
 // reloads.
 func (a *App) HistoryContentForTab(tabID string, ref HistoryContentRef, chunkIndex int) HistoryContentChunk {
+	if ref.ReadHandleID != "" {
+		return a.boundNativeHistoryContent(tabID, ref, chunkIndex)
+	}
 	out := HistoryContentChunk{EntryID: ref.EntryID, Field: ref.Field, Chunk: max(chunkIndex, 0)}
 	msgIndex, sub, legacyRow, ok := parseHistoryEntryID(ref.EntryID)
 	if !ok {
@@ -1376,6 +1381,11 @@ func (a *App) HistoryContentForTab(tabID string, ref HistoryContentRef, chunkInd
 // selected tab or creates a controller.
 func (a *App) HistoryContentForTarget(selector SessionSelector, ref HistoryContentRef, chunkIndex int) (HistoryContentChunk, error) {
 	out := HistoryContentChunk{EntryID: ref.EntryID, Field: ref.Field, Chunk: max(chunkIndex, 0)}
+	if ref.ReadHandleID != "" {
+		// This ref belongs to a navigation reader, not a management target.
+		out.Stale = true
+		return out, nil
+	}
 	target, err := a.resolveSessionTargetWithArchived(selector, true)
 	if err != nil {
 		return out, err

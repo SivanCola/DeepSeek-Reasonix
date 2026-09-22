@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 11;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:58e272b6290b0ee6bbf4b0e7d12f1117673e1c29e70e82dd04edec4f914b70ee";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:bb74c666838d8d261766ee3f3855e8ace52e5f627859a47db4204486e2f80e0d";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -2584,6 +2584,7 @@ export interface HistoryContentChunk {
 }
 
 export interface HistoryContentRef {
+  readHandleId?: string;
   entryId: string;
   field: string;
   size: number;

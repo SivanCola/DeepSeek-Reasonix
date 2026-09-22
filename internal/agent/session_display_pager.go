@@ -24,6 +24,7 @@ type DisplayPager struct {
 	Header        SessionDisplayIndex
 	Built         bool
 	DAG           bool
+	SchemaOne     bool
 	ctx           context.Context
 	source        string
 	sourceInfo    os.FileInfo
@@ -75,24 +76,53 @@ func openDisplayPager(ctx context.Context, source, cachePath, head string, force
 	}
 	sourceTarget, sourceVersion := fileops.DiskSnapshot(source, info)
 	fingerprint := fmt.Sprintf("%s:%s", sourceTarget.Key, sourceVersion)
+	opts := projectiondb.OpenOptions{Path: cachePath, Migrations: displayPagerMigrations, RequireDisk: true, MaxOpenConns: 1}
+	handle, err := projectiondb.Open(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if handle != nil {
+			_ = handle.DB.Close()
+		}
+	}()
+	var stored string
+	storedErr := handle.DB.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='source'`).Scan(&stored)
 	var eventInfo os.FileInfo
 	var eventVersion fileops.Version
 	dag := false
+	schemaOne := false
 	hasDAG := false
 	if eventInfo, err = os.Stat(store.SessionEventLog(source)); err == nil && eventInfo.Size() > 0 {
-		f, openErr := os.Open(store.SessionEventLog(source))
-		if openErr != nil {
-			return nil, openErr
-		}
-		schema, _, known := probeSessionEventHeader(&historywork.Reader{Context: ctx, Source: f})
-		_ = f.Close()
-		hasDAG = known && schema == sessionDAGSchemaVersion
-		dag = hasDAG && (plain || head != "" || forceSource)
 		eventTarget, version := fileops.DiskSnapshot(store.SessionEventLog(source), eventInfo)
 		eventVersion = version
 		fingerprint += fmt.Sprintf(":event:%s:%s", eventTarget.Key, eventVersion)
+		// Reuse the proven kind for unchanged schema-1 sources. A legacy JSON
+		// writer may place its identifying fields after a huge messages array;
+		// rediscovering that header on every cached open would reread the array.
+		if plain && head == "" && storedErr == nil && stored == fingerprint+":schema1" {
+			schemaOne = true
+		} else {
+			f, openErr := os.Open(store.SessionEventLog(source))
+			if openErr != nil {
+				return nil, openErr
+			}
+			schema, kind, known, probeErr := probeDisplayEventHeader(ctx, f)
+			_ = f.Close()
+			if probeErr != nil {
+				return nil, probeErr
+			}
+			if known && (schema > sessionDAGSchemaVersion || schema == sessionEventSchemaVersion && kind != sessionEventTypeReplace && kind != sessionEventTypeAppend) {
+				return nil, fmt.Errorf("%w: event schema %d type %q", ErrDisplayFormatUnsupported, schema, kind)
+			}
+			hasDAG = known && schema == sessionDAGSchemaVersion
+			dag = hasDAG && (plain || head != "" || forceSource)
+			schemaOne = known && schema == sessionEventSchemaVersion && (kind == sessionEventTypeReplace || kind == sessionEventTypeAppend) && plain
+		}
 		if dag {
 			fingerprint += fmt.Sprintf(":dag:%d:%d:%s", eventInfo.Size(), eventInfo.ModTime().UnixNano(), head)
+		} else if schemaOne {
+			fingerprint += ":schema1"
 		}
 	} else if err != nil && !os.IsNotExist(err) {
 		return nil, err
@@ -104,7 +134,7 @@ func openDisplayPager(ctx context.Context, source, cachePath, head string, force
 	if head != "" && !dag {
 		return nil, errors.New("requested branch has no DAG source")
 	}
-	if dag {
+	if dag || schemaOne {
 		plain = false
 	}
 	if plain {
@@ -116,22 +146,18 @@ func openDisplayPager(ctx context.Context, source, cachePath, head string, force
 			return nil, logErr
 		}
 		fingerprint += ":checkpoint"
-	} else if !dag {
+	} else if !dag && !schemaOne {
 		fingerprint += fmt.Sprintf(":%d:%d", indexInfo.Size(), indexInfo.ModTime().UnixNano())
 	}
-	opts := projectiondb.OpenOptions{Path: cachePath, Migrations: displayPagerMigrations, RequireDisk: true, MaxOpenConns: 1}
-	handle, err := projectiondb.Open(ctx, opts)
-	if err != nil {
-		return nil, err
-	}
-	var stored string
-	err = handle.DB.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='source'`).Scan(&stored)
-	built := err != nil || stored != fingerprint
+	built := storedErr != nil || stored != fingerprint
 	if built {
 		_ = handle.DB.Close()
 		err = projectiondb.Rebuild(ctx, opts, func(ctx context.Context, db *sql.DB) error {
 			if dag {
 				return buildDAGDisplayPager(ctx, db, source, fingerprint, head, info.Size())
+			}
+			if schemaOne {
+				return buildEventDisplayPager(ctx, db, source, fingerprint, info.Size())
 			}
 			if plain {
 				return buildCheckpointDisplayPager(ctx, db, source, fingerprint)
@@ -139,7 +165,7 @@ func openDisplayPager(ctx context.Context, source, cachePath, head string, force
 			return importDisplayPager(ctx, db, indexPath, fingerprint)
 		})
 		if err != nil {
-			if !dag && !plain && ctx.Err() == nil {
+			if !dag && !schemaOne && !plain && ctx.Err() == nil {
 				return openDisplayPager(ctx, source, cachePath, head, true)
 			}
 			return nil, err
@@ -149,7 +175,7 @@ func openDisplayPager(ctx context.Context, source, cachePath, head string, force
 			return nil, err
 		}
 	}
-	p := &DisplayPager{DB: handle.DB, ctx: ctx, source: source, sourceInfo: info, eventInfo: eventInfo, sourceVersion: sourceVersion, eventVersion: eventVersion, DAG: dag, Built: built && (plain || dag)}
+	p := &DisplayPager{DB: handle.DB, ctx: ctx, source: source, sourceInfo: info, eventInfo: eventInfo, sourceVersion: sourceVersion, eventVersion: eventVersion, DAG: dag, SchemaOne: schemaOne, Built: built && (plain || dag || schemaOne)}
 	var header string
 	if err := p.DB.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='header'`).Scan(&header); err != nil {
 		p.Close()
@@ -161,7 +187,7 @@ func openDisplayPager(ctx context.Context, source, cachePath, head string, force
 	}
 	if p.Header.TranscriptSize != info.Size() || known && head == "" && (p.Header.ContentDigest != identity.DigestHex || p.Header.RevisionKnown != identity.RevisionKnown || p.Header.RevisionKnown && p.Header.Revision != identity.Revision) {
 		p.Close()
-		if !dag && !plain {
+		if !dag && !schemaOne && !plain {
 			return openDisplayPager(ctx, source, cachePath, head, true)
 		}
 		return nil, ErrDisplaySourceChanged
@@ -176,6 +202,7 @@ func openDisplayPager(ctx context.Context, source, cachePath, head string, force
 		p.Close()
 		return nil, err
 	}
+	handle = nil // The returned pager owns the open database from here.
 	return p, nil
 }
 

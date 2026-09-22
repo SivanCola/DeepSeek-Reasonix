@@ -31013,6 +31013,13 @@
     "main.HistoryContentRef": {
       "fields": [
         {
+          "name": "readHandleId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
           "name": "entryId",
           "type": {
             "kind": "string"
