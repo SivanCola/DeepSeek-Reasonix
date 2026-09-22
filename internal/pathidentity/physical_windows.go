@@ -45,9 +45,8 @@ func resolveExistingPath(path string) (string, error) {
 	return "", fmt.Errorf("final physical path exceeds 65536 UTF-16 units")
 }
 
-// CreateFile implicitly requests read attributes and synchronization even
-// with zero desired access. NtCreateFile keeps this a pure identity query,
-// including when a credential read-deny ACL has not yet been repaired.
+// NtCreateFile avoids CreateFile's implicit SYNCHRONIZE requirement. Owners
+// denied file attributes can still query security metadata via READ_CONTROL.
 func openPhysicalPath(path string) (windows.Handle, error) {
 	name, err := windows.NewNTUnicodeString(ntPhysicalPath(path))
 	if err != nil {
@@ -57,9 +56,15 @@ func openPhysicalPath(path string) (windows.Handle, error) {
 	oa.Length = uint32(unsafe.Sizeof(oa))
 	var handle windows.Handle
 	var iosb windows.IO_STATUS_BLOCK
-	err = windows.NtCreateFile(&handle, 0, &oa, &iosb, nil, 0,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
-		windows.FILE_OPEN, windows.FILE_OPEN_FOR_BACKUP_INTENT, 0, 0)
+	open := func(access uint32) error {
+		return windows.NtCreateFile(&handle, access, &oa, &iosb, nil, 0,
+			windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+			windows.FILE_OPEN, windows.FILE_OPEN_FOR_BACKUP_INTENT, 0, 0)
+	}
+	err = open(windows.FILE_READ_ATTRIBUTES)
+	if errors.Is(err, windows.STATUS_ACCESS_DENIED) {
+		err = open(windows.READ_CONTROL)
+	}
 	var status windows.NTStatus
 	if errors.As(err, &status) {
 		err = status.Errno()
