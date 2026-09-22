@@ -2,7 +2,7 @@
 // decision receipts, and compaction cards.
 
 import { useState } from "react";
-import { CheckCheck, ChevronRight, CirclePlay, ClipboardCheck, FileSearch, Info, TriangleAlert } from "lucide-react";
+import { CheckCheck, ChevronRight, CirclePlay, ClipboardCheck, FileSearch, Info, LoaderCircle, TriangleAlert } from "lucide-react";
 import { useT } from "../lib/i18n";
 import type { Item } from "../lib/useController";
 import { sessionOperationStatus } from "../lib/sessionMaintenanceOperation";
@@ -142,7 +142,10 @@ export function CompactionCard({ item }: { item: CompactionItem }) {
     : status === "unavailable" ? t("compaction.unavailable")
     : item.pending ? t("compaction.working") : t("compaction.title");
   if (item.pending || status === "noop" || status === "cancelled" || status === "interrupted" || status === "unavailable") {
-    return <div className={`compaction${item.pending ? " compaction--pending" : ""}`} data-entrance={item.id} data-transcript-layout-variant="static"><ProcessCompactIcon size={12} /><span>{stateLabel}</span></div>;
+    return <div className={`compaction${item.pending ? " compaction--pending" : ""}`} data-entrance={item.id} data-transcript-layout-variant="static" role="status">
+      {item.pending ? <LoaderCircle className="compaction__spinner" size={14} aria-hidden="true" /> : <ProcessCompactIcon size={12} />}
+      <span>{stateLabel}{status === "running" || (!status && item.pending) ? <span className="compaction__hint">{t("compaction.workingHint")}</span> : null}</span>
+    </div>;
   }
   const tokenMeta = item.inputTokens != null && item.resultTokens != null
     ? t("compaction.tokens", { before: item.inputTokens, after: item.resultTokens }) : "";
