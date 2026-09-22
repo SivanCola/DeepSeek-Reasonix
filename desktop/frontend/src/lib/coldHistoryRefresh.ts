@@ -1,5 +1,6 @@
 import type { Meta, TabMeta } from "./types";
-import { sessionIdentityStableKey } from "./sessionIdentity";
+import { sameSessionIdentity, sessionIdentityStableKey, type SessionIdentity } from "./sessionIdentity";
+import type { HydrateSurfacePolicy } from "./hydrateHistoryApply";
 
 /** A passive runtime refresh may retain an already certified reading window.
  * Missing content metadata is not an instruction to replace it with the tail.
@@ -14,4 +15,55 @@ export function coldHistoryRefreshProof(target: TabMeta, state: {
   if (target.sessionDigest && target.sessionDigest !== state.historyDigest) return undefined;
   if (target.sessionRevision !== undefined && target.sessionRevision > 0 && target.sessionRevision !== state.historyRevision) return undefined;
   return { revision: state.historyRevision, digest: state.historyDigest };
+}
+
+type ActiveTabHydrationTarget = SessionIdentity & {
+  sessionRevision?: number;
+  sessionDigest?: string;
+};
+
+export type ActiveTabHydrationLoadOptions = ActiveTabHydrationTarget & {
+  preserveCachedHistory: boolean;
+  surfacePolicy?: HydrateSurfacePolicy;
+};
+
+export function activeTabHydrationPlan(
+  target: ActiveTabHydrationTarget,
+  current: SessionIdentity | undefined,
+  reset: boolean,
+  requestedPolicy?: HydrateSurfacePolicy,
+  requestedCache?: boolean,
+): {
+  sameSession: boolean;
+  surfacePolicy: HydrateSurfacePolicy;
+  loadOptions: ActiveTabHydrationLoadOptions;
+} {
+  const sameSession = sameSessionIdentity(target, current);
+  const surfacePolicy = requestedPolicy ?? (sameSession ? "preserve-current" : "replace-surface");
+  if (surfacePolicy === "replace-surface") {
+    return {
+      sameSession,
+      surfacePolicy,
+      loadOptions: {
+        preserveCachedHistory: false,
+        surfacePolicy,
+        session: target.session,
+        sessionPath: target.sessionPath,
+        sessionRevision: target.sessionRevision,
+        sessionDigest: target.sessionDigest,
+        sessionGeneration: target.sessionGeneration,
+      },
+    };
+  }
+  return {
+    sameSession,
+    surfacePolicy,
+    loadOptions: {
+      preserveCachedHistory: sameSession && (requestedCache ?? !reset),
+      session: target.session,
+      sessionPath: target.sessionPath,
+      sessionRevision: target.sessionRevision,
+      sessionDigest: target.sessionDigest,
+    },
+  };
 }

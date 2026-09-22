@@ -85,7 +85,7 @@ import { applyReadStatusEvent, type ReadStatusHost } from "./readStatus";
 import { upsertReadPause } from "./readPause";
 import { applyHydrateErrorState, hydratePlaceholderItems as resolveHydratePlaceholders } from "./hydrateErrorState";
 import { isHostRecoveryGuidance } from "./hostRecoverySteer";
-import { activeTabHydrationPlan, canAdoptUnboundLiveSurface, hasCachedLiveTurn, hasReusableCachedTranscript, sameSessionHydrateIdentity, sameSessionPlaceholderItems, type HydrateSurfacePolicy } from "./hydrateHistoryApply";
+import { canAdoptUnboundLiveSurface, hasCachedLiveTurn, hasReusableCachedTranscript, sameSessionHydrateIdentity, sameSessionPlaceholderItems, type HydrateSurfacePolicy } from "./hydrateHistoryApply";
 import { useSessionCatalogActions } from "./useSessionCatalogActions";
 import { hydrateIdentityCurrent, sessionIdentityFields, sessionIdentityStableKey, type SessionHydrationOptions } from "./sessionIdentity";
 import { loadHistoryWindow } from "./historyWindowController";
@@ -3044,6 +3044,7 @@ export function useController() {
     const expectedNavigationSeq = options.navigationIntentSeq ?? activeNavigationSeqRef.current;
     const active = await activeTabFromBackend();
     if (!active) return undefined;
+    const { activeTabHydrationPlan, coldHistoryRefreshProof } = await import("./coldHistoryRefresh");
     if (!isNavigationIntentCurrent(expectedNavigationSeq)) return active.id;
     // When guard is true, skip if the frontend already settled on a
     // different tab while we were fetching — this prevents fire-and-forget
@@ -3063,8 +3064,6 @@ export function useController() {
     // navigation while execution is recovering; the ready event will bind the
     // live follower. Never manufacture a subscription or executable runtime.
     if (needsColdHistory(active)) {
-      const { coldHistoryRefreshProof } = await import("./coldHistoryRefresh");
-      if (!isNavigationIntentCurrent(expectedNavigationSeq) || activeTabIdRef.current !== active.id) return active.id;
       const proof = coldHistoryRefreshProof(active, previousState, !reset && hydration.loadOptions.preserveCachedHistory);
       if (proof && getTranscriptStore().peek(active.id, active.sessionPath ?? "", proof)) return active.id;
       dispatchTo(active.id, { type: "hydrate_start", reason: "startup" });
