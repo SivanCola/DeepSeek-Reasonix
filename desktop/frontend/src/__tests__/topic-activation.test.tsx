@@ -204,7 +204,8 @@ const desktopStub = installDesktopHostStub(({
           await transientFailure.beforeThrow?.();
           throw new Error("session runtime is still publishing its history");
         }
-        return historySliceFromMessages(tabID, historyFor(tabID), req);
+        return historySliceFromMessages(tabID, historyFor(tabID), req,
+          tabsById.get(tabID)?.startupErr ? { digest: `native-digest-${tabID}` } : {});
       },
       HistoryCheckpointTurnsForTab: async () => [],
       StartTopicActivation: async (req: TopicActivationRequest) => {
@@ -345,6 +346,13 @@ await waitFor("history succeeds after runtime failure", () => hasHistory(tabB.id
 eq(controller?.state.hydrateError, undefined, "a late valid baseline clears the history error");
 eq(controller?.state.meta?.ready, false, "late history cannot clear the failed runtime write fence");
 historyGate = undefined;
+const readsAfterBlockedHistory = historyRequests;
+const itemsAfterBlockedHistory = JSON.stringify(controller?.state.items);
+const mutationAfterBlockedHistory = controller?.state.historyMutation.seq;
+await act(async () => { await controller?.syncActiveTab(false, true, { preserveCachedHistory: true }); });
+eq(historyRequests, readsAfterBlockedHistory, "settled blocked metadata refresh keeps the certified window without a latest-page read");
+eq(JSON.stringify(controller?.state.items), itemsAfterBlockedHistory, "passive blocked refresh preserves the reader's current items");
+eq(controller?.state.historyMutation.seq, mutationAfterBlockedHistory, "passive blocked refresh does not publish another history replacement");
 const blockedFollowsBeforeRebuild = followTabs.filter(id => id === tabB.id).length;
 await act(async () => {
   desktopStub.emit("runtime:rebuilt", tabB.id, "blocked-rebuilt");

@@ -1,4 +1,4 @@
-import { runtimeReadyForSubmit, needsColdHistory, metaWithoutCanonicalTodos } from "./controllerHistoryMeta";
+import { runtimeReadyForSubmit, needsColdHistory, metaWithoutCanonicalTodos, coldHistoryRefreshProof } from "./controllerHistoryMeta";
 export { runtimeReadyForSubmit } from "./controllerHistoryMeta";
 import { usageTotalTokens, mergeChatTurnUsage } from "./controllerTurnUsage";
 import { reduceCompactionEvent, reduceMaintenanceRuntimeSnapshot, reconcileMaintenanceState } from "./sessionMaintenanceReducer";
@@ -3063,6 +3063,8 @@ export function useController() {
     // navigation while execution is recovering; the ready event will bind the
     // live follower. Never manufacture a subscription or executable runtime.
     if (needsColdHistory(active)) {
+      const proof = coldHistoryRefreshProof(active, previousState, !reset && hydration.loadOptions.preserveCachedHistory);
+      if (proof && getTranscriptStore().peek(active.id, active.sessionPath ?? "", proof)) return active.id;
       dispatchTo(active.id, { type: "hydrate_start", reason: "startup" });
       const current = () => isNavigationIntentCurrent(expectedNavigationSeq) && activeTabIdRef.current === active.id;
       const read = primeReadableHistoryForTab(active.id, active, "startup", expectedNavigationSeq, current);
