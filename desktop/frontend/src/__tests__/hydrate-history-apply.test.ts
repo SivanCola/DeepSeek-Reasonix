@@ -10,7 +10,7 @@ import {
   sameSessionPlaceholderItems,
   shouldPreferResidentHistory,
 } from "../lib/hydrateHistoryApply";
-import { coldHistoryRefreshProof } from "../lib/controllerHistoryMeta";
+import { coldHistoryRefreshProof } from "../lib/coldHistoryRefresh";
 import type { Meta, TabMeta } from "../lib/types";
 
 let passed = 0;
