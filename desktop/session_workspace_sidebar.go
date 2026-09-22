@@ -78,7 +78,7 @@ func (a *App) buildProjectTopics(req ProjectTopicPageRequest, reader workspaceSe
 	if err != nil {
 		return ProjectTopicPage{Items: []ProjectNode{}}, nil, err
 	}
-	state, err := a.workspaceRegistry().LoadProjection(a.bootContext())
+	state, versions, err := a.workspaceRegistry().LoadProjectionWithVersions(a.bootContext())
 	if err != nil {
 		return ProjectTopicPage{Items: []ProjectNode{}}, nil, err
 	}
@@ -87,16 +87,16 @@ func (a *App) buildProjectTopics(req ProjectTopicPageRequest, reader workspaceSe
 	if workspace.Organization != nil {
 		org = *workspace.Organization
 	}
-	if page, validate, handled, err := a.lazyProjectTopicSnapshot(req, reader, snap, state, workspaceID, org); handled {
+	if page, validate, handled, err := a.lazyProjectTopicSnapshot(req, reader, snap, state, workspaceID, org, versions); handled {
 		return page, validate, err
 	}
-	return a.materializeProjectTopics(req, reader, snap, state, workspacestate.NewWorkspaceIndex(state), workspaceID, org, nil)
+	return a.materializeProjectTopics(req, reader, snap, state, workspacestate.NewWorkspaceIndex(state), workspaceID, org, nil, versions)
 }
 
 // projectTopicsFromProjection materializes one workspace from a caller-owned
 // registry snapshot. Project-tree reads use it without organization migration
 // or repeated registry loads, so building sidebar shells remains read-only.
-func (a *App) projectTopicsFromProjection(req ProjectTopicPageRequest, state workspacestate.State, workspaceIndex *workspacestate.WorkspaceIndex, workspaceID string, org workspacestate.Organization, shellPreferences *desktopProject) (ProjectTopicPage, error) {
+func (a *App) projectTopicsFromProjection(req ProjectTopicPageRequest, state workspacestate.State, workspaceIndex *workspacestate.WorkspaceIndex, workspaceID string, org workspacestate.Organization, shellPreferences *desktopProject, snapshotVersions ...*workspacestate.ReadVersions) (ProjectTopicPage, error) {
 	scope, root, err := normalizeOrganizationTarget(req.Scope, req.WorkspaceRoot)
 	if err != nil {
 		return ProjectTopicPage{Items: []ProjectNode{}}, err
@@ -109,7 +109,27 @@ func (a *App) projectTopicsFromProjection(req ProjectTopicPageRequest, state wor
 	var first *readSnapshot
 	if req.Cursor == "" {
 		first, err = store.build(a.bootContext(), binding, func(ctx context.Context, snap *readSnapshot) error {
-			page, validate, err := a.materializeProjectTopics(req, a.desktopSessionService("").Query(), snap, state, workspaceIndex, workspaceID, org, shellPreferences)
+			versions := projectionReadVersions(state, snapshotVersions)
+			effectiveOrg := org
+			tryLazy := true
+			if shellPreferences != nil {
+				workspace := state.Workspaces[workspaceID]
+				if workspace.Organization != nil {
+					effectiveOrg = *workspace.Organization
+				}
+				// An old manual order needs its source-alias translation first.
+				tryLazy = effectiveOrg.MigrationVersion != 0 || !shellPreferences.ManualSessionOrder && !shellPreferences.ManualTopicOrder
+			}
+			var page ProjectTopicPage
+			var validate func() error
+			var handled bool
+			var err error
+			if tryLazy {
+				page, validate, handled, err = a.lazyProjectTopicSnapshot(req, a.desktopSessionService("").Query(), snap, state, workspaceID, effectiveOrg, versions)
+			}
+			if !handled {
+				page, validate, err = a.materializeProjectTopics(req, a.desktopSessionService("").Query(), snap, state, workspaceIndex, workspaceID, org, shellPreferences, versions)
+			}
 			if err != nil {
 				return err
 			}
@@ -150,7 +170,7 @@ func (a *App) projectTopicsFromProjection(req ProjectTopicPageRequest, state wor
 	return out, nil
 }
 
-func (a *App) materializeProjectTopics(req ProjectTopicPageRequest, reader workspaceSessionInfoReader, snap *readSnapshot, state workspacestate.State, workspaceIndex *workspacestate.WorkspaceIndex, workspaceID string, org workspacestate.Organization, shellPreferences *desktopProject) (ProjectTopicPage, func() error, error) {
+func (a *App) materializeProjectTopics(req ProjectTopicPageRequest, reader workspaceSessionInfoReader, snap *readSnapshot, state workspacestate.State, workspaceIndex *workspacestate.WorkspaceIndex, workspaceID string, org workspacestate.Organization, shellPreferences *desktopProject, versions *workspacestate.ReadVersions) (ProjectTopicPage, func() error, error) {
 	workspace := state.Workspaces[workspaceID]
 	if req.pinnedOnly {
 		// Collapsed shells need only explicitly pinned metadata. Do not Stat
@@ -226,8 +246,8 @@ func (a *App) materializeProjectTopics(req ProjectTopicPageRequest, reader works
 	legacy.NextCursor = ""
 	// Ordinary activity and organization edits do not revoke frozen reads.
 	// Membership removal, lifecycle transitions and source adoption do.
-	validate := a.workspaceReadFence(state, workspace, filtered)
-	sourcesFence := &readSourceFence{app: a, files: map[string]os.FileInfo{}, bindings: map[string]string{}, initial: state, store: &a.desktopSessions.readSnapshots, snapshot: snap, metadataOnly: true}
+	validate := a.workspaceReadFence(versions, workspace, filtered)
+	sourcesFence := &readSourceFence{app: a, files: map[string]os.FileInfo{}, bindings: map[string]string{}, versions: versions, store: &a.desktopSessions.readSnapshots, snapshot: snap, metadataOnly: true}
 	for _, node := range filtered {
 		if node.Session != nil {
 			continue
@@ -242,12 +262,15 @@ func (a *App) materializeProjectTopics(req ProjectTopicPageRequest, reader works
 			}
 		}
 	}
-	validateSources := sourcesFence.freeze()
 	return legacy, func() error {
-		if err := validate(); err != nil {
+		current, err := a.workspaceRegistry().VerifySnapshot(a.bootContext())
+		if err != nil {
 			return err
 		}
-		return validateSources()
+		if err := validate(current); err != nil {
+			return err
+		}
+		return sourcesFence.validateWithCurrent(current)
 	}, nil
 }
 
@@ -266,6 +289,13 @@ func desktopSessionTimeCutoff(filter string) int64 {
 		return 0
 	}
 	return time.Now().Add(-duration).UnixMilli()
+}
+
+func projectTopicTimeCutoff(req ProjectTopicPageRequest) int64 {
+	if req.timeCutoff > 0 {
+		return req.timeCutoff
+	}
+	return desktopSessionTimeCutoff(req.TimeFilter)
 }
 
 func (a *App) unifiedProjectRevision(catalogRevision uint64) uint64 {
@@ -311,14 +341,15 @@ func (a *App) updateCanonicalTopicPresentation(topicID string, title *string, pi
 }
 
 func (a *App) mergeCanonicalWorkspaceShells(projects []ProjectNode) []ProjectNode {
-	state, err := a.workspaceRegistry().LoadProjection(a.bootContext())
+	state, versions, err := a.workspaceRegistry().LoadProjectionWithVersions(a.bootContext())
 	if err != nil {
 		return projects
 	}
-	return a.mergeCanonicalWorkspaceShellsFromProjection(projects, state)
+	return a.mergeCanonicalWorkspaceShellsFromProjection(projects, state, versions)
 }
 
-func (a *App) mergeCanonicalWorkspaceShellsFromProjection(projects []ProjectNode, state workspacestate.State) []ProjectNode {
+func (a *App) mergeCanonicalWorkspaceShellsFromProjection(projects []ProjectNode, state workspacestate.State, snapshotVersions ...*workspacestate.ReadVersions) []ProjectNode {
+	versions := projectionReadVersions(state, snapshotVersions)
 	preferences := loadProjectsFile()
 	workspaceIndex := workspacestate.NewWorkspaceIndex(state)
 	owner := func(scope, root string) (string, bool) {
@@ -389,7 +420,7 @@ func (a *App) mergeCanonicalWorkspaceShellsFromProjection(projects []ProjectNode
 		pins := []ProjectNode{}
 		snapshotID := ""
 		for {
-			page, err := a.projectTopicsFromProjection(req, state, workspaceIndex, workspaceID, workspacestate.Organization{}, &legacy)
+			page, err := a.projectTopicsFromProjection(req, state, workspaceIndex, workspaceID, workspacestate.Organization{}, &legacy, versions)
 			if err != nil {
 				project.Health = "metadata_failed"
 				break
@@ -488,7 +519,7 @@ func (a *App) canonicalTopicNodes(req ProjectTopicPageRequest, state workspacest
 	service := a.desktopSessionService("")
 	nodes := initial
 	query := strings.ToLower(strings.TrimSpace(req.Query))
-	cutoff := desktopSessionTimeCutoff(req.TimeFilter)
+	cutoff := projectTopicTimeCutoff(req)
 	var createdTopics map[string]int64
 	if len(created) > 0 {
 		createdTopics = created[0]
@@ -548,7 +579,7 @@ func filterWorkspaceSessionNodes(req ProjectTopicPageRequest, org workspacestate
 	}
 	filtered := []ProjectNode{}
 	seen := map[string]bool{}
-	cutoff := desktopSessionTimeCutoff(req.TimeFilter)
+	cutoff := projectTopicTimeCutoff(req)
 	query := strings.ToLower(strings.TrimSpace(req.Query))
 	aliases := workspaceSourceAliases(state, workspaceID)
 	for _, n := range nodes {

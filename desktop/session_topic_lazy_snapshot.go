@@ -20,14 +20,14 @@ type topicPagePosition struct {
 // Ordinary legacy history is read directly from the existing catalog WAL
 // snapshot. Only requested pages are decoded; no all-pages loop or temporary
 // copy of the whole result is needed to return the first fifty rows.
-func (a *App) lazyProjectTopicSnapshot(req ProjectTopicPageRequest, reader workspaceSessionInfoReader, snap *readSnapshot, state workspacestate.State, workspaceID string, org workspacestate.Organization) (ProjectTopicPage, func() error, bool, error) {
+func (a *App) lazyProjectTopicSnapshot(req ProjectTopicPageRequest, reader workspaceSessionInfoReader, snap *readSnapshot, state workspacestate.State, workspaceID string, org workspacestate.Organization, versions *workspacestate.ReadVersions) (ProjectTopicPage, func() error, bool, error) {
 	catalog := a.sessionCatalog.Load()
-	if catalog == nil || !catalog.MetadataOnly() || org.ManualOrderEnabled || len(org.Groups) > 0 || req.Query != "" || req.TimeFilter != "" || req.GroupFilter != "" && req.GroupFilter != "all" {
+	if catalog == nil || !catalog.MetadataOnly() || org.ManualOrderEnabled || req.Query != "" || req.GroupFilter != "" && req.GroupFilter != "all" {
 		return ProjectTopicPage{}, nil, false, nil
 	}
-	if multiple, err := catalog.HasMultipleHeads(a.bootContext(), req.Scope, req.WorkspaceRoot); err != nil || multiple {
-		return ProjectTopicPage{}, nil, err != nil, err
-	}
+	// Freeze relative filters once so canonical extras and every catalog page
+	// use the same boundary even if the cursor is resumed much later.
+	req.timeCutoff = desktopSessionTimeCutoff(req.TimeFilter)
 	lease, err := catalog.OpenReadLease(a.desktopSessions.readSnapshots.ctx)
 	if errors.Is(err, sessioncatalog.ErrReadLeaseUnavailable) {
 		return ProjectTopicPage{}, nil, false, nil
@@ -37,14 +37,30 @@ func (a *App) lazyProjectTopicSnapshot(req ProjectTopicPageRequest, reader works
 	}
 	snap.closeRead = lease.Close
 	ctx := lease.Context(a.bootContext())
+	// Decide which adapter can represent this exact WAL snapshot. A head
+	// discovered after this transaction starts belongs to the next refresh.
+	if multiple, err := catalog.HasMultipleHeads(ctx, req.Scope, req.WorkspaceRoot); err != nil || multiple {
+		lease.Close()
+		snap.closeRead = nil
+		return ProjectTopicPage{}, nil, err != nil, err
+	}
 	workspace := state.Workspaces[workspaceID]
+	if req.pinnedOnly {
+		ids := make([]string, 0)
+		for _, id := range workspace.SessionIDs {
+			if state.Presentation[id].Pinned {
+				ids = append(ids, id)
+			}
+		}
+		workspace.SessionIDs = ids
+	}
 	infos, _ := listWorkspaceSessionInfo(a.bootContext(), reader, workspace.SessionIDs)
 	sources := a.historicalCanonicalTopicsFromProjection(req.Scope, req.WorkspaceRoot, state, workspacestate.NewWorkspaceIndex(state))
 	if saved, err := readHistoricalSidecar(); err == nil {
 		applyHistoricalPresentations(sources, saved)
 	}
 	adoptedTopics := map[string]bool{}
-	for _, id := range workspace.SessionIDs {
+	for _, id := range state.Workspaces[workspaceID].SessionIDs {
 		adoptedTopics[state.Presentation[id].TopicID] = true
 	}
 	// Unbacked user-created topics remain visible without inspecting a body.
@@ -62,8 +78,8 @@ func (a *App) lazyProjectTopicSnapshot(req ProjectTopicPageRequest, reader works
 	// paths are stable identities; a background activity update cannot reorder
 	// a view whose WAL transaction has already been captured.
 	less := func(left, right ProjectNode) bool {
-		if left.Pinned == right.Pinned && projectTopicSortValue(left.CreatedAt, left.LastActivityAt, req.SortMode) == projectTopicSortValue(right.CreatedAt, right.LastActivityAt, req.SortMode) && left.TopicID == right.TopicID && left.Session == nil && right.Session == nil && left.Source == nil && right.Source == nil {
-			return left.SessionPath < right.SessionPath
+		if left.Pinned == right.Pinned && projectTopicSortValue(left.CreatedAt, left.LastActivityAt, req.SortMode) == projectTopicSortValue(right.CreatedAt, right.LastActivityAt, req.SortMode) && left.TopicID == right.TopicID {
+			return topicPageIdentity(left) < topicPageIdentity(right)
 		}
 		return projectTopicLess(left, right, req.SortMode, false)
 	}
@@ -75,12 +91,12 @@ func (a *App) lazyProjectTopicSnapshot(req ProjectTopicPageRequest, reader works
 		}
 	}
 	excludedJSON, _ := json.Marshal(excluded)
-	query := sessioncatalog.OrdinaryPageRequest{Scope: req.Scope, WorkspaceRoot: req.WorkspaceRoot, SortMode: req.SortMode, PinnedOnly: req.pinnedOnly, ExcludePinned: req.ExcludePinned, ExcludedPathsJSON: string(excludedJSON)}
+	query := sessioncatalog.OrdinaryPageRequest{Scope: req.Scope, WorkspaceRoot: req.WorkspaceRoot, SortMode: req.SortMode, PinnedOnly: req.pinnedOnly, ExcludePinned: req.ExcludePinned, ExcludedPathsJSON: string(excludedJSON), MinActivity: req.timeCutoff}
 	positions := map[int]topicPagePosition{0: {}}
 	// Snapshot memory accounts for retained metadata and cursor checkpoints,
 	// including roots retained while a caller has not yet requested page two.
 	store := &a.desktopSessions.readSnapshots
-	fence := &readSourceFence{app: a, files: map[string]os.FileInfo{}, bindings: map[string]string{}, initial: state, store: store, snapshot: snap, metadataOnly: true}
+	fence := &readSourceFence{app: a, files: map[string]os.FileInfo{}, bindings: map[string]string{}, versions: versions, store: store, snapshot: snap, metadataOnly: true}
 	encoded, err := json.Marshal(extras)
 	if err != nil {
 		return ProjectTopicPage{}, nil, true, err
@@ -134,7 +150,7 @@ func (a *App) lazyProjectTopicSnapshot(req ProjectTopicPageRequest, reader works
 			}
 			rows = append(rows, b)
 			if node.Session == nil && node.SessionPath != "" {
-				if err := fence.add(readCtx, node.SessionPath); err != nil {
+				if err := fence.add(lease.Context(readCtx), node.SessionPath); err != nil {
 					return nil, false, err
 				}
 			}
@@ -152,11 +168,25 @@ func (a *App) lazyProjectTopicSnapshot(req ProjectTopicPageRequest, reader works
 	}
 	availability := a.catalogWorkspaceAvailability(catalog, req.Scope, req.WorkspaceRoot, ctx)
 	page := availability.decorate(ProjectTopicPage{Items: []ProjectNode{}}, catalog.Status().Revision+state.Generation)
-	validateWorkspace := a.workspaceReadFence(state, workspace, extras)
+	validateWorkspace := a.workspaceReadFence(versions, workspace, extras)
 	return page, func() error {
-		if err := validateWorkspace(); err != nil {
+		current, err := a.workspaceRegistry().VerifySnapshot(a.bootContext())
+		if err != nil {
 			return err
 		}
-		return fence.validateCurrent()
+		if err := validateWorkspace(current); err != nil {
+			return err
+		}
+		return fence.validateWithCurrent(current)
 	}, true, nil
+}
+
+func topicPageIdentity(node ProjectNode) string {
+	if node.Session != nil {
+		return "ref\x00" + node.Session.HostID + "\x00" + node.Session.SessionID
+	}
+	if node.Source != nil {
+		return "source\x00" + node.Source.Path + "\x00" + node.Source.HeadID
+	}
+	return "node\x00" + node.Key
 }

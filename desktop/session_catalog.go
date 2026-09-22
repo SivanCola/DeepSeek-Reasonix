@@ -93,6 +93,7 @@ type ProjectTopicPageRequest struct {
 	groupSelected    *desktopGroup
 	groupAll         []desktopGroup
 	pinnedOnly       bool
+	timeCutoff       int64
 	readContext      context.Context
 	metadataSnapshot *[]ProjectNode
 	readAllSources   bool
@@ -610,9 +611,9 @@ func (a *App) GetProjectTreeSnapshot() ProjectTreeSnapshot {
 		projects = append(projects, remoteNodes...)
 	}
 	registryGeneration := uint64(0)
-	if state, err := a.workspaceRegistry().LoadProjection(a.bootContext()); err == nil {
+	if state, versions, err := a.workspaceRegistry().LoadProjectionWithVersions(a.bootContext()); err == nil {
 		registryGeneration = state.Generation
-		projects = a.mergeCanonicalWorkspaceShellsFromProjection(projects, state)
+		projects = a.mergeCanonicalWorkspaceShellsFromProjection(projects, state, versions)
 	}
 	projects = applyPinnedProjectOrder(applyProjectTreeOrder(projects, f.SidebarOrder), f.PinnedProjects)
 	status := a.currentSessionCatalogStatus()

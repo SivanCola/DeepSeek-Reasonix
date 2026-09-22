@@ -105,18 +105,33 @@ func (s *Store) LoadProjection(ctx context.Context) (State, error) {
 	return s.loadSnapshot(ctx, true)
 }
 
+// LoadProjectionWithVersions returns a mutable display copy and the immutable
+// invalidation index from the exact same verification. Callers must not infer
+// that relationship from generation numbers, which legacy writers can retain.
+func (s *Store) LoadProjectionWithVersions(ctx context.Context) (State, *ReadVersions, error) {
+	snapshot, err := s.VerifySnapshot(ctx)
+	if err != nil {
+		return State{}, nil, err
+	}
+	return snapshot.cloneState(true), snapshot.versions, nil
+}
+
 func (s *Store) loadSnapshot(ctx context.Context, projection bool) (State, error) {
 	snapshot, err := s.VerifySnapshot(ctx)
 	if err != nil {
 		return State{}, err
 	}
-	state := snapshot.state
+	return snapshot.cloneState(projection), nil
+}
+
+func (r *ReadSnapshot) cloneState(projection bool) State {
+	state := r.state
 	if projection {
 		state = State{Version: state.Version, Generation: state.Generation, Initialized: state.Initialized,
 			WorkspaceIDs: state.WorkspaceIDs, Workspaces: state.Workspaces,
 			SessionStates: state.SessionStates, SourceMappings: state.SourceMappings, Presentation: state.Presentation}
 	}
-	return cloneSnapshot(state), nil
+	return cloneSnapshot(state)
 }
 
 func (s *Store) verifySnapshotLocked(ctx context.Context) error {

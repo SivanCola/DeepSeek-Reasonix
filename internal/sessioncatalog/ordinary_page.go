@@ -13,6 +13,7 @@ import (
 type OrdinaryPageRequest struct {
 	Scope, WorkspaceRoot, Cursor, SortMode, ExcludedPathsJSON string
 	Limit                                                     int
+	MinActivity                                               int64
 	PinnedOnly, ExcludePinned                                 bool
 }
 
@@ -60,6 +61,10 @@ func (c *Catalog) ListOrdinarySessions(ctx context.Context, req OrdinaryPageRequ
 	}
 	where := `s.scope=? AND s.workspace_root_key=? AND s.missing_since=0 AND s.health<>'missing' AND s.ordinary_visible=1`
 	args := []any{req.Scope, c.workspaceRootKey(req.Scope, req.WorkspaceRoot)}
+	if req.MinActivity > 0 {
+		where += ` AND max(s.created_at,s.last_activity_at)>=?`
+		args = append(args, req.MinActivity)
+	}
 	if req.PinnedOnly {
 		where += ` AND s.topic_pinned=1`
 	}

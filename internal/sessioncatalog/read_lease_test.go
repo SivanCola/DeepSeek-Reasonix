@@ -129,3 +129,41 @@ func TestOrdinaryPagePinIndexTracksMetadataAndSourceMoves(t *testing.T) {
 	}
 	assertFirst(b.Path)
 }
+
+func TestOrdinaryPageTimeFilterUsesFrozenInclusiveBoundary(t *testing.T) {
+	c, err := Open(t.Context(), Options{InMemory: true, MetadataOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close(context.Background())
+	dir := t.TempDir()
+	for i, times := range [][2]int64{{99, 99}, {100, 90}, {80, 100}, {90, 120}} {
+		r := SessionRecord{Path: filepath.Join(dir, fmt.Sprintf("%d.jsonl", i)), Directory: dir, Scope: "global", TopicID: "shared",
+			CreatedAt: times[0], LastActivityAt: times[1], Health: HealthOK, TurnsState: TurnsUnknown, OrdinaryVisible: true}
+		if err := c.UpsertSession(t.Context(), r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, mode := range []string{"activity", "created"} {
+		req := OrdinaryPageRequest{Scope: "global", SortMode: mode, Limit: 1, MinActivity: 100}
+		seen := map[string]bool{}
+		for {
+			page, err := c.ListOrdinarySessions(t.Context(), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(page) == 0 {
+				break
+			}
+			name := filepath.Base(page[0].Path)
+			if seen[name] || name == "0.jsonl" || len(seen) > 3 {
+				t.Fatalf("%s repeated or admitted a pre-boundary record: %s", mode, name)
+			}
+			seen[name] = true
+			req.Cursor = page[0].Cursor
+		}
+		if len(seen) != 3 {
+			t.Fatalf("%s omitted inclusive created/activity boundary: %v", mode, seen)
+		}
+	}
+}

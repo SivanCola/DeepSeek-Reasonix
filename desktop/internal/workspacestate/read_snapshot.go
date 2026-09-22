@@ -18,6 +18,7 @@ type ReadSnapshot struct {
 	conflicts    map[string]bool
 	activeTopics map[string]int
 	headSources  map[string]bool
+	versions     *ReadVersions
 }
 
 // SessionMetadata deliberately excludes workspace members and organization:
@@ -39,7 +40,7 @@ type snapshotVerification struct {
 }
 
 func (s *Store) publishSnapshotLocked(body []byte, state State) {
-	r := &ReadSnapshot{state: state, owners: make(map[string]string), conflicts: make(map[string]bool), activeTopics: make(map[string]int), headSources: make(map[string]bool)}
+	r := &ReadSnapshot{state: state, owners: make(map[string]string), conflicts: make(map[string]bool), activeTopics: make(map[string]int), headSources: make(map[string]bool), versions: NewReadVersions(state)}
 	for key, workspace := range state.Workspaces {
 		for _, id := range workspace.SessionIDs {
 			if _, exists := r.owners[id]; exists {
