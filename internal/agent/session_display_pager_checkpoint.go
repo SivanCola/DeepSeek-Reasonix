@@ -5,12 +5,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 
+	"reasonix/internal/fileops"
 	"reasonix/internal/historywork"
 	"reasonix/internal/provider"
 )
@@ -19,22 +21,37 @@ import (
 // repairing any session sidecar. At most one message and one SQLite batch are
 // retained. Digest validation happens before the disposable index is published.
 func buildCheckpointDisplayPager(ctx context.Context, db *sql.DB, source, fingerprint string) error {
+	return buildCheckpointDisplayPagerObserved(ctx, db, source, fingerprint, nil)
+}
+
+// The observer is used by deterministic interruption tests after durable batch
+// publication. Production callers do not install one.
+func buildCheckpointDisplayPagerObserved(ctx context.Context, db *sql.DB, source, fingerprint string, committed func(int)) error {
 	f, err := os.Open(source)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	reader := bufio.NewReaderSize(&historywork.Reader{Context: ctx, Source: f}, historywork.ReadChunk)
+	if err := validateCheckpointPagerFile(source, f, fingerprint); err != nil {
+		return err
+	}
 	hash := sha256.New()
 	idx := SessionDisplayIndex{SchemaVersion: SessionDisplayIndexSchemaVersion, ListingPreviewKnown: true}
 	users := 0
+	if err := restoreCheckpointPagerProgress(ctx, db, &idx, &users, hash); err != nil {
+		return err
+	}
+	if _, err := f.Seek(idx.TranscriptSize, io.SeekStart); err != nil {
+		return err
+	}
+	reader := bufio.NewReaderSize(&historywork.Reader{Context: ctx, Source: f}, historywork.ReadChunk)
 	done := false
 	for !done {
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
-		for batch := 0; batch < historywork.BatchEntries; batch++ {
+		for range historywork.BatchEntries {
 			line, readErr := readSessionDisplayIndexLine(reader)
 			if readErr != nil && !errors.Is(readErr, io.EOF) {
 				err = readErr
@@ -96,8 +113,19 @@ func buildCheckpointDisplayPager(ctx context.Context, db *sql.DB, source, finger
 			_ = tx.Rollback()
 			return fmt.Errorf("build checkpoint display index: %w", err)
 		}
+		state, marshalErr := hash.(encoding.BinaryMarshaler).MarshalBinary()
+		if marshalErr == nil {
+			marshalErr = saveCheckpointPagerProgress(ctx, tx, idx, users, state)
+		}
+		if marshalErr != nil {
+			_ = tx.Rollback()
+			return marshalErr
+		}
 		if err := tx.Commit(); err != nil {
 			return err
+		}
+		if committed != nil {
+			committed(idx.MessageCount)
 		}
 	}
 	var digest [sha256.Size]byte
@@ -113,10 +141,36 @@ func buildCheckpointDisplayPager(ctx context.Context, db *sql.DB, source, finger
 		}
 		idx.Revision, idx.RevisionKnown = identity.Revision, identity.RevisionKnown
 	}
+	if err := validateCheckpointPagerFile(source, f, fingerprint); err != nil {
+		return err
+	}
 	body, err := json.Marshal(idx)
 	if err != nil {
 		return err
 	}
-	_, err = db.ExecContext(ctx, `INSERT INTO metadata VALUES('source',?),('header',?)`, fingerprint, string(body))
+	_, err = db.ExecContext(ctx, `INSERT OR REPLACE INTO metadata VALUES('source',?),('header',?)`, fingerprint, string(body))
 	return err
+}
+
+// Fence both the handle that supplied the bytes and its current pathname
+// before publishing. A replacement or a newly authoritative event log cannot
+// turn a resumed checkpoint prefix into a complete generation.
+func validateCheckpointPagerFile(source string, f *os.File, fingerprint string) error {
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	target, version := fileops.DiskHandleSnapshot(source, f, info)
+	if fmt.Sprintf("%s:%s:checkpoint", target.Key, version) != fingerprint {
+		return ErrDisplaySourceChanged
+	}
+	current, err := os.Stat(source)
+	if err != nil {
+		return err
+	}
+	target, version = fileops.DiskSnapshot(source, current)
+	if !os.SameFile(info, current) || fmt.Sprintf("%s:%s:checkpoint", target.Key, version) != fingerprint {
+		return ErrDisplaySourceChanged
+	}
+	return validateCheckpointDisplaySource(source)
 }

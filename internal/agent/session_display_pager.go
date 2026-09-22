@@ -97,6 +97,9 @@ func openDisplayPager(ctx context.Context, source, cachePath, head string, force
 	built := storedErr != nil || stored != fingerprint
 	if built {
 		_ = handle.DB.Close()
+		if observed.plain {
+			opts.ResumeKey = "checkpoint-v1:" + fingerprint
+		}
 		err = projectiondb.Rebuild(ctx, opts, func(ctx context.Context, db *sql.DB) error {
 			return observed.build(ctx, db, source, indexPath, head, info.Size())
 		})
