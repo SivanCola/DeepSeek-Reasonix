@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,7 +21,7 @@ import (
 )
 
 func TestCheckpointPagerResumesDurableBatchAfterReopen(t *testing.T) {
-	for _, mode := range []string{"resume", "changed-source", "damaged-progress", "missing-progress"} {
+	for _, mode := range []string{"resume", "process-restart", "changed-source", "damaged-progress", "missing-progress"} {
 		t.Run(mode, func(t *testing.T) { checkCheckpointPagerResume(t, mode) })
 	}
 }
@@ -94,18 +95,30 @@ func checkCheckpointPagerResume(t *testing.T, mode string) {
 	target, version := fileops.DiskSnapshot(source, info)
 	fingerprint := fmt.Sprintf("%s:%s:checkpoint", target.Key, version)
 	opts := projectiondb.OpenOptions{Path: cache, Migrations: displayPagerMigrations, RequireDisk: true, MaxOpenConns: 1, ResumeKey: "checkpoint-v1:" + fingerprint}
-	ctx, cancel := context.WithCancel(t.Context())
-	err = projectiondb.Rebuild(ctx, opts, func(ctx context.Context, db *sql.DB) error {
-		return buildCheckpointDisplayPagerObserved(ctx, db, source, fingerprint, func(count int) {
-			if count != historywork.BatchEntries {
-				t.Fatalf("checkpoint was not a complete batch: %d", count)
-			}
-			cancel()
+	if mode == "process-restart" {
+		executable, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		child := exec.CommandContext(t.Context(), executable, "-test.run=^TestCheckpointPagerCrashHelper$")
+		child.Env = append(os.Environ(), "REASONIX_CHECKPOINT_CRASH_SOURCE="+source, "REASONIX_CHECKPOINT_CRASH_CACHE="+cache)
+		if output, err := child.CombinedOutput(); err != nil {
+			t.Fatalf("interrupted child: %v\n%s", err, output)
+		}
+	} else {
+		ctx, cancel := context.WithCancel(t.Context())
+		err = projectiondb.Rebuild(ctx, opts, func(ctx context.Context, db *sql.DB) error {
+			return buildCheckpointDisplayPagerObserved(ctx, db, source, fingerprint, func(count int) {
+				if count != historywork.BatchEntries {
+					t.Fatalf("checkpoint was not a complete batch: %d", count)
+				}
+				cancel()
+			})
 		})
-	})
-	cancel()
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("expected retained interrupted preparation: %v", err)
+		cancel()
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected retained interrupted preparation: %v", err)
+		}
 	}
 	switch mode {
 	case "changed-source":
@@ -147,7 +160,7 @@ func checkCheckpointPagerResume(t *testing.T, mode string) {
 		t.Fatal(err)
 	}
 	defer pager.Close()
-	if got := meter.Diagnostics().InstrumentedReadBytes; mode == "resume" && got >= int64(body.Len())*3/4 {
+	if got := meter.Diagnostics().InstrumentedReadBytes; (mode == "resume" || mode == "process-restart") && got >= int64(body.Len())*3/4 {
 		t.Fatalf("reopen reread the completed prefix: %d of %d bytes", got, body.Len())
 	}
 	digest, err := ContentDigestForMessages(messages)
@@ -162,4 +175,29 @@ func checkCheckpointPagerResume(t *testing.T, mode string) {
 	if err != nil || !bytes.Equal(after, body.Bytes()) {
 		t.Fatalf("preparation changed the source: %v", err)
 	}
+}
+
+// A separate process exits after SQLite commits, without unwinding the file,
+// database or lock owners. Reopening must recover its WAL and committed offset.
+func TestCheckpointPagerCrashHelper(t *testing.T) {
+	source, cache := os.Getenv("REASONIX_CHECKPOINT_CRASH_SOURCE"), os.Getenv("REASONIX_CHECKPOINT_CRASH_CACHE")
+	if source == "" || cache == "" {
+		return
+	}
+	info, err := os.Stat(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, version := fileops.DiskSnapshot(source, info)
+	fingerprint := fmt.Sprintf("%s:%s:checkpoint", target.Key, version)
+	opts := projectiondb.OpenOptions{Path: cache, Migrations: displayPagerMigrations, RequireDisk: true, MaxOpenConns: 1, ResumeKey: "checkpoint-v1:" + fingerprint}
+	err = projectiondb.Rebuild(t.Context(), opts, func(ctx context.Context, db *sql.DB) error {
+		return buildCheckpointDisplayPagerObserved(ctx, db, source, fingerprint, func(count int) {
+			if count != historywork.BatchEntries {
+				t.Fatalf("unexpected crash position: %d", count)
+			}
+			os.Exit(0)
+		})
+	})
+	t.Fatalf("child did not stop at the committed batch: %v", err)
 }
