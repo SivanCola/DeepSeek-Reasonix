@@ -76,8 +76,8 @@ export function ProviderCatalogPicker({ choices, busy, onConnect, onView, onRese
     setKeyDraft({id: "", keyEnv: "", value: ""});
     setConfirmReset(false);
   };
-  const chooseDimension = (dimension: "region" | "product" | "format", value: string) => {
-    const candidates = (dimension === "product" ? siblings : dimension === "region" ? productChoices : formatChoices)
+  const chooseDimension = (dimension: "region" | "product", value: string) => {
+    const candidates = (dimension === "product" ? siblings : productChoices)
       .filter(c => c.catalog[dimension] === value);
     const choice = candidates.find(c => c.catalog.region === selected.catalog.region && genericFormat(c.catalog.format) === format)
       ?? candidates.find(c => genericFormat(c.catalog.format) === format)
@@ -87,19 +87,19 @@ export function ProviderCatalogPicker({ choices, busy, onConnect, onView, onRese
       setFormatDrafts(prev => ({...prev, [choice.id]: format}));
     }
   };
-  const field = (dimension: "region" | "product" | "format", label: DictKey, candidates: CatalogChoice[]) => {
+  const field = (dimension: "region" | "product", label: DictKey, candidates: CatalogChoice[]) => {
     const values = [...new Set(candidates.map(c => c.catalog[dimension]))];
     const labels = dimension === "region" ? (label === "settings.catalog.cluster" ? clusterKeys : regionKeys) : productKeys;
     return <div className="provider-catalog__field">
       <label className="set-label" htmlFor={`${uid}-${dimension}`}>{t(label)}</label>
       <SettingsSelect id={`${uid}-${dimension}`} className="mem-select" disabled={busy || values.length < 2}
         value={selected.catalog[dimension]} onValueChange={value => chooseDimension(dimension, value)}>
-        {values.map(value => <option key={value} value={value}>{dimension === "format"
-          ? value === "bundle" ? t("settings.catalog.formatBundle") : apiFormatLabel(value)
-          : labels[value] ? t(labels[value]) : value}</option>)}
+        {values.map(value => <option key={value} value={value}>{labels[value] ? t(labels[value]) : value}</option>)}
       </SettingsSelect>
     </div>;
   };
+  const hasProducts = new Set(siblings.map(c => c.catalog.product)).size > 1;
+  const hasRegions = new Set(productChoices.map(c => c.catalog.region)).size > 1;
   return <div className="provider-catalog">
     <aside className="provider-catalog__sidebar">
       <input className="mem-input" aria-label={t("settings.catalog.search")} placeholder={t("settings.catalog.search")}
@@ -116,9 +116,9 @@ export function ProviderCatalogPicker({ choices, busy, onConnect, onView, onRese
     </aside>
     <section className="provider-catalog__detail" aria-label={selected.catalog.brandLabel}>
       <strong className="provider-catalog__title">{selected.catalog.brandLabel}</strong>
-      {(new Set(siblings.map(c => c.catalog.product)).size > 1 || new Set(productChoices.map(c => c.catalog.region)).size > 1) && <div className="provider-catalog__options">
-        {new Set(siblings.map(c => c.catalog.product)).size > 1 && field("product", "settings.catalog.product", siblings)}
-        {new Set(productChoices.map(c => c.catalog.region)).size > 1 && field("region", selected.catalog.brandId === "mimo" && selected.catalog.product === "token" ? "settings.catalog.cluster" : "settings.catalog.region", productChoices)}
+      {(hasProducts || hasRegions) && <div className="provider-catalog__options">
+        {hasProducts && field("product", "settings.catalog.product", siblings)}
+        {hasRegions && field("region", selected.catalog.brandId === "mimo" && selected.catalog.product === "token" ? "settings.catalog.cluster" : "settings.catalog.region", productChoices)}
       </div>}
       {selected.catalog.brandId === "mimo" && selected.catalog.product === "token" && <div className="mem-hint">{t("settings.catalog.mimoTokenPlanHint")}</div>}
       <div className="provider-catalog__field">

@@ -47,7 +47,9 @@ export const mockTokenRhythmModelOverrides = mockTokenRhythmModels.flatMap((mode
   if (model.startsWith("deepseek-")) return [{ model, reasoningProtocol: "deepseek", supportedEfforts: model === "deepseek-v4-pro" ? ["disabled", "high", "max"] : ["disabled", "low", "high", "max"], defaultEffort: "high" }];
   return [];
 });
-export const mockMiMoModels = ["mimo-v2.6-pro", "mimo-v2.6-flash", "mimo-v2.5-pro", "mimo-v2.5"];
+const mockMiMoModels = ["mimo-v2.6-pro", "mimo-v2.6-flash", "mimo-v2.5-pro", "mimo-v2.5"];
+const mockMiMoVisionModels = ["mimo-v2.6-pro", "mimo-v2.6-flash", "mimo-v2.5"];
+export const mockMiMoDefaults = { models: mockMiMoModels, visionModels: mockMiMoVisionModels, default: "mimo-v2.6-pro", contextWindow: 1048576 };
 export const mockMiniMaxModels = ["MiniMax-M3", "MiniMax-M2.7", "MiniMax-M2.7-highspeed"];
 export const mockGLMAPIModels = ["glm-5.2", "glm-5.1", "glm-5", "glm-5-turbo", "glm-5v-turbo", "glm-4.7", "glm-4.7-flash", "glm-4.7-flashx", "glm-4.6", "glm-4.5", "glm-4.5-air", "glm-4.5-flash"];
 export const mockGLMCodingModels = ["glm-5.2", "glm-5.1", "glm-5", "glm-4.7"];
