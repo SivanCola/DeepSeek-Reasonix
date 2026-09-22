@@ -150,8 +150,6 @@ type FileRefSearchCacheEntry = {
   cachedAt: number;
 };
 
-type ComposerSubmission = false | "message" | "compact";
-
 type ComposerDraft = {
   text: string;
   invocations: ComposerInvocation[];
@@ -169,7 +167,7 @@ type ComposerDraft = {
   guidanceExpanded: boolean;
   guidanceSendingId: string | null;
   pendingPaste: number;
-  submitting: ComposerSubmission;
+  submitting: false | "message" | "compact";
 };
 
 type ComposerEditSnapshot = {
@@ -815,8 +813,7 @@ export function Composer({
   const guidanceExpandedRef = useRef(false);
   const guidanceSendingIdRef = useRef<string | null>(null);
   const [loadingPastChats, setLoadingPastChats] = useState(false);
-  const [submission, setSubmission] = useState<ComposerSubmission>(false);
-  const submitting = Boolean(submission);
+  const [submission, setSubmission] = useState<false | "message" | "compact">(false);
   const cancelSettlingDraftsRef = useRef(new Set<string>());
   const [, setCancelSettlingRevision] = useState(0);
   const [inputMenuPoint, setInputMenuPoint] = useState<ContextMenuPoint | null>(null);
@@ -859,7 +856,7 @@ export function Composer({
   const guidanceReceiptTrackerRef = useRef<GuidanceReceiptTracker | null>(null);
   guidanceReceiptTrackerRef.current ??= createGuidanceReceiptTracker();
   const selfDispatchedGuidanceByDraftRef = useRef<Record<string, string[]>>({});
-  const submittingRef = useRef<ComposerSubmission>(false);
+  const submittingRef = useRef<false | "message" | "compact">(false);
   const nativeClipboardPasteTimerRef = useRef<number | null>(null);
   const nativeClipboardPasteCompletionRef = useRef<(() => void) | null>(null);
   // Snapshot of the current cwd so async callbacks (openPastChats) can detect
@@ -1227,15 +1224,14 @@ export function Composer({
     draftsBySessionRef.current[targetDraftKey] = draft;
   };
 
-  const updateSubmittingForDraft = (targetDraftKey: string, next: boolean, kind: Exclude<ComposerSubmission, false> = "message") => {
-    const value = next ? kind : false;
+  const updateSubmittingForDraft = (targetDraftKey: string, next: boolean, kind: "message" | "compact" = "message") => {
     if (targetDraftKey === activeDraftKeyRef.current) {
-      submittingRef.current = value;
-      setSubmission(value);
+      submittingRef.current = next ? kind : false;
+      setSubmission(next ? kind : false);
       return;
     }
     const draft = cloneComposerDraft(draftsBySessionRef.current[targetDraftKey] ?? emptyComposerDraft());
-    draft.submitting = value;
+    draft.submitting = next ? kind : false;
     draftsBySessionRef.current[targetDraftKey] = draft;
   };
 
@@ -2170,11 +2166,8 @@ export function Composer({
     const currentSessionRefs = sessionRefsRef.current;
     const currentSelectedTextRefs = selectedTextRefsRef.current;
 		const currentPastedBlocks = [...pastedBlocksRef.current];
-    // Capture the submitted command once; editing or switching drafts must
-    // not relabel the request that is still waiting for admission.
     updateSubmittingForDraft(submitDraftKey, true,
-      !goalModeOn && trimmedDraft.invocations.length === 0 && currentSessionRefs.length === 0 &&
-      isCompactCommand(expandPastedBlocks(trimmedText, currentPastedBlocks)) ? "compact" : "message");
+      !goalModeOn && trimmedDraft.invocations.length === 0 && currentSessionRefs.length === 0 && isCompactCommand(expandPastedBlocks(trimmedText, currentPastedBlocks)) ? "compact" : "message");
 		let submissionCapture: unknown;
 		let submissionAttachmentTarget: string | undefined;
 		let attachmentSubmissionId: string | undefined;
@@ -4055,7 +4048,7 @@ export function Composer({
   const runStrip = runMetrics?.stripParts.length ? runMetrics : null;
   const submitEmpty = !text.trim() && attachments.length === 0 && workspaceRefs.length === 0 &&
     !invocations.some((invocation) => invocation.command.kind === "skill");
-  const submitBlocked = queueEditing || submitting || (!pendingFollowup && (pendingPaste > 0 || (submitEmpty && !(goalModeOn && !activeGoal)) || disabled || (!running && submitDisabled) || readOnly));
+  const submitBlocked = queueEditing || Boolean(submission) || (!pendingFollowup && (pendingPaste > 0 || (submitEmpty && !(goalModeOn && !activeGoal)) || disabled || (!running && submitDisabled) || readOnly));
   const submitUnavailableHint = !running && submitDisabled ? submitDisabledReason : undefined;
   const submitTooltip = pendingFollowup ? t("runtime.checkReceipt") : running
     ? t("composer.queueGuidance", { combo: sendComboLabel })
