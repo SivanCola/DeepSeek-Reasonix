@@ -26,7 +26,9 @@ func resolveExistingPath(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	handle, err := windows.CreateFile(name, windows.FILE_READ_ATTRIBUTES,
+	// Zero access follows reparse points without requiring read permission;
+	// credential ACL recovery must resolve its edit lock before repairing ACLs.
+	handle, err := windows.CreateFile(name, 0,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
 		nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
 	if err != nil {

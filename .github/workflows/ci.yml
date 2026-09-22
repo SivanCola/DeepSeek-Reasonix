@@ -574,7 +574,7 @@ jobs:
           run_install: false
       - uses: actions/setup-node@v7
         with:
-          node-version: "24"
+          node-version: ${{ needs.desktop-prepare.outputs.node_version }}
           cache: pnpm
           cache-dependency-path: desktop/pnpm-lock.yaml
       - name: Install frontend dependencies
@@ -623,7 +623,7 @@ jobs:
           run_install: false
       - uses: actions/setup-node@v7
         with:
-          node-version: "24"
+          node-version: ${{ needs.desktop-prepare.outputs.node_version }}
           cache: pnpm
           cache-dependency-path: desktop/pnpm-lock.yaml
       - name: Install frontend dependencies
@@ -730,6 +730,7 @@ jobs:
     env:
       REASONIX_COMMIT: ${{ github.sha }}
     outputs:
+      node_version: ${{ steps.frontend-toolchain.outputs.node_version }}
       producer_attempt: ${{ steps.artifact-identity.outputs.attempt }}
       stable_artifact_name: desktop-frontend-stable-${{ github.run_id }}-${{ steps.artifact-identity.outputs.attempt }}
       canary_artifact_name: desktop-frontend-canary-${{ github.run_id }}-${{ steps.artifact-identity.outputs.attempt }}
@@ -763,6 +764,10 @@ jobs:
           node-version: "24"
           cache: pnpm
           cache-dependency-path: desktop/pnpm-lock.yaml
+
+      - name: Capture frontend Node version
+        id: frontend-toolchain
+        run: echo "node_version=$(node --version)" >> "$GITHUB_OUTPUT"
 
       - name: gofmt
         run: |
@@ -875,7 +880,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: "24"
+          node-version: ${{ needs.desktop-prepare.outputs.node_version }}
           cache: pnpm
           cache-dependency-path: desktop/pnpm-lock.yaml
 
@@ -952,7 +957,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: "24"
+          node-version: ${{ needs.desktop-prepare.outputs.node_version }}
           cache: pnpm
           cache-dependency-path: desktop/pnpm-lock.yaml
 
@@ -1012,7 +1017,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: "24"
+          node-version: ${{ needs.desktop-prepare.outputs.node_version }}
           cache: pnpm
           cache-dependency-path: desktop/pnpm-lock.yaml
 
@@ -1183,7 +1188,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: "24"
+          node-version: ${{ needs.desktop-prepare.outputs.node_version }}
           cache: pnpm
           cache-dependency-path: desktop/pnpm-lock.yaml
 
@@ -1320,7 +1325,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: "24"
+          node-version: ${{ needs.desktop-prepare.outputs.node_version }}
 
       # Same Defender hazard as the Electron leg: exclusions keep Go test
       # binaries from crashing mid-syscall and freshly written files readable.
@@ -1432,7 +1437,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: "24"
+          node-version: ${{ needs.desktop-prepare.outputs.node_version }}
           cache: pnpm
           cache-dependency-path: desktop/pnpm-lock.yaml
 

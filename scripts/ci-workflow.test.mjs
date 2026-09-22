@@ -449,6 +449,21 @@ test("all desktop consumers verify the prepared build and reject a failed prepar
   assert.equal(prepare.match(/desktop\/frontend\/sourcemaps\/\$\{\{ github\.sha \}\}/g)?.length, 2);
 });
 
+test("every prepared frontend consumer uses the producer's exact Node runtime", () => {
+  const prepare = job(ci, "desktop-prepare");
+  assert.match(prepare, /node_version: \$\{\{ steps\.frontend-toolchain\.outputs\.node_version \}\}/);
+  assert.match(prepare, /id: frontend-toolchain\n\s+run: echo "node_version=\$\(node --version\)" >> "\$GITHUB_OUTPUT"/);
+  assert.ok(prepare.indexOf("actions/setup-node@") < prepare.indexOf("id: frontend-toolchain"));
+  const consumers = [...ci.matchAll(/\n  ([a-z][a-z0-9-]*):\n/g)]
+    .map(([, name]) => [name, job(ci, name)])
+    .filter(([, body]) => body.includes("artifact-identity.mjs verify"));
+  assert.equal(consumers.length, 8);
+  for (const [name, body] of consumers) {
+    assert.match(body, /node-version: \$\{\{ needs\.desktop-prepare\.outputs\.node_version \}\}/, name);
+    assert.equal(body.match(/node-version:/g)?.length, 1, name);
+  }
+});
+
 test("browser matrix preserves five entry points and fails closed through desktop-browser", () => {
   const groups = job(ci, "desktop-browser-group");
   assert.match(groups, /max-parallel: 2/);
