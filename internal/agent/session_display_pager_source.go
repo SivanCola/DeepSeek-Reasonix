@@ -76,7 +76,7 @@ func observeDisplayPagerEvents(ctx context.Context, source, head string, forceSo
 }
 
 func validatedDisplayEventKind(ctx context.Context, source string) (int, string, bool, error) {
-	f, openErr := os.Open(store.SessionEventLog(source))
+	f, openErr := fileops.OpenReplaceableRead(store.SessionEventLog(source))
 	if openErr != nil {
 		return 0, "", false, openErr
 	}

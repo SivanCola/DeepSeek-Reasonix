@@ -27,7 +27,7 @@ func buildCheckpointDisplayPager(ctx context.Context, db *sql.DB, source, finger
 // The observer is used by deterministic interruption tests after durable batch
 // publication. Production callers do not install one.
 func buildCheckpointDisplayPagerObserved(ctx context.Context, db *sql.DB, source, fingerprint string, committed func(int)) error {
-	f, err := os.Open(source)
+	f, err := fileops.OpenReplaceableRead(source)
 	if err != nil {
 		return err
 	}

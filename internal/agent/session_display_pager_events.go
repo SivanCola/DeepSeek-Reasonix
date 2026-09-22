@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 
+	"reasonix/internal/fileops"
 	"reasonix/internal/historywork"
 	"reasonix/internal/provider"
 	"reasonix/internal/store"
@@ -24,7 +25,7 @@ func buildEventDisplayPager(ctx context.Context, db *sql.DB, source, fingerprint
 }
 
 func buildEventDisplayPagerObserved(ctx context.Context, db *sql.DB, source, fingerprint string, checkpointSize int64, observed func(string, int)) error {
-	f, err := os.Open(store.SessionEventLog(source))
+	f, err := fileops.OpenReplaceableRead(store.SessionEventLog(source))
 	if err != nil {
 		return err
 	}
@@ -210,7 +211,7 @@ func (p *DisplayPager) EventMessages(lo, hi int) ([]provider.Message, error) {
 	if err != nil {
 		return nil, err
 	}
-	file, err := os.Open(store.SessionEventLog(p.source))
+	file, err := fileops.OpenReplaceableRead(store.SessionEventLog(p.source))
 	if err != nil {
 		return nil, err
 	}

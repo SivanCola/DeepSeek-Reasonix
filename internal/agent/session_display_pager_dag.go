@@ -11,6 +11,7 @@ import (
 	"os"
 	"time"
 
+	"reasonix/internal/fileops"
 	"reasonix/internal/historywork"
 	"reasonix/internal/provider"
 	"reasonix/internal/store"
@@ -56,7 +57,7 @@ func buildDAGDisplayPager(ctx context.Context, db *sql.DB, source, fingerprint, 
 }
 
 func buildDAGDisplayPagerObserved(ctx context.Context, db *sql.DB, source, fingerprint, requestedHead string, checkpointSize int64, observed func(string, int)) error {
-	f, err := os.Open(store.SessionEventLog(source))
+	f, err := fileops.OpenReplaceableRead(store.SessionEventLog(source))
 	if err != nil {
 		return err
 	}
@@ -144,7 +145,7 @@ func (p *DisplayPager) DAGMessages(lo, hi int) ([]provider.Message, error) {
 	if err != nil {
 		return nil, err
 	}
-	f, err := os.Open(store.SessionEventLog(p.source))
+	f, err := fileops.OpenReplaceableRead(store.SessionEventLog(p.source))
 	if err != nil {
 		return nil, err
 	}
