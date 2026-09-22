@@ -2,6 +2,18 @@ package sessioncatalog
 
 import "context"
 
+// Progress is a catalog mutation too. In particular, it must not acquire a
+// second SQLite write lock while metadata synchronization owns a transaction.
+func (c *Catalog) updateDirectoryScanProgress(ctx context.Context, path string, generation int64, total int) error {
+	c.mutationMu.Lock()
+	defer c.mutationMu.Unlock()
+	if c.testScanProgressWriteHook != nil {
+		c.testScanProgressWriteHook()
+	}
+	_, err := c.db.ExecContext(ctx, `UPDATE catalog_directories SET indexed=? WHERE path_key=? AND scan_generation=?`, total, c.pathKey(path), generation)
+	return err
+}
+
 func (c *Catalog) failDirectoryScan(ctx context.Context, path string, scanErr error) {
 	c.mutationMu.Lock()
 	_, _ = c.db.ExecContext(ctx, `UPDATE catalog_directories SET state='degraded',error=? WHERE path_key=?`, scanErr.Error(), c.pathKey(path))

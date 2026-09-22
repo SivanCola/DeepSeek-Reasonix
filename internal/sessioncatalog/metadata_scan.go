@@ -276,7 +276,7 @@ func (s *metadataScan) step(ctx context.Context) (done bool, bytes int64, result
 		return false, bytes, err
 	}
 	s.total += len(records)
-	_, err = c.db.ExecContext(ctx, `UPDATE catalog_directories SET indexed=? WHERE path_key=? AND scan_generation=?`, s.total, c.pathKey(target.Path), s.generation)
+	err = c.updateDirectoryScanProgress(ctx, target.Path, s.generation, s.total)
 	if err == nil && done {
 		err = c.finishDirectoryScan(ctx, target, s.signature, s.generation, s.started, s.total)
 	}

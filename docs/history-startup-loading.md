@@ -64,6 +64,12 @@ Mainline formal session creation and input recovery remain intact. Durable opera
 
 ## Remaining acceptance boundaries
 
+Discovery progress updates use the same process-local SQLite writer boundary as metadata refresh, row publication, and scan completion. An outdated scan generation cannot update a successor's progress. Cancellation leaves discovery incomplete. This removes a concurrent writer admission gap; it does not suppress external database contention or change the retry limits.
+
+The native measurement harness is `node desktop/packaging/history-startup-scale.mjs /path/Reasonix.app`. Its default is 30 launches at each of 100, 10,000 and 100,000 inactive legacy sessions with one fixed active session. It records package identity, machine, individual samples and p95 separately for a visible action button, the first 50 catalog rows, the trusted transcript window, and sending readiness with a nonempty unsent draft. Button visibility is a proxy, not a comprehensive responsiveness measurement. The harness verifies active identity, no additional model calls and clean shell/service exit. Failed runs retain the fixture and report incomplete cohorts; smoke runs cannot qualify the 30-run gate.
+
+The September 22, 2026 history.12 run completed 30 samples for 100 and 10,000 sessions: first-page p95 increased from 1,296 ms to 2,374 ms; visible-button p95 was 1,337 ms and 1,330 ms. The 100,000-session discovery warmup timed out before measurement and retained a database with a busy-write failure. This is failed/incomplete acceptance evidence, not a passing performance result. The subsequent writer-boundary repair requires a new package measurement.
+
 The implementation must not yet be described as complete performance governance. Custom ordering and multi-head sidebars still use the original full snapshot adapter. Importing old source-dependent organization preferences can still enumerate legacy pages. The ordinary all-sessions view still reads all current-format member headers; historical directory discovery still needs integration into the persistent incremental projection. A shell still collects all explicitly pinned rows. These remaining paths prevent a claim that every startup/list configuration is independent of library size.
 
 Opening a projection database still validates its integrity synchronously, and metadata refresh still includes whole-projection reconciliation. Moving the refresh behind startup admission does not remove its background cost or establish constant-time catalog opening.

@@ -75,6 +75,8 @@ type Catalog struct {
 	// testPathMutationLoadedHook pauses after reading a removal generation.
 	// Production catalogs leave it nil.
 	testPathMutationLoadedHook func(string)
+	// testScanProgressWriteHook runs after acquiring the shared writer boundary.
+	testScanProgressWriteHook func()
 }
 
 type sessionPathRequest struct {
