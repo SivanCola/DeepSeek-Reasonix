@@ -106,6 +106,15 @@ func TestCatalogWatchCanonicalEventKeepsRegisteredAccessPath(t *testing.T) {
 		t.Fatalf("root removal retained the native subscription: %v", watcher.removes)
 	}
 	clear(dirty)
+	// Root-level write/create notifications do not identify a changed
+	// session. They are replay noise from the native watcher and must not
+	// restart a completed or in-flight full-directory discovery.
+	admitCatalogWatchEvent(catalog, fsnotify.Event{Name: key, Op: fsnotify.Write}, targets, watched, dirty, watcher)
+	admitCatalogWatchEvent(catalog, fsnotify.Event{Name: key, Op: fsnotify.Create}, targets, watched, dirty, watcher)
+	if len(dirty) != 0 {
+		t.Fatalf("root metadata notifications restarted discovery: %v", dirty)
+	}
+	clear(dirty)
 	refreshCatalogWatchTargets(watcher, targets, []sessioncatalog.DirectoryTarget{{Path: dir, Scope: "global"}}, watched, dirty)
 	if watcher.adds != 1 || !watched[key] || !dirty[key] {
 		t.Fatal("replacement directory did not re-register and reconcile")

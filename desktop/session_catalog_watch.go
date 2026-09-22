@@ -164,6 +164,16 @@ func admitCatalogWatchEvent(catalog *sessioncatalog.Catalog, event fsnotify.Even
 		}
 	}
 	if _, exists := targets[filepath.Clean(event.Name)]; exists {
+		// macOS FSEvents can emit a root-level Write/Create event while
+		// replaying the observation history after a watch is attached. The
+		// event has no changed session path, so treating it as a dirty root
+		// starts another complete metadata iterator immediately after the
+		// current one finishes. File-level events still enqueue the exact
+		// session above, and overflow/error notifications still dirty every
+		// root through the error path below.
+		if event.Op&(fsnotify.Remove|fsnotify.Rename) == 0 {
+			return
+		}
 		key = filepath.Clean(event.Name)
 		if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
 			// Native backends retain subscriptions until explicitly removed.
