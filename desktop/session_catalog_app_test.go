@@ -550,6 +550,52 @@ func TestListProjectTopicsUsesAvailableProjectionBeforeEveryGlobalDirectoryIsSca
 	}
 }
 
+func TestMetadataCatalogAvailabilityUsesDiscoveryStateForAbsentRoots(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := NewApp()
+	catalog, err := sessioncatalog.Open(t.Context(), sessioncatalog.Options{InMemory: true, MetadataOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.sessionCatalog.Store(catalog)
+	t.Cleanup(func() { app.stopSessionCatalog(time.Second) })
+	legacy := config.SessionDir()
+	if err := os.MkdirAll(legacy, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(legacy, "retained.jsonl")
+	if err := os.WriteFile(path, []byte("body must not be read\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	before := app.catalogWorkspaceAvailability(catalog, "global", "")
+	if before.complete || before.pending == 0 {
+		t.Fatalf("unknown directories declared complete: %+v", before)
+	}
+	for _, target := range app.sessionCatalogTargets() {
+		if err := catalog.ReconcileDirectory(t.Context(), target); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ready := app.catalogWorkspaceAvailability(catalog, "global", "")
+	if !ready.complete || ready.failed != 0 || ready.pending != 0 {
+		t.Fatalf("optional absent roots did not settle: %+v", ready)
+	}
+	if err := os.Rename(legacy, legacy+"-offline"); err != nil {
+		t.Fatal(err)
+	}
+	if err := catalog.ReconcileDirectory(t.Context(), sessioncatalog.DirectoryTarget{Path: legacy, Scope: "global"}); !os.IsNotExist(err) {
+		t.Fatalf("known missing root accepted: %v", err)
+	}
+	offline := app.catalogWorkspaceAvailability(catalog, "global", "")
+	if offline.complete || !offline.usable || offline.failed != 1 {
+		t.Fatalf("unavailable history was hidden from completeness: %+v", offline)
+	}
+	row, found, err := catalog.GetSession(t.Context(), path)
+	if err != nil || !found || row.MissingSince != 0 {
+		t.Fatalf("unavailable root lost retained row: %+v %v", row, err)
+	}
+}
+
 func TestListProjectTopicsPaginatesMetadataWhileCatalogIsPartiallyAvailable(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	legacy := config.SessionDir()

@@ -21,11 +21,11 @@ const dir = join(home, "sessions");
 mkdirSync(dir);
 writeFileSync(join(home, "config.toml"), `default_model = "fixture/model"\n[desktop]\nprovider_access = ["fixture"]\n[[providers]]\nname = "fixture"\nkind = "openai"\nbase_url = "http://127.0.0.1:1/v1"\nmodels = ["model"]\ndefault = "model"\napi_key_env = "HISTORY_FIXTURE_KEY"\n`);
 const answer = "完整内容🧭".repeat(90000);
-const messages = Array.from({ length: 140 }, (_, index) => [
-  { role: "user", content: `NATIVE_QUESTION_${index}` },
-  { role: "assistant", content: index === 139 ? answer : `NATIVE_ANSWER_${index}` },
-]).flat();
 const fixtures = ["checkpoint", "events"].map(kind => {
+  const messages = Array.from({ length: 140 }, (_, index) => [
+    { role: "user", content: `NATIVE_${kind}_QUESTION_${index}` },
+    { role: "assistant", content: index === 139 ? answer : `NATIVE_${kind}_ANSWER_${index}` },
+  ]).flat();
   const path = join(dir, `${kind}.jsonl`);
   const eventPath = join(dir, `${kind}.events.jsonl`);
   const body = kind === "checkpoint" ? messages.map(message => JSON.stringify(message)).join("\n") + "\n"
@@ -70,8 +70,15 @@ sys.stdin.read()
       return Boolean(selected);
     });
     const ticket = { tabId: selected.id };
-    await page.waitForFunction(() => document.querySelector(".chat-transcript")?.textContent?.includes("NATIVE_QUESTION_139"));
+    await page.waitForFunction(kind => document.querySelector(".chat-transcript")?.textContent?.includes(`NATIVE_${kind}_QUESTION_139`), fixture.kind);
+    const visible = await page.locator(".chat-transcript").innerText();
+    for (const other of fixtures.filter(other => other !== fixture)) {
+      assert.equal(visible.includes(`NATIVE_${other.kind}_QUESTION_`), false, "previous session remained visible");
+    }
+    const composer = page.locator("#composer-input");
+    await composer.fill("Unsaved draft while the external writer owns execution");
     assert.equal(await page.locator(".composer__btn--send").isEnabled(), false);
+    await composer.fill("");
     const handle = await invoke("BeginSessionHistoryReadForTab", [ticket.tabId]);
     assert.equal(handle.storageBackend, "legacy");
     const newest = await invoke("ReadSessionHistorySlice", [handle.id, { entries: 32, turns: 32, bytes: 1 << 20 }]);
@@ -87,7 +94,7 @@ sys.stdin.read()
     assert.equal(location.status, "ready");
     const located = await invoke("ReadSessionHistorySlice", [handle.id, { anchor: "turn", turn: 4, entries: 2, generation: outline.generation, snapshotSequence: outline.snapshotSequence }]);
     assert.equal(located.status, "ready");
-    assert.equal(located.page.entries.at(-1).message.content, "NATIVE_QUESTION_3");
+    assert.equal(located.page.entries.at(-1).message.content, `NATIVE_${fixture.kind}_QUESTION_3`);
     const ref = newest.page.entries.flatMap(entry => entry.refs ?? []).find(ref => ref.field === "content");
     assert.equal(ref?.readHandleId, handle.id);
     let text = "";
@@ -110,6 +117,44 @@ sys.stdin.read()
     assert.equal(existsSync(fixture.path.replace(/\.jsonl$/, ".display-index.json")), false);
     console.log(`PASS ${fixture.kind}: bounded pages, outline, direct anchor, complete Unicode content, released refs fenced, writer conflict; source unchanged`);
   }
+  await waitForSmokeCondition(async () => {
+    const topics = await invoke("ListProjectTopics", [{ scope: "global", limit: 50 }]);
+    assert.equal(topics.failedDirectories, 0, "optional absent history roots reported as failed");
+    return topics.complete && topics.pendingDirectories === 0;
+  });
+  const workspace = { scope: "global" };
+  let organization = await invoke("GetSessionOrganization", [workspace]);
+  const mutate = async mutation => {
+    // Match the production client's CAS contract: first-time legacy preference
+    // import may advance the revision before the requested mutation is applied.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      organization = await invoke("UpdateSessionOrganization", [workspace, organization.revision, mutation]);
+      if (organization.applied) return;
+    }
+    assert.fail("organization mutation could not settle under the production CAS contract");
+  };
+  await mutate({ kind: "create-group", groupId: "native-fixtures", title: "Native fixtures" });
+  const sources = (await invoke("ListProjectTopics", [{ scope: "global", limit: 50 }])).items
+    .filter(node => fixtures.some(fixture => fixture.path === node.sessionPath));
+  assert.equal(sources.length, 2);
+  for (const node of sources) await mutate({ kind: "set-group", groupId: "native-fixtures", target: { source: node.source } });
+  const groupedRequest = { scope: "global", groupFilter: "group", groupId: "native-fixtures", limit: 1 };
+  const first = await invoke("ListProjectTopics", [groupedRequest]);
+  assert.equal(first.items.length, 1);
+  assert.ok(first.nextCursor);
+  const removed = sources.find(node => node.sessionPath !== first.items[0].sessionPath);
+  await mutate({ kind: "set-group", groupId: "", target: { source: removed.source } });
+  const retained = await invoke("ListProjectTopics", [{ ...groupedRequest, cursor: first.nextCursor }]);
+  assert.equal(retained.items.length, 1);
+  assert.equal(retained.items[0].sessionPath, removed.sessionPath);
+  assert.equal(retained.nextCursor ?? "", "");
+  await invoke("ReleaseReadSnapshot", [first.snapshotId]);
+  const fresh = await invoke("ListProjectTopics", [groupedRequest]);
+  assert.equal(fresh.items.length, 1);
+  assert.equal(fresh.items[0].sessionPath, first.items[0].sessionPath);
+  assert.equal(fresh.nextCursor ?? "", "");
+  await invoke("ReleaseReadSnapshot", [fresh.snapshotId]);
+  console.log("PASS native group paging: source membership, retained cursor, refreshed membership");
   const ready = parseServiceReady(readFileSync(join(home, "desktop-shell/logs/shell.log"), "utf8"));
   assert.ok(ready);
   await closeAndVerify(application, { shellPid: await application.evaluate(() => process.pid), servicePid: ready.pid });

@@ -2,10 +2,13 @@ package sessioncatalog
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"reasonix/internal/agent"
 )
 
 func TestReadLeaseAllowsWritesAndKeepsFlatPageSnapshot(t *testing.T) {
@@ -38,6 +41,72 @@ func TestReadLeaseAllowsWritesAndKeepsFlatPageSnapshot(t *testing.T) {
 	}
 	lease.Close()
 	lease.Close()
+}
+
+func TestOrdinaryGroupFiltersPhysicalSourcesAcrossCursorRanges(t *testing.T) {
+	c, err := Open(t.Context(), Options{Path: filepath.Join(t.TempDir(), "catalog.sqlite"), MetadataOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close(context.Background())
+	dir := t.TempDir()
+	keys := []string{}
+	for i := range 8 {
+		path := filepath.Join(dir, fmt.Sprintf("%d.jsonl", i))
+		topic := "shared"
+		if i < 2 {
+			topic = "pinned"
+		}
+		if err := c.UpsertSession(t.Context(), SessionRecord{Path: path, Directory: dir, Scope: "global", TopicID: topic,
+			LastActivityAt: int64(i), CreatedAt: int64(i), OrdinaryVisible: true, Health: HealthOK}); err != nil {
+			t.Fatal(err)
+		}
+		if i%2 == 0 {
+			keys = append(keys, agent.SessionSourceKeyFromIdentity(PathIdentityKey(path), ""))
+		}
+	}
+	if err := c.SyncMetadata(t.Context(), nil, []TopicMetadata{{Scope: "global", TopicID: "pinned", Pinned: true}}); err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(keys)
+	lease, err := c.OpenReadLease(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Close()
+	for _, size := range []int{1, 2, 3} {
+		for _, include := range []bool{true, false} {
+			req := OrdinaryPageRequest{Scope: "global", Limit: size}
+			want := []string{"0.jsonl", "6.jsonl", "4.jsonl", "2.jsonl"}
+			if include {
+				req.IncludeSourceKeysJSON = string(encoded)
+			} else {
+				req.ExcludeSourceKeysJSON = string(encoded)
+				want = []string{"1.jsonl", "7.jsonl", "5.jsonl", "3.jsonl"}
+			}
+			got := []string{}
+			for len(got) <= 8 {
+				page, err := c.ListOrdinarySessions(lease.Context(t.Context()), req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(page) == 0 {
+					break
+				}
+				for _, row := range page {
+					got = append(got, filepath.Base(row.Path))
+				}
+				req.Cursor = page[len(page)-1].Cursor
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("size=%d include=%v got %v, want %v", size, include, got, want)
+			}
+		}
+	}
+	page, err := c.ListOrdinarySessions(lease.Context(t.Context()), OrdinaryPageRequest{Scope: "global", IncludeSourceKeysJSON: "[]"})
+	if err != nil || len(page) != 0 {
+		t.Fatalf("empty group admitted rows: %+v %v", page, err)
+	}
 }
 
 func TestOrdinaryCursorCrossesPinnedActivityAndIdentityRangesExactlyOnce(t *testing.T) {

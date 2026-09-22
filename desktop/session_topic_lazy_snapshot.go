@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"sort"
 	"strings"
@@ -22,8 +23,11 @@ type topicPagePosition struct {
 // copy of the whole result is needed to return the first fifty rows.
 func (a *App) lazyProjectTopicSnapshot(req ProjectTopicPageRequest, reader workspaceSessionInfoReader, snap *readSnapshot, state workspacestate.State, workspaceID string, org workspacestate.Organization, versions *workspacestate.ReadVersions) (ProjectTopicPage, func() error, bool, error) {
 	catalog := a.sessionCatalog.Load()
-	if catalog == nil || !catalog.MetadataOnly() || org.ManualOrderEnabled || req.Query != "" || req.GroupFilter != "" && req.GroupFilter != "all" {
+	if catalog == nil || !catalog.MetadataOnly() || org.ManualOrderEnabled || req.Query != "" {
 		return ProjectTopicPage{}, nil, false, nil
+	}
+	if err := applyOrganizationGroupFilter(&req, org); err != nil {
+		return ProjectTopicPage{}, nil, true, err
 	}
 	// Freeze relative filters once so canonical extras and every catalog page
 	// use the same boundary even if the cursor is resumed much later.
@@ -45,15 +49,7 @@ func (a *App) lazyProjectTopicSnapshot(req ProjectTopicPageRequest, reader works
 		return ProjectTopicPage{}, nil, err != nil, err
 	}
 	workspace := state.Workspaces[workspaceID]
-	if req.pinnedOnly {
-		ids := make([]string, 0)
-		for _, id := range workspace.SessionIDs {
-			if state.Presentation[id].Pinned {
-				ids = append(ids, id)
-			}
-		}
-		workspace.SessionIDs = ids
-	}
+	workspace.SessionIDs = admittedWorkspaceTopicMembers(req, state, workspace)
 	infos, _ := listWorkspaceSessionInfo(a.bootContext(), reader, workspace.SessionIDs)
 	sources := a.historicalCanonicalTopicsFromProjection(req.Scope, req.WorkspaceRoot, state, workspacestate.NewWorkspaceIndex(state))
 	if saved, err := readHistoricalSidecar(); err == nil {
@@ -92,6 +88,15 @@ func (a *App) lazyProjectTopicSnapshot(req ProjectTopicPageRequest, reader works
 	}
 	excludedJSON, _ := json.Marshal(excluded)
 	query := sessioncatalog.OrdinaryPageRequest{Scope: req.Scope, WorkspaceRoot: req.WorkspaceRoot, SortMode: req.SortMode, PinnedOnly: req.pinnedOnly, ExcludePinned: req.ExcludePinned, ExcludedPathsJSON: string(excludedJSON), MinActivity: req.timeCutoff}
+	groupJSON := ordinaryGroupSourceKeys(req)
+	// The retained page closure only needs the encoded membership predicate.
+	// Do not keep another copy of every organization's member slice alive.
+	req.groupAll, req.groupSelected = nil, nil
+	if req.GroupFilter == "group" {
+		query.IncludeSourceKeysJSON = groupJSON
+	} else if req.GroupFilter == "ungrouped" {
+		query.ExcludeSourceKeysJSON = groupJSON
+	}
 	positions := map[int]topicPagePosition{0: {}}
 	// Snapshot memory accounts for retained metadata and cursor checkpoints,
 	// including roots retained while a caller has not yet requested page two.
@@ -101,7 +106,7 @@ func (a *App) lazyProjectTopicSnapshot(req ProjectTopicPageRequest, reader works
 	if err != nil {
 		return ProjectTopicPage{}, nil, true, err
 	}
-	if err := store.reserve(snap, int64(len(encoded)+len(excludedJSON)+1024)); err != nil {
+	if err := store.reserve(snap, int64(len(encoded)+len(excludedJSON)+len(groupJSON)+1024)); err != nil {
 		return ProjectTopicPage{}, nil, true, err
 	}
 	snap.readPage = func(readCtx context.Context, offset, limit int) ([][]byte, bool, error) {
@@ -179,6 +184,47 @@ func (a *App) lazyProjectTopicSnapshot(req ProjectTopicPageRequest, reader works
 		}
 		return fence.validateWithCurrent(current)
 	}, true, nil
+}
+
+// Group membership comes from the same immutable organization as the canonical
+// rows. A group contains explicit session keys after preference import, so
+// sessions sharing a topic must not inherit each other's membership.
+func applyOrganizationGroupFilter(req *ProjectTopicPageRequest, org workspacestate.Organization) error {
+	req.groupInclude, req.groupExclude = nil, nil
+	req.groupIncludeJSON, req.groupExcludeJSON = "", ""
+	req.groupAll = organizationSnapshot(org, true).Groups
+	req.groupSelected = nil
+	if req.GroupFilter == "group" {
+		for i := range req.groupAll {
+			if req.groupAll[i].ID == req.GroupID {
+				req.groupSelected = &req.groupAll[i]
+				return nil
+			}
+		}
+		return fmt.Errorf("session group no longer exists")
+	}
+	return nil
+}
+
+func ordinaryGroupSourceKeys(req ProjectTopicPageRequest) string {
+	if req.GroupFilter != "group" && req.GroupFilter != "ungrouped" {
+		return ""
+	}
+	groups := req.groupAll
+	if req.GroupFilter == "group" {
+		groups = []desktopGroup{*req.groupSelected}
+	}
+	keys, seen := []string{}, map[string]bool{}
+	const prefix = "source\x00" + localDesktopHostID + "\x00"
+	for _, group := range groups {
+		for _, member := range group.SessionKeys {
+			if key, ok := strings.CutPrefix(strings.TrimSpace(member), prefix); ok && !seen[key] {
+				keys, seen[key] = append(keys, key), true
+			}
+		}
+	}
+	encoded, _ := json.Marshal(keys)
+	return string(encoded)
 }
 
 func topicPageIdentity(node ProjectNode) string {

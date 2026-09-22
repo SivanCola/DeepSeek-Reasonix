@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -64,6 +65,111 @@ func TestMetadataTopicSnapshotReadsPagesWithoutMaterializingHistory(t *testing.T
 	app.ReleaseReadSnapshot(first.SnapshotID)
 	if !snapshot.released || snapshot.closeRead != nil {
 		t.Fatal("released cursor retained the WAL view")
+	}
+}
+
+func TestMetadataTopicGroupSnapshotKeepsMembershipAndPagesLazy(t *testing.T) {
+	app, root, _ := canonicalOrganizationFixture(t, "inside", "outside")
+	catalog, err := sessioncatalog.Open(t.Context(), sessioncatalog.Options{Path: filepath.Join(t.TempDir(), "catalog.sqlite"), MetadataOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.sessionCatalog.Store(catalog)
+	t.Cleanup(func() { app.desktopSessions.readSnapshots.close(); app.stopSessionCatalog(time.Second) })
+	workspaceID, _, err := app.ensureSessionOrganization("project", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths := []string{}
+	for i := range 9 {
+		path := filepath.Join(root, fmt.Sprintf("unread-%d.jsonl", i))
+		paths = append(paths, path)
+		if err := catalog.UpsertSession(t.Context(), sessioncatalog.SessionRecord{Path: path, Directory: root,
+			Scope: "project", WorkspaceRoot: root, TopicID: "shared", TopicTitle: "Shared",
+			CreatedAt: int64(i + 1), LastActivityAt: int64(i + 1), OrdinaryVisible: true, Health: sessioncatalog.HealthOK}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sourceKey := func(i int) string { return "source\x00local\x00" + desktopSourceKey(paths[i], "") }
+	_, _, err = app.workspaceRegistry().UpdateOrganization(t.Context(), workspaceID, nil, func(org *workspacestate.Organization) error {
+		org.Groups = []workspacestate.OrganizationGroup{
+			{ID: "selected", Members: []string{workspacestate.SessionKey("inside"), sourceKey(1), sourceKey(8)}},
+			{ID: "empty", Members: []string{}},
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := &recordingTopicInfoReader{}
+	req := ProjectTopicPageRequest{Scope: "project", WorkspaceRoot: root, GroupFilter: "group", GroupID: "selected", Limit: 1}
+	page, err := app.readProjectTopicPage(req, reader)
+	if err != nil || len(page.Items) != 1 || page.NextCursor == "" {
+		t.Fatalf("first grouped page: %+v %v", page, err)
+	}
+	if !reflect.DeepEqual(reader.ids, []string{"inside"}) {
+		t.Fatalf("group read unrelated canonical headers: %v", reader.ids)
+	}
+	store := &app.desktopSessions.readSnapshots
+	store.mu.Lock()
+	snapshot := store.entries[page.SnapshotID].data
+	store.mu.Unlock()
+	if snapshot.readPage == nil || snapshot.count != 0 || len(snapshot.rows) != 0 || snapshot.db != nil {
+		t.Fatal("group materialized the history library")
+	}
+	// A later membership change belongs to a fresh snapshot. The retained
+	// cursor must keep all three original members and their fixed order.
+	_, _, err = app.workspaceRegistry().UpdateOrganization(t.Context(), workspaceID, nil, func(org *workspacestate.Organization) error {
+		org.Groups[0].Members = []string{workspacestate.SessionKey("outside"), sourceKey(0)}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := []string{projectNodeSessionKey(page.Items[0])}
+	for page.NextCursor != "" && len(seen) <= 9 {
+		req.Cursor = page.NextCursor
+		page, err = app.readProjectTopicPage(req, reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, node := range page.Items {
+			seen = append(seen, projectNodeSessionKey(node))
+		}
+	}
+	want := []string{sourceKey(8), sourceKey(1), workspacestate.SessionKey("inside")}
+	if !reflect.DeepEqual(seen, want) {
+		t.Fatalf("retained membership: %v, want %v", seen, want)
+	}
+	app.ReleaseReadSnapshot(page.SnapshotID)
+	reader.ids = nil
+	req.Cursor, req.Limit = "", 50
+	fresh, err := app.readProjectTopicPage(req, reader)
+	if err != nil || len(fresh.Items) != 2 || !reflect.DeepEqual(reader.ids, []string{"outside"}) {
+		t.Fatalf("fresh group: %+v headers=%v %v", fresh, reader.ids, err)
+	}
+	app.ReleaseReadSnapshot(fresh.SnapshotID)
+	reader.ids = nil
+	req.GroupID = "empty"
+	empty, err := app.readProjectTopicPage(req, reader)
+	if err != nil || len(empty.Items) != 0 || len(reader.ids) != 0 {
+		t.Fatalf("empty group: %+v headers=%v %v", empty, reader.ids, err)
+	}
+	app.ReleaseReadSnapshot(empty.SnapshotID)
+	req.GroupFilter, req.GroupID = "ungrouped", ""
+	ungrouped, err := app.readProjectTopicPage(req, reader)
+	if err != nil || len(ungrouped.Items) != 9 || !reflect.DeepEqual(reader.ids, []string{"inside"}) {
+		t.Fatalf("ungrouped: %+v headers=%v %v", ungrouped, reader.ids, err)
+	}
+	for _, node := range ungrouped.Items {
+		if key := projectNodeSessionKey(node); key == sourceKey(0) || key == workspacestate.SessionKey("outside") {
+			t.Fatalf("grouped member appeared ungrouped: %s", key)
+		}
+	}
+	app.ReleaseReadSnapshot(ungrouped.SnapshotID)
+	req.GroupFilter, req.GroupID = "group", "deleted"
+	if _, err := app.readProjectTopicPage(req, reader); err == nil {
+		t.Fatal("deleted group silently returned all history")
 	}
 }
 

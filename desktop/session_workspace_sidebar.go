@@ -172,36 +172,11 @@ func (a *App) projectTopicsFromProjection(req ProjectTopicPageRequest, state wor
 
 func (a *App) materializeProjectTopics(req ProjectTopicPageRequest, reader workspaceSessionInfoReader, snap *readSnapshot, state workspacestate.State, workspaceIndex *workspacestate.WorkspaceIndex, workspaceID string, org workspacestate.Organization, shellPreferences *desktopProject, versions *workspacestate.ReadVersions) (ProjectTopicPage, func() error, error) {
 	workspace := state.Workspaces[workspaceID]
-	if req.pinnedOnly {
-		// Collapsed shells need only explicitly pinned metadata. Do not Stat
-		// every canonical member before discarding its unpinned row.
-		ids := make([]string, 0)
-		for _, id := range workspace.SessionIDs {
-			if state.Presentation[id].Pinned {
-				ids = append(ids, id)
-			}
-		}
-		workspace.SessionIDs = ids
+	if err := applyOrganizationGroupFilter(&req, org); err != nil {
+		return ProjectTopicPage{Items: []ProjectNode{}}, nil, err
 	}
+	workspace.SessionIDs = admittedWorkspaceTopicMembers(req, state, workspace)
 	infos, _ := listWorkspaceSessionInfo(a.bootContext(), reader, workspace.SessionIDs)
-	groups := organizationSnapshot(org, true).Groups
-	req.groupInclude = nil
-	req.groupExclude = nil
-	req.groupIncludeJSON = ""
-	req.groupExcludeJSON = ""
-	req.groupAll = groups
-	req.groupSelected = nil
-	if req.GroupFilter == "group" {
-		for i := range groups {
-			if groups[i].ID == req.GroupID {
-				req.groupSelected = &groups[i]
-				break
-			}
-		}
-		if req.groupSelected == nil {
-			return ProjectTopicPage{Items: []ProjectNode{}}, nil, fmt.Errorf("session group no longer exists")
-		}
-	}
 	adopted := map[string]bool{}
 	adoptedTopics := map[string]bool{}
 	for _, m := range state.SourceMappings {

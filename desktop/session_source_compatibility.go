@@ -25,8 +25,7 @@ func desktopSourceKey(path, head string) string {
 	// directories. Keep their persisted key independent from the runtime
 	// session locator, which intentionally accepts transcript paths only.
 	pathKey := agent.CanonicalSessionPath(cleanDesktopPath(path))
-	sum := sha256.Sum256([]byte(pathKey + "\x00" + head))
-	return hex.EncodeToString(sum[:])
+	return agent.SessionSourceKeyFromIdentity(pathKey, head)
 }
 
 func (source desktopMigrationSource) mappingKey(path string) string {

@@ -2,10 +2,15 @@ package sessioncatalog
 
 import (
 	"context"
+	"database/sql/driver"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"reasonix/internal/agent"
+
+	"modernc.org/sqlite"
 )
 
 // OrdinaryPage is a flat session projection. A topic containing many sessions
@@ -15,6 +20,23 @@ type OrdinaryPageRequest struct {
 	Limit                                                     int
 	MinActivity                                               int64
 	PinnedOnly, ExcludePinned                                 bool
+	// Empty means no filter; [] explicitly includes no sources. These keys
+	// describe physical single-head sources, never topics or adopted sessions.
+	IncludeSourceKeysJSON, ExcludeSourceKeysJSON string
+}
+
+func init() {
+	// This function is deliberately not persisted in a schema/index: older
+	// readers can still open the disposable database unchanged. Filtering can
+	// inspect metadata keys, but never resolves source paths or decodes bodies.
+	sqlite.MustRegisterDeterministicScalarFunction("reasonix_catalog_source_key", 1,
+		func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+			pathKey, ok := args[0].(string)
+			if !ok {
+				return nil, fmt.Errorf("invalid catalog path identity")
+			}
+			return agent.SessionSourceKeyFromIdentity(pathKey, ""), nil
+		})
 }
 
 type OrdinaryRecord struct {
@@ -75,6 +97,14 @@ func (c *Catalog) ListOrdinarySessions(ctx context.Context, req OrdinaryPageRequ
 		where += ` AND s.path NOT IN (SELECT value FROM json_each(?))`
 		args = append(args, req.ExcludedPathsJSON)
 	}
+	if req.IncludeSourceKeysJSON != "" {
+		where += ` AND reasonix_catalog_source_key(s.path_key) IN (SELECT value FROM json_each(?))`
+		args = append(args, req.IncludeSourceKeysJSON)
+	}
+	if req.ExcludeSourceKeysJSON != "" && req.ExcludeSourceKeysJSON != "[]" {
+		where += ` AND reasonix_catalog_source_key(s.path_key) NOT IN (SELECT value FROM json_each(?))`
+		args = append(args, req.ExcludeSourceKeysJSON)
+	}
 	var cursor *ordinaryCursor
 	if req.Cursor != "" {
 		var cur ordinaryCursor
@@ -83,6 +113,9 @@ func (c *Catalog) ListOrdinarySessions(ctx context.Context, req OrdinaryPageRequ
 			return nil, fmt.Errorf("invalid ordinary cursor")
 		}
 		cursor = &cur
+	}
+	if req.IncludeSourceKeysJSON == "[]" {
+		return []OrdinaryRecord{}, nil
 	}
 	columns := "s." + strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(sessionSelectColumns, "\n", ""), " ", ""), ",", ",s.")
 	selectSQL := `SELECT ` + columns + `,t.title,t.title_source,s.topic_pinned AS page_pin,` + activity + ` AS page_activity FROM catalog_sessions s INDEXED BY ` + index + ` JOIN catalog_topics t ON t.scope=s.scope AND t.workspace_root_key=s.workspace_root_key AND t.topic_id=s.topic_id WHERE ` + where
