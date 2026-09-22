@@ -2197,7 +2197,7 @@ export function Composer({
         const guidanceText = displayText.trim() || (structured?.display.trim() ?? "");
         const guidanceSubmitText = submitText.trim();
         if (guidanceText) {
-          if (!queueOnly && !localDurableGuidance && onSteer) {
+          if (!queueOnly && !localDurableGuidance && !target && onSteer) {
             try {
               await onSteer(guidanceSubmitText, submitTabId);
               clearSubmittedDraft(submitDraftKey);

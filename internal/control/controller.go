@@ -102,6 +102,7 @@ var errNoSessionPath = errors.New("session has content but no session path; conv
 // methods; observe through the Sink passed in Options.
 type Controller struct {
 	lifecycleDiagnostics lifecycleDiagnosticBuffer
+	providerDiagnostics  providerDiagnosticBuffer
 	runtimeState         controllerRuntimeState
 	controllerPromptRouting
 	authentication authenticationGate
