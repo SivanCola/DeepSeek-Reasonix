@@ -19,12 +19,14 @@ import (
 func (a *App) watchSessionCatalog(ctx context.Context, catalog *sessioncatalog.Catalog, metadataRequests <-chan struct{}, onAdmitted func()) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	watcher, _ := fsnotify.NewWatcher()
+	// Reuse the platform directory backend. On macOS the generic kqueue
+	// adapter enumerates children and opens a descriptor for every file.
+	watcher, _ := newWorkspaceWatcher()
 	var events <-chan fsnotify.Event
 	var failures <-chan error
 	if watcher != nil {
 		defer watcher.Close()
-		events, failures = watcher.Events, watcher.Errors
+		events, failures = watcher.Events(), watcher.Errors()
 	}
 	targets := map[string]sessioncatalog.DirectoryTarget{}
 	watched := map[string]bool{}
@@ -133,11 +135,13 @@ func (a *App) watchSessionCatalog(ctx context.Context, catalog *sessioncatalog.C
 }
 
 func admitCatalogWatchEvent(catalog *sessioncatalog.Catalog, event fsnotify.Event, targets map[string]sessioncatalog.DirectoryTarget, watched, dirty map[string]bool) {
-	key := filepath.Dir(event.Name)
+	key := filepath.Clean(filepath.Dir(event.Name))
 	// A transcript/sidecar write invalidates one session, not its root.
 	if target, exists := targets[key]; exists {
 		if path := catalogSessionPathForEvent(event.Name); path != "" && event.Op&(fsnotify.Remove|fsnotify.Rename) == 0 {
-			catalog.RequestIndexSession(target, path)
+			// Platform events use the canonical watch path; retain the registered
+			// access spelling when publishing the exact session identity.
+			catalog.RequestIndexSession(target, filepath.Join(target.Path, filepath.Base(path)))
 			return
 		}
 	}
@@ -165,20 +169,24 @@ func catalogSessionPathForEvent(path string) string {
 	return ""
 }
 
-func refreshCatalogWatchTargets(watcher *fsnotify.Watcher, current map[string]sessioncatalog.DirectoryTarget, targets []sessioncatalog.DirectoryTarget, watched, dirty map[string]bool) map[string]sessioncatalog.DirectoryTarget {
+func refreshCatalogWatchTargets(watcher workspaceWatcher, current map[string]sessioncatalog.DirectoryTarget, targets []sessioncatalog.DirectoryTarget, watched, dirty map[string]bool) map[string]sessioncatalog.DirectoryTarget {
 	next := map[string]sessioncatalog.DirectoryTarget{}
 	for _, target := range targets {
-		key := filepath.Clean(target.Path)
+		key := canonicalWorkspaceRoot(target.Path)
 		next[key] = target
-		if _, known := current[key]; !known {
+		_, known := current[key]
+		if !known {
 			dirty[key] = true
 		}
 		if watcher != nil && !watched[key] {
-			watched[key] = watcher.Add(key) == nil
+			watched[key] = watcher.Add(key, false) == nil
+			if watched[key] && known {
+				// Recovered watching must reconcile the unobserved interval.
+				dirty[key] = true
+			}
 		}
-		if !watched[key] {
-			dirty[key] = true
-		}
+		// Unavailable watches use the rotating audit, not a full-root scan
+		// on every metadata refresh. Registration itself may still retry.
 	}
 	for key := range current {
 		if _, exists := next[key]; !exists {

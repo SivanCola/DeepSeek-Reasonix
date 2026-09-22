@@ -93,6 +93,15 @@ func (c *Catalog) metadataReconcileLoop() {
 		next.turn = turn
 		var err error
 		if next.scan == nil {
+			// Waiting for an iterator or priority slot is not a running scan.
+			// Fold all pre-dispatch invalidations into this scan; only changes
+			// arriving after dispatch need a follow-up pass.
+			target, owned := c.resolveReconcileToken(next.target)
+			if !owned {
+				delete(jobs, selected)
+				continue
+			}
+			next.target = target
 			if c.testReconcileStartHook != nil {
 				c.testReconcileStartHook(next.target)
 			}
