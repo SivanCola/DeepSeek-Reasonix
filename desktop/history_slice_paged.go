@@ -2,35 +2,38 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
-	"fmt"
 	"path/filepath"
 	"strings"
 
 	"reasonix/internal/agent"
-	"reasonix/internal/config"
 	"reasonix/internal/provider"
 )
 
 func (a *App) pagedColdHistorySlice(ctx context.Context, sessionDir, path string, req HistorySliceRequest, heads ...string) (HistorySlice, bool, error) {
-	ctx = a.historyMaintenance.Context(ctx)
-	cacheRoot := config.CacheDir()
-	if cacheRoot == "" {
-		return HistorySlice{}, false, nil
-	}
 	head := ""
 	if len(heads) > 0 {
 		head = heads[0]
 	}
-	key := sha256.Sum256([]byte(sessionRuntimeKey(path) + "\x00" + head))
-	cachePath := filepath.Join(cacheRoot, "history-display-v1", fmt.Sprintf("%x.sqlite", key))
-	release, err := a.historyMaintenance.Foreground(ctx)
+	generation, err := nativeHistorySourceGeneration(path)
 	if err != nil {
 		return emptyHistorySlice(), true, err
 	}
-	pager, err := agent.OpenDisplayPager(ctx, path, cachePath, head)
-	release()
+	sourceKey := sessionRuntimeKey(path)
+	a.historyReaders.mu.Lock()
+	if a.historyReaders.closed || a.shuttingDown.Load() {
+		a.historyReaders.mu.Unlock()
+		return emptyHistorySlice(), true, context.Canceled
+	}
+	job, release := a.acquireNativeHistoryLocked(path, head, sourceKey, generation)
+	a.historyReaders.mu.Unlock()
+	defer release()
+	// Compatibility RPCs borrow the same preparation and cache owner as bound
+	// readers. Neither path can rebuild underneath the other's live database.
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(job.ctx, cancel)
+	defer func() { stop(); cancel() }()
+	pager, err := job.wait(ctx)
 	if err != nil {
 		if errors.Is(err, agent.ErrDisplaySourceChanged) {
 			return emptyHistorySlice(), true, err
@@ -38,13 +41,16 @@ func (a *App) pagedColdHistorySlice(ctx context.Context, sessionDir, path string
 		if errors.Is(err, agent.ErrSessionDisplayReadModelDamaged) {
 			return emptyHistorySlice(), true, err
 		}
-		if ctx.Err() != nil {
-			return emptyHistorySlice(), true, ctx.Err()
+		if ctx.Err() != nil || job.ctx.Err() != nil {
+			return emptyHistorySlice(), true, context.Canceled
 		}
 		return HistorySlice{}, false, nil
 	}
-	defer pager.Close()
-	return a.historySliceFromPager(ctx, pager, sessionDir, path, req, fmt.Sprintf("%x", key))
+	page, ready, err := a.historySliceFromPager(ctx, pager, sessionDir, path, req, job.key)
+	if ctx.Err() != nil || job.ctx.Err() != nil {
+		return emptyHistorySlice(), true, context.Canceled
+	}
+	return page, ready, err
 }
 
 func (a *App) historySliceFromPager(ctx context.Context, pager *agent.DisplayPager, sessionDir, path string, req HistorySliceRequest, sourceID string) (HistorySlice, bool, error) {

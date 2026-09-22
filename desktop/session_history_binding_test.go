@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"reasonix/internal/agent"
 	"reasonix/internal/config"
 	"reasonix/internal/provider"
 	"reasonix/internal/session"
@@ -143,6 +145,9 @@ func TestNativeHistorySourceReplacementRetiresOldGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	second, _ := a.historyReader(two.ID)
+	if first.ctx.Err() != context.Canceled {
+		t.Fatal("source replacement did not cancel in-flight reads")
+	}
 	if first.native == second.native || first.native.key == second.native.key {
 		t.Fatal("replacement reused the old preparation")
 	}
@@ -162,4 +167,131 @@ func TestNativeHistorySourceReplacementRetiresOldGeneration(t *testing.T) {
 		t.Fatal("late old release canceled the new generation")
 	}
 	a.ReleaseSessionHistoryRead(two.ID)
+}
+
+func TestNativeHistoryWaitRejectsRetiredPreparation(t *testing.T) {
+	for _, ready := range []bool{false, true} {
+		t.Run(map[bool]string{false: "preparing", true: "ready"}[ready], func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			job := &nativeHistoryPreparation{ctx: ctx, done: make(chan struct{}), pager: &agent.DisplayPager{}}
+			if ready {
+				close(job.done)
+			}
+			cancel()
+			pager, err := job.wait(t.Context())
+			if pager != nil || !errors.Is(err, context.Canceled) {
+				t.Fatalf("retired preparation returned a pager: %v, %v", pager, err)
+			}
+		})
+	}
+}
+
+func TestNativeHistoryImmediateReopenRetainsCloseBarrier(t *testing.T) {
+	a := historySliceTestApp(t)
+	t.Cleanup(a.closeHistoryReaders)
+	tab := newColdHistoryTab(t, a)
+	_, tab.SessionPath = saveHistorySliceSession(t, tabSessionDir(tab), "reopen.jsonl", []provider.Message{historySliceUser(0, "one")})
+	resume, err := a.historyMaintenance.Foreground(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resume()
+	one, err := a.BeginSessionHistoryReadForTab(tab.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _ := a.historyReader(one.ID)
+	generation, err := nativeHistorySourceGeneration(first.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Delay the worker's final close bookkeeping under the owner lock, then
+	// reacquire the same source before the canceled worker can retire it.
+	a.historyReaders.mu.Lock()
+	job := first.native
+	job.cancel()
+	next, release := a.acquireNativeHistoryLocked(first.path, first.head, sessionRuntimeKey(first.path), generation)
+	if next == job || next.ctx.Err() != nil {
+		a.historyReaders.mu.Unlock()
+		t.Fatal("reopen reused a canceled preparation")
+	}
+	a.historyReaders.mu.Unlock()
+	defer release()
+	a.ReleaseSessionHistoryRead(one.ID)
+	resume()
+	if _, err := next.wait(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-job.closed:
+	default:
+		t.Fatal("new preparation completed before predecessor closed")
+	}
+	if next.ctx.Err() != nil {
+		t.Fatal("old release canceled the reopened reader")
+	}
+}
+
+func TestNativeHistoryCompatibilityPageBorrowsBoundPreparation(t *testing.T) {
+	a := historySliceTestApp(t)
+	t.Cleanup(a.closeHistoryReaders)
+	tab := newColdHistoryTab(t, a)
+	_, tab.SessionPath = saveHistorySliceSession(t, tabSessionDir(tab), "compatibility.jsonl", []provider.Message{
+		historySliceUser(0, "one"), historySliceAssistant(0, "answer"), historySliceUser(1, "two"),
+	})
+	handle, err := a.BeginSessionHistoryReadForTab(tab.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.ReleaseSessionHistoryRead(handle.ID)
+	request := normalizeHistorySliceRequest(HistorySliceRequest{Entries: 1, Turns: 1})
+	bound, err := a.ReadSessionHistorySlice(handle.ID, request)
+	if err != nil || bound.Status != "ready" {
+		t.Fatalf("bound page: %+v %v", bound, err)
+	}
+	reader, _ := a.historyReader(handle.ID)
+	compatibility, ready, err := a.pagedColdHistorySlice(t.Context(), tabSessionDir(tab), tab.SessionPath, request)
+	if err != nil || !ready {
+		t.Fatalf("compatibility page: %+v %v", compatibility, err)
+	}
+	if compatibility.NextCursor == "" || compatibility.NextCursor != bound.Page.NextCursor {
+		t.Fatal("compatibility and bound readers used different source generations")
+	}
+	if reader.ctx.Err() != nil || reader.native.pager.DB.Ping() != nil {
+		t.Fatal("compatibility reader released the bound reader's database")
+	}
+	a.historyReaders.mu.Lock()
+	refs := reader.native.refs
+	a.historyReaders.mu.Unlock()
+	if refs != 1 {
+		t.Fatalf("compatibility read leaked a preparation reference: %d", refs)
+	}
+}
+
+func TestNativeHistoryShutdownCancelsUnboundPreparation(t *testing.T) {
+	a := historySliceTestApp(t)
+	tab := newColdHistoryTab(t, a)
+	_, path := saveHistorySliceSession(t, tabSessionDir(tab), "shutdown.jsonl", []provider.Message{historySliceUser(0, "one")})
+	generation, err := nativeHistorySourceGeneration(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resume, err := a.historyMaintenance.Foreground(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resume()
+	a.historyReaders.mu.Lock()
+	job, release := a.acquireNativeHistoryLocked(path, "", sessionRuntimeKey(path), generation)
+	a.historyReaders.mu.Unlock()
+	defer release()
+	a.closeHistoryReaders()
+	if _, err := job.wait(t.Context()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("shutdown left unbound preparation active: %v", err)
+	}
+	select {
+	case <-job.closed:
+	default:
+		t.Fatal("shutdown returned before cache owner closed")
+	}
 }

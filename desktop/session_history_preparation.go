@@ -51,8 +51,15 @@ func (p *nativeHistoryPreparation) wait(ctx context.Context) (*agent.DisplayPage
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	case <-p.ctx.Done():
+		return nil, p.ctx.Err()
 	case <-p.done:
 		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		// Completion and retirement may both be ready. Retirement wins even
+		// when select chose completion; the pager no longer admits readers.
+		if err := p.ctx.Err(); err != nil {
 			return nil, err
 		}
 		return p.pager, p.err
@@ -70,7 +77,7 @@ func (a *App) acquireNativeHistoryLocked(path, head, sourceKey, generation strin
 	cacheKey := fmt.Sprintf("%x", sum)
 	key := cacheKey + ":" + generation
 	job := manager.native[key]
-	if job == nil {
+	if job == nil || job.ctx.Err() != nil {
 		// A replaced source invalidates its old readers. Retire those derived
 		// handles before replacing the shared cache, including on Windows.
 		var retired []<-chan struct{}
@@ -87,15 +94,22 @@ func (a *App) acquireNativeHistoryLocked(path, head, sourceKey, generation strin
 		manager.workers.Add(1)
 		go func() {
 			defer manager.workers.Done()
-			defer close(job.closed)
-			for _, closed := range retired {
-				select {
-				case <-closed:
-				case <-ctx.Done():
-					job.err = ctx.Err()
-					close(job.done)
-					return
+			defer func() {
+				if job.pager != nil {
+					_ = job.pager.Close()
 				}
+				manager.mu.Lock()
+				if manager.native[key] == job {
+					delete(manager.native, key)
+				}
+				close(job.closed)
+				manager.mu.Unlock()
+			}()
+			for _, closed := range retired {
+				// Preserve the cache retirement chain even if this successor is
+				// canceled before admission. A third reader must not rebuild the
+				// same cache while a predecessor still holds its database open.
+				<-closed
 			}
 			release, err := a.historyMaintenance.Foreground(ctx)
 			if err == nil {
@@ -123,9 +137,6 @@ func (a *App) acquireNativeHistoryLocked(path, head, sourceKey, generation strin
 			job.err = err
 			close(job.done)
 			<-ctx.Done()
-			if job.pager != nil {
-				_ = job.pager.Close()
-			}
 		}()
 	}
 	job.refs++
@@ -135,9 +146,8 @@ func (a *App) acquireNativeHistoryLocked(path, head, sourceKey, generation strin
 			manager.mu.Lock()
 			job.refs--
 			if job.refs == 0 {
-				if manager.native[key] == job {
-					delete(manager.native, key)
-				}
+				// Keep the retiring owner discoverable until its database closes.
+				// An immediate reopen must join the close barrier, not reuse it.
 				job.cancel()
 			}
 			manager.mu.Unlock()

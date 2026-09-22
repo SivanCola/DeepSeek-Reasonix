@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"reasonix/internal/agent"
@@ -111,7 +110,10 @@ func (a *App) BeginSessionHistoryReadForTab(tabID string) (SessionHistoryReadHan
 		var releaseNative context.CancelFunc
 		reader.native, releaseNative = a.acquireNativeHistoryLocked(reader.path, reader.head, nativeSourceKey, nativeGeneration)
 		release := reader.release
-		reader.release = func() { release(); releaseNative() }
+		// Source retirement cancels every read in that generation. Individual
+		// navigation cancellation still releases only this reader's reference.
+		reader.ctx, cancel = context.WithCancel(reader.native.ctx)
+		reader.release = func() { cancel(); release(); releaseNative() }
 	}
 	a.historyReaders.mu.Unlock()
 	return reader.handle, nil
@@ -157,6 +159,11 @@ func (a *App) closeHistoryReaders() {
 	readers := a.historyReaders.entries
 	a.historyReaders.entries = nil
 	a.historyReaders.closed = true
+	// Compatibility reads also borrow preparations without a persistent RPC
+	// handle. Shutdown retires the owner, then joins every cache close barrier.
+	for _, job := range a.historyReaders.native {
+		job.cancel()
+	}
 	a.historyReaders.mu.Unlock()
 	for _, reader := range readers {
 		reader.release()
@@ -210,7 +217,7 @@ func (a *App) ReadSessionHistorySlice(id string, req HistorySliceRequest) (Sessi
 		return SessionHistoryReadSlice{Status: "stale_cursor", Page: emptyHistorySlice()}, nil
 	}
 	if err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "database is closed") || errors.Is(err, context.Canceled) {
+		if errors.Is(err, context.Canceled) {
 			return SessionHistoryReadSlice{Status: "stale_cursor", Page: emptyHistorySlice()}, nil
 		}
 		return SessionHistoryReadSlice{Status: "failed", Page: emptyHistorySlice()}, err
