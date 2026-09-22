@@ -164,17 +164,19 @@ func (a *App) finishTopicActivation(gen uint64, requestID string) {
 // the same generation, so interleaved legacy and ticketed calls resolve
 // deterministically to the last call.
 func (a *App) StartTopicActivation(req TopicActivationRequest) (TopicActivationTicket, error) {
-	// Claim intent before source adoption can block. A later request must not
+	// Claim intent before source resolution can block. A later request must not
 	// be displaced by this request finishing its I/O last.
 	intent := a.desktopSessions.navigationSeq.Add(1)
 	if req.Selector != nil {
-		target, err := a.resolveSessionMutationTarget(*req.Selector)
+		target, err := a.resolveSessionTarget(*req.Selector)
 		if err != nil {
 			return TopicActivationTicket{}, err
 		}
 		req.Scope, req.WorkspaceRoot, req.TopicID, req.SessionPath = target.Scope, target.WorkspaceRoot, target.TopicID, target.SessionPath
 		if target.SessionRef.SessionID != "" {
 			req.SessionPath = sessionRoute(target.SessionRef.SessionID)
+		} else if target.Source != nil {
+			req.SessionPath = nativeSessionSourceRoute(target.Source)
 		}
 	}
 	a.singleSurfaceMu.Lock()

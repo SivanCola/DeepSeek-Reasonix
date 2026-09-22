@@ -12,7 +12,7 @@ import (
 	"reasonix/internal/provider"
 )
 
-func TestDefaultPathUsesV8CacheFile(t *testing.T) {
+func TestDefaultPathUsesProgressiveMaintenanceCacheFile(t *testing.T) {
 	t.Parallel()
 	path := DefaultPath()
 	if path == "" {

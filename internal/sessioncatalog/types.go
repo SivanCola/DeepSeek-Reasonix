@@ -11,10 +11,11 @@ import (
 
 	"reasonix/internal/agent"
 	"reasonix/internal/config"
+	"reasonix/internal/historywork"
 )
 
 const (
-	SchemaVersion       = 14
+	SchemaVersion       = 15
 	repairEngineVersion = 1
 	DefaultLimit        = 50
 	MaxLimit            = 200
@@ -88,6 +89,11 @@ type Options struct {
 	Path          string
 	InMemory      bool
 	DisableRepair bool
+	// MetadataOnly never reads transcripts or repairs content as a side effect
+	// of discovering sessions. Explicit content readers own that work.
+	MetadataOnly  bool
+	StartPaused   bool // Desktop resumes discovery after the shell and watchers are ready.
+	Maintenance   *historywork.Coordinator
 	MissingGrace  time.Duration
 	QueueCapacity int
 	Now           func() time.Time
@@ -226,6 +232,7 @@ type TopicPageRequest struct {
 	IncludeTopicIDsJSON string `json:"-"`
 	ExcludeTopicIDsJSON string `json:"-"`
 	ExcludePinned       bool   `json:"-"`
+	PinnedOnly          bool   `json:"-"`
 	CursorBinding       string `json:"-"`
 	// ManualOrder makes sort_order the primary key within each pinned bucket.
 	// It is intentionally request-scoped: users who have never reordered keep
@@ -257,7 +264,7 @@ type SessionPage struct {
 }
 
 // DefaultPath is the disposable cache file under CacheDir ("" when unavailable).
-// v10.sqlite isolates native Windows junction identities from v2 writers.
+// v10.sqlite isolates progressive maintenance state from older writers.
 // Session JSONL/WAL/sidecars remain authoritative and older binaries may keep
 // using their own disposable cache without cross-writing this one.
 func DefaultPath() string {

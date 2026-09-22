@@ -81,8 +81,8 @@ func TestWindowsUpgradeFixtureMigratesLegacyAndRestarts(t *testing.T) {
 				t.Fatalf("saved historical tab must be pending, not corrupt: %+v", file.Tabs)
 			}
 			tab := &WorkspaceTab{}
-			if prepareRestoredTabIdentity(tab, file.Tabs[0]) || tab.Ctrl != nil || tab.StartupErr != "" || tab.HistoricalSource == nil {
-				t.Fatalf("passive restore started a runtime or reported corruption: %+v", tab)
+			if !prepareRestoredTabIdentity(tab, file.Tabs[0]) || tab.Ctrl != nil || tab.StartupErr != "" || tab.SessionPath != legacyPath {
+				t.Fatalf("native identity was not admitted independently of discovery: %+v", tab)
 			}
 			state, err := app.workspaceRegistry().Load(t.Context())
 			if err != nil || len(state.SourceMappings) != 0 || len(state.PendingOperations) != 0 {

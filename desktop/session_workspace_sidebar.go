@@ -87,6 +87,9 @@ func (a *App) buildProjectTopics(req ProjectTopicPageRequest, reader workspaceSe
 	if workspace.Organization != nil {
 		org = *workspace.Organization
 	}
+	if page, validate, handled, err := a.lazyProjectTopicSnapshot(req, reader, snap, state, workspaceID, org); handled {
+		return page, validate, err
+	}
 	return a.materializeProjectTopics(req, reader, snap, state, workspacestate.NewWorkspaceIndex(state), workspaceID, org, nil)
 }
 
@@ -149,6 +152,17 @@ func (a *App) projectTopicsFromProjection(req ProjectTopicPageRequest, state wor
 
 func (a *App) materializeProjectTopics(req ProjectTopicPageRequest, reader workspaceSessionInfoReader, snap *readSnapshot, state workspacestate.State, workspaceIndex *workspacestate.WorkspaceIndex, workspaceID string, org workspacestate.Organization, shellPreferences *desktopProject) (ProjectTopicPage, func() error, error) {
 	workspace := state.Workspaces[workspaceID]
+	if req.pinnedOnly {
+		// Collapsed shells need only explicitly pinned metadata. Do not Stat
+		// every canonical member before discarding its unpinned row.
+		ids := make([]string, 0)
+		for _, id := range workspace.SessionIDs {
+			if state.Presentation[id].Pinned {
+				ids = append(ids, id)
+			}
+		}
+		workspace.SessionIDs = ids
+	}
 	infos, _ := listWorkspaceSessionInfo(a.bootContext(), reader, workspace.SessionIDs)
 	groups := organizationSnapshot(org, true).Groups
 	req.groupInclude = nil
@@ -178,7 +192,7 @@ func (a *App) materializeProjectTopics(req ProjectTopicPageRequest, reader works
 			}
 		}
 	}
-	for _, id := range workspace.SessionIDs {
+	for _, id := range state.Workspaces[workspaceID].SessionIDs {
 		adoptedTopics[state.Presentation[id].TopicID] = true
 	}
 	all := req

@@ -1,5 +1,6 @@
 import { noteSessionObservation } from "./sessionObservationDiagnostics";
 import { app } from "./bridge";
+import { bindNativeTranscriptHistory, nativeSnapshotWindow } from "./nativeTranscriptHistory";
 import { entriesFor, registerTranscriptContentRecovery } from "./canonicalTranscriptBackend";
 import { TranscriptFollowClient } from "./transcriptFollowClient";
 import { getTranscriptStore } from "./transcriptStore";
@@ -18,6 +19,7 @@ export class TranscriptSessionFollowerRuntime {
   private turn = 0;
   private generation = 0;
   private releaseContentRecovery?: () => void;
+  private releaseNativeHistory?: () => void;
   private recoveringContent = false;
   private coverage = 0;
   private recoveryScheduled = false;
@@ -37,6 +39,8 @@ export class TranscriptSessionFollowerRuntime {
 
   async start(): Promise<void> {
     this.generation++;
+    this.releaseNativeHistory?.();
+    this.releaseNativeHistory = undefined;
     noteSessionObservation(this.path, { action: "subscribe", tabId: this.tabId, generation: this.generation, sequence: this.coverage });
     this.recoveryScheduled = false;
     this.coverage = 0;
@@ -72,7 +76,7 @@ export class TranscriptSessionFollowerRuntime {
     });
   }
 
-  stop(closeSubscription = true, reason?: "service_stopping"): void { noteSessionObservation(this.path, { action: "unsubscribe", tabId: this.tabId, generation: this.generation, sequence: this.coverage }); this.generation++; this.confirmationReads.clear(); this.submissionCoverage.clear(); this.releaseContentRecovery?.(); this.releaseContentRecovery = undefined; this.client.stop(closeSubscription, reason); }
+  stop(closeSubscription = true, reason?: "service_stopping"): void { noteSessionObservation(this.path, { action: "unsubscribe", tabId: this.tabId, generation: this.generation, sequence: this.coverage }); this.generation++; this.confirmationReads.clear(); this.submissionCoverage.clear(); this.releaseContentRecovery?.(); this.releaseContentRecovery = undefined; this.releaseNativeHistory?.(); this.releaseNativeHistory = undefined; this.client.stop(closeSubscription, reason); }
 
   private observeSubmissions(): void {
     const pending = new Set(this.state()?.localSubmissionOrder ?? []);
@@ -178,9 +182,13 @@ export class TranscriptSessionFollowerRuntime {
     if (generation !== this.generation) return;
     this.observeSubmissions();
     const page = response.history;
+    this.releaseNativeHistory?.();
+    this.releaseNativeHistory = response.storageBackend === "legacy"
+      ? bindNativeTranscriptHistory(this.tabId, snapshot as unknown as TranscriptSnapshot, this.remote) : undefined;
+    const nativeWindow = response.storageBackend === "legacy" ? nativeSnapshotWindow(snapshot as unknown as TranscriptSnapshot) : undefined;
     this.turn = page?.totalTurns ?? snapshot.totalTurns;
     this.orders.clear();
-    const entries = entriesFor(page?.messages ?? [], page?.snapshotSequence ?? snapshot.coveredThroughSeq);
+    const entries = nativeWindow?.entries ?? entriesFor(page?.messages ?? [], page?.snapshotSequence ?? snapshot.coveredThroughSeq);
     for (const entry of entries) this.orders.set(entry.entryId, entry.order);
     this.nextOrder = Math.max(0, ...entries.map(entry => entry.order + 1));
     const merged = new Map(entries.map(entry => [entry.entryId, entry]));
@@ -196,10 +204,10 @@ export class TranscriptSessionFollowerRuntime {
     const all = [...merged.values()].sort((a, b) => a.order - b.order);
     this.metrics = { entries: all.length, inlineBytes: all.reduce((bytes, entry) => bytes + entry.message.content.length + (entry.message.reasoning?.length ?? 0), 0) };
     const prepared = getTranscriptStore().prepareInstallSlice(this.tabId, this.path, {
-      entries: all, nextCursor: page?.olderCursor ?? "", newerCursor: page?.newerCursor ?? "",
-      hasOlder: Boolean(page?.hasOlder), hasNewer: Boolean(page?.hasNewer), totalTurns: this.turn,
+      entries: all, nextCursor: page?.olderCursor ?? nativeWindow?.olderCursor ?? "", newerCursor: page?.newerCursor ?? nativeWindow?.newerCursor ?? "",
+      hasOlder: Boolean(page?.hasOlder ?? nativeWindow?.hasOlder), hasNewer: Boolean(page?.hasNewer ?? nativeWindow?.hasNewer), totalTurns: this.turn,
       startTurn: Math.min(this.turn, ...all.map(entry => entry.turn)), endTurn: this.turn,
-      revision: page?.snapshotSequence ?? snapshot.coveredThroughSeq, revisionKnown: true, digest: page?.generation ?? "", stale: false,
+      revision: page?.snapshotSequence ?? snapshot.coveredThroughSeq, revisionKnown: true, digest: page?.generation ?? nativeWindow?.digest ?? "", stale: false,
     });
     const combined: TranscriptSnapshot = {
       ...snapshot as unknown as TranscriptSnapshot,

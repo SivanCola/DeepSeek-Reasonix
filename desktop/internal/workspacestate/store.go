@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"reasonix/internal/fileutil"
@@ -70,11 +71,13 @@ type State struct {
 }
 
 type Store struct {
-	path          string
-	mu            sync.Mutex
-	beforeUpgrade func(context.Context) error
-	readBody      []byte
-	readState     State
+	path           string
+	mu             sync.Mutex
+	beforeUpgrade  func(context.Context) error
+	readBody       []byte
+	readSnapshot   atomic.Pointer[ReadSnapshot]
+	verificationMu sync.Mutex
+	verification   *snapshotVerification
 }
 
 func NewStore(path string, beforeUpgrade ...func(context.Context) error) *Store {
@@ -103,38 +106,43 @@ func (s *Store) LoadProjection(ctx context.Context) (State, error) {
 }
 
 func (s *Store) loadSnapshot(ctx context.Context, projection bool) (State, error) {
-	if s == nil || strings.TrimSpace(s.path) == "" || s.path == "." {
-		return State{}, errors.New("workspace state path is required")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := ctx.Err(); err != nil {
-		return State{}, err
-	}
-	// Compare actual bytes, not timestamps or generation: another supported
-	// writer may replace a file while preserving either of those values.
-	body, err := os.ReadFile(s.path)
-	if errors.Is(err, os.ErrNotExist) {
-		s.readBody = nil
-		return newState(), nil
-	}
+	snapshot, err := s.VerifySnapshot(ctx)
 	if err != nil {
 		return State{}, err
 	}
-	if s.readBody == nil || !bytes.Equal(body, s.readBody) {
-		state, err := decodeState(body)
-		if err != nil {
-			return State{}, err
-		}
-		s.readBody, s.readState = body, state
-	}
-	state := s.readState
+	state := snapshot.state
 	if projection {
 		state = State{Version: state.Version, Generation: state.Generation, Initialized: state.Initialized,
 			WorkspaceIDs: state.WorkspaceIDs, Workspaces: state.Workspaces,
 			SessionStates: state.SessionStates, SourceMappings: state.SourceMappings, Presentation: state.Presentation}
 	}
 	return cloneSnapshot(state), nil
+}
+
+func (s *Store) verifySnapshotLocked(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Compare actual bytes, not timestamps or generation: another supported
+	// writer may replace a file while preserving either of those values.
+	body, err := os.ReadFile(s.path)
+	if errors.Is(err, os.ErrNotExist) {
+		if s.readSnapshot.Load() == nil || s.readBody != nil {
+			s.publishSnapshotLocked(nil, newState())
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if s.readBody == nil || !bytes.Equal(body, s.readBody) {
+		state, err := decodeState(body)
+		if err != nil {
+			return err
+		}
+		s.publishSnapshotLocked(body, state)
+	}
+	return ctx.Err()
 }
 
 func (s *Store) RenameWorkspace(ctx context.Context, workspaceID, title string) error {
@@ -394,11 +402,11 @@ func (s *Store) RestoreSession(ctx context.Context, sessionID string) error {
 }
 
 func (s *Store) Contains(ctx context.Context, sessionID string) (bool, error) {
-	state, err := s.Load(ctx)
+	snapshot, err := s.VerifySnapshot(ctx)
 	if err != nil {
 		return false, err
 	}
-	_, ok := sessionOwner(state, strings.TrimSpace(sessionID))
+	_, ok := snapshot.owners[strings.TrimSpace(sessionID)]
 	return ok, nil
 }
 
@@ -521,7 +529,18 @@ func (s *Store) mutate(ctx context.Context, change func(*State) error) error {
 	if err != nil {
 		return err
 	}
-	return fileutil.AtomicWriteFileStrict(s.path, append(body, '\n'), 0o600)
+	body = append(body, '\n')
+	// Decode a private copy before committing: mutation inputs may retain slices
+	// or maps, and must never be able to change a published immutable snapshot.
+	published, err := decodeState(body)
+	if err != nil {
+		return err
+	}
+	if err := fileutil.AtomicWriteFileStrict(s.path, body, 0o600); err != nil {
+		return err
+	}
+	s.publishSnapshotLocked(body, published)
+	return nil
 }
 
 func load(path string) (State, error) {

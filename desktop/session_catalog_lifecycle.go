@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/sync/errgroup"
-
 	"reasonix/internal/history"
 	"reasonix/internal/sessioncatalog"
 	"reasonix/internal/taskcatalog"
@@ -36,7 +34,10 @@ func (a *App) runSessionCatalog(ctx context.Context, initialReconcileDone chan s
 		taskcatalog.RegisterSharedProject(project.Root, projectDisplayName(project))
 	}
 	catalog, err := sessioncatalog.Open(ctx, sessioncatalog.Options{
-		Path: path,
+		Path:         path,
+		MetadataOnly: true,
+		StartPaused:  true,
+		Maintenance:  &a.historyMaintenance,
 		OnRevision: func(revision uint64, roots []string, reason string) {
 			a.emitProjectTreeChangedV2(revision, roots, reason)
 		},
@@ -64,31 +65,15 @@ func (a *App) runSessionCatalog(ctx context.Context, initialReconcileDone chan s
 	targets = a.sessionCatalogTargets()
 	history.RegisterCatalogRoots(historyCatalogRoots(targets))
 	a.indexRestoredSessionPaths(ctx, catalog)
-	// Directory scans are independent and internally batched/resumable; keep
-	// startup work bounded so a large project set cannot starve the UI.
-	var reconcileGroup errgroup.Group
-	reconcileGroup.SetLimit(4)
-	for _, target := range targets {
-		if ctx.Err() != nil || a.shuttingDown.Load() {
-			return
-		}
-		reconcileGroup.Go(func() error {
-			if migrated := migrateLegacySessionsIntoGlobalTopics(target.Path); len(migrated) > 0 {
-				_ = a.syncSessionCatalogMetadataBounded(ctx, catalog)
-			}
-			if err := catalog.ReconcileDirectory(ctx, target); err != nil && !errors.Is(err, context.Canceled) {
-				slog.Debug("desktop: reconcile session catalog directory", "dir", target.Path, "err", err)
-			}
-			return nil
-		})
-	}
-	_ = reconcileGroup.Wait()
+	// This signal now means startup admission is complete, not that every
+	// historical root has been enumerated. Workspace completeness is reported
+	// by DirectoryStatus. The watcher registers roots before queuing scans.
 	close(initialReconcileDone)
 	initialReconcileFinished = true
 	if freshGeneration {
 		catalog.MarkRepairReason("generation_upgrade")
 	}
-	a.retargetOpenTabsToContinuations()
+	a.requestHistoricalCatalog()
 	a.runSessionCatalogRefreshLoop(ctx, catalog)
 }
 

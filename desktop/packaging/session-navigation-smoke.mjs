@@ -24,11 +24,12 @@ const server = createServer(async (req, res) => {
 });
 await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
 writeFileSync(join(home, "config.toml"), `default_model = "fixture/model"\n[desktop]\nprovider_access = ["fixture"]\n[[providers]]\nname = "fixture"\nkind = "openai"\nbase_url = "http://127.0.0.1:${server.address().port}/v1"\nmodels = ["model"]\ndefault = "model"\napi_key_env = "SIDEBAR_FIXTURE_KEY"\n`);
-let application;
+let application, page;
+let failed = false;
 try {
   application = await _electron.launch({ executablePath: join(process.argv[2], "Contents/MacOS/Reasonix"),
     env: { ...packagedSmokeEnv(process.env, home), SIDEBAR_FIXTURE_KEY: "local-fixture" } });
-  const page = await application.firstWindow();
+  page = await application.firstWindow();
   page.setDefaultTimeout(15000);
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
@@ -81,9 +82,22 @@ try {
   assert.equal((await active()).session.sessionId, refs.NAV_BETA.sessionId);
   assert.deepEqual(errors, []);
   console.log("PASS packaged sidebar: create after completed turn, A/B/A selection and transcript agree, rapid clicks keep the last target; no page errors");
+} catch (error) {
+  failed = true;
+  if (page) {
+    const state = await page.evaluate(async () => ({
+      tabs: await window.reasonixDesktop.invoke("ListTabs", []),
+      topics: await window.reasonixDesktop.invoke("ListProjectTopics", [{ scope: "global", limit: 50 }]).catch(error => ({ error: String(error) })),
+      sidebar: document.querySelector(".project-tree")?.textContent,
+    })).catch(error => ({ error: String(error) }));
+    writeFileSync(join(home, "navigation-failure.json"), JSON.stringify(state, null, 2));
+    await page.screenshot({ path: join(home, "navigation-failure.png"), fullPage: true }).catch(() => {});
+  }
+  console.error(`Native navigation evidence retained at ${home}`);
+  throw error;
 } finally {
   await application?.close();
   server.closeAllConnections();
   await new Promise(resolve => server.close(resolve));
-  rmSync(home, { recursive: true, force: true });
+  if (!failed) rmSync(home, { recursive: true, force: true });
 }

@@ -163,7 +163,7 @@ func (a *App) bindLegacyCleanupMigration(ctx context.Context, path, headID, sess
 		return nil
 	}
 	ref := session.SessionRef{HostID: localDesktopHostID, SessionID: sessionID}
-	info, err := a.desktopSessionService("").Query().Stat(ctx, ref)
+	info, err := a.desktopSessionService("").Query().RefreshMetadata(ctx, ref)
 	if err != nil {
 		return err
 	}

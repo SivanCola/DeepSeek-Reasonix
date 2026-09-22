@@ -135,7 +135,7 @@ const effort: EffortInfo = { supported: true, current: "auto", default: "auto", 
 const balance: BalanceInfo = { available: false, display: "" };
 const jobs: JobView[] = [];
 const checkpoints: CheckpointMeta[] = [];
-const tabA = tabMeta("tab-a", { active: true });
+const tabA = tabMeta("tab-a", { active: true, ready: false });
 const tabB = tabMeta("tab-b");
 const tabC = tabMeta("tab-c");
 const tabR = tabMeta("tab-r", { running: true, cancellable: true });
@@ -244,6 +244,14 @@ await act(async () => {
   await flushPromises();
 });
 await waitFor("initial tab", () => controller?.activeTabId === "tab-a" && hasHistory("tab-a"));
+eq(controller?.state.meta?.ready, false, "startup history is readable while execution is still recovering");
+eq(controller?.state.hydrating, false, "cold startup settles the history window independently");
+ok(controller?.state.transcriptProtocol !== 2, "cold startup does not invent a live Follow subscription");
+tabsById.set(tabA.id, { ...tabA, ready: true });
+await act(async () => { desktopStub.emit("agent:ready", tabA.id); await flushPromises(); });
+await waitFor("startup live handoff", () => controller?.state.transcriptProtocol === 2 && controller.state.meta?.ready === true);
+eq(controller?.state.items.filter(item => item.kind === "user" && item.text === "history tab-a").length, 1,
+  "runtime handoff replaces the cold cut without duplicating history");
 
 // ── rapid A→B→C with out-of-order events: only C hydrates ──────────────────
 await act(async () => {

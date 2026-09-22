@@ -2881,7 +2881,7 @@ export function useController() {
     reason: HydrateReason,
     navigationIntent: number,
     current: () => boolean,
-  ): Promise<"cached" | "loaded" | "miss"> => {
+  ): Promise<"cached" | "loaded" | "miss" | "failed"> => {
     const sessionPath = (target.sessionPath ?? "").trim();
     const identity = sessionIdentityFields(target);
     const seq = bumpSessionLoadSeq(tabId);
@@ -2892,10 +2892,10 @@ export function useController() {
     ensureTranscriptSubscription(tabId, { path: sessionPath, key: sessionIdentityStableKey(target) });
     const store = getTranscriptStore();
     const startedAt = Date.now();
-    const resident = store.peek(tabId, sessionPath, {
+    const resident = target.sessionDigest ? store.peek(tabId, sessionPath, {
       revision: target.sessionRevision,
       digest: target.sessionDigest,
-    });
+    }) : undefined;
     noteNavigationHistoryRequested(navigationIntent, Boolean(resident));
     recordFrontendDiagnostic("navigation", resident ? "navigation.history-cache-hit" : "navigation.history-cache-miss", {
       tabId,
@@ -2942,7 +2942,7 @@ export function useController() {
         reason,
         durationMs: Date.now() - startedAt,
       });
-      return "miss";
+      return stillCurrent() ? "failed" : "miss";
     }
   }, [bumpSessionLoadSeq, dispatchTo, ensureTranscriptSubscription, sessionLoadCurrent]);
 
@@ -3073,12 +3073,27 @@ export function useController() {
     if (active.runtime?.epoch) runtimeEpochByTabRef.current.set(active.id, active.runtime.epoch);
     dispatchTo(active.id, { type: "optimistic_meta", meta: metaFromTab(active, previousState?.meta) });
     if (!reset && hydration.surfacePolicy === "preserve-current") dispatchRuntimeStatusForTab(active.id, active, snapshotAt);
+    // Startup has no activation ticket. Use the same bounded cold reader as
+    // navigation while execution is recovering; the ready event will bind the
+    // live follower. Never manufacture a subscription or executable runtime.
+    if (!active.ready && !active.startupErr && !active.remote && (active.sessionPath || active.session?.sessionId)) {
+      dispatchTo(active.id, { type: "hydrate_start", reason: "startup" });
+      const current = () => isNavigationIntentCurrent(expectedNavigationSeq) && activeTabIdRef.current === active.id;
+      const read = primeReadableHistoryForTab(active.id, active, "startup", expectedNavigationSeq, current).then(result => {
+        if (result === "failed" && current() && !statesRef.current.get(active.id)?.meta?.ready) {
+          dispatchTo(active.id, { type: "hydrate_error", reason: "startup", error: t("history.failedLoadHistory") });
+        }
+      });
+      if (options.deferHydration) void read;
+      else await read;
+      return active.id;
+    }
     const load = loadSessionDataForTab(active.id, reset, "startup", hydration.loadOptions);
     if (reset || hydration.surfacePolicy === "replace-surface") dispatchRuntimeStatusForTab(active.id, active, snapshotAt);
     if (options.deferHydration) void load;
     else await load;
     return active.id;
-  }, [activeTabFromBackend, beginActiveNavigation, confirmBackendActiveTab, dispatchRuntimeStatusForTab, dispatchTo, isNavigationIntentCurrent, loadSessionDataForTab]);
+  }, [activeTabFromBackend, beginActiveNavigation, confirmBackendActiveTab, dispatchRuntimeStatusForTab, dispatchTo, isNavigationIntentCurrent, loadSessionDataForTab, primeReadableHistoryForTab]);
 
   const reconcileTabRuntime = useCallback(async (
     tabId: string,

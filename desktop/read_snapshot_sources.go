@@ -76,42 +76,44 @@ func (f *readSourceFence) add(ctx context.Context, path string) error {
 
 func (f *readSourceFence) freeze() func() error {
 	f.initial = workspacestate.State{}
-	return func() error {
-		current, err := f.app.workspaceRegistry().LoadProjection(f.app.bootContext())
-		if err != nil {
-			return err
-		}
-		for path, original := range f.files {
-			if !f.metadataOnly {
-				info, err := os.Stat(path)
-				if os.IsNotExist(err) {
-					return snapshotStale("lifecycle_changed")
-				}
-				if err != nil {
-					return err
-				}
-				if !os.SameFile(original, info) {
-					return snapshotStale("lifecycle_changed")
-				}
-			} else if expected, ok := f.indexed[path]; ok {
-				catalog := f.app.sessionCatalog.Load()
-				if catalog == nil {
-					return snapshotStale("lifecycle_changed")
-				}
-				record, found, err := catalog.GetSession(f.app.bootContext(), path)
-				if err != nil {
-					return err
-				}
-				if !found || record.MissingSince != 0 || record.Health == "missing" || snapshotBinding("catalog-source", []any{record.Scope, record.WorkspaceRoot, record.TopicID}) != expected {
-					return snapshotStale("lifecycle_changed")
-				}
+	return f.validateCurrent
+}
+
+func (f *readSourceFence) validateCurrent() error {
+	current, err := f.app.workspaceRegistry().LoadProjection(f.app.bootContext())
+	if err != nil {
+		return err
+	}
+	for path, original := range f.files {
+		if !f.metadataOnly {
+			info, err := os.Stat(path)
+			if os.IsNotExist(err) {
+				return snapshotStale("lifecycle_changed")
 			}
-			if sourceLifecycleBinding(current, path) != f.bindings[path] {
+			if err != nil {
+				return err
+			}
+			if !os.SameFile(original, info) {
+				return snapshotStale("lifecycle_changed")
+			}
+		} else if expected, ok := f.indexed[path]; ok {
+			catalog := f.app.sessionCatalog.Load()
+			if catalog == nil {
+				return snapshotStale("lifecycle_changed")
+			}
+			record, found, err := catalog.GetSession(f.app.bootContext(), path)
+			if err != nil {
+				return err
+			}
+			if !found || record.MissingSince != 0 || record.Health == "missing" || snapshotBinding("catalog-source", []any{record.Scope, record.WorkspaceRoot, record.TopicID}) != expected {
 				return snapshotStale("lifecycle_changed")
 			}
 		}
-		return nil
+		if sourceLifecycleBinding(current, path) != f.bindings[path] {
+			return snapshotStale("lifecycle_changed")
+		}
 	}
+	return nil
 }
 
 func (a *App) workspaceReadFence(state workspacestate.State, workspace workspacestate.Workspace, nodes []ProjectNode) func() error {

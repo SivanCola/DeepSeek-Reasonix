@@ -34,28 +34,33 @@ type Catalog struct {
 	// mutationMu is the process-local SQLite single-writer boundary. WAL permits
 	// concurrent readers, but repair, metadata, and reconcile mutations must not
 	// race into avoidable SQLITE_BUSY failures.
-	mutationMu       sync.Mutex
-	removedPaths     sync.Map
-	repairCh         chan string
-	repairQueued     sync.Map
-	reconcileCh      chan DirectoryTarget
-	reconcileQueued  sync.Map
-	reconcileDirtyMu sync.Mutex
-	reconcileDirty   map[string]DirectoryTarget
-	verifiedDirsMu   sync.RWMutex
-	verifiedDirs     map[string]string
-	pathCh           chan sessionPathRequest
-	pathQueueMu      sync.Mutex
-	pathQueued       sync.Map
-	directoryLocksMu sync.Mutex
-	directoryLocks   map[string]*sync.Mutex
-	workerCtx        context.Context
-	workerCancel     context.CancelFunc
-	stop             chan struct{}
-	stopOnce         sync.Once
-	workers          sync.WaitGroup
-	closeDone        chan struct{}
-	closeErr         error
+	mutationMu        sync.Mutex
+	removedPaths      sync.Map
+	repairCh          chan string
+	repairQueued      sync.Map
+	reconcileCh       chan DirectoryTarget
+	reconcileQueued   sync.Map
+	reconcileDirtyMu  sync.Mutex
+	reconcileDirty    map[string]DirectoryTarget
+	reconcileDone     map[string]chan struct{}
+	verifiedDirsMu    sync.RWMutex
+	verifiedDirs      map[string]string
+	pathCh            chan sessionPathRequest
+	pathQueueMu       sync.Mutex
+	pathQueued        sync.Map
+	directoryLocksMu  sync.Mutex
+	directoryLocks    map[string]*sync.Mutex
+	metadataScans     sync.Map
+	discoveryStart    chan struct{}
+	discoveryOnce     sync.Once
+	priorityWorkspace atomic.Value
+	workerCtx         context.Context
+	workerCancel      context.CancelFunc
+	stop              chan struct{}
+	stopOnce          sync.Once
+	workers           sync.WaitGroup
+	closeDone         chan struct{}
+	closeErr          error
 	// testReconcileBatchHook deterministically pauses an uncommitted directory
 	// projection. Production catalogs leave it nil.
 	testReconcileBatchHook func(int)
@@ -90,6 +95,9 @@ type pageCursor struct {
 }
 
 func Open(ctx context.Context, opts Options) (*Catalog, error) {
+	if opts.MetadataOnly {
+		opts.DisableRepair = true
+	}
 	if opts.Path == "" {
 		opts.Path = DefaultPath()
 	}
@@ -127,6 +135,7 @@ func Open(ctx context.Context, opts Options) (*Catalog, error) {
 		directoryLocks: map[string]*sync.Mutex{},
 		stop:           make(chan struct{}),
 		closeDone:      make(chan struct{}),
+		discoveryStart: make(chan struct{}),
 		status:         Status{State: StateOpening, Path: opts.Path},
 	}
 	handle, err := projectiondb.Open(ctx, projectiondb.OpenOptions{
@@ -166,6 +175,16 @@ func Open(ctx context.Context, opts Options) (*Catalog, error) {
 	}
 	c.testRepairSessionHook = opts.repairSession
 	c.workerCtx, c.workerCancel = context.WithCancel(context.Background())
+	if !opts.StartPaused {
+		c.ResumeDiscovery()
+	}
+	if opts.MetadataOnly {
+		if err := c.loadReconcileJournal(ctx); err != nil {
+			c.workerCancel()
+			_ = c.db.Close()
+			return nil, err
+		}
+	}
 	c.workers.Add(1)
 	go c.writerLoop()
 	c.workers.Add(1)
@@ -204,6 +223,19 @@ func (c *Catalog) Status() Status {
 
 func (c *Catalog) refreshCounts(ctx context.Context) {
 	if c == nil || c.db == nil {
+		return
+	}
+	if c.opts.MetadataOnly {
+		// Startup and each discovery batch may read root progress, but must
+		// not aggregate every session merely to draw the loading indicator.
+		var indexed, total int64
+		if err := c.readDB(ctx).QueryRowContext(ctx, `SELECT COALESCE(SUM(indexed),0),COALESCE(SUM(total),0) FROM catalog_directories`).Scan(&indexed, &total); err == nil {
+			c.statusMu.Lock()
+			c.status.Indexed, c.status.Total = indexed, max(total, indexed)
+			c.status.SourceCount = max(total, indexed)
+			c.status.Revision = c.revision.Load()
+			c.statusMu.Unlock()
+		}
 		return
 	}
 	var indexed, pending, total, physical, logical, groups, branches, diverged, cleanup int64

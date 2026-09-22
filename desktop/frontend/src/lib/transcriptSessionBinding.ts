@@ -1,4 +1,5 @@
 import type { SessionTranscript } from "./transcriptStoreTypes";
+import { releaseHistoryRead } from "./historyReadScope";
 
 export type TranscriptTabBinding = {
   key: string;
@@ -36,6 +37,7 @@ export function bindTranscriptSession(
   const previous = bindings.get(tabId);
   const key = stableSessionKeyFor(bindingKey) ?? legacySessionKeyFor(tabId, sessionPath);
   if (previous?.key === key && previous.sessionPath === sessionPath && previous.bindingKey === bindingKey) return false;
+	if (previous) releaseHistoryRead(tabId);
   const replaced = Boolean(previous);
   bindings.delete(tabId);
   if (previous && (previous.key !== key || (!key.startsWith("stable\0") && previous.bindingKey !== bindingKey))) {
@@ -67,6 +69,7 @@ export function detachTranscriptTab(
   tabId: string,
   evict: (session: SessionTranscript) => void,
 ): void {
+  releaseHistoryRead(tabId);
   const binding = bindings.get(tabId);
   bindings.delete(tabId);
   if (binding && !binding.key.startsWith("stable\0")) {

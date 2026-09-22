@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"reasonix/internal/agent"
-	"reasonix/internal/control"
 	"reasonix/internal/sessioncatalog"
 )
 
@@ -102,6 +101,11 @@ func (a *App) resumeSessionPageForTab(tabID, path string, limit int) (HistoryPag
 }
 
 func (a *App) resumeSessionForTranscript(tabID, path string, limit int, includeHistory bool) (HistoryPage, error) {
+	if ref, adopted, err := a.legacyCanonicalRef(a.bootContext(), path); err != nil {
+		return HistoryPage{}, err
+	} else if adopted {
+		path = sessionRoute(ref.SessionID)
+	}
 	started := time.Now()
 	phases := HistorySwitchPhases{Outcome: "ok"}
 	defer func() { logSessionSwitchPhases(phases, started) }()
@@ -135,22 +139,6 @@ func (a *App) resumeSessionForTranscript(tabID, path string, limit int, includeH
 		return HistoryPage{}, err
 	}
 	phases.ResolveMs = elapsedMs(resolveStarted)
-	if identity, ok := ctrl.(control.IdentityLifecycle); ok && identity.UsesExclusiveSession() {
-		migrateStarted := time.Now()
-		page, migrateErr := a.continueLegacySessionForTranscript(tab, ctrl, sessionPath, limit, includeHistory, false)
-		if migrateErr != nil {
-			phases.Outcome = "legacy_migration_failed"
-			return HistoryPage{}, migrateErr
-		}
-		phases.LoadMs = elapsedMs(migrateStarted)
-		phases.LoadedCount = len(ctrl.History())
-		phases.LoadedBytes = sessionFileBytes(sessionPath)
-		phases.DurableReads = 1
-		phases.TotalMs = elapsedMs(started)
-		page.Switch = &phases
-		return page, nil
-	}
-
 	loadStarted := time.Now()
 	phases.DurableReads++
 	loaded, err := loadResumableSession(sessionPath)

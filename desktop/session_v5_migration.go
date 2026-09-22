@@ -76,13 +76,14 @@ func (a *App) startDesktopSessionMigration(ctx context.Context) {
 	c.mu.Unlock()
 	go func() {
 		defer c.workers.Done()
-		defer close(a.desktopMigrationDone)
+		admitted := false
 		defer func() {
-			c.mu.Lock()
-			c.discoveryPending = false
-			c.mu.Unlock()
+			if !admitted {
+				close(a.desktopMigrationDone)
+			}
 		}()
-		_, _ = a.listHistoricalSessions(ctx)
+		// Reservation recovery is independent of historical discovery. The
+		// catalog starts metadata discovery after the restored shell exists.
 		if err := a.recoverDesktopPendingCreateSnapshot(ctx, startupState.PendingCreates); err != nil {
 			a.desktopMigrationFailed.Store(true)
 			slogWarnDesktopMigration(err)
@@ -92,6 +93,19 @@ func (a *App) startDesktopSessionMigration(ctx context.Context) {
 		if err := a.recoverDesktopOperations(ctx, false); err != nil {
 			slogWarnDesktopMigration(err)
 		}
+		// Saved-tab reconciliation waits for reservation recovery. It must be
+		// released before waiting for the shell that reconciliation will create.
+		close(a.desktopMigrationDone)
+		admitted = true
+		select {
+		case <-a.tabsRestoredSignal():
+		case <-ctx.Done():
+			return
+		}
+		c.mu.Lock()
+		c.discoveryPending = false
+		c.mu.Unlock()
+		a.requestHistoricalCatalog()
 		a.emitProjectTreeChanged()
 	}()
 }

@@ -19,6 +19,7 @@ import (
 
 	"reasonix/internal/agent"
 	"reasonix/internal/control"
+	"reasonix/internal/historywork"
 	"reasonix/internal/provider"
 	"reasonix/internal/session"
 	"reasonix/internal/store"
@@ -93,6 +94,7 @@ type HistorySliceRequest struct {
 	Turns   int    `json:"turns"`   // default 12
 	Entries int    `json:"entries"` // default 120
 	Bytes   int    `json:"bytes"`   // inline byte budget, default 512KiB
+	Newer   bool   `json:"newer,omitempty"`
 }
 
 // HistoryContentRef marks a string field that exceeded the inline threshold.
@@ -130,14 +132,16 @@ type HistoryEntry struct {
 
 // HistorySlice is one page of history toward older messages.
 type HistorySlice struct {
-	Entries    []HistoryEntry `json:"entries"`
-	NextCursor string         `json:"nextCursor"` // toward older; empty when none
-	HasOlder   bool           `json:"hasOlder"`
-	TotalTurns int            `json:"totalTurns"`
-	StartTurn  int            `json:"startTurn"` // oldest visible turn in the page (0 when none)
-	EndTurn    int            `json:"endTurn"`   // newest visible turn in the page (0 when none)
-	Stale      bool           `json:"stale"`     // cursor bound to an older session revision
-	Revision   int64          `json:"revision"`  // session revision the page was cut from (0 when unknown)
+	Entries     []HistoryEntry `json:"entries"`
+	NextCursor  string         `json:"nextCursor"` // toward older; empty when none
+	HasOlder    bool           `json:"hasOlder"`
+	HasNewer    bool           `json:"hasNewer"`
+	NewerCursor string         `json:"newerCursor,omitempty"`
+	TotalTurns  int            `json:"totalTurns"`
+	StartTurn   int            `json:"startTurn"` // oldest visible turn in the page (0 when none)
+	EndTurn     int            `json:"endTurn"`   // newest visible turn in the page (0 when none)
+	Stale       bool           `json:"stale"`     // cursor bound to an older session revision
+	Revision    int64          `json:"revision"`  // session revision the page was cut from (0 when unknown)
 	// RevisionKnown and Digest expose the complete canonical identity already
 	// carried by cursors. They let same-path resident frontend projections be
 	// invalidated after another process advances or rewrites the session.
@@ -224,6 +228,7 @@ type historySliceCursor struct {
 	RevKnown bool   `json:"revKnown"`
 	Digest   string `json:"digest"`
 	Before   int    `json:"before"` // next page covers messages/rows with index < Before
+	Source   string `json:"source,omitempty"`
 }
 
 func encodeHistorySliceCursor(c historySliceCursor) string {
@@ -257,6 +262,7 @@ func decodeHistorySliceCursor(s string) (historySliceCursor, error) {
 // page: per-message visible turns and roles plus bounded message fetches.
 type historySliceSource struct {
 	sessionID  string // transcript basename minus .jsonl
+	sourceID   string // storage root and selected branch identity for cold cursors
 	total      int    // total provider messages
 	turns      []int  // turns[i] = visible turn of message i (1-based; 0 = before first turn)
 	roles      []provider.Role
@@ -273,6 +279,46 @@ type historySliceSource struct {
 	// windowBytes estimates the raw transcript span of [lo, hi); 0 means
 	// unbounded-but-cheap (in-memory). Used to cap cold-path reads.
 	windowBytes func(lo, hi int) int64
+	position    func(int) (agent.DisplayIndexEntry, error)
+	usersBefore func(int) (int, error)
+	readErr     error
+	maxFetch    int
+	// Disk projections already preserve the available per-record timestamps.
+	// Missing optional display timestamps must never trigger whole-log replay.
+	windowOnly bool
+}
+
+func (src *historySliceSource) turnAt(index int) int {
+	if src.position == nil {
+		return src.turns[index]
+	}
+	entry, err := src.position(index)
+	if err != nil {
+		src.readErr = err
+	}
+	return entry.AuthoredTurn
+}
+
+func (src *historySliceSource) roleAt(index int) provider.Role {
+	if src.position == nil {
+		return src.roles[index]
+	}
+	entry, err := src.position(index)
+	if err != nil {
+		src.readErr = err
+	}
+	return historyPersistedUserRole(entry.Role, entry.PinnedContextRevision)
+}
+
+func (src *historySliceSource) userCountBefore(index int) int {
+	if src.usersBefore == nil {
+		return countRoleBefore(src.roles, index, provider.RoleUser)
+	}
+	count, err := src.usersBefore(index)
+	if err != nil {
+		src.readErr = err
+	}
+	return count
 }
 
 // identityMatches reports whether the cursor/ref identity describes the same
@@ -531,6 +577,9 @@ func (a *App) coldHistorySlice(sessionDir, path string, req HistorySliceRequest)
 	if info.IsDir() {
 		return emptyHistorySlice(), fmt.Errorf("not a session file: %s", sessionPath)
 	}
+	if page, ok, err := a.pagedColdHistorySlice(a.bootContext(), sessionDir, sessionPath, req); ok {
+		return page, err
+	}
 	if historySessionLooksEventFormat(sessionPath) {
 		// Legacy event-record format: stream-decode (constant memory) and page
 		// the decoded rows. Only ancient sessions take this path.
@@ -597,15 +646,15 @@ func (a *App) coldHistorySlice(sessionDir, path string, req HistorySliceRequest)
 		if loadErr != nil {
 			return emptyHistorySlice(), loadErr
 		}
+		if !repairable {
+			return emptyHistorySlice(), agent.ErrSessionDisplayReadModelDamaged
+		}
 		src := newInMemoryHistorySliceSource(strings.TrimSuffix(filepath.Base(sessionPath), ".jsonl"), messages, resolver, state, true)
 		slice, pageErr := a.pageHistorySliceSource(src, req, resolver, sessionPlannerDisplayTurns(sessionDir, sessionPath), nil, sessionPath)
 		if pageErr != nil {
 			return emptyHistorySlice(), pageErr
 		}
 		slice.Source = "event-log"
-		if repairable {
-			a.kickHistoryReadModelRepair(sessionPath)
-		}
 		return slice, nil
 	}
 
@@ -621,15 +670,15 @@ func (a *App) coldHistorySlice(sessionDir, path string, req HistorySliceRequest)
 		if loadErr != nil {
 			return emptyHistorySlice(), errors.Join(scanErr, loadErr)
 		}
+		if !repairable {
+			return emptyHistorySlice(), agent.ErrSessionDisplayReadModelDamaged
+		}
 		src := newInMemoryHistorySliceSource(strings.TrimSuffix(filepath.Base(sessionPath), ".jsonl"), messages, resolver, state, true)
 		slice, pageErr := a.pageHistorySliceSource(src, req, resolver, sessionPlannerDisplayTurns(sessionDir, sessionPath), nil, sessionPath)
 		if pageErr != nil {
 			return emptyHistorySlice(), pageErr
 		}
 		slice.Source = "scan"
-		if repairable {
-			a.kickHistoryReadModelRepair(sessionPath)
-		}
 		return slice, nil
 	}
 	if identityKnown {
@@ -724,6 +773,10 @@ func coldHistorySliceSource(sessionPath string, idx *agent.SessionDisplayIndex) 
 // readSessionMessagesAtOffsets decodes the message lines for entries, whose
 // byte ranges are contiguous in the transcript, with one read.
 func readSessionMessagesAtOffsets(sessionPath string, entries []agent.DisplayIndexEntry) ([]provider.Message, error) {
+	return readSessionMessagesAtOffsetsContext(context.Background(), sessionPath, entries)
+}
+
+func readSessionMessagesAtOffsetsContext(ctx context.Context, sessionPath string, entries []agent.DisplayIndexEntry) ([]provider.Message, error) {
 	out := make([]provider.Message, 0, len(entries))
 	if len(entries) == 0 {
 		return out, nil
@@ -741,10 +794,13 @@ func readSessionMessagesAtOffsets(sessionPath string, entries []agent.DisplayInd
 	}
 	if spanLength <= historySliceColdWindowBytes {
 		buf := make([]byte, int(spanLength))
-		if _, err := f.ReadAt(buf, spanStart); err != nil {
+		if _, err := io.ReadFull(&historywork.Reader{Context: ctx, Source: io.NewSectionReader(f, spanStart, spanLength)}, buf); err != nil {
 			return nil, err
 		}
 		for _, e := range entries {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			start := e.Offset - spanStart
 			end := start + e.Length
 			if start < 0 || end < start || end > int64(len(buf)) {
@@ -763,7 +819,7 @@ func readSessionMessagesAtOffsets(sessionPath string, entries []agent.DisplayInd
 	// allocate and copy a second full record-sized byte slice.
 	for _, e := range entries {
 		var m provider.Message
-		dec := json.NewDecoder(io.NewSectionReader(f, e.Offset, e.Length))
+		dec := json.NewDecoder(&historywork.Reader{Context: ctx, Source: io.NewSectionReader(f, e.Offset, e.Length)})
 		if err := dec.Decode(&m); err != nil {
 			return nil, fmt.Errorf("decode oversized session transcript line %d: %w", e.Index, err)
 		}
@@ -810,12 +866,23 @@ func (a *App) pageHistorySliceSource(src *historySliceSource, req HistorySliceRe
 	cursor, err := decodeHistorySliceCursor(req.Cursor)
 	// An undecodable cursor is treated like a request for the latest page.
 	hasCursor := req.Cursor != "" && err == nil
+	sourceID := src.sourceID
+	if sourceID == "" {
+		sourceID = src.sessionID
+	}
+	if src.windowOnly && req.Cursor != "" && (err != nil || cursor.Before < 0 || cursor.Before > src.total || cursor.Source != sourceID) {
+		return staleHistorySlice(src.revision, src.revKnown, src.digest), nil
+	}
 	if hasCursor && !src.identityMatches(cursor.Revision, cursor.RevKnown, cursor.Digest) {
 		return staleHistorySlice(src.revision, src.revKnown, src.digest), nil
 	}
 	hi := src.total
 	if hasCursor && cursor.Before < hi {
 		hi = cursor.Before
+	}
+	forward := req.Newer && hasCursor
+	if forward {
+		hi = min(src.total, cursor.Before+min(req.Entries, 500))
 	}
 	page := HistorySlice{
 		Entries:       []HistoryEntry{},
@@ -829,23 +896,36 @@ func (a *App) pageHistorySliceSource(src *historySliceSource, req HistorySliceRe
 	}
 
 	// Turn budget: the oldest visible turn this page may reach.
-	newestTurn := src.turns[hi-1]
+	newestTurn := src.turnAt(hi - 1)
 	oldestTurn := 0
 	if newestTurn > 0 {
 		oldestTurn = max(newestTurn-req.Turns+1, 1)
 	}
 	// turns is non-decreasing: binary-search the first message in the page.
-	candidateLo := sort.Search(hi, func(i int) bool { return src.turns[i] >= oldestTurn })
+	candidateLo := sort.Search(hi, func(i int) bool { return src.turnAt(i) >= oldestTurn })
 	if oldestTurn <= 1 {
 		// A page reaching the first turn also includes the pre-turn messages
 		// (system prompt), mirroring providerMessagesForVisibleTurnRange.
 		candidateLo = 0
 	}
+	if src.maxFetch > 0 {
+		candidateLo = max(candidateLo, hi-min(req.Entries, src.maxFetch))
+	}
+	if forward {
+		candidateLo = cursor.Before
+	}
+	if src.readErr != nil {
+		return emptyHistorySlice(), src.readErr
+	}
 	// Cold-path raw-span cap: shrink the window forward while the byte span
 	// is excessive (image-dense windows).
 	if src.windowBytes != nil {
 		for candidateLo < hi-1 && src.windowBytes(candidateLo, hi) > historySliceColdWindowBytes {
-			candidateLo++
+			if forward {
+				hi--
+			} else {
+				candidateLo++
+			}
 		}
 	}
 
@@ -856,7 +936,9 @@ func (a *App) pageHistorySliceSource(src *historySliceSource, req HistorySliceRe
 	if len(window) != hi-candidateLo {
 		return emptyHistorySlice(), fmt.Errorf("history window length %d, want %d", len(window), hi-candidateLo)
 	}
-	window = historyWindowWithPersistedTimes(window, sessionPath, countRoleBefore(src.roles, candidateLo, provider.RoleUser))
+	if !src.windowOnly {
+		window = historyWindowWithPersistedTimes(window, sessionPath, src.userCountBefore(candidateLo))
+	}
 	toolResults := historyToolResultsByID(window)
 	if err := extendHistoryToolResults(src, window, hi, toolResults); err != nil {
 		return emptyHistorySlice(), err
@@ -888,6 +970,11 @@ func (a *App) pageHistorySliceSource(src *historySliceSource, req HistorySliceRe
 		groups = append(groups, g)
 		entryCount += len(g.entries)
 		byteCount += g.bytes
+		if forward && len(groups) > 1 && (entryCount > req.Entries || byteCount > req.Bytes) {
+			groups = groups[:len(groups)-1]
+			hi = i
+			break
+		}
 		// Keep the newest suffix within budget; always keep the newest group
 		// so a single oversized message still makes progress.
 		for len(groups) > 1 && (entryCount > req.Entries || byteCount > req.Bytes) {
@@ -923,7 +1010,12 @@ func (a *App) pageHistorySliceSource(src *historySliceSource, req HistorySliceRe
 			RevKnown: src.revKnown,
 			Digest:   src.digest,
 			Before:   pageStart,
+			Source:   sourceID,
 		})
+	}
+	page.HasNewer = hi < src.total
+	if page.HasNewer {
+		page.NewerCursor = encodeHistorySliceCursor(historySliceCursor{V: 1, Revision: src.revision, RevKnown: src.revKnown, Digest: src.digest, Before: hi, Source: sourceID})
 	}
 	return page, nil
 }
@@ -968,7 +1060,7 @@ func extendHistoryToolResults(src *historySliceSource, window []provider.Message
 		return nil
 	}
 	for i := hi; i < src.total && len(want) > 0; i++ {
-		if src.roles[i] != provider.RoleTool {
+		if src.roleAt(i) != provider.RoleTool {
 			continue
 		}
 		msgs, err := src.fetch(i, i+1)
@@ -1030,7 +1122,7 @@ func primeHistoryPlannerState(src *historySliceSource, state *historyMessageConv
 func newHistoryEntry(src *historySliceSource, entryID string, msgIndex, sub int, row HistoryMessage) HistoryEntry {
 	entry := HistoryEntry{
 		EntryID: entryID,
-		Turn:    src.turns[msgIndex],
+		Turn:    src.turnAt(msgIndex),
 		Order:   msgIndex,
 		Message: row,
 		Refs:    []HistoryContentRef{},
@@ -1430,13 +1522,10 @@ func (a *App) coldHistoryFieldValue(sessionDir, sessionPath string, msgIndex, su
 		src = coldHistorySliceSource(absPath, scanned)
 	} else {
 		messages, state, repairable, loadErr := agent.LoadSessionDisplayMessages(absPath)
-		if loadErr != nil {
+		if loadErr != nil || !repairable {
 			return "", false, true
 		}
 		src = newInMemoryHistorySliceSource(strings.TrimSuffix(filepath.Base(absPath), ".jsonl"), messages, resolver, state, true)
-		if repairable {
-			a.kickHistoryReadModelRepair(absPath)
-		}
 	}
 	return a.historyFieldValueForSource(src, msgIndex, sub, ref, resolver, sessionPlannerDisplayTurns(sessionDir, absPath), nil)
 }

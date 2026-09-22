@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -12,6 +13,7 @@ import (
 
 	"reasonix/desktop/internal/workspacestate"
 	"reasonix/internal/agent"
+	"reasonix/internal/historywork"
 	"reasonix/internal/identitylock"
 	"reasonix/internal/session"
 	"reasonix/internal/store"
@@ -105,40 +107,83 @@ func (a *App) ListHistoricalSessions() (HistoricalImportStatus, error) {
 	return a.listHistoricalSessions(a.bootContext())
 }
 
-func scanHistoricalRoot(ctx context.Context, source desktopMigrationSource, format string, add func(string, string, string, string, string)) error {
-	entries, err := os.ReadDir(source.root)
+func scanHistoricalRoot(ctx context.Context, source desktopMigrationSource, format string, add func(string, string, string, string, string), coordinators ...*historywork.Coordinator) error {
+	f, err := os.Open(source.root)
 	if os.IsNotExist(err) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	for _, entry := range entries {
+	defer f.Close()
+	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if strings.HasPrefix(entry.Name(), ".") || entry.Type()&os.ModeSymlink != 0 {
-			continue
+		release := func(int64) {}
+		if len(coordinators) > 0 && coordinators[0] != nil {
+			release, err = coordinators[0].BackgroundSlice(ctx, false)
+			if err != nil {
+				return err
+			}
 		}
-		if format == "canonical" && !entry.IsDir() {
-			continue
+		bytes, count := int64(0), 0
+		started := time.Now()
+		var readErr error
+		for count < historywork.BatchEntries && bytes+historywork.ReadChunk <= historywork.BatchBytes && time.Since(started) < historywork.SliceDuration {
+			if readErr = ctx.Err(); readErr != nil {
+				break
+			}
+			var entries []os.DirEntry
+			entries, readErr = f.ReadDir(1)
+			if readErr != nil {
+				break
+			}
+			count++
+			entry := entries[0]
+			if strings.HasPrefix(entry.Name(), ".") || entry.Type()&os.ModeSymlink != 0 {
+				continue
+			}
+			if format == "canonical" && !entry.IsDir() {
+				continue
+			}
+			if format == "legacy" && (entry.IsDir() || !store.IsSessionTranscriptName(entry.Name())) {
+				continue
+			}
+			path := filepath.Join(source.root, entry.Name())
+			if format == "canonical" && !hasHistoricalSessionArtifacts(path) {
+				continue
+			}
+			if format == "legacy" {
+				// The bounded head sidecar is the only payload this discovery reads.
+				// Charge its maximum size so errors and concurrent changes cannot
+				// exceed the shared rate allowance.
+				bytes += historywork.ReadChunk
+				if addIndexedHistoricalHeads(path, source, add) {
+					continue
+				}
+			}
+			add(path, format, source.scope, source.workspaceRoot, "")
 		}
-		if format == "legacy" && (entry.IsDir() || !store.IsSessionTranscriptName(entry.Name())) {
-			continue
+		release(bytes)
+		if errors.Is(readErr, io.EOF) {
+			return nil
 		}
-		path := filepath.Join(source.root, entry.Name())
-		if format == "canonical" && !hasHistoricalSessionArtifacts(path) {
-			continue
+		if readErr != nil {
+			return readErr
 		}
-		if format == "legacy" && addIndexedHistoricalHeads(path, source, add) {
-			continue
+		if len(coordinators) == 0 || coordinators[0] == nil {
+			if err := historywork.Pause(ctx, bytes); err != nil {
+				return err
+			}
 		}
-		add(path, format, source.scope, source.workspaceRoot, "")
 	}
-	return nil
 }
 
 func addIndexedHistoricalHeads(path string, source desktopMigrationSource, add func(string, string, string, string, string)) bool {
+	if info, err := os.Stat(store.SessionEventIndex(path)); err != nil || info.Size() > historywork.ReadChunk {
+		return false
+	}
 	index, err := agent.ReadSessionHeadIndex(path)
 	if err != nil || index == nil || !index.Current(path) {
 		return false

@@ -15,6 +15,30 @@ import (
 	"reasonix/internal/session"
 )
 
+func TestStartupReservationReadinessPrecedesRestoredShell(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := NewApp()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	app.tabsRestored = make(chan struct{})
+	app.startDesktopSessionMigration(ctx)
+	select {
+	case <-app.desktopMigrationDone:
+	case <-time.After(3 * time.Second):
+		cancel()
+		t.Fatal("reservation recovery waited for the shell that depends on it")
+	}
+	app.historicalImports.mu.Lock()
+	pending := app.historicalImports.discoveryPending
+	app.historicalImports.mu.Unlock()
+	if !pending {
+		t.Fatal("historical discovery ran before shell readiness")
+	}
+	app.markTabsRestored()
+	app.historicalImports.workers.Wait()
+	app.closeSessionServices()
+}
+
 // Startup may discover historical metadata, but only an explicit open/import
 // request is allowed to convert source content or replay a prepared import.
 func TestDesktopStartupLeavesColdHistoryForExplicitImport(t *testing.T) {
@@ -115,6 +139,9 @@ func runHistoryDiscoveryStartup(t *testing.T, app *App) {
 	app.startDesktopSessionMigration(ctx)
 	select {
 	case <-app.desktopMigrationDone:
+		// Reservation recovery no longer gates on historical discovery. Tests
+		// inspecting the eventual directory view join that worker explicitly.
+		app.historicalImports.workers.Wait()
 	case <-time.After(5 * time.Second):
 		// Source locks are deliberately retained throughout startup. This is a
 		// deadlock watchdog, not a startup performance requirement.

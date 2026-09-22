@@ -462,32 +462,14 @@ func (a *App) runSessionCatalogReconcile(key string, done chan struct{}) {
 		if a.catalogReconcileHook != nil {
 			a.catalogReconcileHook(target)
 		}
-		// Explicit reconcile bypasses disposable migration markers. Signatures
-		// keep periodic passes cheap, but an old CLI or restored backup must
-		// never be permanently hidden by a timestamp/content collision.
-		migrated, migratedPaths := forceMigrateLegacySessionsIntoGlobalTopicsWithPaths(target.Path)
-		if len(migrated) > 0 {
-			ctx, cancel := context.WithTimeout(a.bootContext(), 30*time.Second)
-			// Publish the exact migrated sessions before the broader metadata
-			// projection. On large stores (and especially Windows), the metadata
-			// pass can take long enough to defeat this interactive fast path.
-			for _, path := range migratedPaths {
-				if err := catalog.IndexSessionPath(ctx, target, path); err != nil && !errors.Is(err, context.Canceled) {
-					slog.Debug("desktop: index migrated session", "path", path, "err", err)
-				}
+		// Discovery projects metadata without rewriting organization sidecars or
+		// proving recovery ancestry through transcript reads.
+		if settled, accepted := catalog.ScheduleReconcile(target); accepted {
+			select {
+			case <-settled:
+			case <-a.bootContext().Done():
 			}
-			_ = a.syncSessionCatalogMetadata(ctx, catalog)
-			cancel()
 		}
-		// Keep the per-directory single-flight slot until the catalog scan ends.
-		// Enqueuing would reopen the pre-scan stampede window while the catalog
-		// worker was still reconciling the same directory.
-		if err := catalog.ReconcileDirectory(a.bootContext(), target); err != nil && !errors.Is(err, context.Canceled) {
-			slog.Debug("desktop: reconcile session catalog", "path", target.Path, "err", err)
-		}
-		// The count sweep rides the reconcile worker; every move re-proves
-		// coverage from disk, so a stale projection after a failed scan is safe.
-		a.sweepExcessRecoveryCopies(catalog, target)
 
 		a.catalogReconcileMu.Lock()
 		job = a.catalogReconcileJobs[key]

@@ -41,6 +41,9 @@ func (c *Catalog) RequestIndexSession(target DirectoryTarget, path string) bool 
 	default:
 		c.pathQueued.Delete(key)
 		c.pathQueueMu.Unlock()
+		// Losing a wake-up must not lose the authoritative write. The root
+		// queue coalesces overflow and retains it until reconciliation.
+		c.RequestReconcile(target)
 		return false
 	}
 }

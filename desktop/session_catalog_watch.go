@@ -5,10 +5,12 @@ import (
 	"errors"
 	"log/slog"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"reasonix/internal/sessioncatalog"
+	"reasonix/internal/store"
 )
 
 // Directory notifications admit only dirty roots. The periodic audit remains
@@ -46,6 +48,7 @@ func (a *App) watchSessionCatalog(ctx context.Context, catalog *sessioncatalog.C
 		targets = refreshCatalogWatchTargets(watcher, targets, a.sessionCatalogTargets(), watched, dirty)
 	}
 	refreshTargets()
+	catalog.ResumeDiscovery()
 	armBatch()
 	metadata := time.NewTicker(30 * time.Second)
 	audit := time.NewTicker(5 * time.Minute)
@@ -63,6 +66,13 @@ func (a *App) watchSessionCatalog(ctx context.Context, catalog *sessioncatalog.C
 				continue
 			}
 			key := filepath.Dir(event.Name)
+			// A transcript/sidecar write invalidates one session, not its root.
+			if target, exists := targets[key]; exists {
+				if path := catalogSessionPathForEvent(event.Name); path != "" && event.Op&(fsnotify.Remove|fsnotify.Rename) == 0 {
+					catalog.RequestIndexSession(target, path)
+					continue
+				}
+			}
 			if _, exists := targets[filepath.Clean(event.Name)]; exists {
 				key = filepath.Clean(event.Name)
 				if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
@@ -87,17 +97,16 @@ func (a *App) watchSessionCatalog(ctx context.Context, catalog *sessioncatalog.C
 			armBatch()
 		case <-audit.C:
 			refreshTargets()
+			keys := make([]string, 0, len(targets))
 			for key := range targets {
-				dirty[key] = true
+				keys = append(keys, key)
 			}
-			armBatch()
-			// Retention maintenance has a separate, bounded admission budget.
-			// Never sweep every workspace on one ordinary refresh tick.
-			all := a.sessionCatalogTargets()
-			if len(all) > 0 {
-				a.sweepExcessRecoveryCopies(catalog, all[maintenance%len(all)])
+			sort.Strings(keys)
+			if len(keys) > 0 {
+				dirty[keys[maintenance%len(keys)]] = true
 				maintenance++
 			}
+			armBatch()
 		case <-batchReady:
 			batchReady = nil
 			for key := range dirty {
@@ -106,13 +115,23 @@ func (a *App) watchSessionCatalog(ctx context.Context, catalog *sessioncatalog.C
 				if !exists || ctx.Err() != nil {
 					continue
 				}
-				if len(migrateLegacySessionsIntoGlobalTopics(target.Path)) > 0 {
-					syncMetadata()
-				}
 				catalog.RequestReconcile(target)
 			}
 		}
 	}
+}
+
+func catalogSessionPathForEvent(path string) string {
+	if store.IsSessionTranscriptName(filepath.Base(path)) {
+		return path
+	}
+	if filepath.Ext(path) == ".meta" {
+		candidate := path[:len(path)-len(".meta")]
+		if store.IsSessionTranscriptName(filepath.Base(candidate)) {
+			return candidate
+		}
+	}
+	return ""
 }
 
 func refreshCatalogWatchTargets(watcher *fsnotify.Watcher, current map[string]sessioncatalog.DirectoryTarget, targets []sessioncatalog.DirectoryTarget, watched, dirty map[string]bool) map[string]sessioncatalog.DirectoryTarget {

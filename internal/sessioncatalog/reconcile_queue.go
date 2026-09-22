@@ -9,29 +9,59 @@ import (
 // RequestReconcile makes the channel a wake signal while the maps retain the
 // newest target. Session saves never wait for catalog work.
 func (c *Catalog) RequestReconcile(target DirectoryTarget) bool {
+	_, accepted := c.ScheduleReconcile(target)
+	return accepted
+}
+
+// ScheduleReconcile joins the catalog's single discovery owner. The returned
+// signal settles after all coalesced source changes have been visited; callers
+// must also select their own cancellation when waiting during shutdown.
+func (c *Catalog) ScheduleReconcile(target DirectoryTarget) (<-chan struct{}, bool) {
 	if c == nil || strings.TrimSpace(target.Path) == "" {
-		return false
+		return nil, false
 	}
 	target.Path = cleanCatalogAccessPath(target.Path)
 	key := queuePathKey(target.Path)
 	if key == "" {
-		return false
+		return nil, false
 	}
 	target.mutationSeq = c.mutationSeq.Add(1)
-	if _, loaded := c.reconcileQueued.LoadOrStore(key, target); loaded {
-		c.markReconcileDirty(target)
-		return true
+	if c.opts.MetadataOnly {
+		// A saturated path queue has already committed its authoritative save.
+		// Persist the root invalidation before acknowledging maintenance so a
+		// crash cannot turn an overflow into a permanently stale ready catalog.
+		if err := c.persistReconcileTarget(target); err != nil {
+			return nil, false
+		}
 	}
+	c.reconcileDirtyMu.Lock()
+	defer c.reconcileDirtyMu.Unlock()
+	select {
+	case <-c.stop:
+		return nil, false
+	default:
+	}
+	if c.reconcileDone == nil {
+		c.reconcileDone = map[string]chan struct{}{}
+	}
+	done := c.reconcileDone[key]
+	if done == nil {
+		done = make(chan struct{})
+		c.reconcileDone[key] = done
+	}
+	if queued, loaded := c.reconcileQueued.Load(key); loaded {
+		target = newestReconcileTarget(queued.(DirectoryTarget), target)
+		c.reconcileDirty[key] = target
+		c.reconcileQueued.Store(key, target)
+		return done, true
+	}
+	c.reconcileQueued.Store(key, target)
 	select {
 	case c.reconcileCh <- target:
-		return true
-	case <-c.stop:
-		c.reconcileQueued.Delete(key)
-		return false
+		return done, true
 	default:
-		c.reconcileQueued.Delete(key)
-		c.markReconcileDirty(target)
-		return false
+		c.reconcileDirty[key] = target
+		return done, true
 	}
 }
 
@@ -86,6 +116,15 @@ func (c *Catalog) takeReconcileDirty() (DirectoryTarget, bool) {
 
 func (c *Catalog) reconcileLoop() {
 	defer c.workers.Done()
+	select {
+	case <-c.discoveryStart:
+	case <-c.stop:
+		return
+	}
+	if c.opts.MetadataOnly {
+		c.metadataReconcileLoop()
+		return
+	}
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -113,13 +152,24 @@ func (c *Catalog) reconcileLoop() {
 	}
 }
 
+// ResumeDiscovery separates a queryable projection from background discovery.
+func (c *Catalog) ResumeDiscovery() {
+	c.discoveryOnce.Do(func() { close(c.discoveryStart) })
+}
+
 func (c *Catalog) runQueuedReconcile(target DirectoryTarget) {
 	key := queuePathKey(target.Path)
 	for {
 		if c.testReconcileStartHook != nil {
 			c.testReconcileStartHook(target)
 		}
-		ctx, cancel := context.WithTimeout(c.workerCtx, 2*time.Minute)
+		// A metadata scan is resumable between slices. A directory-size timeout
+		// would restart large directories forever before reaching EOF.
+		ctx, cancel := context.WithCancel(c.workerCtx)
+		if !c.opts.MetadataOnly {
+			cancel()
+			ctx, cancel = context.WithTimeout(c.workerCtx, 2*time.Minute)
+		}
 		_ = c.reconcileDirectory(ctx, target, target.mutationSeq)
 		cancel()
 
@@ -133,6 +183,10 @@ func (c *Catalog) runQueuedReconcile(target DirectoryTarget) {
 			continue
 		}
 		c.reconcileQueued.Delete(key)
+		if done := c.reconcileDone[key]; done != nil {
+			delete(c.reconcileDone, key)
+			close(done)
+		}
 		c.reconcileDirtyMu.Unlock()
 		return
 	}

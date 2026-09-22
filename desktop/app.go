@@ -31,6 +31,7 @@ import (
 	"reasonix/internal/extension/providerext"
 	"reasonix/internal/fileref"
 	fileenc "reasonix/internal/fileutil/encoding"
+	"reasonix/internal/historywork"
 	"reasonix/internal/i18n"
 	"reasonix/internal/mcpdiag"
 	"reasonix/internal/mcpregistry"
@@ -131,6 +132,9 @@ type App struct {
 	// authoritative session sidecars. Project-shell APIs must tolerate nil here:
 	// opening, migration, repair, and corruption recovery never gate the UI.
 	sessionCatalog                           atomic.Pointer[sessioncatalog.Catalog]
+	historyMaintenance                       historywork.Coordinator
+	historyIdlePool                          session.IdlePool
+	historyReaders                           desktopHistoryReaders
 	catalogLifecycleMu                       sync.Mutex
 	catalogCancel                            context.CancelFunc
 	catalogDone, catalogInitialReconcileDone chan struct{}
@@ -206,8 +210,9 @@ type App struct {
 	runtimeBySessionKey map[string]*desktopSessionRuntime
 	// sessionServices contains one SessionID-only registry for the whole local
 	// Desktop host. desktopSessions owns its persistence and navigation state.
-	sessionServicesMu sync.Mutex
-	sessionServices   map[string]*session.Service
+	sessionServicesMu         sync.Mutex
+	sessionServices           map[string]*session.Service
+	historicalSessionServices map[string]*session.Service
 	desktopPersistenceState
 
 	// tabsRestored is closed when restoreOrBuildTabs has finished populating
@@ -527,7 +532,10 @@ func (a *App) startup(ctx context.Context) {
 	a.lifecycle.tracker.markAsync("ready")
 	a.startNativeShellSupport()
 	a.enableDeferredRebuildRetry()
-	a.startHistoryIndexMigration()
+	// Historical bodies are prepared only when a reader requests them.
+	a.mu.Lock()
+	a.tabsRestored = make(chan struct{})
+	a.mu.Unlock()
 	a.startDesktopSessionMigration(ctx)
 
 	if cfg, err := config.Load(); err == nil && cfg.DesktopMetrics() && version != "dev" {
@@ -539,9 +547,6 @@ func (a *App) startup(ctx context.Context) {
 	a.heartbeat = newHeartbeatEngine(a)
 	a.heartbeat.Start()
 
-	a.mu.Lock()
-	a.tabsRestored = make(chan struct{})
-	a.mu.Unlock()
 	go a.restoreOrBuildTabs()
 	a.startDesktopPersistenceReconciliation()
 	a.registerHistoryIndexEvents()
@@ -790,6 +795,7 @@ func (a *App) restoreOrBuildTabs() {
 			}
 			tab.SessionPath = strings.TrimSpace(entry.SessionPath)
 			tab.SessionID = strings.TrimSpace(entry.SessionID)
+			tab.SessionHeadID = strings.TrimSpace(entry.SessionHeadID)
 			tab.PendingCreateOperationID = strings.TrimSpace(entry.CreateOperationID)
 			tab.persistenceExtra = cloneDesktopJSONFields(entry.extra)
 			tab.ReadOnly = entry.ReadOnly
@@ -1436,7 +1442,7 @@ func (a *App) ensureTabControllerWorkspace(tab *WorkspaceTab) error {
 			dirMatches = true
 		}
 	}
-	sessionMatches := path == "" || sessionRuntimeKey(ctrl.SessionPath()) == sessionRuntimeKey(path)
+	sessionMatches := a.controllerMatchesSessionPath(ctrl, path)
 	if rootMatches && dirMatches && sessionMatches {
 		return nil
 	}
@@ -3408,25 +3414,17 @@ func (a *App) ResumeSessionPageForTab(tabID, path string, limit int) (HistoryPag
 // path is a runtime identity, so changing to a different path must replace the
 // tab's controller binding rather than mutating the current controller in place.
 func (a *App) ResumeSessionForTab(tabID, path string) ([]HistoryMessage, error) {
+	if ref, adopted, err := a.legacyCanonicalRef(a.bootContext(), path); err != nil {
+		return nil, err
+	} else if adopted {
+		path = sessionRoute(ref.SessionID)
+	}
 	tab, ctrl := a.tabAndCtrlByID(tabID)
 	if tab == nil || ctrl == nil {
 		return []HistoryMessage{}, fmt.Errorf("tab is not ready")
 	}
 	if _, isV3 := parseSessionRoute(path); isV3 {
 		if _, err := a.resumeCanonicalSessionForTranscript(tab, ctrl, path, defaultHistoryPageTurns, false); err != nil {
-			return nil, err
-		}
-		return a.HistoryForTab(tab.ID), nil
-	}
-	if identity, ok := ctrl.(control.IdentityLifecycle); ok && identity.UsesExclusiveSession() {
-		if continued := a.continuePathForOpen(path); continued != "" {
-			path = continued
-		}
-		sessionPath, _, err := validateSessionPath(controllerSessionDir(ctrl), path)
-		if err != nil {
-			return nil, err
-		}
-		if _, err := a.continueLegacySessionForTranscript(tab, ctrl, sessionPath, defaultHistoryPageTurns, false, false); err != nil {
 			return nil, err
 		}
 		return a.HistoryForTab(tab.ID), nil
@@ -3497,12 +3495,6 @@ func (a *App) OpenChannelSessionForTab(tabID, path string) ([]HistoryMessage, er
 	if err != nil {
 		return nil, err
 	}
-	if identity, ok := ctrl.(control.IdentityLifecycle); ok && identity.UsesExclusiveSession() {
-		if _, err := a.continueLegacySessionForTranscript(tab, ctrl, sessionPath, defaultHistoryPageTurns, false, true); err != nil {
-			return nil, err
-		}
-		return a.HistoryForTab(tab.ID), nil
-	}
 	loaded, err := loadResumableSession(sessionPath)
 	if err != nil {
 		return nil, err
@@ -3521,6 +3513,11 @@ func (a *App) OpenChannelSessionPageForTab(tabID, path string, limit int) (Histo
 }
 
 func (a *App) openChannelSessionForTranscript(tabID, path string, limit int, includeHistory bool) (HistoryPage, error) {
+	if ref, adopted, err := a.legacyCanonicalRef(a.bootContext(), path); err != nil {
+		return HistoryPage{}, err
+	} else if adopted {
+		path = sessionRoute(ref.SessionID)
+	}
 	started := time.Now()
 	phases := HistorySwitchPhases{Outcome: "ok"}
 	defer func() { logSessionSwitchPhases(phases, started) }()
@@ -3558,17 +3555,6 @@ func (a *App) openChannelSessionForTranscript(tabID, path string, limit int, inc
 	phases.LoadMs = elapsedMs(loadStarted)
 	phases.LoadedCount = loaded.Len()
 	phases.LoadedBytes = sessionFileBytes(sessionPath)
-	if identity, ok := ctrl.(control.IdentityLifecycle); ok && identity.UsesExclusiveSession() {
-		page, migrateErr := a.continueLegacySessionForTranscript(tab, ctrl, sessionPath, limit, includeHistory, true)
-		if migrateErr != nil {
-			phases.Outcome = "legacy_migration_failed"
-			return HistoryPage{}, migrateErr
-		}
-		phases.TotalMs = elapsedMs(started)
-		page.Switch = &phases
-		return page, nil
-	}
-
 	page, err := a.switchToLoadedSessionPage(tab, loaded, sessionPath, true, includeHistory, limit, &phases)
 	if err != nil {
 		return HistoryPage{}, err
@@ -3823,6 +3809,8 @@ func (a *App) rebindTabToLoadedSessionPath(tab *WorkspaceTab, sessionPath string
 	tab.Ctrl = candidate.ctrl
 	tab.sink = candidate.sink
 	tab.SessionPath = sessionPath
+	tab.SessionID = ""
+	tab.SessionHeadID = ""
 	tab.model = candidate.model
 	tab.Label = candidate.ctrl.Label()
 	applyNormalizedRuntimeToTabLocked(tab, candidate.runtime)
@@ -4043,6 +4031,10 @@ func (a *App) buildSessionRebindCandidate(
 	if _, err := loadPinnedContextState(sessionPath); err != nil {
 		return nil, err
 	}
+	nativeService, err := a.historicalSessionService(desktopSessionRoot(filepath.Dir(sessionPath)))
+	if err != nil {
+		return nil, err
+	}
 	ctrl, err := a.buildTabControllerBoot(a.bootContext(), boot.Options{
 		Model:                model,
 		RequireKey:           false,
@@ -4052,6 +4044,8 @@ func (a *App) buildSessionRebindCandidate(
 		Sink:                 a.desktopControllerSink(sink, cfg.Notifications),
 		WorkspaceRoot:        root,
 		SessionDir:           sessionDir,
+		NativeLegacySession:  true,
+		SessionService:       nativeService,
 		EffortOverride:       cloneStringPtr(source.effort),
 		EffortModel:          source.model,
 		SharedHost:           sharedHost, BrowserExecutor: a.browserExecutorForRuntime(tab.ID, sink),
@@ -4122,6 +4116,13 @@ func loadResumableSession(sessionPath string) (*agent.Session, error) {
 		return nil, fmt.Errorf("session is pending cleanup")
 	}
 	return agent.LoadSession(sessionPath)
+}
+
+func loadResumableSessionContext(ctx context.Context, sessionPath string) (*agent.Session, error) {
+	if agent.IsCleanupPending(sessionPath) {
+		return nil, fmt.Errorf("session is pending cleanup")
+	}
+	return agent.LoadSessionContext(ctx, sessionPath)
 }
 
 // PreviewSession reads a saved session for display only. It does not snapshot or

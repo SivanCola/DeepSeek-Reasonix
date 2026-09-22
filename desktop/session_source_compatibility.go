@@ -297,33 +297,33 @@ func (a *App) resolveDesktopImportTarget(ctx context.Context, query *session.Que
 }
 
 func (a *App) legacyCanonicalRef(ctx context.Context, path string) (session.SessionRef, bool, error) {
-	state, err := a.workspaceRegistry().Load(ctx)
+	snapshot, err := a.workspaceRegistry().VerifySnapshot(ctx)
 	if err != nil {
 		return session.SessionRef{}, false, err
 	}
-	mapping, adopted := state.SourceMappings[desktopSourceKey(path, "")]
+	mapping, adopted := snapshot.Source(desktopSourceKey(path, ""))
 	if !adopted {
 		// DAG migration records each head separately. A path-only legacy tab
 		// still refers to the selected head, not a new import of that path.
-		for _, candidate := range state.SourceMappings {
-			if candidate.HeadID == "" || sessionRuntimeKey(candidate.Path) != sessionRuntimeKey(path) {
-				continue
-			}
+		hasHeads, err := snapshot.HasHeadSource(path)
+		if err != nil {
+			return session.SessionRef{}, false, err
+		}
+		if hasHeads {
 			heads, err := agent.ListSessionHeads(path)
 			if err != nil {
 				return session.SessionRef{}, false, err
 			}
 			for _, head := range heads {
 				if head.Selected && !head.Retired {
-					mapping, adopted = state.SourceMappings[desktopSourceKey(path, head.ID)]
+					mapping, adopted = snapshot.Source(desktopSourceKey(path, head.ID))
 					break
 				}
 			}
-			break
 		}
 	}
 	if adopted {
-		if state.SessionStates[mapping.SessionID].Lifecycle == workspacestate.Deleted {
+		if snapshot.Session(mapping.SessionID).State.Lifecycle == workspacestate.Deleted {
 			return session.SessionRef{}, true, session.ErrSessionNotFound
 		}
 		// Adoption is durable. Opening the new conversation must not hash or

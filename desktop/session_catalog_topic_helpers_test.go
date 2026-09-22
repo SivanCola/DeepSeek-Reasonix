@@ -54,11 +54,9 @@ func waitForCatalogReconcileJobs(t *testing.T, app *App) {
 
 func waitForCatalogTopic(t *testing.T, app *App, scope, workspaceRoot, topicID string) []ProjectNode {
 	t.Helper()
-	alreadyStarted := waitForInitialCatalogReconcile(t, app)
+	waitForInitialCatalogReconcile(t, app)
 	t.Cleanup(func() { app.stopSessionCatalog(time.Second) })
-	if alreadyStarted {
-		waitForCatalogReconcileJobs(t, app)
-	}
+	waitForCatalogReconcileJobs(t, app)
 	nodes := mustListProjectTree(t, app)
 	for _, folder := range nodes {
 		if scope == "project" && (!sameProjectRoot(folder.Root, workspaceRoot) || folder.Kind != "project") {
@@ -79,10 +77,8 @@ func waitForCatalogTopic(t *testing.T, app *App, scope, workspaceRoot, topicID s
 
 func waitForCatalogTreeCondition(t *testing.T, app *App, description string, matches func([]ProjectNode) bool) []ProjectNode {
 	t.Helper()
-	alreadyStarted := waitForInitialCatalogReconcile(t, app)
-	if alreadyStarted {
-		waitForCatalogReconcileJobs(t, app)
-	}
+	waitForInitialCatalogReconcile(t, app)
+	waitForCatalogReconcileJobs(t, app)
 	nodes := mustListProjectTree(t, app)
 	if matches(nodes) {
 		return nodes

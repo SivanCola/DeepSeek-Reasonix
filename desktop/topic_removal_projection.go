@@ -14,18 +14,23 @@ func (a *App) withRemovablePlaceholderTopics(req ProjectTopicPageRequest, state 
 	if err != nil {
 		return nodes
 	}
-	dirs := a.knownSessionDirs()
 	for _, node := range a.metadataProjectTopics(req.Scope, req.WorkspaceRoot) {
 		if seen[node.TopicID] || adopted[node.TopicID] || node.RuntimeOnly {
+			continue
+		}
+		if catalog := a.sessionCatalog.Load(); catalog != nil && catalog.TopicFolded(a.bootContext(), req.Scope, req.WorkspaceRoot, node.TopicID) {
 			continue
 		}
 		item, err := topicRemovalCandidate(state, file, TopicRemovalTarget{TopicID: node.TopicID})
 		if err != nil || item.Topic.Scope != req.Scope || (req.Scope == "project" && !sameDesktopPath(item.Topic.WorkspaceRoot, req.WorkspaceRoot)) {
 			continue
 		}
-		if classification, _ := classifyLegacyCleanupTopicSources(item, dirs); classification != "empty" {
-			continue
-		}
+		// A partial directory projection cannot prove that this topic is empty.
+		// Listing must not enumerate source directories or read transcripts to
+		// decide removability. InspectTopicRemoval performs that proof only when
+		// the user explicitly requests the management action.
+		node.TurnsState = "unknown"
+		node.Health = "metadata_pending"
 		nodes = append(nodes, node)
 		seen[node.TopicID] = true
 	}

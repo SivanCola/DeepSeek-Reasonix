@@ -28,6 +28,7 @@ func (c *Catalog) ListTopics(ctx context.Context, req TopicPageRequest) (TopicPa
 	rootKey := c.workspaceRootKey(req.Scope, req.WorkspaceRoot)
 	args := []any{req.Scope, rootKey}
 	where := `scope=? AND workspace_root_key=?`
+	if req.PinnedOnly { where += ` AND pinned=1` }
 	if query := strings.TrimSpace(req.Query); query != "" {
 		where += ` AND lower(title) LIKE ?`
 		args = append(args, "%"+strings.ToLower(query)+"%")
