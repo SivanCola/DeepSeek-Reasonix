@@ -67,3 +67,17 @@ export function activeTabHydrationPlan(
     },
   };
 }
+
+export function continueColdHistory(
+  pending: Promise<"cached" | "loaded" | "miss" | "failed">,
+  current: () => boolean,
+  fallback: () => void | Promise<void>,
+  follow: () => Promise<unknown>,
+  ready: () => void | Promise<void>,
+): void {
+  void pending.then(result => {
+    if (!current()) return;
+    if (result === "miss" || result === "failed") return fallback();
+    void follow().then(() => current() ? ready() : undefined).catch(() => {});
+  }).catch(() => {});
+}

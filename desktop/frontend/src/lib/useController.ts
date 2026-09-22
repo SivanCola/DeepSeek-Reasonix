@@ -873,7 +873,6 @@ function backendStatusFromRuntimeMeta(meta: RuntimeMetaSnapshot): Extract<Action
 
 // ---- reducer helpers (unchanged logic) ----
 
-
 /** End the compatibility-path segment before a committed tool dispatch. */
 function settleCurrentAssistant(s: State, now = Date.now()): State {
   const settled = endTurnModelActivity(s, now, true);
@@ -964,7 +963,6 @@ function endPromptWaitIfIdle(s: State, now = Date.now()): State {
   if (s.approval || s.ask || s.mcpInteraction) return s;
   return endPromptWait(s, now);
 }
-
 
 function beginTurnModelActivity(s: State, now = Date.now()): State {
   return s.turnModelActiveAt && s.turnModelActiveAt > 0
@@ -3044,7 +3042,7 @@ export function useController() {
     const expectedNavigationSeq = options.navigationIntentSeq ?? activeNavigationSeqRef.current;
     const active = await activeTabFromBackend();
     if (!active) return undefined;
-    const { activeTabHydrationPlan, coldHistoryRefreshProof } = await import("./coldHistoryRefresh");
+    const { activeTabHydrationPlan, coldHistoryRefreshProof, continueColdHistory } = await import("./coldHistoryRefresh");
     if (!isNavigationIntentCurrent(expectedNavigationSeq)) return active.id;
     // When guard is true, skip if the frontend already settled on a
     // different tab while we were fetching — this prevents fire-and-forget
@@ -3060,6 +3058,13 @@ export function useController() {
     if (active.runtime?.epoch) runtimeEpochByTabRef.current.set(active.id, active.runtime.epoch);
     dispatchTo(active.id, { type: "optimistic_meta", meta: metaFromTab(active, previousState?.meta) });
     if (!reset && hydration.surfacePolicy === "preserve-current") dispatchRuntimeStatusForTab(active.id, active, snapshotAt);
+    const loadStartup = (loadOptions: SessionHydrationOptions<Item, HydrateSurfacePolicy> = hydration.loadOptions) => loadSessionDataForTab(active.id, false, "startup", loadOptions);
+    const pendingColdHistory = !reset ? coldHistoryInFlight.current.get(active.id) : undefined;
+    if (pendingColdHistory?.current()) {
+      const current = () => isNavigationIntentCurrent(expectedNavigationSeq) && activeTabIdRef.current === active.id;
+      continueColdHistory(pendingColdHistory.promise, current, loadStartup, () => startTranscriptFollow(active.id, active.sessionPath ?? ""), () => loadStartup({ ...hydration.loadOptions, skipHistory: true, preserveCachedHistory: true }));
+      return active.id;
+    }
     // Startup has no activation ticket. Use the same bounded cold reader as
     // navigation while execution is recovering; the ready event will bind the
     // live follower. Never manufacture a subscription or executable runtime.
@@ -3073,12 +3078,12 @@ export function useController() {
       else await read;
       return active.id;
     }
-    const load = loadSessionDataForTab(active.id, reset, "startup", hydration.loadOptions);
+    const load = reset ? loadSessionDataForTab(active.id, reset, "startup", hydration.loadOptions) : loadStartup();
     if (reset || hydration.surfacePolicy === "replace-surface") dispatchRuntimeStatusForTab(active.id, active, snapshotAt);
     if (options.deferHydration) void load;
     else await load;
     return active.id;
-  }, [activeTabFromBackend, beginActiveNavigation, confirmBackendActiveTab, dispatchRuntimeStatusForTab, dispatchTo, isNavigationIntentCurrent, loadSessionDataForTab, primeReadableHistoryForTab]);
+  }, [activeTabFromBackend, beginActiveNavigation, confirmBackendActiveTab, dispatchRuntimeStatusForTab, dispatchTo, isNavigationIntentCurrent, loadSessionDataForTab, primeReadableHistoryForTab, startTranscriptFollow]);
 
   const reconcileTabRuntime = useCallback(async (
     tabId: string,
