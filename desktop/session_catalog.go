@@ -213,15 +213,17 @@ func (a *App) startSessionCatalog() {
 	ctx, cancel := context.WithCancel(a.bootContext())
 	done := make(chan struct{})
 	initialReconcileDone := make(chan struct{})
+	metadataRequests := make(chan struct{}, 1)
 	a.catalogCancel = cancel
 	a.catalogDone = done
 	a.catalogInitialReconcileDone = initialReconcileDone
+	a.catalogMetadataRequests = metadataRequests
 	a.catalogLifecycleMu.Unlock()
 	history.RegisterSessionPersistObserver(desktopSessionCatalogPersistObserverKey, desktopSessionCatalogPersistObserver{app: a})
 
 	go func() {
 		defer close(done)
-		a.runSessionCatalog(ctx, initialReconcileDone)
+		a.runSessionCatalog(ctx, initialReconcileDone, metadataRequests)
 	}()
 }
 
@@ -235,6 +237,7 @@ func (a *App) stopSessionCatalog(timeout time.Duration) bool {
 	a.catalogCancel = nil
 	a.catalogDone = nil
 	a.catalogInitialReconcileDone = nil
+	a.catalogMetadataRequests = nil
 	a.catalogLifecycleMu.Unlock()
 	if cancel != nil {
 		cancel()
@@ -564,15 +567,18 @@ func (a *App) removeSessionCatalogPath(path, reason string) {
 }
 
 func (a *App) requestSessionCatalogMetadataSync() {
-	catalog := a.sessionCatalog.Load()
-	if catalog == nil || a.shuttingDown.Load() {
+	if a.shuttingDown.Load() {
 		return
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(a.bootContext(), 5*time.Second)
-		defer cancel()
-		_ = a.syncSessionCatalogMetadata(ctx, catalog)
-	}()
+	a.catalogLifecycleMu.Lock()
+	requests := a.catalogMetadataRequests
+	a.catalogLifecycleMu.Unlock()
+	// Every source shares the watcher's worker, including user edits. A nil
+	// channel before startup/after shutdown simply has no receiver to wake.
+	select {
+	case requests <- struct{}{}:
+	default:
+	}
 }
 
 func (a *App) GetProjectTreeSnapshot() ProjectTreeSnapshot {

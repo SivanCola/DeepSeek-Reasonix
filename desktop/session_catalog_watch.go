@@ -9,13 +9,16 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"reasonix/internal/history"
 	"reasonix/internal/sessioncatalog"
 	"reasonix/internal/store"
 )
 
 // Directory notifications admit only dirty roots. The periodic audit remains
 // authoritative after dropped notifications and on unsupported filesystems.
-func (a *App) watchSessionCatalog(ctx context.Context, catalog *sessioncatalog.Catalog) {
+func (a *App) watchSessionCatalog(ctx context.Context, catalog *sessioncatalog.Catalog, metadataRequests <-chan struct{}, onAdmitted func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	watcher, _ := fsnotify.NewWatcher()
 	var events <-chan fsnotify.Event
 	var failures <-chan error
@@ -39,17 +42,20 @@ func (a *App) watchSessionCatalog(ctx context.Context, catalog *sessioncatalog.C
 			batch.Stop()
 		}
 	}()
-	syncMetadata := func() {
+	// A slow registry projection must not stop receiving filesystem events.
+	// One worker coalesces refreshes and is joined before this owner returns.
+	refreshMetadata, metadataDone := startCatalogMetadataRefresh(ctx, func(ctx context.Context) {
 		if err := a.syncSessionCatalogMetadataBounded(ctx, catalog); err != nil && !errors.Is(err, context.Canceled) {
 			slog.Debug("desktop: refresh session catalog metadata", "err", err)
 		}
-	}
+	})
+	defer func() { cancel(); <-metadataDone }()
 	refreshTargets := func() {
 		targets = refreshCatalogWatchTargets(watcher, targets, a.sessionCatalogTargets(), watched, dirty)
 	}
 	refreshTargets()
-	catalog.ResumeDiscovery()
-	armBatch()
+	restored := a.tabsRestoredSignal()
+	admitted := false
 	metadata := time.NewTicker(30 * time.Second)
 	audit := time.NewTicker(5 * time.Minute)
 	defer metadata.Stop()
@@ -59,6 +65,23 @@ func (a *App) watchSessionCatalog(ctx context.Context, catalog *sessioncatalog.C
 		select {
 		case <-ctx.Done():
 			return
+		case <-metadataRequests:
+			if admitted {
+				refreshMetadata()
+			}
+		case <-restored:
+			restored = nil
+			// Restored identities can reveal additional roots. Register those
+			// watches before allowing their queued discovery to run.
+			refreshTargets()
+			history.RegisterCatalogRoots(historyCatalogRoots(a.sessionCatalogTargets()))
+			a.indexRestoredSessionPaths(ctx, catalog)
+			catalog.ResumeDiscovery()
+			admitted = true
+			onAdmitted()
+			refreshMetadata()
+			a.requestHistoricalCatalog()
+			armBatch()
 		case event, ok := <-events:
 			if !ok {
 				events = nil
@@ -92,7 +115,9 @@ func (a *App) watchSessionCatalog(ctx context.Context, catalog *sessioncatalog.C
 			}
 			armBatch()
 		case <-metadata.C:
-			syncMetadata()
+			if admitted {
+				refreshMetadata()
+			}
 			refreshTargets()
 			armBatch()
 		case <-audit.C:

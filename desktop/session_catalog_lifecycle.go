@@ -13,7 +13,7 @@ import (
 	"reasonix/internal/taskcatalog"
 )
 
-func (a *App) runSessionCatalog(ctx context.Context, initialReconcileDone chan struct{}) {
+func (a *App) runSessionCatalog(ctx context.Context, initialReconcileDone chan struct{}, metadataRequests <-chan struct{}) {
 	initialReconcileFinished := false
 	defer func() {
 		if !initialReconcileFinished {
@@ -53,30 +53,13 @@ func (a *App) runSessionCatalog(ctx context.Context, initialReconcileDone chan s
 		return
 	}
 	a.sessionCatalog.Store(catalog)
-	if err := a.syncSessionCatalogMetadataBounded(ctx, catalog); err != nil && !errors.Is(err, context.Canceled) {
-		slog.Warn("desktop: sync session catalog metadata", "err", err)
-	}
-	select {
-	case <-a.tabsRestoredSignal():
-	case <-ctx.Done():
-		return
-	}
-	// Restored tabs can reveal a project absent from the initial registry.
-	targets = a.sessionCatalogTargets()
-	history.RegisterCatalogRoots(historyCatalogRoots(targets))
-	a.indexRestoredSessionPaths(ctx, catalog)
-	// This signal now means startup admission is complete, not that every
-	// historical root has been enumerated. Workspace completeness is reported
-	// by DirectoryStatus. The watcher registers roots before queuing scans.
-	close(initialReconcileDone)
-	initialReconcileFinished = true
 	if freshGeneration {
 		catalog.MarkRepairReason("generation_upgrade")
 	}
-	a.requestHistoricalCatalog()
-	a.runSessionCatalogRefreshLoop(ctx, catalog)
-}
-
-func (a *App) runSessionCatalogRefreshLoop(ctx context.Context, catalog *sessioncatalog.Catalog) {
-	a.watchSessionCatalog(ctx, catalog)
+	// Watch immediately, including while restored identities are pending. The
+	// watcher publishes admission without waiting for metadata synchronization.
+	a.watchSessionCatalog(ctx, catalog, metadataRequests, func() {
+		close(initialReconcileDone)
+		initialReconcileFinished = true
+	})
 }
