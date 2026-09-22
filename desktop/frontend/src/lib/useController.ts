@@ -3709,13 +3709,9 @@ export function useController() {
   const steerForTab = useCallback(async (tabId: string, text: string) => {
     if (!tabId) throw new Error(t("composer.workspaceStarting"));
     const state = statesRef.current.get(tabId);
-    const target = app.CaptureInboxTarget
-      ? await app.CaptureInboxTarget(tabId, state?.meta?.sessionPath ?? "")
-      : undefined;
-    const { enqueueTrackedGuidance } = await import("./inboxGuidanceSubmit");
-    await enqueueTrackedGuidance(app, {
-      tabId, target, key: `guidance-${crypto.randomUUID()}`, display: text, submit: text, draft: text,
-    }, state?.activeTurnId);
+    const target = await app.CaptureInboxTarget?.(tabId, state?.meta?.sessionPath ?? "");
+    const { enqueueGuidanceForTarget } = await import("./inboxGuidanceSubmit");
+    await enqueueGuidanceForTarget(app, target, tabId, text, state?.activeTurnId);
     // queued_followup is success: the instruction is durable and will run at
     // the next idle/tool-boundary kick. Do not surface it as a send failure.
   }, []);

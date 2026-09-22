@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { enqueueComposerGuidance, enqueueTrackedGuidance } from "../lib/inboxGuidanceSubmit";
+import { enqueueComposerGuidance, enqueueGuidanceForTarget, enqueueTrackedGuidance } from "../lib/inboxGuidanceSubmit";
 import { resolveActiveTurnId, steerInboxItemForActiveTurn } from "../lib/inboxSubmit";
 import { followupNotSubmitted, type PendingFollowup } from "../lib/pendingFollowup";
 import type { AppBindings } from "../lib/bridge";
@@ -23,6 +23,13 @@ assert.equal(reads, 0);
 assert.deepEqual(await enqueueComposerGuidance(bindings(), request, false, "observed"), receipt);
 assert.deepEqual(writes.pop(), [target, { kind: "enqueue_steer", text: "guide", display: "guide", turnId: "observed", idempotencyKey: "one-request" }]);
 assert.equal(reads, 0, "known turn must not be replaced by a successor query");
+await enqueueGuidanceForTarget(bindings(), target, "tab", "captured guidance", "observed");
+const [capturedTarget, capturedCommand] = writes.pop() as [unknown, { text: string; display: string; turnId: string; idempotencyKey: string }];
+assert.deepEqual(capturedTarget, target);
+assert.equal(capturedCommand.text, "captured guidance");
+assert.equal(capturedCommand.display, "captured guidance");
+assert.equal(capturedCommand.turnId, "observed");
+assert.match(capturedCommand.idempotencyKey, /^guidance-/);
 
 for (const ListTabs of [async () => [], async () => { throw new Error("discovery unavailable"); }]) {
   writes = [];

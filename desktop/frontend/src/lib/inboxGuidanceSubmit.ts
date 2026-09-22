@@ -5,6 +5,14 @@ import { confirmFollowup, followupNotSubmitted, followupSessionKey, pendingFollo
 
 type InboxEnqueueBindings = Pick<AppBindings, "EnqueueInboxFollowup" | "EnqueueInboxFollowupWithInvocations" | "EnqueueInboxSteer" | "EnqueueInboxSteerForTurn" | "EnqueueForAttachmentTarget">;
 
+// Keep request construction with the lazy submission owner while callers
+// capture the session target before crossing the module-loading boundary.
+export function enqueueGuidanceForTarget(binding: AppBindings, target: PendingFollowup["target"], tabId: string, text: string, turnId?: string) {
+  return enqueueTrackedGuidance(binding, {
+    tabId, target, key: `guidance-${crypto.randomUUID()}`, display: text, submit: text, draft: text,
+  }, turnId);
+}
+
 // Non-Composer callers share its unresolved-request owner so a lost receipt
 // cannot cause a second POST when the user retries guidance.
 export async function enqueueTrackedGuidance(binding: AppBindings, request: PendingFollowup, turnId?: string) {
