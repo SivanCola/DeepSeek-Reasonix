@@ -128,10 +128,10 @@ export function installTranscriptRecords(s: State, a: Extract<Action, { type: "t
     let left: string | undefined;
     let right: string | undefined;
     for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
-      if (previousProjected.has(s.items[cursor].id)) { left = s.items[cursor].id; break; }
+      if (projectedIds.has(s.items[cursor].id)) { left = s.items[cursor].id; break; }
     }
     for (let cursor = index + 1; cursor < s.items.length; cursor += 1) {
-      if (previousProjected.has(s.items[cursor].id)) { right = s.items[cursor].id; break; }
+      if (projectedIds.has(s.items[cursor].id)) { right = s.items[cursor].id; break; }
     }
     localRows.push({ item, index, left, right });
   }
@@ -141,7 +141,11 @@ export function installTranscriptRecords(s: State, a: Extract<Action, { type: "t
   // is owned outside `items`. Move that anchor to the durable user record so
   // the already-mounted turn stays in user -> process -> assistant order.
   const turnAnchors = new Map<string, string>();
-  for (const item of projected) {
+  const userOwners = new Map<string, string | undefined>();
+  let userId: string | undefined;
+  for (const item of items) {
+    if (item.kind === "user") userId = item.id;
+    userOwners.set(item.id, userId);
     if (item.kind === "user" && item.turnId) turnAnchors.set(item.turnId, item.id);
   }
   for (const local of Object.values(s.localSubmissions)) {
@@ -176,7 +180,10 @@ export function installTranscriptRecords(s: State, a: Extract<Action, { type: "t
   };
   const tails = new Map<string, string>();
   for (const row of localRows) {
-    const anchor = (row.item.turnId && turnAnchors.get(row.item.turnId)) || tailAnchor(row) || row.left;
+    const owner = (row.item.turnId && turnAnchors.get(row.item.turnId)) || tailAnchor(row);
+    // The user bounds the turn; a surviving (or newly formal) predecessor
+    // within that turn still owns this row's position among samples and tools.
+    const anchor = owner && (!row.left || userOwners.get(row.left) !== owner) ? owner : row.left;
     const left = anchor && (tails.get(anchor) ?? anchor);
     const leftIndex = left ? items.findIndex(item => item.id === left) : -1;
     if (leftIndex >= 0) {

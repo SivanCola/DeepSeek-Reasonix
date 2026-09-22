@@ -2334,7 +2334,7 @@ function reduceState(s: State, a: Action): State {
     }
     case "stream_batch": {
       if (s.transcriptProtocol === 2 && s.historyHasNewer) {
-        const base = { ...s, historyHasNewer: false, items: s.offscreenItems ?? [] };
+        const base = { ...s, items: s.offscreenItems ?? [] };
         const next = stampArrivingTurnId(applyStreamBatch(base, a.segments), base.items, s.activeTurnId);
         return { ...next, items: s.items, offscreenItems: next.items.slice(-96) };
       }
