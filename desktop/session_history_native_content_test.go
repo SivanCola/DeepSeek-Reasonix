@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"reasonix/internal/agent"
+	"reasonix/internal/config"
 	"reasonix/internal/provider"
 	"reasonix/internal/session"
 	"reasonix/internal/store"
@@ -21,7 +22,10 @@ func TestCompatibilityColdContentUsesReadOnlyNativePreparation(t *testing.T) {
 			a := historySliceTestApp(t)
 			t.Cleanup(a.closeHistoryReaders)
 			tab := newColdHistoryTab(t, a)
-			dir := tabSessionDir(tab)
+			// Production global tabs retain the current workspace root even
+			// when opening a source in the pre-workspace global directory.
+			tab.WorkspaceRoot = globalWorkspaceRoot()
+			dir := config.SessionDir()
 			if err := os.MkdirAll(dir, 0700); err != nil {
 				t.Fatal(err)
 			}

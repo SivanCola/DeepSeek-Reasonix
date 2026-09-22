@@ -17,9 +17,42 @@ type metadataQueueJob struct {
 	failures int
 }
 
-// The queue retains each directory iterator, but admits only one slice. A
-// large root therefore cannot prevent another root from publishing its first
-// batch. Committed path updates use the independent small-metadata writer.
+// Keep one slot available for a newly visible workspace. Existing iterators
+// are never evicted to admit another root: restarting them would repeatedly
+// read the same prefix and could prevent large directories from completing.
+const metadataIteratorLimit = 8
+
+func selectMetadataQueueJob(jobs map[string]*metadataQueueJob, now time.Time, foreground bool, priority func(DirectoryTarget) bool) (string, *metadataQueueJob) {
+	active := 0
+	for _, job := range jobs {
+		if job.scan != nil {
+			active++
+		}
+	}
+	var selected string
+	var next *metadataQueueJob
+	for key, job := range jobs {
+		if job.ready.After(now) {
+			continue
+		}
+		visible := priority(job.target)
+		if !visible && foreground {
+			continue
+		}
+		if job.scan == nil && (active >= metadataIteratorLimit || !visible && active >= metadataIteratorLimit-1) {
+			continue
+		}
+		if next == nil || visible && !priority(next.target) || visible == priority(next.target) && (job.turn < next.turn || job.turn == next.turn && job.target.mutationSeq < next.target.mutationSeq) {
+			selected, next = key, job
+		}
+	}
+	return selected, next
+}
+
+// The queue retains a bounded set of directory iterators and admits only one
+// slice. Admitted roots rotate without restarting their prefixes; waiting
+// roots enter as earlier scans finish. Committed path updates use the
+// independent small-metadata writer and never need an iterator slot.
 func (c *Catalog) metadataReconcileLoop() {
 	jobs := map[string]*metadataQueueJob{}
 	defer func() {
@@ -41,21 +74,9 @@ func (c *Catalog) metadataReconcileLoop() {
 			return true
 		})
 		c.reconcileDirtyMu.Unlock()
-		var selected string
-		var next *metadataQueueJob
 		now := c.opts.Now()
-		for key, job := range jobs {
-			if job.ready.After(now) {
-				continue
-			}
-			priority := c.isPriorityDirectory(job.target)
-			if !priority && c.opts.Maintenance != nil && c.opts.Maintenance.ForegroundActive() {
-				continue
-			}
-			if next == nil || priority && !c.isPriorityDirectory(next.target) || priority == c.isPriorityDirectory(next.target) && (job.turn < next.turn || job.turn == next.turn && job.target.mutationSeq < next.target.mutationSeq) {
-				selected, next = key, job
-			}
-		}
+		foreground := c.opts.Maintenance != nil && c.opts.Maintenance.ForegroundActive()
+		selected, next := selectMetadataQueueJob(jobs, now, foreground, c.isPriorityDirectory)
 		if next == nil {
 			timer := time.NewTimer(historywork.PauseDuration)
 			select {

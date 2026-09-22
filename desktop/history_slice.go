@@ -574,7 +574,7 @@ func newInMemoryHistorySliceSource(sessionID string, msgs []provider.Message, re
 // serve the window; a missing/stale/corrupt index is rebuilt by streaming
 // scan (constant memory) and the first page is served from the scan result.
 func (a *App) coldHistorySlice(sessionDir, path string, req HistorySliceRequest) (HistorySlice, error) {
-	sessionPath, _, err := validateSessionPath(sessionDir, path)
+	sessionDir, sessionPath, err := a.historyReadSource(sessionDir, path)
 	if err != nil {
 		return emptyHistorySlice(), err
 	}
@@ -1506,7 +1506,7 @@ func (a *App) liveHistoryFieldValue(ctrl control.SessionAPI, sessionDir, session
 // authoritative source selection as HistorySliceForTab. It never trusts a
 // stale checkpoint merely because the requested message's old offset exists.
 func (a *App) coldHistoryFieldValue(sessionDir, sessionPath string, msgIndex, sub int, ref HistoryContentRef) (string, bool, bool) {
-	absPath, _, err := validateSessionPath(sessionDir, sessionPath)
+	sessionDir, absPath, err := a.historyReadSource(sessionDir, sessionPath)
 	if err != nil {
 		return "", false, true
 	}

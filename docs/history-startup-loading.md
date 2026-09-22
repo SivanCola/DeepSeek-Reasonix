@@ -16,6 +16,8 @@ Ordinary startup no longer repairs display indexes across the history library. T
 
 Discovery preserves directory iterators within the process and rotates roots. Each background slice admits at most 128 entries, 4 MiB, or 50 ms, with a minimum 100 ms yield and a shared 8 MiB/s input budget. Foreground preparation and background scanning each have concurrency 1. The visible project's metadata has priority; other roots pause during foreground preparation. Controlled reads check cancellation in blocks of at most 64 KiB. These are scheduling parameters, not hard real-time or measured end-to-end guarantees.
 
+Queued metadata discovery retains at most eight iterators. Background roots occupy at most seven slots, leaving one for the visible workspace. Waiting roots enter when a retained scan finishes; admitted scans keep their exact iterator and progress. Repeated workspace switches do not bypass the cap or evict unfinished scans. If all slots are occupied, a newly visible root waits for a slot; small exact-path updates remain independent of admission. This bound covers queued discovery, not explicit synchronous management scans.
+
 Exact save events update the affected path. Dirty-root coordination records survive restart. Ordinary failures back off for 1, 5, and 30 seconds; inaccessible roots keep a failure state without hiding their history in bulk.
 
 An optional legacy root that has never contained cataloged history may be absent on a fresh installation. Its discovery completes empty without creating the directory. An absent root with retained catalog rows remains unavailable; it cannot confirm those rows as missing. Creating the optional directory later schedules ordinary discovery again.
@@ -37,6 +39,8 @@ Schema-1 native event logs without a trusted display sidecar use the same reader
 Large-field refs returned by bound native windows retain their read handle. Content chunks use the same pager, source cut and cancellation lifetime; releasing or replacing the handle cannot redirect an old ref into a new reader or a management target. Reading a field no longer invokes the compatibility checkpoint-repair path for these refs.
 
 Unbound compatibility field reads for formats accepted by the native pager also borrow that preparation owner, including explicit management targets. They validate the native source before and after reading and do not publish a compatibility display sidecar or repair a stale checkpoint. Canceling one borrowed read does not cancel a bound peer. Unsupported preparation paths and ancient event-row refs still use their existing compatibility reader; this does not give those protocols the lifetime of a persistent read handle.
+
+Cold compatibility readers resolve the captured historical path against known source directories. A global tab's current workspace directory does not replace the original global history directory. Paging, field reads, and older preview RPCs share that resolution; unknown roots and symlinks escaping known roots remain rejected.
 
 Maintenance diagnostics contain counters and resource usage, not transcript bodies. `historyMaintenance.instrumentedReadBytes` counts actual controlled-reader bytes, not stat sizes presented as I/O measurements.
 

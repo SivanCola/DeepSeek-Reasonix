@@ -5094,6 +5094,10 @@ func (a *App) HistoryPageForTab(tabID string, beforeTurn, limit int) HistoryPage
 		if strings.TrimSpace(sessionPath) == "" {
 			return HistoryPage{Messages: []HistoryMessage{}}
 		}
+		sessionDir, sessionPath, err := a.historyReadSource(sessionDir, sessionPath)
+		if err != nil {
+			return HistoryPage{Messages: []HistoryMessage{}}
+		}
 		page, err := previewSessionPage(sessionDir, sessionPath, beforeTurn, limit)
 		if err != nil {
 			return HistoryPage{Messages: []HistoryMessage{}}
@@ -5259,6 +5263,10 @@ func (a *App) HistoryForTab(tabID string) []HistoryMessage {
 	a.mu.RUnlock()
 	if ctrl == nil {
 		if strings.TrimSpace(sessionPath) == "" {
+			return []HistoryMessage{}
+		}
+		sessionDir, sessionPath, err := a.historyReadSource(sessionDir, sessionPath)
+		if err != nil {
 			return []HistoryMessage{}
 		}
 		messages, err := previewSessionMessages(sessionDir, sessionPath)

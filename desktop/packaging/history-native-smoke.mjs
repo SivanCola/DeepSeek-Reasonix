@@ -113,7 +113,8 @@ sys.stdin.read()
     await invoke("ReleaseSessionHistoryRead", [reopen.id]);
     const compatibility = await invoke("HistorySliceForTab", [ticket.tabId, { entries: 2 }]);
     const compatibilityRef = compatibility.entries.flatMap(entry => entry.refs ?? []).find(ref => ref.field === "content");
-    assert.ok(compatibilityRef);
+    assert.ok(compatibilityRef, JSON.stringify({ source: compatibility.source, error: compatibility.error,
+      stale: compatibility.stale, entries: compatibility.entries.map(entry => ({ id: entry.id, refs: entry.refs?.length })) }));
     assert.equal(compatibilityRef.readHandleId ?? "", "");
     const compatibilityChunk = await invoke("HistoryContentForTab", [ticket.tabId, compatibilityRef, 0]);
     assert.equal(compatibilityChunk.stale, false);
