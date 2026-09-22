@@ -210,7 +210,7 @@ ok(
 );
 
 const coldTarget = { sessionPath: "/fixture/legacy.jsonl", sessionGeneration: 4 } as TabMeta;
-const coldState = { meta: { ...coldTarget } as Meta, historyDigest: "verified-cut", historyRevision: 7 };
+const coldState = { meta: { ...coldTarget, eventChannel: "agent:event" } as Meta, historyDigest: "verified-cut", historyRevision: 7 };
 ok(coldHistoryRefreshProof(coldTarget, coldState, true)?.digest === "verified-cut", "passive metadata without a digest retains the existing certified cut");
 ok(!coldHistoryRefreshProof(coldTarget, coldState, false), "explicit reset cannot reuse passive proof");
 ok(!coldHistoryRefreshProof({ ...coldTarget, sessionGeneration: 5 }, coldState, true), "a new storage generation cannot reuse the old cut");
