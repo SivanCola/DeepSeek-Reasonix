@@ -167,7 +167,7 @@ type ComposerDraft = {
   guidanceExpanded: boolean;
   guidanceSendingId: string | null;
   pendingPaste: number;
-  submitting: boolean;
+  submitting: false | "message" | "compact";
 };
 
 type ComposerEditSnapshot = {
@@ -813,7 +813,7 @@ export function Composer({
   const guidanceExpandedRef = useRef(false);
   const guidanceSendingIdRef = useRef<string | null>(null);
   const [loadingPastChats, setLoadingPastChats] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const [submission, setSubmission] = useState<false | "message" | "compact">(false);
   const cancelSettlingDraftsRef = useRef(new Set<string>());
   const [, setCancelSettlingRevision] = useState(0);
   const [inputMenuPoint, setInputMenuPoint] = useState<ContextMenuPoint | null>(null);
@@ -856,7 +856,7 @@ export function Composer({
   const guidanceReceiptTrackerRef = useRef<GuidanceReceiptTracker | null>(null);
   guidanceReceiptTrackerRef.current ??= createGuidanceReceiptTracker();
   const selfDispatchedGuidanceByDraftRef = useRef<Record<string, string[]>>({});
-  const submittingRef = useRef(false);
+  const submittingRef = useRef<false | "message" | "compact">(false);
   const nativeClipboardPasteTimerRef = useRef<number | null>(null);
   const nativeClipboardPasteCompletionRef = useRef<(() => void) | null>(null);
   // Snapshot of the current cwd so async callbacks (openPastChats) can detect
@@ -906,7 +906,7 @@ export function Composer({
   guidanceExpandedRef.current = guidanceExpanded;
   guidanceSendingIdRef.current = guidanceSendingId;
   pendingPasteRef.current = pendingPaste;
-  submittingRef.current = submitting;
+  submittingRef.current = submission;
 
   const snapshotComposerDraft = (): ComposerDraft => ({
     text: textRef.current,
@@ -962,7 +962,7 @@ export function Composer({
     setGuidanceExpanded(next.guidanceExpanded);
     setGuidanceSendingId(next.guidanceSendingId);
     setPendingPaste(next.pendingPaste);
-    setSubmitting(next.submitting);
+    setSubmission(next.submitting);
     setHistoryIndex(next.historyIndex);
     const restoredSelection = { start: next.text.length, end: next.text.length };
     lastSelectionRef.current = restoredSelection;
@@ -1224,20 +1224,20 @@ export function Composer({
     draftsBySessionRef.current[targetDraftKey] = draft;
   };
 
-  const updateSubmittingForDraft = (targetDraftKey: string, next: boolean) => {
+  const updateSubmittingForDraft = (targetDraftKey: string, next: boolean, kind: "message" | "compact" = "message") => {
     if (targetDraftKey === activeDraftKeyRef.current) {
-      submittingRef.current = next;
-      setSubmitting(next);
+      submittingRef.current = next ? kind : false;
+      setSubmission(next ? kind : false);
       return;
     }
     const draft = cloneComposerDraft(draftsBySessionRef.current[targetDraftKey] ?? emptyComposerDraft());
-    draft.submitting = next;
+    draft.submitting = next ? kind : false;
     draftsBySessionRef.current[targetDraftKey] = draft;
   };
 
   const draftIsSubmitting = (targetDraftKey: string): boolean =>
     targetDraftKey === activeDraftKeyRef.current
-      ? submittingRef.current
+      ? Boolean(submittingRef.current)
       : Boolean(draftsBySessionRef.current[targetDraftKey]?.submitting);
 
   const draftHasPendingPaste = (targetDraftKey: string): boolean =>
@@ -2162,11 +2162,12 @@ export function Composer({
       return;
     }
     setComposerPrompt(null);
-    updateSubmittingForDraft(submitDraftKey, true);
     const submittedDraft = followupDraftFingerprint(submitDraftKey);
     const currentSessionRefs = sessionRefsRef.current;
     const currentSelectedTextRefs = selectedTextRefsRef.current;
 		const currentPastedBlocks = [...pastedBlocksRef.current];
+    updateSubmittingForDraft(submitDraftKey, true,
+      !goalModeOn && trimmedDraft.invocations.length === 0 && currentSessionRefs.length === 0 && isCompactCommand(expandPastedBlocks(trimmedText, currentPastedBlocks)) ? "compact" : "message");
 		let submissionCapture: unknown;
 		let submissionAttachmentTarget: string | undefined;
 		let attachmentSubmissionId: string | undefined;
@@ -2282,7 +2283,7 @@ export function Composer({
       }
 			await onSend(displayText, submitText, submitTabId, structured, submissionCapture);
 			attachmentSubmit?.settleImageSubmission(submitDraftKey, attachmentSubmissionId);
-			if (!persistentDraft) clearSubmittedDraft(submitDraftKey);
+			if (!persistentDraft && followupDraftFingerprint(submitDraftKey) === submittedDraft) clearSubmittedDraft(submitDraftKey);
     } catch (error) {
       if (persistentDraft?.onTaskError) persistentDraft.onTaskError(persistentDraft.draftId, persistentDraft.generation, formatInboxError(error, locale));
       else showToast(formatInboxError(error, locale), "warn");
@@ -3866,7 +3867,8 @@ export function Composer({
   // `!suspendedByDecision` mirrors the run-state chain, which yields no label
   // while a decision surface owns the footer; without it the reservation would
   // hold a strip's height open with nothing to draw in it.
-  const showRunStrip = Boolean((running && !suspendedByDecision) || retry || waitingPrompt || finishing || runtimeState.unknown || runtimeState.kind === "background_job" || runtimeState.kind === "cancelling");
+  const compactSubmitting = submission === "compact" && !running;
+  const showRunStrip = Boolean(compactSubmitting || (running && !suspendedByDecision) || retry || waitingPrompt || finishing || runtimeState.unknown || runtimeState.kind === "background_job" || runtimeState.kind === "cancelling");
   const effectiveComposerHeight = composerHeight === null
     ? null
     : resolveComposerContentSizing({
@@ -3990,7 +3992,7 @@ export function Composer({
   );
   const turnPhaseLabel = turnPhaseStatusLabel(turnPhase, t);
   const readStatusText = readStatusLabel(readStatuses, t);
-  const runStateText = runtimeState.unknown ? t("runtime.unknown") : runtimeState.kind === "maintenance_finalizing" ? t("compaction.saving") : runtimeState.kind === "maintenance_cancelling" ? t("compaction.stopping") : runtimeState.kind === "maintenance_running" ? t("compaction.working") : finishing ? t("runtime.finishing") : runtimeState.kind === "cancelling" ? t("status.jobStopping") : runtimeState.kind === "background_job" ? t("runtime.background", { count: runtimeState.state?.backgroundJobs ?? 0 }) : retry
+  const runStateText = runtimeState.unknown ? t("runtime.unknown") : compactSubmitting ? t("compaction.preparing") : runtimeState.kind === "maintenance_finalizing" ? t("compaction.saving") : runtimeState.kind === "maintenance_cancelling" ? t("compaction.stopping") : runtimeState.kind === "maintenance_running" ? t("compaction.working") : finishing ? t("runtime.finishing") : runtimeState.kind === "cancelling" ? t("status.jobStopping") : runtimeState.kind === "background_job" ? t("runtime.background", { count: runtimeState.state?.backgroundJobs ?? 0 }) : retry
     ? recoveryStatusText(t, retry, now)
     : waitingPrompt === "approval"
       ? t("composer.runWaitingApproval", { tool: pendingApprovalLabel ?? "" })
@@ -4046,7 +4048,7 @@ export function Composer({
   const runStrip = runMetrics?.stripParts.length ? runMetrics : null;
   const submitEmpty = !text.trim() && attachments.length === 0 && workspaceRefs.length === 0 &&
     !invocations.some((invocation) => invocation.command.kind === "skill");
-  const submitBlocked = queueEditing || submitting || (!pendingFollowup && (pendingPaste > 0 || (submitEmpty && !(goalModeOn && !activeGoal)) || disabled || (!running && submitDisabled) || readOnly));
+  const submitBlocked = queueEditing || Boolean(submission) || (!pendingFollowup && (pendingPaste > 0 || (submitEmpty && !(goalModeOn && !activeGoal)) || disabled || (!running && submitDisabled) || readOnly));
   const submitUnavailableHint = !running && submitDisabled ? submitDisabledReason : undefined;
   const submitTooltip = pendingFollowup ? t("runtime.checkReceipt") : running
     ? t("composer.queueGuidance", { combo: sendComboLabel })
@@ -4620,7 +4622,7 @@ export function Composer({
             {!finishing && !runtimeState.unknown && <span className="composer-run-strip__dot" aria-hidden="true" />}
             <span className="composer-run-strip__text">
               <span className="composer-run-strip__state">{readStatusText || runStateText}</span>
-              {runStrip && (
+              {runStrip && !compactSubmitting && !maintenanceActive && (
                 <span className="composer-run-strip__metrics">
                   {runStrip.stripParts.map((part) => (
                     <span className="composer-run-strip__metric" key={part}>{` ${part}`}</span>

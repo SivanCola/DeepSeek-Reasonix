@@ -4,7 +4,7 @@ import { isShellToolName } from "./shellToolIdentity";
 // useController is the frontend's state machine over the agent event stream. It keeps
 // per-tab output, tool state, and approvals while the user switches tabs; components
 // render the active tab's state.
-import { resetTurnTiming, confirmPendingUser, installTranscriptRecords, startLocalSubmission, submissionBindingCurrent } from "./submissionReducer";
+import { resetTurnTiming, confirmPendingUser, installTranscriptRecords, stampArrivingTurnId, startLocalSubmission, submissionBindingCurrent } from "./submissionReducer";
 import { runtimeStatusSnapshotIsStale } from "./runtimeStatusFreshness";
 import { useRuntimeSession } from "./useRuntimeState";
 import { acceptSessionRuntimeSnapshot, type RuntimeState } from "./runtimeStateStore";
@@ -2321,11 +2321,7 @@ function reduceState(s: State, a: Action): State {
         const next = reducer({ ...s, historyHasNewer: false, items: s.offscreenItems ?? [] }, a);
         return settleLocalSubmissions({ ...next, items: s.items, visibleSubmissionHandoffs: s.visibleSubmissionHandoffs, historyHasNewer: true, offscreenItems: next.items.slice(-96) }, s.items);
       }
-      let next = applyEvent(s, a.e, a.remote);
-      if (a.e.turnId && next.items !== s.items) {
-        const prior = new Set(s.items);
-        next = { ...next, items: next.items.map(item => prior.has(item) || item.turnId ? item : { ...item, turnId: a.e.turnId }) };
-      }
+      let next = stampArrivingTurnId(applyEvent(s, a.e, a.remote), s.items, a.e.turnId, a.e.messageId);
       if (a.e.messageId && a.e.tool?.id && next.items !== s.items) {
         const toolId = a.e.tool.id;
         const prior = s.items.find((item) => item.kind === "tool" && item.id === toolId);
@@ -2338,10 +2334,11 @@ function reduceState(s: State, a: Action): State {
     }
     case "stream_batch": {
       if (s.transcriptProtocol === 2 && s.historyHasNewer) {
-        const next = applyStreamBatch({ ...s, items: s.offscreenItems ?? [] }, a.segments);
+        const base = { ...s, items: s.offscreenItems ?? [] };
+        const next = stampArrivingTurnId(applyStreamBatch(base, a.segments), base.items, s.activeTurnId);
         return { ...next, items: s.items, offscreenItems: next.items.slice(-96) };
       }
-      const next = applyStreamBatch(s, a.segments);
+      const next = stampArrivingTurnId(applyStreamBatch(s, a.segments), s.items, s.activeTurnId);
       return next.items.length > s.items.length
         ? { ...next, historyMutation: { seq: s.historyMutation.seq + 1, kind: "append" } }
         : next;

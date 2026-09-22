@@ -3244,6 +3244,8 @@ export const zh: Record<DictKey, string> = {
   "questionNav.progress": "问题 {current} / {total}",
   "questionNav.notLoaded": "第 {n} 个问题（点击加载）",
   "compaction.working": "正在压缩对话…",
+  "compaction.preparing": "正在准备压缩…",
+  "compaction.workingHint": "正在生成摘要，可随时停止。",
   "compaction.alreadyRunning": "压缩任务正在进行，请等待完成。",
   "compaction.stopping": "正在停止压缩…",
   "compaction.saving": "正在保存压缩结果…",

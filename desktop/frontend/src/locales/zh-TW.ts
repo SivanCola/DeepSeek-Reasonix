@@ -2459,6 +2459,8 @@ export const zhTW: Record<DictKey, string> = {
   "questionNav.progress": "問題 {current} / {total}",
   "questionNav.notLoaded": "第 {n} 個問題（點擊載入）",
   "compaction.working": "正在壓縮對話…",
+  "compaction.preparing": "正在準備壓縮…",
+  "compaction.workingHint": "正在產生摘要，可隨時停止。",
   "compaction.alreadyRunning": "壓縮工作正在進行，請等待完成。",
   "compaction.stopping": "正在停止壓縮…",
   "compaction.saving": "正在儲存壓縮結果…",

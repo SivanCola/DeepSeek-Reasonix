@@ -3241,6 +3241,8 @@ export const en = {
   "questionNav.progress": "Question {current} / {total}",
   "questionNav.notLoaded": "Question {n} (click to load)",
   "compaction.working": "Compacting conversation…",
+  "compaction.preparing": "Preparing compaction…",
+  "compaction.workingHint": "Generating summary… You can stop anytime.",
   "compaction.alreadyRunning": "Compaction is already in progress. Please wait for it to finish.",
   "compaction.stopping": "Stopping compaction…",
   "compaction.saving": "Saving compaction result…",
