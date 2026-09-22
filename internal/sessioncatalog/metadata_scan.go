@@ -160,6 +160,21 @@ func (c *Catalog) startMetadataScan(ctx context.Context, target DirectoryTarget,
 	}
 	scan.generation = generation
 	scan.file, err = os.Open(target.Path)
+	if os.IsNotExist(err) {
+		// Optional legacy roots do not exist on a fresh installation. They are
+		// an empty discovery only while the catalog has never retained a row
+		// there. An unavailable root with known history may be an unplugged
+		// device; never turn that into missing-row confirmation.
+		var known bool
+		queryErr := c.readDB(ctx).QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM catalog_sessions WHERE directory_key=? LIMIT 1)`, c.pathKey(target.Path)).Scan(&known)
+		if queryErr != nil {
+			return nil, queryErr
+		}
+		if !known {
+			return scan, nil
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -215,6 +230,10 @@ func (s *metadataScan) step(ctx context.Context) (done bool, bytes int64, result
 	for count := 0; count < historywork.BatchEntries && bytes+historywork.ReadChunk+1 <= historywork.BatchBytes && time.Since(start) < historywork.SliceDuration; count++ {
 		if err := ctx.Err(); err != nil {
 			return false, bytes, err
+		}
+		if s.file == nil {
+			done = true
+			break
 		}
 		entries, readErr := s.file.ReadDir(1)
 		if errors.Is(readErr, io.EOF) {

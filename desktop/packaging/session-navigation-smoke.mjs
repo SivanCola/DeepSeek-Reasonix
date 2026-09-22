@@ -34,6 +34,13 @@ try {
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
   await page.waitForFunction(() => Boolean(window.reasonixDesktop));
+  await page.evaluate(() => {
+    window.__navigationSmokeEvents = [];
+    window.reasonixDesktop.on("topic:activation", event => {
+      window.__navigationSmokeEvents.push(event);
+      if (window.__navigationSmokeEvents.length > 64) window.__navigationSmokeEvents.shift();
+    });
+  });
   const invoke = (method, args = []) => page.evaluate(({ method, args }) => window.reasonixDesktop.invoke(method, args), { method, args });
   const active = async () => (await invoke("ListTabs")).find(tab => tab.active);
   const transcriptContains = (text, expected = true) => page.waitForFunction(({ text, expected }) =>
@@ -61,6 +68,7 @@ try {
   assert.notEqual(refs.NAV_ALPHA.sessionId, refs.NAV_BETA.sessionId);
   const sessionRow = marker => page.locator(".project-tree__topic-main").filter({ has: page.getByText(marker, { exact: true }) });
   for (const marker of ["NAV_ALPHA", "NAV_BETA", "NAV_ALPHA"]) {
+    console.log("Selecting", marker);
     await sessionRow(marker).click();
     await transcriptContains(`ANSWER_${marker}`);
     const other = marker === "NAV_ALPHA" ? "NAV_BETA" : "NAV_ALPHA";
@@ -89,6 +97,14 @@ try {
       tabs: await window.reasonixDesktop.invoke("ListTabs", []),
       topics: await window.reasonixDesktop.invoke("ListProjectTopics", [{ scope: "global", limit: 50 }]).catch(error => ({ error: String(error) })),
       sidebar: document.querySelector(".project-tree")?.textContent,
+      transcript: await (async () => {
+        const tab = (await window.reasonixDesktop.invoke("ListTabs", [])).find(tab => tab.active);
+        if (!tab) return null;
+        return window.reasonixDesktop.invoke("TranscriptSnapshotForTab", [tab.id, { records: 32 }]).catch(error => ({ error: String(error) }));
+      })(),
+      body: document.body.innerText,
+      activationEvents: window.__navigationSmokeEvents,
+      catalog: await window.reasonixDesktop.invoke("GetProjectTreeSnapshot", []).catch(error => ({ error: String(error) })),
     })).catch(error => ({ error: String(error) }));
     writeFileSync(join(home, "navigation-failure.json"), JSON.stringify(state, null, 2));
     await page.screenshot({ path: join(home, "navigation-failure.png"), fullPage: true }).catch(() => {});
