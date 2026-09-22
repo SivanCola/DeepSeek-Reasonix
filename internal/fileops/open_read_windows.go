@@ -19,7 +19,7 @@ func OpenReplaceableRead(path string) (*os.File, error) {
 	}
 	handle, err := windows.CreateFile(
 		name,
-		windows.GENERIC_READ,
+		windows.GENERIC_READ|windows.DELETE,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
 		nil,
 		windows.OPEN_EXISTING,
