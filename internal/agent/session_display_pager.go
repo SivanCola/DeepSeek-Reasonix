@@ -97,12 +97,7 @@ func openDisplayPager(ctx context.Context, source, cachePath, head string, force
 	built := storedErr != nil || stored != fingerprint
 	if built {
 		_ = handle.DB.Close()
-		if observed.plain {
-			opts.ResumeKey = "checkpoint-v1:" + fingerprint
-		}
-		err = projectiondb.Rebuild(ctx, opts, func(ctx context.Context, db *sql.DB) error {
-			return observed.build(ctx, db, source, indexPath, head, info.Size())
-		})
+		err = observed.rebuild(ctx, opts, source, indexPath, head, info.Size())
 		if err != nil {
 			if !dag && !schemaOne && !plain && ctx.Err() == nil {
 				return openDisplayPager(ctx, source, cachePath, head, true)
@@ -262,19 +257,37 @@ func (p *DisplayPager) TurnEntries(start, limit int) ([]DisplayIndexEntry, error
 // Import the existing JSON index one entry at a time. A corrupt or cancelled
 // build never replaces the last published projection.
 func importDisplayPager(ctx context.Context, db *sql.DB, indexPath, fingerprint string) error {
+	return importDisplayPagerObserved(ctx, db, indexPath, fingerprint, nil)
+}
+
+func importDisplayPagerObserved(ctx context.Context, db *sql.DB, indexPath, fingerprint string, committed func(int)) error {
 	f, err := os.Open(indexPath)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	decoder := json.NewDecoder(&historywork.Reader{Context: ctx, Source: f})
+	key, err := displayImportFileKey(indexPath, f)
+	if err != nil {
+		return err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	progress, err := restoreDisplayImportProgress(ctx, db, key, info.Size())
+	if err != nil {
+		return err
+	}
+	decoder, base, err := displayImportDecoder(ctx, f, progress.sourceOffset)
+	if err != nil {
+		return err
+	}
+	progress.decoderBase, progress.committed = base, committed
 	token, err := decoder.Token()
 	if err != nil || token != json.Delim('{') {
 		return errors.New("invalid display index object")
 	}
-	header := map[string]json.RawMessage{}
-	count, users := 0, 0
-	var offset int64
+	header := progress.header
 	sawEntries := false
 	for decoder.More() {
 		key, err := decoder.Token()
@@ -301,11 +314,9 @@ func importDisplayPager(ctx context.Context, db *sql.DB, indexPath, fingerprint 
 		if err != nil || token != json.Delim('[') {
 			return errors.New("invalid display entries")
 		}
-		progress := displayIndexImportProgress{count: count, users: users, offset: offset}
 		if err := progress.readEntries(ctx, db, decoder); err != nil {
 			return err
 		}
-		count, users, offset = progress.count, progress.users, progress.offset
 		if _, err := decoder.Token(); err != nil {
 			return err
 		}
@@ -315,7 +326,7 @@ func importDisplayPager(ctx context.Context, db *sql.DB, indexPath, fingerprint 
 	}
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return errors.New("trailing display index data")
+		return errors.Join(errors.New("trailing display index data"), err)
 	}
 	body, err := json.Marshal(header)
 	if err != nil {
@@ -325,16 +336,28 @@ func importDisplayPager(ctx context.Context, db *sql.DB, indexPath, fingerprint 
 	if err := json.Unmarshal(body, &idx); err != nil {
 		return err
 	}
-	if !sawEntries || idx.SchemaVersion != SessionDisplayIndexSchemaVersion || idx.MessageCount != count || idx.TranscriptSize != offset {
+	if !sawEntries || idx.SchemaVersion != SessionDisplayIndexSchemaVersion || idx.MessageCount != progress.count || idx.TranscriptSize != progress.offset {
 		return errors.New("display index header does not cover entries")
 	}
-	_, err = db.ExecContext(ctx, `INSERT INTO metadata VALUES('source',?),('header',?)`, fingerprint, string(body))
+	current, err := displayImportFileKey(indexPath, f)
+	if err != nil {
+		return err
+	}
+	if current != key {
+		return ErrDisplaySourceChanged
+	}
+	_, err = db.ExecContext(ctx, `INSERT OR REPLACE INTO metadata VALUES('source',?),('header',?)`, fingerprint, string(body))
 	return err
 }
 
 type displayIndexImportProgress struct {
 	count, users int
 	offset       int64
+	sourceOffset int64
+	decoderBase  int64
+	sourceKey    string
+	header       map[string]json.RawMessage
+	committed    func(int)
 }
 
 func (progress *displayIndexImportProgress) readEntries(ctx context.Context, db *sql.DB, decoder *json.Decoder) error {
@@ -371,8 +394,16 @@ func (progress *displayIndexImportProgress) readEntries(ctx context.Context, db 
 			_ = tx.Rollback()
 			return err
 		}
+		progress.sourceOffset = decoder.InputOffset() + progress.decoderBase
+		if err := progress.save(ctx, tx); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
 		if err := tx.Commit(); err != nil {
 			return err
+		}
+		if progress.committed != nil {
+			progress.committed(progress.count)
 		}
 	}
 	return nil

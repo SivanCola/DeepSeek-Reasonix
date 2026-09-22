@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"reasonix/internal/fileops"
+	"reasonix/internal/projectiondb"
 	"reasonix/internal/store"
 )
 
@@ -121,4 +122,15 @@ func (s *displayPagerEventSource) build(ctx context.Context, db *sql.DB, source,
 		return buildCheckpointDisplayPager(ctx, db, source, s.fingerprint)
 	}
 	return importDisplayPager(ctx, db, indexPath, s.fingerprint)
+}
+
+func (s *displayPagerEventSource) rebuild(ctx context.Context, opts projectiondb.OpenOptions, source, indexPath, head string, size int64) error {
+	if s.plain {
+		opts.ResumeKey = "checkpoint-v1:" + s.fingerprint
+	} else if !s.dag && !s.schemaOne {
+		opts.ResumeKey = "display-import-v1:" + s.fingerprint
+	}
+	return projectiondb.Rebuild(ctx, opts, func(ctx context.Context, db *sql.DB) error {
+		return s.build(ctx, db, source, indexPath, head, size)
+	})
 }
