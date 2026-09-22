@@ -19,7 +19,7 @@ type diagnosticRequestRunner struct {
 
 func (r diagnosticRequestRunner) Run(ctx context.Context, _ string) error {
 	resp, err := provider.SendWithRetry(ctx, r.client, provider.SendOptions{}, func(ctx context.Context) (*http.Request, error) {
-		return http.NewRequestWithContext(ctx, "GET", r.url, nil)
+		return http.NewRequestWithContext(ctx, http.MethodGet, r.url, nil)
 	})
 	if err != nil {
 		return err

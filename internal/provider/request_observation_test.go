@@ -37,7 +37,7 @@ func TestRequestObservationDistinguishesHeaderAndBodyWaitCancellation(t *testing
 			bodyRead := make(chan struct{})
 			go func() {
 				resp, err := SendWithRetry(ctx, server.Client(), SendOptions{}, func(ctx context.Context) (*http.Request, error) {
-					return http.NewRequestWithContext(ctx, "GET", server.URL+"/?secret=private-token", nil)
+					return http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/?secret=private-token", nil)
 				})
 				if err == nil {
 					defer resp.Body.Close()
@@ -98,7 +98,7 @@ func TestRequestObservationPreservesResponseBytesAndEOF(t *testing.T) {
 	var last RequestObservation
 	ctx := WithRequestObserver(t.Context(), func(v RequestObservation) { mu.Lock(); last = v; mu.Unlock() })
 	resp, err := SendWithRetry(ctx, server.Client(), SendOptions{}, func(ctx context.Context) (*http.Request, error) {
-		return http.NewRequestWithContext(ctx, "GET", server.URL, nil)
+		return http.NewRequestWithContext(ctx, http.MethodGet, server.URL, nil)
 	})
 	if err != nil {
 		t.Fatal(err)
