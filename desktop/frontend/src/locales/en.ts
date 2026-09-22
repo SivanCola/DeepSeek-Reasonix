@@ -36,7 +36,7 @@ export const en = {
   "chat.stopped": "Stopped",
   "chat.timedOut": "Timed out",
   "chat.notRun": "Not executed",
-  "chat.background": "Running in background",
+  "chat.background": "Started in background",
   "chat.unknown": "Result unavailable",
   "chat.submissionUnknown": "Delivery not yet confirmed; reconnecting to check. Do not resend yet",
   "chat.failed": "Failed",
