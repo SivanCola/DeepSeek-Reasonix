@@ -6,6 +6,7 @@ import { projectSessionIdentity, projectSessionRowKey } from "../lib/projectSess
 import type { CSSProperties, DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 import { Archive, Pencil, Plus, Folder, FolderPlus, Search, BriefcaseBusiness, Copy, FolderOpen, XCircle, Check, ListCollapse, ListRestart, MessageSquare, Clock, Pin, MoreHorizontal, Minimize2, Maximize2, GitBranch, Sparkles, Cloud } from "lucide-react";
 import { asArray } from "../lib/array";
+import { defaultWorkspaceTitle } from "../lib/sessionTitles";
 import { useToast } from "../lib/toast";
 import { app } from "../lib/bridge";
 import { onProjectTreeChangedV2 } from "../lib/sessionCatalogBridge";
@@ -1489,7 +1490,7 @@ export function ProjectTree({
     const projectDragKey = scope === "global" ? GLOBAL_PROJECT_ORDER_KEY : projectRoot;
     const projectPath = node.root ?? "";
     const colorTargetRoot = scope === "global" ? "" : projectPath;
-    const projectLabel = node.label || (scope === "global" ? "Global" : "Untitled");
+    const projectLabel = scope === "global" && !node.remote ? defaultWorkspaceTitle(node.label) : node.label || "Untitled";
     const workspaceDraft = workspaceDraftBadge(draftSummaries, scope, projectRoot);
     const projectPinned = Boolean(node.pinned);
     const projectActive = node.remote ? Boolean(activeRemote && remoteProjectKey(activeRemote) === remoteProjectKey(node.remote)) : activeScope === scope && (scope === "global" || activeWorkspaceRoot === node.root);
@@ -1792,6 +1793,7 @@ export function ProjectTree({
           <button
             type="button"
             className="project-tree__folder-main"
+            title={scope === "global" && !node.remote ? t("workspace.defaultHint") : undefined}
             style={{ paddingLeft: 8 + depth * 16 }}
             onClick={() => {
               if (node.remote && !folderDisclosure.canExpand) return void openRemoteProject(node.remote, { focus: true });

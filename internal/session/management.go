@@ -477,15 +477,15 @@ func (p *FilesystemPersistence) importDirectory(ctx context.Context, source stri
 		if err := writeManifestFile(filepath.Join(staging, "manifest.json"), manifest); err != nil {
 			return "", err
 		}
-		// Storage generations are scoped to the manifest identity. The imported
-		// event prefix remains valid, but a remapped SessionID must publish a new
-		// generation before any recovery/query projection can be trusted.
-		if _, err := ensureStorageIdentity(staging, manifest); err != nil {
-			return "", err
-		}
 	}
 	if _, err := Replay(staging, nil); err != nil {
 		return "", fmt.Errorf("validate imported events: %w", err)
+	}
+	// Pre-recovery archives (Desktop 1.38.8) need an identity before history reads.
+	// Keep valid identities and create missing/remapped generations in staging;
+	// the source archive remains untouched and no runtime is needed.
+	if _, err := ensureStorageIdentity(staging, manifest); err != nil {
+		return "", err
 	}
 	if options.SessionID == "" {
 		options.SessionID = targetID

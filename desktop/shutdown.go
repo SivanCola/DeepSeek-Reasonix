@@ -209,9 +209,12 @@ func (a *App) runShutdown(c *desktopShutdownCoordinator) (err error) {
 	if !frozen {
 		c.setPhase("cancelling_background")
 		a.lifecycle.tracker.markShutdown(reason, "cancelling_background", "in_progress")
+		a.manualCreationMu.Lock()
 		a.shuttingDown.Store(true)
+		a.manualCreationMu.Unlock()
 		c.runStep("cancel-session-navigation", a.cancelSessionNavigation)
 		c.runStep("cancel-tab-builds", a.cancelAllTabBuilds)
+		c.runStep("manual-session-creation", a.manualCreationTasks.Wait)
 		c.runStep("cancel-session-exports", a.cancelSessionExports)
 		c.runStep("runtime-projections", a.flushRuntimeProjections)
 		c.runStep("tab-layout", a.flushTabLayoutWrites)
@@ -299,6 +302,11 @@ func completeDesktopShutdown(tracker *desktopLifecycleTracker, body func()) {
 }
 
 func (a *App) shutdownBody(c *desktopShutdownCoordinator, items []desktopShutdownItem) error {
+	if a.sessionUI != nil {
+		if err := c.runErrorStep("session-ui", a.sessionUI.Close); err != nil {
+			return &shutdownStepError{code: "session_ui_close_failed", err: err}
+		}
+	}
 	if a.desktopDrafts != nil {
 		if err := c.runErrorStep("desktop-drafts", a.desktopDrafts.Close); err != nil {
 			return &shutdownStepError{code: "draft_close_failed", err: err}

@@ -3596,26 +3596,26 @@ export function useController() {
       collaborationMode: CollaborationMode;
       toolApprovalMode: ToolApprovalMode;
     },
+    composerSubmissionId?: string,
   ) => {
-    if (!tabId) throw new Error(t("composer.workspaceStarting"));
+    if (!tabId) throw new Error("reasonix_error:workspace_starting");
     let currentState = getOrCreateState(statesRef.current, tabId);
     if (currentState.transcriptProtocol !== 2 && !followers.current.has(tabId)) {
       await startTranscriptFollow(tabId, currentState.meta?.sessionPath ?? "");
       currentState = getOrCreateState(statesRef.current, tabId);
     }
     if (currentState.transcriptProtocol !== 2 || currentState.transcriptConnection !== "connected") {
-      throw new Error("Transcript v2 is not synchronized. Upgrade Desktop and Serve together, or reconnect.");
+      throw new Error("reasonix_error:inbox_not_submitted");
     }
     const runtime = currentState.meta?.runtime;
     if (currentState.meta && !runtimeReadyForSubmit(currentState.meta)) {
-      throw new Error(runtime?.issue?.message || currentState.meta.startupErr || t("composer.workspaceStarting"));
+      throw new Error("reasonix_error:inbox_not_submitted");
     }
     const seq = currentState.seq;
-    const submissionId = structured?.attachmentSubmissionId ?? createTurnSubmissionId(tabId, currentState.sessionGen, seq, runtimeEpochByTabRef.current.get(tabId) ?? runtime?.epoch);
+    const submissionId = structured?.attachmentSubmissionId ?? composerSubmissionId ?? createTurnSubmissionId(tabId, currentState.sessionGen, seq, runtimeEpochByTabRef.current.get(tabId) ?? runtime?.epoch);
     const submissionCurrent = () => submissionBindingCurrent(statesRef.current.get(tabId), currentState);
     const promptEpoch = currentState.promptEpoch;
     const { display, submit } = normalizeTurnSubmit(displayText, submitText);
-    const original = originalText?.trim() ?? "";
     bumpCancelHydrateSeq(tabId);
     if (currentState.hydrateReason === "rewind") dispatchTo(tabId, { type: "hydrate_done" });
     // A compact request never starts a conversational turn. Runtime snapshots
@@ -3627,7 +3627,7 @@ export function useController() {
     }
     invalidateCache();
     try {
-      const [outcome, detail] = await import("./turnSubmit").then(module => module.submitTurn(app, tabId, submissionId, display, submit, original, structured, initialGoal));
+      const [outcome, detail] = await import("./turnSubmit").then(module => module.submitTurn(app, tabId, submissionId, display, submit, originalText?.trim() ?? "", structured, initialGoal));
       if (!submissionCurrent()) return;
       if (outcome === 1) {
         dispatchTo(tabId, { type: "send_confirmed", submissionId });
