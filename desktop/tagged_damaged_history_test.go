@@ -36,7 +36,7 @@ func TestTaggedDamagedHistoryIsolatesFailureAndRetainsRecoveryEvidence(t *testin
 				app := NewApp()
 				t.Cleanup(app.closeSessionServices)
 				healthy := map[string]string{}
-				for attempt := 0; attempt < 3; attempt++ {
+				for attempt := range 3 {
 					err := app.migrateDesktopSessionsV5(t.Context())
 					if attempt == 2 && damage == "truncated-commit" {
 						// Export failed after reserving the original source fingerprint.

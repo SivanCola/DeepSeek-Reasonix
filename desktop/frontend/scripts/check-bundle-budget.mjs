@@ -550,6 +550,9 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // Settled launch receipts and output-reader history states add 104 B over the
 // same-toolchain base (2102940 B versus 2102836 B). The Linux producer measures
 // 2103126 B; retain the next one-decimal ceiling with all other gates fixed.
-const rawInitialBudgetKiB = 2_053.9;
+// Eager-session recovery adds 88 B with the same dependencies and embedded
+// commit: 2103296 B versus 2103208 B on main-v2. The latter already exceeds
+// the old gate by 15 B. Round to the next decimal; retain every other gate.
+const rawInitialBudgetKiB = 2_054.1;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

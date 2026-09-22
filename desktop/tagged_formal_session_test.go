@@ -18,7 +18,7 @@ func TestTaggedFormalSessionsKeepHeaderAndProviderHistory(t *testing.T) {
 			var want []provider.Message
 			readTaggedJSON(t, filepath.Join(fixture, "canonical-expected.json"), &want)
 			ref := session.SessionRef{HostID: "desktop", SessionID: "formal-session"}
-			for restart := 0; restart < 2; restart++ {
+			for restart := range 2 {
 				service, err := session.NewService("desktop", session.NewFilesystemPersistence(root))
 				if err != nil {
 					t.Fatal(err)

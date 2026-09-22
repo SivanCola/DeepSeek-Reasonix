@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -163,12 +164,10 @@ func taggedHistoryReleaseUpgradeMatrix(t *testing.T, first, last int) {
 				}
 				before := copyTaggedDirectory(t, filepath.Join(fixture, "legacy"), legacyRoot)
 				if release >= 8 {
-					for path, body := range copyTaggedDirectory(t, filepath.Join(fixture, "canonical"), canonicalRoot) {
-						before[path] = body
-					}
+					maps.Copy(before, copyTaggedDirectory(t, filepath.Join(fixture, "canonical"), canonicalRoot))
 				}
 				var identities map[string]string
-				for restart := 0; restart < 3; restart++ {
+				for restart := range 3 {
 					app := NewApp()
 					t.Cleanup(app.closeSessionServices)
 					t.Cleanup(func() { _ = app.sessionUIStore().Close() })

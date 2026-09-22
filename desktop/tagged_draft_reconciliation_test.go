@@ -11,7 +11,7 @@ func TestTaggedDraftRestartReconcilesWithoutReplay(t *testing.T) {
 		t.Run(version, func(t *testing.T) {
 			isolateDesktopUserDirs(t)
 			path := copyRollbackFixture(t, version, "drafts.sqlite")
-			for restart := 0; restart < 3; restart++ {
+			for restart := range 3 {
 				app := NewApp()
 				app.ctx = t.Context()
 				app.desktopDrafts = draftstate.New(path)
