@@ -2,9 +2,27 @@ package sessioncatalog
 
 import (
 	"context"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
+
+func TestDiscoveryDiagnosticsIdentifyPathOverflowCaller(t *testing.T) {
+	var events []DiscoveryEvent
+	c := &Catalog{
+		opts:   Options{OnDiscovery: func(event DiscoveryEvent) { events = append(events, event) }},
+		pathCh: make(chan sessionPathRequest), reconcileCh: make(chan DirectoryTarget, 1),
+		reconcileDirty: map[string]DirectoryTarget{}, stop: make(chan struct{}),
+	}
+	root := t.TempDir()
+	if c.RequestIndexSession(DirectoryTarget{Path: root}, filepath.Join(root, "old.jsonl")) {
+		t.Fatal("unbuffered path queue unexpectedly accepted a request")
+	}
+	if len(events) != 1 || !strings.HasSuffix(events[0].Origin, ".TestDiscoveryDiagnosticsIdentifyPathOverflowCaller") {
+		t.Fatalf("overflow diagnostic hid the request owner: %+v", events)
+	}
+}
 
 func TestDiscoveryDiagnosticsCorrelateRequestAndDispatch(t *testing.T) {
 	root := t.TempDir()

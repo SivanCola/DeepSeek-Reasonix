@@ -30,12 +30,12 @@ func (c *Catalog) ScheduleReconcile(target DirectoryTarget) (<-chan struct{}, bo
 	if c.opts.OnDiscovery != nil {
 		// Keep the function symbol, never runtime file names or stack arguments.
 		// Skip only the two public queue wrappers to identify the real owner.
-		var pcs [4]uintptr
+		var pcs [8]uintptr
 		n := runtime.Callers(2, pcs[:])
 		frames := runtime.CallersFrames(pcs[:n])
 		for {
 			frame, more := frames.Next()
-			if !strings.HasSuffix(frame.Function, ".(*Catalog).RequestReconcile") {
+			if !strings.HasSuffix(frame.Function, ".(*Catalog).RequestReconcile") && !strings.HasSuffix(frame.Function, ".(*Catalog).RequestIndexSession") {
 				c.observeDiscovery(target, "requested", frame.Function, "")
 				break
 			}

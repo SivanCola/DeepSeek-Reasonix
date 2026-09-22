@@ -86,6 +86,11 @@ func (a *App) watchSessionCatalog(ctx context.Context, catalog *sessioncatalog.C
 			discoveryPending = true
 			admitted = true
 			onAdmitted()
+			// Query admission precedes this background-only watch barrier. A
+			// native notification backlog predating discovery is covered by the
+			// first scan; indexing every old notification here saturates the
+			// path queue and incorrectly schedules a second whole-root pass.
+			catchUpCatalogWatch(watcher, events, failures, targets, watched, dirty)
 			refreshMetadata()
 			a.requestHistoricalCatalog()
 			armBatch()
@@ -95,7 +100,7 @@ func (a *App) watchSessionCatalog(ctx context.Context, catalog *sessioncatalog.C
 				clear(watched)
 				continue
 			}
-			admitCatalogWatchEvent(catalog, event, targets, watched, dirty, watcher)
+			admitCatalogWatchEvent(catalog, event, targets, watched, dirty, watcher, !admitted || discoveryPending)
 			armBatch()
 		case _, ok := <-failures:
 			if !ok {
@@ -152,11 +157,36 @@ func (a *App) watchSessionCatalog(ctx context.Context, catalog *sessioncatalog.C
 	}
 }
 
-func admitCatalogWatchEvent(catalog *sessioncatalog.Catalog, event fsnotify.Event, targets map[string]sessioncatalog.DirectoryTarget, watched, dirty map[string]bool, watcher workspaceWatcher) {
+func catchUpCatalogWatch(watcher workspaceWatcher, events <-chan fsnotify.Event, failures <-chan error, targets map[string]sessioncatalog.DirectoryTarget, watched, dirty map[string]bool) {
+	if barrier, ok := watcher.(interface{ CatchUp() }); ok {
+		barrier.CatchUp()
+	}
+	// Drain only the notifications already queued at the barrier. New events
+	// still go through the ordinary loop; a continuously written directory
+	// cannot hold discovery hostage by keeping this drain alive indefinitely.
+	for count := len(events); count > 0; count-- {
+		if event, ok := <-events; ok {
+			admitCatalogWatchEvent(nil, event, targets, watched, dirty, watcher, true)
+		}
+	}
+	for count := len(failures); count > 0; count-- {
+		if _, ok := <-failures; ok {
+			for key := range targets {
+				dirty[key] = true
+			}
+		}
+	}
+}
+
+func admitCatalogWatchEvent(catalog *sessioncatalog.Catalog, event fsnotify.Event, targets map[string]sessioncatalog.DirectoryTarget, watched, dirty map[string]bool, watcher workspaceWatcher, initialDiscovery bool) {
 	key := filepath.Clean(filepath.Dir(event.Name))
 	// A transcript/sidecar write invalidates one session, not its root.
 	if target, exists := targets[key]; exists {
 		if path := catalogSessionPathForEvent(event.Name); path != "" && event.Op&(fsnotify.Remove|fsnotify.Rename) == 0 {
+			if initialDiscovery {
+				dirty[key] = true
+				return
+			}
 			// Platform events use the canonical watch path; retain the registered
 			// access spelling when publishing the exact session identity.
 			catalog.RequestIndexSession(target, filepath.Join(target.Path, filepath.Base(path)))
@@ -164,16 +194,6 @@ func admitCatalogWatchEvent(catalog *sessioncatalog.Catalog, event fsnotify.Even
 		}
 	}
 	if _, exists := targets[filepath.Clean(event.Name)]; exists {
-		// macOS FSEvents can emit a root-level Write/Create event while
-		// replaying the observation history after a watch is attached. The
-		// event has no changed session path, so treating it as a dirty root
-		// starts another complete metadata iterator immediately after the
-		// current one finishes. File-level events still enqueue the exact
-		// session above, and overflow/error notifications still dirty every
-		// root through the error path below.
-		if event.Op&(fsnotify.Remove|fsnotify.Rename) == 0 {
-			return
-		}
 		key = filepath.Clean(event.Name)
 		if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
 			// Native backends retain subscriptions until explicitly removed.
