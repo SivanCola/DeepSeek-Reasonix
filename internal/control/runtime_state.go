@@ -196,7 +196,7 @@ func (c *Controller) refreshRuntimeStateAttempt(e event.Event, attempt int) {
 	}
 	next.BackgroundJobs = 0
 	if c.jobs != nil {
-		next.BackgroundJobs = len(c.jobs.RunningForSession(agent.BranchID(path)))
+		next.BackgroundJobs = len(c.jobs.RunningForSession(c.parentSessionID()))
 	}
 	// Sampling owners is off their locks. Do not commit a mixture if the
 	// admission/close/binding boundary advanced while another owner was read.

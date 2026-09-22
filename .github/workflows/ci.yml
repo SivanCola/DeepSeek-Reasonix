@@ -1036,6 +1036,10 @@ jobs:
       - name: Test native macOS signing coverage
         run: node --test packaging/sign-macos.test.mjs
 
+      - name: Test native graphics recovery
+        timeout-minutes: 3
+        run: node electron/scripts/graphics-recovery-smoke.mjs
+
       - name: Test native browser runtime and 100 capture lifecycles
         timeout-minutes: 5
         env:
@@ -1242,6 +1246,10 @@ jobs:
       - name: Test native window geometry on Windows
         timeout-minutes: 2
         run: node electron/scripts/window-geometry-smoke.mjs
+
+      - name: Test native graphics recovery
+        timeout-minutes: 3
+        run: node electron/scripts/graphics-recovery-smoke.mjs
 
       - name: Test native browser foreground runtime
         timeout-minutes: 3
