@@ -1,7 +1,6 @@
 // Run: tsx src/__tests__/hydrate-history-apply.test.ts
 
 import {
-  activeTabHydrationPlan,
   canAdoptUnboundLiveSurface,
   duplicateLiveItemIds,
   hasCachedLiveTurn,
@@ -10,7 +9,7 @@ import {
   sameSessionPlaceholderItems,
   shouldPreferResidentHistory,
 } from "../lib/hydrateHistoryApply";
-import { coldHistoryRefreshProof } from "../lib/coldHistoryRefresh";
+import { activeTabHydrationPlan, coldHistoryRefreshProof } from "../lib/coldHistoryRefresh";
 import type { Meta, TabMeta } from "../lib/types";
 
 let passed = 0;

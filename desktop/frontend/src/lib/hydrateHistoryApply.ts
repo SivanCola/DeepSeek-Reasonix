@@ -25,8 +25,6 @@ export type SessionHydrateIdentity = SessionIdentity;
 
 export type HydrateSurfacePolicy = "preserve-current" | "replace-surface";
 
-export { activeTabHydrationPlan, type ActiveTabHydrationLoadOptions } from "./coldHistoryRefresh";
-
 type UnboundLiveSurfaceState = HydrateLiveState & {
   hydrateHistoryLoaded?: boolean;
 };
