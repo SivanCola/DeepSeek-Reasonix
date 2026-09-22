@@ -572,7 +572,7 @@ function bootstrap(dataHome: string): void {
   void app.whenReady().then(() => {
       if (lifecycle.isQuitting) return;
       if (process.platform === "darwin") {
-        const dockIcon = firstExisting(icons.window);
+        const dockIcon = firstExisting(icons.dock);
         if (dockIcon && app.dock) app.dock.setIcon(dockIcon);
       }
       registerAppProtocol({
