@@ -107,6 +107,11 @@ func mutateDAGPagerSource(t *testing.T, source, mode string) {
 		t.Fatal(err)
 	}
 	if mode == "replace" {
+		// Windows rejects direct replacement of an open target even with delete
+		// sharing. Moving the old path first still tests fencing the new identity.
+		if err := os.Rename(path, path+".previous"); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.Rename(writePath, path); err != nil {
 			t.Fatal(err)
 		}
