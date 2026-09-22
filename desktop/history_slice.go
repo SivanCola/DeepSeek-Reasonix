@@ -95,6 +95,12 @@ type HistorySliceRequest struct {
 	Entries int    `json:"entries"` // default 120
 	Bytes   int    `json:"bytes"`   // inline byte budget, default 512KiB
 	Newer   bool   `json:"newer,omitempty"`
+	// Bound native readers resolve anchors within their existing projection.
+	Anchor           string  `json:"anchor,omitempty"`
+	Turn             int     `json:"turn,omitempty"`
+	MessageID        string  `json:"messageId,omitempty"`
+	Generation       string  `json:"generation,omitempty"`
+	SnapshotSequence *uint64 `json:"snapshotSequence,omitempty"`
 }
 
 // HistoryContentRef marks a string field that exceeded the inline threshold.

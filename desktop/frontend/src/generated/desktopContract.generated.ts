@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 11;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:c2047b71af56d0ae95fdb3b614424616352f862efea884ba7bd6f24f374053eb";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:58e272b6290b0ee6bbf4b0e7d12f1117673e1c29e70e82dd04edec4f914b70ee";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -2716,6 +2716,11 @@ export interface HistorySliceRequest {
   entries: number;
   bytes: number;
   newer?: boolean;
+  anchor?: string;
+  turn?: number;
+  messageId?: string;
+  generation?: string;
+  snapshotSequence?: number | null;
 }
 
 export interface HistorySwitchPhases {

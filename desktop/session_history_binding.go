@@ -107,6 +107,7 @@ func (a *App) BeginSessionHistoryReadForTab(tabID string) (SessionHistoryReadHan
 	}
 	a.historyReaders.entries[reader.handle.ID] = reader
 	if reader.query == nil && reader.path != "" {
+		reader.handle.Capabilities = append(reader.handle.Capabilities, "history-native-navigation-v1")
 		var releaseNative context.CancelFunc
 		reader.native, releaseNative = a.acquireNativeHistoryLocked(reader.path, reader.head, nativeSourceKey, nativeGeneration)
 		release := reader.release
@@ -212,6 +213,13 @@ func (a *App) ReadSessionHistorySlice(id string, req HistorySliceRequest) (Sessi
 		}
 		return SessionHistoryReadSlice{Status: "failed", Page: emptyHistorySlice()}, err
 	}
+	req, status, err := nativeHistorySliceAnchor(r, pager, req)
+	if r.ctx.Err() != nil || !a.historyReaderCurrent(r) || errors.Is(err, agent.ErrDisplaySourceChanged) {
+		return SessionHistoryReadSlice{Status: "stale_cursor", Page: emptyHistorySlice()}, nil
+	}
+	if err != nil || status != "ready" {
+		return SessionHistoryReadSlice{Status: status, Page: emptyHistorySlice()}, err
+	}
 	page, ready, err := a.historySliceFromPager(r.ctx, pager, filepath.Dir(r.path), r.path, normalizeHistorySliceRequest(req), r.native.key)
 	if errors.Is(err, agent.ErrDisplaySourceChanged) || r.ctx.Err() != nil || !a.historyReaderCurrent(r) {
 		return SessionHistoryReadSlice{Status: "stale_cursor", Page: emptyHistorySlice()}, nil
@@ -228,7 +236,7 @@ func (a *App) ReadSessionHistorySlice(id string, req HistorySliceRequest) (Sessi
 		// still serve this same source until its runtime projection is bound.
 		return SessionHistoryReadSlice{Status: "unsupported", Page: emptyHistorySlice()}, nil
 	}
-	status := "ready"
+	status = "ready"
 	if page.Stale {
 		status = "stale_cursor"
 	}
@@ -240,11 +248,13 @@ func (a *App) ReadSessionHistoryOutline(id string, req session.HistoryOutlineReq
 	if err != nil {
 		return session.HistoryOutlinePage{Entries: []session.HistoryOutlineEntry{}, Status: "stale_cursor"}, nil
 	}
+	var page session.HistoryOutlinePage
 	if r.query == nil {
-		return session.HistoryOutlinePage{Entries: []session.HistoryOutlineEntry{}, Status: "unsupported"}, nil
+		page, err = a.readNativeHistoryOutline(r, req)
+	} else {
+		page, err = r.query.ReadHistoryOutline(r.ctx, r.ref, req)
 	}
-	page, err := r.query.ReadHistoryOutline(r.ctx, r.ref, req)
-	if r.ctx.Err() != nil || !a.historyReaderCurrent(r) {
+	if r.ctx.Err() != nil || !a.historyReaderCurrent(r) || errors.Is(err, agent.ErrDisplaySourceChanged) {
 		return session.HistoryOutlinePage{Entries: []session.HistoryOutlineEntry{}, Status: "stale_cursor"}, nil
 	}
 	return page, err
@@ -255,11 +265,22 @@ func (a *App) LocateSessionHistoryMessage(id, messageID string, snapshot uint64)
 	if err != nil {
 		return session.MessageLocation{Status: "stale_cursor"}, nil
 	}
+	var location session.MessageLocation
 	if r.query == nil {
-		return session.MessageLocation{Status: "unsupported"}, nil
+		var pager *agent.DisplayPager
+		pager, err = nativeNavigationPager(r)
+		if err == nil {
+			location, err = nativeHistoryLocation(r, pager, messageID, snapshot)
+		} else {
+			location.Status = nativeNavigationStatus(r, err)
+			if location.Status != "failed" {
+				err = nil
+			}
+		}
+	} else {
+		location, err = r.query.LocateMessage(r.ctx, r.ref, messageID, snapshot)
 	}
-	location, err := r.query.LocateMessage(r.ctx, r.ref, messageID, snapshot)
-	if r.ctx.Err() != nil || !a.historyReaderCurrent(r) {
+	if r.ctx.Err() != nil || !a.historyReaderCurrent(r) || errors.Is(err, agent.ErrDisplaySourceChanged) {
 		return session.MessageLocation{Status: "stale_cursor"}, nil
 	}
 	return location, err

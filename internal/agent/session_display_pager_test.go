@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reasonix/internal/fileops"
 	"reflect"
+	"strings"
 	"testing"
 
 	"reasonix/internal/provider"
@@ -113,6 +114,23 @@ func TestDisplayPagerCheckpointIsBoundedAndReadOnly(t *testing.T) {
 	}
 	if _, err := p.Entries(0, 501); err == nil {
 		t.Fatal("unbounded page accepted")
+	}
+	turns, err := p.TurnEntries(2, 1)
+	if err != nil || len(turns) != 1 || !turns[0].StartsTurn || turns[0].AuthoredTurn != 2 {
+		t.Fatalf("authored-turn page: %+v %v", turns, err)
+	}
+	var queryID, parentID, unused int
+	var plan string
+	if err := p.DB.QueryRowContext(t.Context(), `EXPLAIN QUERY PLAN SELECT entry FROM entries WHERE turn>=2 AND json_extract(CAST(entry AS TEXT),'$.starts_turn')=1 ORDER BY turn,position LIMIT 1`).Scan(&queryID, &parentID, &unused, &plan); err != nil || !strings.Contains(plan, "SEARCH entries USING INDEX entries_authored_turn") {
+		t.Fatalf("outline prefix scan: %s %v", plan, err)
+	}
+	if _, err := p.TurnEntries(1, 1001); err == nil {
+		t.Fatal("unbounded outline accepted")
+	}
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := p.WithContext(canceled).TurnEntries(1, 1); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled outline read: %v", err)
 	}
 	digest := p.Header.ContentDigest
 	if err := p.Close(); err != nil {

@@ -24,6 +24,8 @@ Legacy JSONL checkpoints, trusted `.displayidx` files, and DAGs can build SQLite
 
 Historical root services share a 256 MiB idle-runtime budget and the existing 60-second idle TTL. Executing, approval-waiting, and bound runtimes are not idle eviction candidates. This is not a total application memory limit.
 
+Bound JSONL/checkpoint and DAG readers also provide paged authored-turn outlines and direct turn/message anchors without creating an execution controller. Outline positions use a partial SQLite index; previews decode only the requested user records, one at a time, and retain bounded text. The optional answer preview is omitted on this cold path. Primary display-message identities resolve directly to fixed-cut cursors; derived subrows are not advertised as independent locator identities. Outline and anchor requests validate the same source, branch and rewrite generation as window reads. Older services without `history-native-navigation-v1` keep their existing navigation protocol. Read cancellation or source replacement cannot publish a partial outline into another navigation.
+
 Maintenance diagnostics contain counters and resource usage, not transcript bodies. `historyMaintenance.instrumentedReadBytes` counts actual controlled-reader bytes, not stat sizes presented as I/O measurements.
 
 ## Registry reads and ownership resolution
@@ -42,7 +44,7 @@ Mainline formal session creation and input recovery remain intact. Durable opera
 
 The implementation must not yet be described as complete performance governance. Custom ordering, group-filtered views, text filtering, and multi-head sidebars still use the original full snapshot adapter. Importing old source-dependent organization preferences can still enumerate legacy pages. The ordinary all-sessions view still reads all current-format member headers; historical directory discovery still needs integration into the persistent incremental projection. A shell still collects all explicitly pinned rows. These remaining paths prevent a claim that every startup/list configuration is independent of library size.
 
-Legacy preparation checkpoints across restarts, oversized individual records, and append-stable cursors require further implementation and validation. Checkpoint preparation currently bounds a single decoded record at 16 MiB; it does not yet spool larger records. Schema-1 event logs without a trustworthy display sidecar, and cold legacy outline/locate/search operations, still require their existing compatibility path. No parseable prefix is certified as a complete replacement for unsupported or damaged history.
+Legacy preparation checkpoints across restarts, oversized individual records, and append-stable cursors require further implementation and validation. Checkpoint preparation currently bounds a single decoded record at 16 MiB; it does not yet spool larger records. Schema-1 event logs without a trustworthy display sidecar and cold legacy full-text search still require their existing compatibility path. No parseable prefix is certified as a complete replacement for unsupported or damaged history.
 
 Formats or remote protocols without the new read binding retain their negotiated reader. A read failure does not authorize changing the storage source. Explicit import, archive, recovery, copy, move, and complete export keep their management semantics.
 

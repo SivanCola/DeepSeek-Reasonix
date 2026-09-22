@@ -11,6 +11,12 @@ export interface HistorySliceRequest {
   bytes?: number;
   /** Page toward newer history from `cursor` instead of older (window only). */
   newer?: boolean;
+  /** Direct anchors require history-native-navigation-v1 on a bound reader. */
+  anchor?: HistoryWindowRequestView["anchor"];
+  turn?: number;
+  messageId?: string;
+  generation?: string;
+  snapshotSequence?: number;
 }
 
 // HistoryContentRef marks a string field replaced inline by a ≤4KiB preview;

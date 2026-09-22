@@ -19,10 +19,11 @@ export async function readBoundHistoryWindow(tabId: string, req: HistoryWindowRe
     if (page.status === "stale_cursor") releaseHistoryRead(tabId);
     return page;
   }
-  if (req.anchor && !["newest", "cursor"].includes(req.anchor)) {
+  if (req.anchor && !["newest", "cursor"].includes(req.anchor) && !handle.capabilities?.includes("history-native-navigation-v1")) {
     return { ...stale(), status: "unsupported" };
   }
-  const result = await app.ReadSessionHistorySlice(handle.id, { cursor: req.cursor ?? "", turns: req.limit ?? 32, entries: req.limit ?? 32, bytes: 1 << 20, newer: req.direction === "newer" });
+  const result = await app.ReadSessionHistorySlice(handle.id, { cursor: req.cursor ?? "", turns: req.limit ?? 32, entries: req.limit ?? 32, bytes: 1 << 20, newer: req.direction === "newer",
+    anchor: req.anchor, turn: req.turn, messageId: req.messageId, generation: req.generation, snapshotSequence: req.snapshotSequence });
   if (currentHistoryReadBinding(tabId) !== binding) return stale();
   if (result.status === "stale_cursor") releaseHistoryRead(tabId);
   const page = result.page;

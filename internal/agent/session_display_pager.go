@@ -170,6 +170,12 @@ func openDisplayPager(ctx context.Context, source, cachePath, head string, force
 		p.Close()
 		return nil, err
 	}
+	// Optional accelerator over disposable metadata. Existing cache readers
+	// can ignore it; no authoritative format or schema version changes.
+	if _, err := p.DB.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS entries_authored_turn ON entries(turn,position) WHERE json_extract(CAST(entry AS TEXT),'$.starts_turn')=1`); err != nil {
+		p.Close()
+		return nil, err
+	}
 	return p, nil
 }
 
@@ -258,6 +264,32 @@ func (p *DisplayPager) UsersBefore(position int) (int, error) {
 	var count int
 	err := p.DB.QueryRowContext(p.ctx, `SELECT user_before FROM entries WHERE position=?`, position).Scan(&count)
 	return count, err
+}
+
+// TurnEntries returns only authored user positions in the selected branch.
+// Hidden control messages and long tool runs do not require prefix decoding.
+func (p *DisplayPager) TurnEntries(start, limit int) ([]DisplayIndexEntry, error) {
+	if limit <= 0 || limit > 1000 {
+		return nil, errors.New("display outline exceeds page budget")
+	}
+	rows, err := p.DB.QueryContext(p.ctx, `SELECT entry FROM entries WHERE turn>=? AND json_extract(CAST(entry AS TEXT),'$.starts_turn')=1 ORDER BY turn,position LIMIT ?`, max(start, 1), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	entries := make([]DisplayIndexEntry, 0, limit)
+	for rows.Next() {
+		var body []byte
+		var entry DisplayIndexEntry
+		if err := rows.Scan(&body); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(body, &entry); err != nil {
+			return nil, err
+		}
+		entries = append(entries, entry)
+	}
+	return entries, rows.Err()
 }
 
 // Import the existing JSON index one entry at a time. A corrupt or cancelled

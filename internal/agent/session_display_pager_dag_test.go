@@ -62,6 +62,25 @@ func TestDisplayPagerDAGSelectedBranchMatchesNativeReplay(t *testing.T) {
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("DAG differs from native selected view: got=%+v want=%+v", got, want)
 			}
+			turns, err := p.TurnEntries(1, 1000)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantIndex := BuildSessionDisplayIndex(want, 0, false, [32]byte{})
+			var expected []DisplayIndexEntry
+			for _, entry := range wantIndex.Entries {
+				if entry.StartsTurn {
+					expected = append(expected, entry)
+				}
+			}
+			if len(turns) != len(expected) {
+				t.Fatalf("outline count %d != selected branch %d", len(turns), len(expected))
+			}
+			for i, entry := range turns {
+				if entry.Index != expected[i].Index || entry.AuthoredTurn != expected[i].AuthoredTurn {
+					t.Fatalf("outline disagrees with branch replay: %+v != %+v", entry, expected[i])
+				}
+			}
 		})
 	}
 	after, _ := os.ReadFile(store.SessionEventLog(path))
