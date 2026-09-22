@@ -3403,23 +3403,17 @@ export function useController() {
     // one the old controller already resolved (#6432 round 3). A tab-less
     // rebuild (settings-wide) affects every known tab.
     const offRebuilt = onRuntimeRebuilt((rebuiltTabId, runtimeEpoch) => {
-      if (rebuiltTabId) {
-        followers.current.get(rebuiltTabId)?.stop();
-        followers.current.delete(rebuiltTabId);
-        invalidateSharedQuery("MetaForTab", [rebuiltTabId]);
-        if (runtimeEpoch) runtimeEpochByTabRef.current.set(rebuiltTabId, runtimeEpoch);
-        dispatchTo(rebuiltTabId, { type: "controller_rebuilt" });
-        if (!needsColdHistory(statesRef.current.get(rebuiltTabId)?.meta) && !statesRef.current.get(rebuiltTabId)?.hydrating && !statesRef.current.get(rebuiltTabId)?.backendActivationPending) void startTranscriptFollow(rebuiltTabId, statesRef.current.get(rebuiltTabId)?.meta?.sessionPath ?? "").catch(error => dispatchTo(rebuiltTabId, { type: "transcript_connection", status: "disconnected", error: String(error) }));
-      } else {
-        if (runtimeEpoch) {
-          for (const id of Array.from(statesRef.current.keys())) runtimeEpochByTabRef.current.set(id, runtimeEpoch);
-        }
-        for (const id of Array.from(statesRef.current.keys())) {
-          followers.current.get(id)?.stop();
-          followers.current.delete(id);
-          invalidateSharedQuery("MetaForTab", [id]);
-          dispatchTo(id, { type: "controller_rebuilt" });
-          if (!needsColdHistory(statesRef.current.get(id)?.meta) && !statesRef.current.get(id)?.hydrating && !statesRef.current.get(id)?.backendActivationPending) void startTranscriptFollow(id, statesRef.current.get(id)?.meta?.sessionPath ?? "").catch(error => dispatchTo(id, { type: "transcript_connection", status: "disconnected", error: String(error) }));
+      const ids = rebuiltTabId ? [rebuiltTabId] : Array.from(statesRef.current.keys());
+      for (const id of ids) {
+        followers.current.get(id)?.stop();
+        followers.current.delete(id);
+        invalidateSharedQuery("MetaForTab", [id]);
+        if (runtimeEpoch) runtimeEpochByTabRef.current.set(id, runtimeEpoch);
+        dispatchTo(id, { type: "controller_rebuilt" });
+        const state = statesRef.current.get(id);
+        if (!needsColdHistory(state?.meta) && !state?.hydrating && !state?.backendActivationPending) {
+          void startTranscriptFollow(id, state?.meta?.sessionPath ?? "").catch(error =>
+            dispatchTo(id, { type: "transcript_connection", status: "disconnected", error: String(error) }));
         }
       }
     });
