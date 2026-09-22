@@ -547,6 +547,9 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // Manual compaction admission feedback and its running summary hint measure
 // 2103022 B in the Linux Electron producer. Retain 69 B at the next one-decimal
 // ceiling; compressed, chunk, CSS, locale, and resident-history gates stay fixed.
-const rawInitialBudgetKiB = 2_053.8;
+// Settled launch receipts and output-reader history states add 104 B over the
+// same-toolchain base (2102940 B versus 2102836 B). The Linux producer measures
+// 2103126 B; retain the next one-decimal ceiling with all other gates fixed.
+const rawInitialBudgetKiB = 2_053.9;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
