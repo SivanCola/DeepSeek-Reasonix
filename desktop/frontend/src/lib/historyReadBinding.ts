@@ -1,5 +1,5 @@
 import { app } from "./bridge";
-import type { HistoryWindowPage, HistoryOutlinePage, HistoryOutlineRequest } from "../generated/desktopContract.generated";
+import type { HistoryWindowPage, HistoryOutlinePage, HistoryOutlineRequest, SearchHistoryPage } from "../generated/desktopContract.generated";
 import type { HistoryWindowRequestView, HistoryWindowPageView } from "./types";
 import { supportsHistoryRead, acquireHistoryRead, currentHistoryReadBinding, releaseHistoryRead } from "./historyReadScope";
 export { releaseHistoryRead } from "./historyReadScope";
@@ -40,6 +40,20 @@ export async function readBoundHistoryOutline(tabId: string, req: HistoryOutline
   if (!handle.capabilities?.includes("history-read-binding-v1")) return undefined;
   const page = await app.ReadSessionHistoryOutline(handle.id, req);
   if (currentHistoryReadBinding(tabId) !== binding) return { ...page, entries: [], status: "stale_cursor" };
+  if (page.status === "stale_cursor") releaseHistoryRead(tabId);
+  return page;
+}
+
+export async function searchBoundHistory(tabId: string, text: string, cursor = "", limit = 50): Promise<SearchHistoryPage | undefined> {
+  if (!supportsHistoryRead() || typeof app.SearchSessionHistoryRead !== "function") return undefined;
+  const empty = (status: string): SearchHistoryPage => ({ hits: [], status, hasMore: false, snapshotSequence: 0, coverageSequence: 0 });
+  const binding = acquireHistoryRead(tabId);
+  const handle = await binding.promise;
+  if (currentHistoryReadBinding(tabId) !== binding) return empty("stale_cursor");
+  if (!handle.capabilities?.includes("history-read-binding-v1")) return undefined;
+  if (handle.storageBackend !== "canonical" && !handle.capabilities?.includes("history-native-search-v1")) return empty("unsupported");
+  const page = await app.SearchSessionHistoryRead(handle.id, text, cursor, limit);
+  if (currentHistoryReadBinding(tabId) !== binding) return empty("stale_cursor");
   if (page.status === "stale_cursor") releaseHistoryRead(tabId);
   return page;
 }

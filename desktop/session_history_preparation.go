@@ -19,6 +19,7 @@ import (
 type nativeHistoryPreparation struct {
 	key      string
 	cacheKey string
+	path     string
 	refs     int // guarded by desktopHistoryReaders.mu
 	done     chan struct{}
 	closed   chan struct{}
@@ -26,6 +27,8 @@ type nativeHistoryPreparation struct {
 	ctx      context.Context
 	pager    *agent.DisplayPager
 	err      error
+	searchMu sync.Mutex
+	search   *nativeHistorySearch
 }
 
 // Stat identities are task admission tokens, not content proof. OpenDisplayPager
@@ -89,12 +92,11 @@ func (a *App) acquireNativeHistoryLocked(path, head, sourceKey, generation strin
 		}
 		ctx, cancel := context.WithCancel(a.bootContext())
 		ctx = a.historyMaintenance.Context(ctx)
-		job = &nativeHistoryPreparation{key: key, cacheKey: cacheKey, done: make(chan struct{}), closed: make(chan struct{}), cancel: cancel, ctx: ctx}
+		job = &nativeHistoryPreparation{key: key, cacheKey: cacheKey, path: path, done: make(chan struct{}), closed: make(chan struct{}), cancel: cancel, ctx: ctx}
 		manager.native[key] = job
-		manager.workers.Add(1)
-		go func() {
-			defer manager.workers.Done()
+		manager.workers.Go(func() {
 			defer func() {
+				job.closeSearch()
 				if job.pager != nil {
 					_ = job.pager.Close()
 				}
@@ -137,7 +139,7 @@ func (a *App) acquireNativeHistoryLocked(path, head, sourceKey, generation strin
 			job.err = err
 			close(job.done)
 			<-ctx.Done()
-		}()
+		})
 	}
 	job.refs++
 	var once sync.Once

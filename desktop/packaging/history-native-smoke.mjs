@@ -95,6 +95,22 @@ sys.stdin.read()
     const located = await invoke("ReadSessionHistorySlice", [handle.id, { anchor: "turn", turn: 4, entries: 2, generation: outline.generation, snapshotSequence: outline.snapshotSequence }]);
     assert.equal(located.status, "ready");
     assert.equal(located.page.entries.at(-1).message.content, `NATIVE_${fixture.kind}_QUESTION_3`);
+    assert.ok(handle.capabilities.includes("history-native-search-v1"));
+    let search;
+    await waitForSmokeCondition(async () => {
+      search = await invoke("SearchSessionHistoryRead", [handle.id, `NATIVE_${fixture.kind}_QUESTION_`, "", 2]);
+      assert.ok(["preparing", "ready"].includes(search.status));
+      if (search.status === "preparing") assert.equal(search.hits.length, 0);
+      return search.status === "ready";
+    });
+    assert.equal(search.hits.length, 2);
+    assert.equal(search.hasMore, true);
+    assert.equal(search.hits[0].preview, `NATIVE_${fixture.kind}_QUESTION_139`);
+    const searchLocation = await invoke("LocateSessionHistoryMessage", [handle.id, search.hits[0].messageId, search.snapshotSequence]);
+    assert.equal(searchLocation.status, "ready");
+    const nextSearch = await invoke("SearchSessionHistoryRead", [handle.id, `NATIVE_${fixture.kind}_QUESTION_`, search.nextCursor, 2]);
+    assert.equal(nextSearch.status, "ready");
+    assert.equal(nextSearch.hits[0].preview, `NATIVE_${fixture.kind}_QUESTION_137`);
     const ref = newest.page.entries.flatMap(entry => entry.refs ?? []).find(ref => ref.field === "content");
     assert.equal(ref?.readHandleId, handle.id);
     let text = "";
@@ -123,7 +139,7 @@ sys.stdin.read()
     assert.equal(readFileSync(fixture.path, "utf8"), fixture.body);
     if (fixture.kind === "events") assert.equal(readFileSync(fixture.eventPath, "utf8"), fixture.events);
     assert.equal(existsSync(fixture.path.replace(/\.jsonl$/, ".display-index.json")), false);
-    console.log(`PASS ${fixture.kind}: bounded pages, outline, direct anchor, complete Unicode content, released refs fenced, unbound content, writer conflict; source unchanged`);
+    console.log(`PASS ${fixture.kind}: bounded pages, outline, direct anchor, cold search and hit location, complete Unicode content, released refs fenced, unbound content, writer conflict; source unchanged`);
   }
   await waitForSmokeCondition(async () => {
     const topics = await invoke("ListProjectTopics", [{ scope: "global", limit: 50 }]);

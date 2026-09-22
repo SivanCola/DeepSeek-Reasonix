@@ -5,7 +5,7 @@ import { installDesktopHostStub } from "./desktopHostStub";
 Object.defineProperty(globalThis, "window", { configurable: true, value: {} });
 const commands: Record<string, unknown> = {};
 installDesktopHostStub(commands);
-const { readBoundHistoryWindow, releaseHistoryRead } = await import("../lib/historyReadBinding");
+const { readBoundHistoryWindow, searchBoundHistory, releaseHistoryRead } = await import("../lib/historyReadBinding");
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>(done => { resolve = done; });
@@ -90,4 +90,30 @@ test("native anchors carry the outline cut only after capability negotiation", a
   await readBoundHistoryWindow("native", { anchor: "message", messageId: "sone:r9:m32:o0", generation: "bound-cut" });
   assert.equal(requests[requests.length - 1]?.messageId, "sone:r9:m32:o0");
   releaseHistoryRead("native");
+});
+
+test("bound search negotiates native support and fences a late reply after navigation", async () => {
+  let enabled = false, reads = 0;
+  commands.BeginSessionHistoryReadForTab = () => ({ ...handle("search"), storageBackend: "legacy",
+    capabilities: ["history-read-binding-v1", ...(enabled ? ["history-native-search-v1"] : [])] });
+  const result = { hits: [{ messageId: "old", preview: "old", position: 1, role: "user", eventSequence: 1 }],
+    status: "ready", snapshotSequence: 1, coverageSequence: 1, hasMore: false };
+  const reply = deferred<typeof result>(), entered = deferred<void>();
+  commands.SearchSessionHistoryRead = () => { reads++; entered.resolve(); return reply.promise; };
+  assert.equal((await searchBoundHistory("search", "needle"))?.status, "unsupported");
+  assert.equal(reads, 0);
+  releaseHistoryRead("search");
+  enabled = true;
+  const old = searchBoundHistory("search", "needle");
+  await entered.promise;
+  releaseHistoryRead("search");
+  commands.SearchSessionHistoryRead = () => ({ ...result, hits: [], status: "preparing", coverageSequence: 0 });
+  assert.equal((await searchBoundHistory("search", "needle"))?.status, "preparing");
+  reply.resolve(result);
+  const late = await old;
+  assert.equal(late?.status, "stale_cursor");
+  assert.deepEqual(late?.hits, []);
+  commands.SearchSessionHistoryRead = () => ({ ...result, hits: [], status: "stale_cursor" });
+  assert.equal((await searchBoundHistory("search", "needle"))?.status, "stale_cursor");
+  releaseHistoryRead("search");
 });
