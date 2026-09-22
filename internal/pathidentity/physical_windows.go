@@ -3,12 +3,19 @@
 package pathidentity
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
 
 	"golang.org/x/sys/windows"
 )
+
+// The kernel reports exhausted reparse traversal as CANT_RESOLVE_FILENAME,
+// rather than the synthetic syscall.ELOOP used by Go's userspace walker.
+func platformLinkLoop(err error) bool {
+	return errors.Is(err, windows.ERROR_CANT_RESOLVE_FILENAME)
+}
 
 // resolveExistingPath asks the kernel to follow all reparse points, including
 // junctions. EvalSymlinks does not follow mount points reported as ModeIrregular:

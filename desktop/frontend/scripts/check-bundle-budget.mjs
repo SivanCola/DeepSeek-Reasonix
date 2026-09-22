@@ -553,6 +553,10 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // Eager-session recovery adds 88 B with the same dependencies and embedded
 // commit: 2103296 B versus 2103208 B on main-v2. The latter already exceeds
 // the old gate by 15 B. Round to the next decimal; retain every other gate.
-const rawInitialBudgetKiB = 2_054.1;
+// Distinct draft submission errors and coalesced resume requests add 506 B
+// (0.024%) with identical dependencies/commit stamping: 2103634 B versus
+// 2103128 B; initial JS gzip grows 120 B. The Linux Electron producer measures
+// 2103802 B. Round that measurement to the next decimal; retain all other gates.
+const rawInitialBudgetKiB = 2_054.5;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

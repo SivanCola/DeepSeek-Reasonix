@@ -172,9 +172,9 @@ func classify(stage, path string, err error) error {
 	switch {
 	case errors.Is(err, os.ErrPermission):
 		kind = ErrorPermission
-	case errors.Is(err, syscall.ELOOP) || strings.Contains(strings.ToLower(err.Error()), "too many links"):
+	case errors.Is(err, syscall.ELOOP) || platformLinkLoop(err) || strings.Contains(strings.ToLower(err.Error()), "too many links"):
 		kind = ErrorLinkLoop
-	case os.IsNotExist(err):
+	case errors.Is(err, os.ErrNotExist):
 		kind = ErrorUnavailable
 	}
 	return &Error{Kind: kind, Stage: stage, Path: path, Err: err}

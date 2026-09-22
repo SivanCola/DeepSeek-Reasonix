@@ -28,9 +28,13 @@ func TestJunctionWorkspaceRetainsOldAliasLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// This is the exact historical spelling for a leaf junction under Go's
-	// default mount-point mode, not the new native physical identity.
-	oldPath := workspaceLockPath(lockDir, compatibilityIdentityPath(alias))
+	// Use the historical filesystem observation, including 8.3 expansion of
+	// the runner's temporary directory. The raw input is not the old lock key.
+	oldRoot, err := filepath.EvalSymlinks(alias)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldPath := workspaceLockPath(lockDir, compatibilityIdentityPath(nearestGitWorktreeRoot(oldRoot)))
 	if owner.lockPath != oldPath {
 		t.Fatalf("legacy lock changed: %q != %q", owner.lockPath, oldPath)
 	}
