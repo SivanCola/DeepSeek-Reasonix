@@ -28,7 +28,8 @@ const fixtures = Array.from({ length: 8 }, (_, id) => {
   const name = `cache-${id}`;
   const messages = Array.from({ length: 160 }, (_, turn) => [
     { role: "user", content: `SOAK_${id}_QUESTION_${turn}` },
-    { role: "assistant", content: `SOAK_${id}_ANSWER_${turn}\n\n` + `**History ${id}/${turn}** with Unicode 🧭 and inline \`code\`.\n\n`.repeat(12) },
+    { role: "assistant", content: `SOAK_${id}_ANSWER_${turn}\n\n` + `**History ${id}/${turn}** with Unicode 🧭 and inline \`code\`.\n\n`.repeat(12)
+      + `\n\`\`\`svg\n<svg xmlns="http://www.w3.org/2000/svg" width="120" height="40"><text x="2" y="25">${id}/${turn}</text></svg>\n\`\`\`\n` },
   ]).flat();
   const path = join(dir, `${name}.jsonl`);
   writeFileSync(path, id % 2 === 0 ? messages.map(message => JSON.stringify(message)).join("\n") + "\n"
@@ -43,7 +44,7 @@ const fixtures = Array.from({ length: 8 }, (_, id) => {
 });
 const report = { build: JSON.parse(readFileSync(join(bundle, "Contents/Resources/build.json"), "utf8")),
   machine: { platform: platform(), arch: arch() }, complete: false, samples: [],
-  scope: "Real UI navigation, bidirectional paging, cache accounting and worker drain for checkpoint/schema-1 fixtures; not whole-process memory, object URL or idle-runtime qualification." };
+  scope: "Real UI navigation, bidirectional paging, cache accounting, worker drain and SVG object URL release for checkpoint/schema-1 fixtures; not whole-process memory or idle-runtime qualification." };
 let application, page, lease;
 const invoke = (method, args = []) => page.evaluate(({ method, args }) => window.reasonixDesktop.invoke(method, args), { method, args });
 const stats = () => page.evaluate(() => window.__reasonixPerf.stats());
@@ -56,7 +57,9 @@ async function sample(id, phase) {
   assert.ok(cache.bodyBytes <= cache.bodyBudgetBytes, "body budget exceeded");
   assert.ok(cache.markdownBytes <= cache.markdownBudgetBytes, "Markdown budget exceeded");
   assert.ok(cache.residentWindowEntries <= cache.residentSessions * cache.windowMaxPages * 32, "resident history window exceeded");
-  report.samples.push({ fixture: id, phase, cache, markdownWorker: value.markdownWorker });
+  const objectURLs = await page.evaluate(() => ({ ...window.__historyObjectURLs(), mountedSVG: document.querySelectorAll(".md-svg").length }));
+  report.samples.push({ fixture: id, phase, cache, markdownWorker: value.markdownWorker, objectURLs });
+  assert.ok(objectURLs.active <= objectURLs.mountedSVG, "unmounted SVG retained an object URL");
 }
 async function select(fixture) {
   await page.locator(".project-tree__topic-main").filter({ has: page.getByText(fixture.name, { exact: true }) }).click();
@@ -106,6 +109,26 @@ sys.stdin.read()
   assert.equal(await application.evaluate(({ app }) => app.isPackaged && !process.env.REASONIX_DEV), true);
   const url = new URL(page.url());
   url.searchParams.set("bench", "1");
+  // Observe native URL ownership without altering app/cache/RPC behavior.
+  // Each navigation gets a fresh counter; only content-free counts are saved.
+  await page.addInitScript(() => {
+    const active = new Set();
+    let created = 0, revoked = 0;
+    const create = URL.createObjectURL, revoke = URL.revokeObjectURL;
+    URL.createObjectURL = function(blob) {
+      const url = create.call(this, blob);
+      // Inline worker loaders revoke their JavaScript blob from inside the
+      // worker realm. A page-only observer cannot count those releases. Track
+      // SVG resources owned by the mounted history components specifically.
+      if (blob.type === "image/svg+xml") { active.add(url); created++; }
+      return url;
+    };
+    URL.revokeObjectURL = function(url) {
+      if (active.delete(url)) revoked++;
+      return revoke.call(this, url);
+    };
+    window.__historyObjectURLs = () => ({ kind: "image/svg+xml", created, revoked, active: active.size });
+  });
   await page.goto(url.href);
   await page.waitForFunction(() => Boolean(window.__reasonixPerf && window.reasonixDesktop));
   assert.equal(await invoke("Version"), report.build.version);
@@ -125,6 +148,8 @@ sys.stdin.read()
   assert.ok(report.samples.some(sample => sample.cache.historyEvictions > 0), "no resident-session eviction exercised");
   assert.ok(report.samples.some(sample => sample.cache.reclaimedPages > 0), "no page reclamation exercised");
   assert.ok(report.samples.some(sample => sample.cache.markdownBytes > 0), "no parsed Markdown cached");
+  assert.ok(report.samples.some(sample => sample.objectURLs?.created > 0), "no native SVG preview URL created");
+  assert.ok(report.samples.some(sample => sample.objectURLs?.revoked > 0), "no native SVG preview URL released");
   for (const fixture of fixtures) for (const file of fixture.files) assert.equal(hash(file.path), file.digest, "authoritative source changed");
   const ready = readFileSync(join(home, "desktop-shell/logs/shell.log"), "utf8").split("\n").reverse().map(parseServiceReady).find(Boolean);
   assert.ok(ready);
@@ -133,7 +158,7 @@ sys.stdin.read()
   report.complete = true;
 } catch (error) {
   report.error = String(error);
-  if (page) writeFileSync(join(home, "failure.json"), JSON.stringify(await page.evaluate(() => ({ text: document.querySelector(".chat-column")?.innerText, stats: window.__reasonixPerf?.stats() })).catch(error => ({ error: String(error) })), null, 2));
+  if (page) writeFileSync(join(home, "failure.json"), JSON.stringify(await page.evaluate(() => ({ text: document.querySelector(".chat-column")?.innerText, stats: window.__reasonixPerf?.stats(), objectURLs: window.__historyObjectURLs?.() })).catch(error => ({ error: String(error) })), null, 2));
   await page?.screenshot({ path: join(home, "failure.png"), fullPage: true }).catch(() => {});
   throw error;
 } finally {
