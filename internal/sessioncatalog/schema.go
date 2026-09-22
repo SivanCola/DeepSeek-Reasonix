@@ -250,6 +250,10 @@ DELETE FROM catalog_topics;
 DELETE FROM catalog_folded_topics;
 `
 
+// v14 also invalidates explicitly selected old catalog files. Default catalogs
+// move to a separate generation so old and new identity writers never mix.
+const migrationV14 = migrationV13
+
 func sessionMigrations() []projectiondb.Migration {
 	return []projectiondb.Migration{
 		{Version: 1, Apply: func(ctx context.Context, tx *sql.Tx) error {
@@ -302,6 +306,10 @@ func sessionMigrations() []projectiondb.Migration {
 		}},
 		{Version: 13, Apply: func(ctx context.Context, tx *sql.Tx) error {
 			_, err := tx.ExecContext(ctx, migrationV13)
+			return err
+		}},
+		{Version: 14, Apply: func(ctx context.Context, tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, migrationV14)
 			return err
 		}},
 	}

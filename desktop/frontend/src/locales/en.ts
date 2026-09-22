@@ -3570,6 +3570,7 @@ export const en = {
   "draft.surfaceLabel": "New session draft",
   "draft.createOnSend": "The session will be created after you send your first message",
   "draft.saveFailed": "Save failed — retrying with the next edit",
+  "draft.startFailed": "Session startup did not complete. Retry to continue.",
   "draft.retrySave": "Retry save",
   "draft.resultUnknown": "Execution status is unknown",
   "draft.starting": "Creating session and starting…",

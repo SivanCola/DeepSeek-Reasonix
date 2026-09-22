@@ -3573,6 +3573,7 @@ export const zh: Record<DictKey, string> = {
   "draft.surfaceLabel": "新会话草稿",
   "draft.createOnSend": "发送第一条消息后创建会话",
   "draft.saveFailed": "保存失败，将在下次编辑时重试",
+  "draft.startFailed": "会话启动未完成，可重试继续",
   "draft.retrySave": "重试保存",
   "draft.resultUnknown": "执行结果状态未知",
   "draft.starting": "正在创建会话并启动…",

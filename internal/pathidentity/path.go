@@ -13,7 +13,7 @@ import (
 	"syscall"
 )
 
-const Version = 2
+const Version = 3
 
 type ErrorKind string
 
@@ -135,7 +135,7 @@ func resolvePhysicalPath(access string, followLeaf bool) (string, error) {
 }
 
 func resolveThroughExistingAncestor(path string) (string, error) {
-	return resolveThroughExistingAncestorWith(path, filepath.EvalSymlinks)
+	return resolveThroughExistingAncestorWith(path, resolveExistingPath)
 }
 
 func resolveThroughExistingAncestorWith(path string, evalSymlinks func(string) (string, error)) (string, error) {
