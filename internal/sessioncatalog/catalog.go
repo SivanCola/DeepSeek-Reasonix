@@ -9,13 +9,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reasonix/internal/agent"
+	"reasonix/internal/projectiondb"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"reasonix/internal/agent"
-	"reasonix/internal/projectiondb"
 )
 
 const defaultMissingGrace = 30 * time.Second
@@ -197,28 +196,6 @@ func Open(ctx context.Context, opts Options) (*Catalog, error) {
 		c.enqueuePersistedRepairs(ctx)
 	}
 	return c, nil
-}
-
-func (c *Catalog) loadStatus(ctx context.Context) error {
-	var revision uint64
-	if err := c.readDB(ctx).QueryRowContext(ctx, `SELECT revision FROM catalog_state WHERE id=1`).Scan(&revision); err != nil {
-		return err
-	}
-	c.revision.Store(revision)
-	c.statusMu.Lock()
-	c.status.Revision = revision
-	c.statusMu.Unlock()
-	c.refreshCounts(ctx)
-	return nil
-}
-
-func (c *Catalog) Status() Status {
-	if c == nil {
-		return Status{State: StateDegraded, Mode: ModeMemory, LastError: "session catalog unavailable"}
-	}
-	c.statusMu.RLock()
-	defer c.statusMu.RUnlock()
-	return c.status
 }
 
 func (c *Catalog) refreshCounts(ctx context.Context) {

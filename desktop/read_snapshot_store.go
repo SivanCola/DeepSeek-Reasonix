@@ -437,30 +437,8 @@ func (s *readSnapshotStore) page(ctx context.Context, binding, cursor string, fi
 		return next, id, snap.lifetime.created.Add(readSnapshotLife).UnixMilli(), snap.metadata, nil
 	}
 	end := min(offset+limit, snap.count)
-	if snap.db == nil {
-		for _, row := range snap.rows[offset:end] {
-			if err := consume(row); err != nil {
-				return "", "", 0, nil, err
-			}
-		}
-	} else {
-		rows, err := snap.db.QueryContext(ctx, `SELECT body FROM rows WHERE n>=? AND n<? ORDER BY n`, offset, end)
-		if err != nil {
-			return "", "", 0, nil, err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var b []byte
-			if err := rows.Scan(&b); err != nil {
-				return "", "", 0, nil, err
-			}
-			if err := consume(b); err != nil {
-				return "", "", 0, nil, err
-			}
-		}
-		if err := rows.Err(); err != nil {
-			return "", "", 0, nil, err
-		}
+	if err := snap.consumeStoredRows(ctx, offset, end, consume); err != nil {
+		return "", "", 0, nil, err
 	}
 	next := ""
 	if end < snap.count {
@@ -556,6 +534,36 @@ func (a *App) ReleaseReadSnapshot(id string) {
 	if snap != nil {
 		s.dispose(snap)
 	}
+}
+
+// The caller holds the snapshot read lease while reading memory or spilled rows.
+func (snap *readSnapshot) consumeStoredRows(ctx context.Context, offset, end int, consume func([]byte) error) error {
+	if snap.db == nil {
+		for _, row := range snap.rows[offset:end] {
+			if err := consume(row); err != nil {
+				return err
+			}
+		}
+	} else {
+		rows, err := snap.db.QueryContext(ctx, `SELECT body FROM rows WHERE n>=? AND n<? ORDER BY n`, offset, end)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var b []byte
+			if err := rows.Scan(&b); err != nil {
+				return err
+			}
+			if err := consume(b); err != nil {
+				return err
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *readSnapshotStore) close() {

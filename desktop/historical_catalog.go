@@ -57,11 +57,7 @@ func (a *App) discoverHistoricalSessions(ctx context.Context, includeLegacy bool
 	defer c.discoveryMu.Unlock()
 	// Failed reads also settle the refresh interval. Otherwise a renderer read
 	// can immediately re-admit the same failed discovery.
-	defer func() {
-		c.mu.Lock()
-		c.catalogAt = time.Now()
-		c.mu.Unlock()
-	}()
+	defer c.finishCatalogRefresh()
 	state, err := a.workspaceRegistry().Load(ctx)
 	if err != nil {
 		return HistoricalImportStatus{Items: []HistoricalSessionView{}}, err
@@ -329,4 +325,10 @@ func (a *App) historicalPinnedShellsFromProjection(req ProjectTopicPageRequest, 
 	pins := filterWorkspaceSessionNodes(req, org, state, workspaceID, nodes)
 	sort.SliceStable(pins, func(i, j int) bool { return projectTopicLess(pins[i], pins[j], req.SortMode, org.ManualOrderEnabled) })
 	return pins, nil
+}
+
+func (c *historicalImportCoordinator) finishCatalogRefresh() {
+	c.mu.Lock()
+	c.catalogAt = time.Now()
+	c.mu.Unlock()
 }

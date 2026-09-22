@@ -2381,19 +2381,11 @@ func (a *App) openTopicTabWithHead(scope, workspaceRoot, topicID, sessionPath, h
 			if activate {
 				a.activeTabID = tab.ID
 			}
-			sameSession := targetKey == "" || sessionRuntimeKeysOverlap(tab, sessionPath)
 			meta := a.tabMeta(tab, tab.ID == a.activeTabID)
 			a.saveTabsLocked()
 			a.mu.Unlock()
-			if sameSession || a.skipContinuationRebind(tab, sessionPath) {
-				return enrichTabMeta(meta), nil
-			}
-			if err := a.rebindTabToSessionPath(tab, sessionPath); err != nil {
-				return TabMeta{}, err
-			}
-			a.mu.RLock()
-			meta = a.tabMeta(tab, tab.ID == a.activeTabID)
-			a.mu.RUnlock()
+			// This branch only admits an empty target key, so the matched topic
+			// already identifies the session. No continuation rebind is needed.
 			return enrichTabMeta(meta), nil
 		}
 	}

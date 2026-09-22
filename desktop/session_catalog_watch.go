@@ -88,23 +88,7 @@ func (a *App) watchSessionCatalog(ctx context.Context, catalog *sessioncatalog.C
 				clear(watched)
 				continue
 			}
-			key := filepath.Dir(event.Name)
-			// A transcript/sidecar write invalidates one session, not its root.
-			if target, exists := targets[key]; exists {
-				if path := catalogSessionPathForEvent(event.Name); path != "" && event.Op&(fsnotify.Remove|fsnotify.Rename) == 0 {
-					catalog.RequestIndexSession(target, path)
-					continue
-				}
-			}
-			if _, exists := targets[filepath.Clean(event.Name)]; exists {
-				key = filepath.Clean(event.Name)
-				if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
-					delete(watched, key)
-				}
-			}
-			if _, exists := targets[key]; exists {
-				dirty[key] = true
-			}
+			admitCatalogWatchEvent(catalog, event, targets, watched, dirty)
 			armBatch()
 		case _, ok := <-failures:
 			if !ok {
@@ -143,6 +127,26 @@ func (a *App) watchSessionCatalog(ctx context.Context, catalog *sessioncatalog.C
 				catalog.RequestReconcile(target)
 			}
 		}
+	}
+}
+
+func admitCatalogWatchEvent(catalog *sessioncatalog.Catalog, event fsnotify.Event, targets map[string]sessioncatalog.DirectoryTarget, watched, dirty map[string]bool) {
+	key := filepath.Dir(event.Name)
+	// A transcript/sidecar write invalidates one session, not its root.
+	if target, exists := targets[key]; exists {
+		if path := catalogSessionPathForEvent(event.Name); path != "" && event.Op&(fsnotify.Remove|fsnotify.Rename) == 0 {
+			catalog.RequestIndexSession(target, path)
+			return
+		}
+	}
+	if _, exists := targets[filepath.Clean(event.Name)]; exists {
+		key = filepath.Clean(event.Name)
+		if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
+			delete(watched, key)
+		}
+	}
+	if _, exists := targets[key]; exists {
+		dirty[key] = true
 	}
 }
 

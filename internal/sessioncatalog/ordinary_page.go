@@ -174,10 +174,9 @@ func (c *Catalog) ListOrdinarySessions(ctx context.Context, req OrdinaryPageRequ
 	if cursor == nil {
 		args = append(args, limit)
 	} else {
-		// Mixed-direction tuples expressed with negation cannot seek our
-		// descending index. Split the disjoint suffix into three bounded
-		// index ranges, then merge at most 3*limit rows. Deep pages must not
-		// walk every preceding page to locate their first row.
+		// Negated mixed-direction tuples cannot seek the descending index.
+		// Three disjoint index ranges merge at most 3*limit rows, so deep
+		// pages never walk every preceding row to locate their first result.
 		cur := *cursor
 		ranges := []struct {
 			predicate string

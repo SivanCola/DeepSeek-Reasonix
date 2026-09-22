@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -99,16 +98,7 @@ func (a *App) lazyProjectTopicSnapshot(req ProjectTopicPageRequest, reader works
 	}
 	// Freeze the localized default along with the search predicate. SQLite's
 	// lower() does not implement the existing Go Unicode matching semantics.
-	defaultTitle := a.localizedDefaultTopicTitle()
-	recordTitle := func(record sessioncatalog.OrdinaryRecord) string {
-		if title := strings.TrimSpace(record.CustomTitle); title != "" {
-			return title
-		}
-		if strings.TrimSpace(record.TitleSource) == topicTitleSourceAuto && isDefaultTopicTitle(record.Title) {
-			return defaultTitle
-		}
-		return record.Title
-	}
+	recordTitle := ordinaryRecordTitle(a.localizedDefaultTopicTitle())
 	var match func(sessioncatalog.OrdinaryRecord) bool
 	if text := strings.ToLower(strings.TrimSpace(req.Query)); text != "" {
 		match = func(record sessioncatalog.OrdinaryRecord) bool {
@@ -116,7 +106,6 @@ func (a *App) lazyProjectTopicSnapshot(req ProjectTopicPageRequest, reader works
 			return strings.Contains(strings.ToLower(recordTitle(record)+"\n"+record.Preview+"\n"+key), text)
 		}
 	}
-	positions := map[int]topicPagePosition{0: {}}
 	// Snapshot memory accounts for retained metadata and cursor checkpoints,
 	// including roots retained while a caller has not yet requested page two.
 	store := &a.desktopSessions.readSnapshots
@@ -128,65 +117,9 @@ func (a *App) lazyProjectTopicSnapshot(req ProjectTopicPageRequest, reader works
 	if err := store.reserve(snap, int64(len(encoded)+len(excludedJSON)+len(groupJSON)+2*len(req.Query)+1024)); err != nil {
 		return ProjectTopicPage{}, nil, true, err
 	}
-	snap.readPage = func(readCtx context.Context, offset, limit int) ([][]byte, bool, error) {
-		position, ok := positions[offset]
-		if !ok {
-			return nil, false, snapshotStale("invalid_cursor")
-		}
-		request := query
-		request.Cursor, request.Limit = position.cursor, min(limit+1, sessioncatalog.MaxLimit)
-		records, err := catalog.ListMatchingOrdinarySessions(lease.Context(readCtx), request, match)
-		if err != nil {
-			return nil, false, err
-		}
-		_, runtime := a.catalogRuntimeOverlays()
-		legacy := make([]ProjectNode, 0, len(records))
-		for _, record := range records {
-			overlay := runtime[sessionRuntimeKey(record.Path)]
-			kind := "topic"
-			if req.Scope == "global" {
-				kind = "global_topic"
-			}
-			title := recordTitle(record)
-			legacy = append(legacy, ProjectNode{Key: projectSessionNodeKey(req.Scope, record.Path), Kind: kind, Label: title, Root: req.WorkspaceRoot, TopicID: record.TopicID, SessionPath: record.Path,
-				Historical: true, Source: &SessionSourceRef{HostID: localDesktopHostID, Path: record.Path, SourceKey: record.SourceKey()},
-				Preview: record.Preview, Turns: record.Turns, TurnsState: string(record.TurnsState), Health: string(record.Health), CreatedAt: record.CreatedAt, LastActivityAt: record.LastActivityAt, Pinned: record.Pinned, SortOrder: -1,
-				Recovered: record.Recovered, RecoveryReason: record.RecoveryReason, RecoveryDigest: record.RecoveryDigest, RecoveryParentID: record.ParentID, Open: overlay.open, Running: overlay.running, Status: overlay.status, Children: []ProjectNode{}})
-		}
-		rows := [][]byte{}
-		index := 0
-		for len(rows) < limit && (index < len(legacy) || position.extra < len(extras)) {
-			var node ProjectNode
-			if index < len(legacy) && (position.extra >= len(extras) || less(legacy[index], extras[position.extra])) {
-				node = legacy[index]
-				position.cursor = records[index].Cursor
-				index++
-			} else {
-				node = extras[position.extra]
-				position.extra++
-			}
-			b, err := json.Marshal(node)
-			if err != nil {
-				return nil, false, err
-			}
-			rows = append(rows, b)
-			if node.Session == nil && node.SessionPath != "" {
-				if err := fence.add(lease.Context(readCtx), node.SessionPath); err != nil {
-					return nil, false, err
-				}
-			}
-		}
-		more := index < len(legacy) || position.extra < len(extras) || len(records) == request.Limit
-		if more {
-			if _, exists := positions[offset+len(rows)]; !exists {
-				if err := store.reserve(snap, int64(len(position.cursor)+64)); err != nil {
-					return nil, false, err
-				}
-				positions[offset+len(rows)] = position
-			}
-		}
-		return rows, more, nil
-	}
+	snap.readPage = (&lazyTopicPageReader{app: a, catalog: catalog, lease: lease, req: req,
+		query: query, extras: extras, positions: map[int]topicPagePosition{0: {}},
+		match: match, recordTitle: recordTitle, less: less, fence: fence}).page
 	availability := a.catalogWorkspaceAvailability(catalog, req.Scope, req.WorkspaceRoot, ctx)
 	page := availability.decorate(ProjectTopicPage{Items: []ProjectNode{}}, catalog.Status().Revision+state.Generation)
 	validateWorkspace := a.workspaceReadFence(versions, workspace, extras)
@@ -251,4 +184,16 @@ func topicPageIdentity(node ProjectNode) string {
 		return "source\x00" + node.Source.Path + "\x00" + node.Source.HeadID
 	}
 	return "node\x00" + node.Key
+}
+
+func ordinaryRecordTitle(defaultTitle string) func(sessioncatalog.OrdinaryRecord) string {
+	return func(record sessioncatalog.OrdinaryRecord) string {
+		if title := strings.TrimSpace(record.CustomTitle); title != "" {
+			return title
+		}
+		if strings.TrimSpace(record.TitleSource) == topicTitleSourceAuto && isDefaultTopicTitle(record.Title) {
+			return defaultTitle
+		}
+		return record.Title
+	}
 }

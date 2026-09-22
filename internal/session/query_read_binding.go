@@ -68,10 +68,9 @@ func (q *Query) historyReadContext(_ string, callers ...context.Context) context
 	if len(callers) > 0 && callers[0].Err() != nil {
 		return callers[0]
 	}
-	// Legacy RPCs return "preparing" before the worker finishes. Their request
-	// context ends with that response and cannot own the asynchronous worker.
-	// They also must not borrow a different client's active read binding.
-	// Explicit read bindings above provide cancellable ownership for new RPCs.
+	// Legacy "preparing" responses end the request before its worker finishes.
+	// They cannot borrow another client's binding; new RPCs use the explicit
+	// cancellable read bindings above instead of this service lifetime.
 	return q.rebuildCtx
 }
 

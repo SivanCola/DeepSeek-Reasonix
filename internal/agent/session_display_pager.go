@@ -88,81 +88,17 @@ func openDisplayPager(ctx context.Context, source, cachePath, head string, force
 	}()
 	var stored string
 	storedErr := handle.DB.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='source'`).Scan(&stored)
-	var eventInfo os.FileInfo
-	var eventVersion fileops.Version
-	dag := false
-	schemaOne := false
-	hasDAG := false
-	if eventInfo, err = os.Stat(store.SessionEventLog(source)); err == nil && eventInfo.Size() > 0 {
-		eventTarget, version := fileops.DiskSnapshot(store.SessionEventLog(source), eventInfo)
-		eventVersion = version
-		fingerprint += fmt.Sprintf(":event:%s:%s", eventTarget.Key, eventVersion)
-		// Reuse the proven kind for unchanged schema-1 sources. A legacy JSON
-		// writer may place its identifying fields after a huge messages array;
-		// rediscovering that header on every cached open would reread the array.
-		if plain && head == "" && storedErr == nil && stored == fingerprint+":schema1" {
-			schemaOne = true
-		} else {
-			f, openErr := os.Open(store.SessionEventLog(source))
-			if openErr != nil {
-				return nil, openErr
-			}
-			schema, kind, known, probeErr := probeDisplayEventHeader(ctx, f)
-			_ = f.Close()
-			if probeErr != nil {
-				return nil, probeErr
-			}
-			if known && (schema > sessionDAGSchemaVersion || schema == sessionEventSchemaVersion && kind != sessionEventTypeReplace && kind != sessionEventTypeAppend) {
-				return nil, fmt.Errorf("%w: event schema %d type %q", ErrDisplayFormatUnsupported, schema, kind)
-			}
-			hasDAG = known && schema == sessionDAGSchemaVersion
-			dag = hasDAG && (plain || head != "" || forceSource)
-			schemaOne = known && schema == sessionEventSchemaVersion && (kind == sessionEventTypeReplace || kind == sessionEventTypeAppend) && plain
-		}
-		if dag {
-			fingerprint += fmt.Sprintf(":dag:%d:%d:%s", eventInfo.Size(), eventInfo.ModTime().UnixNano(), head)
-		} else if schemaOne {
-			fingerprint += ":schema1"
-		}
-	} else if err != nil && !os.IsNotExist(err) {
+	observed, err := observeDisplayPagerEvents(ctx, source, head, forceSource, plain, indexInfo, fingerprint, stored, storedErr)
+	if err != nil {
 		return nil, err
-	} else {
-		// Missing and empty logs carry no authority over a checkpoint. Record
-		// that absence explicitly so Validate can detect a newly written log.
-		eventInfo = nil
 	}
-	if head != "" && !dag {
-		return nil, errors.New("requested branch has no DAG source")
-	}
-	if dag || schemaOne {
-		plain = false
-	}
-	if plain {
-		// A checkpoint is only authoritative in the absence of an event log.
-		// Event/DAG readers must establish the selected view before indexing.
-		if logInfo, logErr := os.Stat(store.SessionEventLog(source)); logErr == nil && logInfo.Size() > 0 {
-			return nil, ErrDisplayFormatUnsupported
-		} else if logErr != nil && !os.IsNotExist(logErr) {
-			return nil, logErr
-		}
-		fingerprint += ":checkpoint"
-	} else if !dag && !schemaOne {
-		fingerprint += fmt.Sprintf(":%d:%d", indexInfo.Size(), indexInfo.ModTime().UnixNano())
-	}
+	fingerprint, plain = observed.fingerprint, observed.plain
+	eventInfo, eventVersion, dag, schemaOne := observed.eventInfo, observed.eventVersion, observed.dag, observed.schemaOne
 	built := storedErr != nil || stored != fingerprint
 	if built {
 		_ = handle.DB.Close()
 		err = projectiondb.Rebuild(ctx, opts, func(ctx context.Context, db *sql.DB) error {
-			if dag {
-				return buildDAGDisplayPager(ctx, db, source, fingerprint, head, info.Size())
-			}
-			if schemaOne {
-				return buildEventDisplayPager(ctx, db, source, fingerprint, info.Size())
-			}
-			if plain {
-				return buildCheckpointDisplayPager(ctx, db, source, fingerprint)
-			}
-			return importDisplayPager(ctx, db, indexPath, fingerprint)
+			return observed.build(ctx, db, source, indexPath, head, info.Size())
 		})
 		if err != nil {
 			if !dag && !schemaOne && !plain && ctx.Err() == nil {
@@ -176,34 +112,35 @@ func openDisplayPager(ctx context.Context, source, cachePath, head string, force
 		}
 	}
 	p := &DisplayPager{DB: handle.DB, ctx: ctx, source: source, sourceInfo: info, eventInfo: eventInfo, sourceVersion: sourceVersion, eventVersion: eventVersion, DAG: dag, SchemaOne: schemaOne, Built: built && (plain || dag || schemaOne)}
-	var header string
-	if err := p.DB.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='header'`).Scan(&header); err != nil {
+	matching, err := p.loadMatchingHeader(ctx, info, identity, known, head)
+	if err != nil {
 		p.Close()
 		return nil, err
 	}
-	if err := json.Unmarshal([]byte(header), &p.Header); err != nil {
-		p.Close()
-		return nil, err
-	}
-	if p.Header.TranscriptSize != info.Size() || known && head == "" && (p.Header.ContentDigest != identity.DigestHex || p.Header.RevisionKnown != identity.RevisionKnown || p.Header.RevisionKnown && p.Header.Revision != identity.Revision) {
+	if !matching {
 		p.Close()
 		if !dag && !schemaOne && !plain {
 			return openDisplayPager(ctx, source, cachePath, head, true)
 		}
 		return nil, ErrDisplaySourceChanged
 	}
-	if err := p.Validate(); err != nil {
-		p.Close()
-		return nil, err
-	}
-	// Optional accelerator over disposable metadata. Existing cache readers
-	// can ignore it; no authoritative format or schema version changes.
-	if _, err := p.DB.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS entries_authored_turn ON entries(turn,position) WHERE json_extract(CAST(entry AS TEXT),'$.starts_turn')=1`); err != nil {
+
+	if err := p.prepareQueries(ctx); err != nil {
 		p.Close()
 		return nil, err
 	}
 	handle = nil // The returned pager owns the open database from here.
 	return p, nil
+}
+
+func (p *DisplayPager) prepareQueries(ctx context.Context) error {
+	if err := p.Validate(); err != nil {
+		return err
+	}
+	// Optional accelerator over disposable metadata. Existing cache readers
+	// can ignore it; no authoritative format or schema version changes.
+	_, err := p.DB.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS entries_authored_turn ON entries(turn,position) WHERE json_extract(CAST(entry AS TEXT),'$.starts_turn')=1`)
+	return err
 }
 
 func (p *DisplayPager) Close() error { return p.DB.Close() }
@@ -361,43 +298,11 @@ func importDisplayPager(ctx context.Context, db *sql.DB, indexPath, fingerprint 
 		if err != nil || token != json.Delim('[') {
 			return errors.New("invalid display entries")
 		}
-		for decoder.More() {
-			tx, err := db.BeginTx(ctx, nil)
-			if err != nil {
-				return err
-			}
-			for batch := 0; batch < historywork.BatchEntries && decoder.More(); batch++ {
-				var e DisplayIndexEntry
-				if err = decoder.Decode(&e); err != nil {
-					break
-				}
-				if e.Index != count || e.Offset != offset || e.Length <= 0 {
-					err = errors.New("invalid display offset chain")
-					break
-				}
-				body, marshalErr := json.Marshal(e)
-				if marshalErr != nil {
-					err = marshalErr
-					break
-				}
-				_, err = tx.ExecContext(ctx, `INSERT INTO entries VALUES(?,?,?,?,?,?,?)`, count, e.Offset, e.Length, e.AuthoredTurn, e.Role, users, body)
-				if err != nil {
-					break
-				}
-				if e.Role == provider.RoleUser && !e.PinnedContextRevision {
-					users++
-				}
-				count++
-				offset += e.Length
-			}
-			if err != nil {
-				_ = tx.Rollback()
-				return err
-			}
-			if err := tx.Commit(); err != nil {
-				return err
-			}
+		progress := displayIndexImportProgress{count: count, users: users, offset: offset}
+		if err := progress.readEntries(ctx, db, decoder); err != nil {
+			return err
 		}
+		count, users, offset = progress.count, progress.users, progress.offset
 		if _, err := decoder.Token(); err != nil {
 			return err
 		}
@@ -422,4 +327,50 @@ func importDisplayPager(ctx context.Context, db *sql.DB, indexPath, fingerprint 
 	}
 	_, err = db.ExecContext(ctx, `INSERT INTO metadata VALUES('source',?),('header',?)`, fingerprint, string(body))
 	return err
+}
+
+type displayIndexImportProgress struct {
+	count, users int
+	offset       int64
+}
+
+func (progress *displayIndexImportProgress) readEntries(ctx context.Context, db *sql.DB, decoder *json.Decoder) error {
+	for decoder.More() {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		for batch := 0; batch < historywork.BatchEntries && decoder.More(); batch++ {
+			var e DisplayIndexEntry
+			if err = decoder.Decode(&e); err != nil {
+				break
+			}
+			if e.Index != progress.count || e.Offset != progress.offset || e.Length <= 0 {
+				err = errors.New("invalid display offset chain")
+				break
+			}
+			body, marshalErr := json.Marshal(e)
+			if marshalErr != nil {
+				err = marshalErr
+				break
+			}
+			_, err = tx.ExecContext(ctx, `INSERT INTO entries VALUES(?,?,?,?,?,?,?)`, progress.count, e.Offset, e.Length, e.AuthoredTurn, e.Role, progress.users, body)
+			if err != nil {
+				break
+			}
+			if e.Role == provider.RoleUser && !e.PinnedContextRevision {
+				progress.users++
+			}
+			progress.count++
+			progress.offset += e.Length
+		}
+		if err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
+	return nil
 }

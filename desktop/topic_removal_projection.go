@@ -25,10 +25,9 @@ func (a *App) withRemovablePlaceholderTopics(req ProjectTopicPageRequest, state 
 		if err != nil || item.Topic.Scope != req.Scope || (req.Scope == "project" && !sameDesktopPath(item.Topic.WorkspaceRoot, req.WorkspaceRoot)) {
 			continue
 		}
-		// A partial directory projection cannot prove that this topic is empty.
-		// Listing must not enumerate source directories or read transcripts to
-		// decide removability. InspectTopicRemoval performs that proof only when
-		// the user explicitly requests the management action.
+		// Partial discovery cannot prove emptiness. Listing must not scan sources
+		// or transcripts for removability; InspectTopicRemoval owns that proof
+		// when the user explicitly requests the management action.
 		node.TurnsState = "unknown"
 		node.Health = "metadata_pending"
 		nodes = append(nodes, node)
