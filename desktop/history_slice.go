@@ -1510,6 +1510,20 @@ func (a *App) coldHistoryFieldValue(sessionDir, sessionPath string, msgIndex, su
 	if err != nil {
 		return "", false, true
 	}
+	var value string
+	var found, stale, handled bool
+	err = a.withNativeHistoryPager(a.bootContext(), absPath, "", func(ctx context.Context, pager *agent.DisplayPager, sourceID string) error {
+		handled = true
+		src := historySourceFromPager(ctx, pager, absPath, sourceID)
+		value, found, stale = a.historyFieldValueForSource(src, msgIndex, sub, ref,
+			sessionDisplayResolver(sessionDir, absPath), sessionPlannerDisplayTurns(sessionDir, absPath), nil)
+		return src.readErr
+	})
+	if handled || nativeHistoryPreparationFailure(err) {
+		return value, found, stale || err != nil
+	}
+	// Formats not handled by the native pager retain their compatibility
+	// reader. A failed read on an admitted native source never falls back.
 	info, err := os.Stat(absPath)
 	if err != nil {
 		return "", false, true

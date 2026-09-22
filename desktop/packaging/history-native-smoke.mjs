@@ -111,11 +111,18 @@ sys.stdin.read()
     assert.equal((await invoke("ReadSessionHistorySlice", [reopen.id, { entries: 2 }])).status, "ready");
     assert.equal((await invoke("HistoryContentForTab", [ticket.tabId, ref, 0])).stale, true);
     await invoke("ReleaseSessionHistoryRead", [reopen.id]);
+    const compatibility = await invoke("HistorySliceForTab", [ticket.tabId, { entries: 2 }]);
+    const compatibilityRef = compatibility.entries.flatMap(entry => entry.refs ?? []).find(ref => ref.field === "content");
+    assert.ok(compatibilityRef);
+    assert.equal(compatibilityRef.readHandleId ?? "", "");
+    const compatibilityChunk = await invoke("HistoryContentForTab", [ticket.tabId, compatibilityRef, 0]);
+    assert.equal(compatibilityChunk.stale, false);
+    assert.ok(compatibilityChunk.data && answer.startsWith(compatibilityChunk.data));
     await waitForSmokeCondition(async () => (await invoke("ListTabs")).find(tab => tab.id === ticket.tabId)?.runtime?.phase === "lease_blocked");
     assert.equal(readFileSync(fixture.path, "utf8"), fixture.body);
     if (fixture.kind === "events") assert.equal(readFileSync(fixture.eventPath, "utf8"), fixture.events);
     assert.equal(existsSync(fixture.path.replace(/\.jsonl$/, ".display-index.json")), false);
-    console.log(`PASS ${fixture.kind}: bounded pages, outline, direct anchor, complete Unicode content, released refs fenced, writer conflict; source unchanged`);
+    console.log(`PASS ${fixture.kind}: bounded pages, outline, direct anchor, complete Unicode content, released refs fenced, unbound content, writer conflict; source unchanged`);
   }
   await waitForSmokeCondition(async () => {
     const topics = await invoke("ListProjectTopics", [{ scope: "global", limit: 50 }]);

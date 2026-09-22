@@ -15,42 +15,66 @@ func (a *App) pagedColdHistorySlice(ctx context.Context, sessionDir, path string
 	if len(heads) > 0 {
 		head = heads[0]
 	}
+	page, handled := emptyHistorySlice(), false
+	err := a.withNativeHistoryPager(ctx, path, head, func(ctx context.Context, pager *agent.DisplayPager, sourceID string) error {
+		handled = true
+		var err error
+		page, _, err = a.historySliceFromPager(ctx, pager, sessionDir, path, req, sourceID)
+		return err
+	})
+	if handled || nativeHistoryPreparationFailure(err) {
+		if err != nil {
+			return emptyHistorySlice(), true, err
+		}
+		return page, true, nil
+	}
+	return HistorySlice{}, false, nil
+}
+
+func nativeHistoryPreparationFailure(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, agent.ErrDisplaySourceChanged) || errors.Is(err, agent.ErrSessionDisplayReadModelDamaged)
+}
+
+// Compatibility paging and field reads borrow the same preparation and cache
+// owner as bound readers. Retirement cancels both the read and its decoding;
+// only the last borrower retires the projection, after the callback returns.
+func (a *App) withNativeHistoryPager(ctx context.Context, path, head string, read func(context.Context, *agent.DisplayPager, string) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	generation, err := nativeHistorySourceGeneration(path)
 	if err != nil {
-		return emptyHistorySlice(), true, err
+		return errors.Join(agent.ErrDisplaySourceChanged, err)
 	}
 	sourceKey := sessionRuntimeKey(path)
 	a.historyReaders.mu.Lock()
 	if a.historyReaders.closed || a.shuttingDown.Load() {
 		a.historyReaders.mu.Unlock()
-		return emptyHistorySlice(), true, context.Canceled
+		return context.Canceled
 	}
 	job, release := a.acquireNativeHistoryLocked(path, head, sourceKey, generation)
 	a.historyReaders.mu.Unlock()
 	defer release()
-	// Compatibility RPCs borrow the same preparation and cache owner as bound
-	// readers. Neither path can rebuild underneath the other's live database.
 	ctx, cancel := context.WithCancel(ctx)
 	stop := context.AfterFunc(job.ctx, cancel)
 	defer func() { stop(); cancel() }()
 	pager, err := job.wait(ctx)
 	if err != nil {
-		if errors.Is(err, agent.ErrDisplaySourceChanged) {
-			return emptyHistorySlice(), true, err
-		}
-		if errors.Is(err, agent.ErrSessionDisplayReadModelDamaged) {
-			return emptyHistorySlice(), true, err
-		}
-		if ctx.Err() != nil || job.ctx.Err() != nil {
-			return emptyHistorySlice(), true, context.Canceled
-		}
-		return HistorySlice{}, false, nil
+		return err
 	}
-	page, ready, err := a.historySliceFromPager(ctx, pager, sessionDir, path, req, job.key)
+	pager = pager.WithContext(ctx)
+	if err := pager.Validate(); err != nil {
+		return err
+	}
+	err = read(ctx, pager, job.key)
 	if ctx.Err() != nil || job.ctx.Err() != nil {
-		return emptyHistorySlice(), true, context.Canceled
+		return context.Canceled
 	}
-	return page, ready, err
+	if err != nil {
+		return err
+	}
+	return pager.Validate()
 }
 
 func (a *App) historySliceFromPager(ctx context.Context, pager *agent.DisplayPager, sessionDir, path string, req HistorySliceRequest, sourceID string) (HistorySlice, bool, error) {
