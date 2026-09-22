@@ -159,42 +159,7 @@ func (c *Catalog) metadataReconcileLoop() {
 			continue
 		}
 		if done || err != nil {
-			phase, failure := "completed", ""
-			if err != nil {
-				phase, failure = "failed", "io_or_database"
-				if errors.Is(err, context.Canceled) {
-					failure = "canceled"
-				} else if os.IsPermission(err) {
-					failure = "permission"
-				} else if os.IsNotExist(err) {
-					failure = "missing"
-				}
-			}
-			c.observeDiscovery(next.target, phase, "", failure)
-			c.observeDatabaseError(err)
-			if next.scan != nil {
-				next.scan.close(c.workerCtx, err)
-				next.scan = nil
-			}
-			if done && err == nil {
-				c.settleReconcileTarget(next.target)
-			}
-			c.reconcileDirtyMu.Lock()
-			if follow, dirty := c.reconcileDirty[selected]; dirty {
-				delete(c.reconcileDirty, selected)
-				next.target, next.failures, next.ready = follow, 0, time.Time{}
-			} else if err != nil && !errors.Is(err, context.Canceled) && !os.IsNotExist(err) && !os.IsPermission(err) && next.failures < 3 {
-				next.ready = c.opts.Now().Add([]time.Duration{time.Second, 5 * time.Second, 30 * time.Second}[next.failures])
-				next.failures++
-			} else {
-				c.reconcileQueued.Delete(selected)
-				delete(jobs, selected)
-				if done := c.reconcileDone[selected]; done != nil {
-					delete(c.reconcileDone, selected)
-					close(done)
-				}
-			}
-			c.reconcileDirtyMu.Unlock()
+			c.finishMetadataQueueJob(jobs, selected, next, done, err)
 		}
 		// Apply a global pause, including when the next slice belongs to a
 		// different root. Per-root timers alone multiply the allowed I/O rate.
@@ -215,4 +180,43 @@ func (c *Catalog) isPriorityDirectory(target DirectoryTarget) bool {
 	scope, root := normalizeScope(target.Scope, target.WorkspaceRoot)
 	key, _ := c.priorityWorkspace.Load().(string)
 	return key == scope+"\x00"+c.workspaceRootKey(scope, root)
+}
+
+func (c *Catalog) finishMetadataQueueJob(jobs map[string]*metadataQueueJob, selected string, next *metadataQueueJob, done bool, err error) {
+	phase, failure := "completed", ""
+	if err != nil {
+		phase, failure = "failed", "io_or_database"
+		if errors.Is(err, context.Canceled) {
+			failure = "canceled"
+		} else if os.IsPermission(err) {
+			failure = "permission"
+		} else if os.IsNotExist(err) {
+			failure = "missing"
+		}
+	}
+	c.observeDiscovery(next.target, phase, "", failure)
+	c.observeDatabaseError(err)
+	if next.scan != nil {
+		next.scan.close(c.workerCtx, err)
+		next.scan = nil
+	}
+	if done && err == nil {
+		c.settleReconcileTarget(next.target)
+	}
+	c.reconcileDirtyMu.Lock()
+	if follow, dirty := c.reconcileDirty[selected]; dirty {
+		delete(c.reconcileDirty, selected)
+		next.target, next.failures, next.ready = follow, 0, time.Time{}
+	} else if err != nil && !errors.Is(err, context.Canceled) && !os.IsNotExist(err) && !os.IsPermission(err) && next.failures < 3 {
+		next.ready = c.opts.Now().Add([]time.Duration{time.Second, 5 * time.Second, 30 * time.Second}[next.failures])
+		next.failures++
+	} else {
+		c.reconcileQueued.Delete(selected)
+		delete(jobs, selected)
+		if done := c.reconcileDone[selected]; done != nil {
+			delete(c.reconcileDone, selected)
+			close(done)
+		}
+	}
+	c.reconcileDirtyMu.Unlock()
 }

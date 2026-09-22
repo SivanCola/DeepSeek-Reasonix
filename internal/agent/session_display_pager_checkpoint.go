@@ -128,28 +128,7 @@ func buildCheckpointDisplayPagerObserved(ctx context.Context, db *sql.DB, source
 			committed(idx.MessageCount)
 		}
 	}
-	var digest [sha256.Size]byte
-	copy(digest[:], hash.Sum(nil))
-	idx.ContentDigest = digestString(digest)
-	identity, known, err := SessionContentIdentity(source)
-	if err != nil {
-		return err
-	}
-	if known {
-		if identity.DigestHex != idx.ContentDigest {
-			return errors.New("checkpoint does not match authoritative identity")
-		}
-		idx.Revision, idx.RevisionKnown = identity.Revision, identity.RevisionKnown
-	}
-	if err := validateCheckpointPagerFile(source, f, fingerprint); err != nil {
-		return err
-	}
-	body, err := json.Marshal(idx)
-	if err != nil {
-		return err
-	}
-	_, err = db.ExecContext(ctx, `INSERT OR REPLACE INTO metadata VALUES('source',?),('header',?)`, fingerprint, string(body))
-	return err
+	return publishCheckpointDisplayPager(ctx, db, source, f, fingerprint, idx, hash)
 }
 
 // Fence both the handle that supplied the bytes and its current pathname

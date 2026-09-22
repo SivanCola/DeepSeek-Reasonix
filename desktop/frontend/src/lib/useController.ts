@@ -1,3 +1,5 @@
+import { runtimeReadyForSubmit, needsColdHistory, metaWithoutCanonicalTodos } from "./controllerHistoryMeta";
+export { runtimeReadyForSubmit } from "./controllerHistoryMeta";
 import { usageTotalTokens, mergeChatTurnUsage } from "./controllerTurnUsage";
 import { reduceCompactionEvent, reduceMaintenanceRuntimeSnapshot, reconcileMaintenanceState } from "./sessionMaintenanceReducer";
 import { isCompactSubmission } from "./sessionMaintenanceOperation";
@@ -756,18 +758,6 @@ export function sameMeta(a?: Meta, b?: Meta): boolean {
   );
 }
 
-export function runtimeReadyForSubmit(meta?: Meta): boolean {
-  if (!meta || meta.ready !== true || meta.startupErr) return false;
-  return !meta.runtime || meta.runtime.phase === "ready";
-}
-
-// A local durable identity remains readable when execution cannot acquire a
-// lease or finish recovery. Remote tabs keep their negotiated reader route.
-function needsColdHistory(meta?: Meta | TabMeta): boolean {
-  return Boolean(meta && !meta.remote && (!meta.ready || meta.startupErr)
-    && (meta.sessionPath || meta.session?.sessionId));
-}
-
 export { normalizeTurnSubmit } from "./inboxSubmit";
 
 const frontendSubmissionEpoch = typeof globalThis.crypto?.randomUUID === "function"
@@ -788,11 +778,6 @@ export function composerProfileApplicationKey(
   goal: string,
 ): string {
   return JSON.stringify([runtimeEpoch ?? "", collaborationMode, toolApprovalMode, goal]);
-}
-
-function metaWithoutCanonicalTodos(meta?: Meta): Meta | undefined {
-  if (!meta || meta.canonicalTodos === undefined) return meta;
-  return { ...meta, canonicalTodos: undefined };
 }
 
 const CANCEL_RECONCILE_DELAYS_MS = [0, 100, 300, 1_000] as const;

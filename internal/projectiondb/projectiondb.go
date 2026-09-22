@@ -77,9 +77,8 @@ type OpenOptions struct {
 	// Authoritative stores keep the full integrity_check default.
 	QuickCheck bool
 	// ResumeKey opts Rebuild into a single persistent staging database. The
-	// populate callback must commit its data and resume position atomically.
-	// Only cancellation retains staging; another key starts a fresh generation.
-	// This is reconstructable progress, never authority over business data.
+	// callback atomically commits data and position. Cancellation retains staging;
+	// a changed key starts fresh. Progress is disposable, never business authority.
 	ResumeKey string
 }
 
@@ -468,61 +467,12 @@ func Rebuild(ctx context.Context, opts OpenOptions, populate func(context.Contex
 		return fmt.Errorf("projection replacement could not use disk storage: %s", detail)
 	}
 	if opts.ResumeKey != "" {
-		matching, resumeErr := matchRebuildResumeKey(ctx, handle.DB, opts.ResumeKey)
-		if resumeErr != nil {
-			_ = handle.DB.Close()
-			if ctx.Err() == nil {
-				cleanupTemporary()
-			}
-			return resumeErr
-		}
-		if !matching {
-			_ = handle.DB.Close()
-			cleanupTemporary()
-			handle, err = Open(ctx, replacement)
-			if err != nil {
-				return err
-			}
-			if _, err := matchRebuildResumeKey(ctx, handle.DB, opts.ResumeKey); err != nil {
-				_ = handle.DB.Close()
-				cleanupTemporary()
-				return err
-			}
-		}
-	}
-	if populate != nil {
-		if err := populate(ctx, handle.DB); err != nil {
-			_ = handle.DB.Close()
-			if opts.ResumeKey == "" || ctx.Err() == nil {
-				cleanupTemporary()
-			}
-			return fmt.Errorf("populate projection replacement: %w", err)
-		}
-	}
-	check := `PRAGMA integrity_check`
-	if opts.QuickCheck {
-		check = `PRAGMA quick_check(1)`
-	}
-	var integrity string
-	if err := handle.DB.QueryRowContext(ctx, check).Scan(&integrity); err != nil || integrity != "ok" {
-		_ = handle.DB.Close()
-		if opts.ResumeKey == "" || ctx.Err() == nil {
-			cleanupTemporary()
-		}
+		handle, err = resumeRebuildReplacement(ctx, handle, replacement, cleanupTemporary)
 		if err != nil {
-			return fmt.Errorf("validate projection replacement: %w", err)
+			return err
 		}
-		return fmt.Errorf("validate projection replacement: %s", integrity)
 	}
-	_, _ = handle.DB.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`)
-	if err := handle.DB.Close(); err != nil {
-		cleanupTemporary()
-		return err
-	}
-	if err := ctx.Err(); err != nil {
-		if opts.ResumeKey == "" {
-			cleanupTemporary()
-		}
+	if err := populateRebuildReplacement(ctx, opts, handle, populate, cleanupTemporary); err != nil {
 		return err
 	}
 

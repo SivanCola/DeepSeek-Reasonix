@@ -23,3 +23,29 @@ func matchRebuildResumeKey(ctx context.Context, db *sql.DB, key string) (bool, e
 	}
 	return stored == key, err
 }
+
+func resumeRebuildReplacement(ctx context.Context, handle *Handle, replacement OpenOptions, cleanupTemporary func()) (*Handle, error) {
+	matching, resumeErr := matchRebuildResumeKey(ctx, handle.DB, replacement.ResumeKey)
+	if resumeErr != nil {
+		_ = handle.DB.Close()
+		if ctx.Err() == nil {
+			cleanupTemporary()
+		}
+		return nil, resumeErr
+	}
+	if !matching {
+		_ = handle.DB.Close()
+		cleanupTemporary()
+		var err error
+		handle, err = Open(ctx, replacement)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := matchRebuildResumeKey(ctx, handle.DB, replacement.ResumeKey); err != nil {
+			_ = handle.DB.Close()
+			cleanupTemporary()
+			return nil, err
+		}
+	}
+	return handle, nil
+}

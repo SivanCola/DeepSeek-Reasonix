@@ -86,10 +86,9 @@ func (a *App) watchSessionCatalog(ctx context.Context, catalog *sessioncatalog.C
 			discoveryPending = true
 			admitted = true
 			onAdmitted()
-			// Query admission precedes this background-only watch barrier. A
-			// native notification backlog predating discovery is covered by the
-			// first scan; indexing every old notification here saturates the
-			// path queue and incorrectly schedules a second whole-root pass.
+			// First discovery covers the notification backlog before this barrier.
+			// Per-file admission would saturate the queue and schedule a second
+			// whole-root pass. Queries are already admitted.
 			catchUpCatalogWatch(watcher, events, failures, targets, watched, dirty)
 			refreshMetadata()
 			a.requestHistoricalCatalog()
@@ -130,27 +129,8 @@ func (a *App) watchSessionCatalog(ctx context.Context, catalog *sessioncatalog.C
 			armBatch()
 		case <-batchReady:
 			batchReady = nil
-			initial := []sessioncatalog.DirectoryTarget{}
-			for key := range dirty {
-				delete(dirty, key)
-				target, exists := targets[key]
-				if !exists || ctx.Err() != nil {
-					continue
-				}
-				if discoveryPending {
-					initial = append(initial, target)
-				} else {
-					if !catalog.RequestReconcile(target) {
-						dirty[key] = true
-					}
-				}
-			}
-			if discoveryPending {
-				for _, target := range catalog.ResumeDiscovery(initial...) {
-					dirty[canonicalWorkspaceRoot(target.Path)] = true
-				}
-				discoveryPending = false
-			}
+			admitCatalogWatchBatch(ctx, catalog, targets, dirty, discoveryPending)
+			discoveryPending = false
 			// Failed journal writes must retain the invalidation for retry.
 			armBatch()
 		}
@@ -261,4 +241,27 @@ func refreshCatalogWatchTargets(watcher workspaceWatcher, current map[string]ses
 		}
 	}
 	return next
+}
+
+func admitCatalogWatchBatch(ctx context.Context, catalog *sessioncatalog.Catalog, targets map[string]sessioncatalog.DirectoryTarget, dirty map[string]bool, discoveryPending bool) {
+	initial := []sessioncatalog.DirectoryTarget{}
+	for key := range dirty {
+		delete(dirty, key)
+		target, exists := targets[key]
+		if !exists || ctx.Err() != nil {
+			continue
+		}
+		if discoveryPending {
+			initial = append(initial, target)
+		} else {
+			if !catalog.RequestReconcile(target) {
+				dirty[key] = true
+			}
+		}
+	}
+	if discoveryPending {
+		for _, target := range catalog.ResumeDiscovery(initial...) {
+			dirty[canonicalWorkspaceRoot(target.Path)] = true
+		}
+	}
 }

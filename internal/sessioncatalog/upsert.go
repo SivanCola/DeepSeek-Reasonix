@@ -29,37 +29,10 @@ func (c *Catalog) upsertSessionsWithNotification(ctx context.Context, records []
 	}
 	c.mutationMu.Lock()
 	defer c.mutationMu.Unlock()
-	filtered := records[:0]
-	for _, record := range records {
-		pathKey := c.pathKey(record.Path)
-		if c.pathMutationAllowed(pathKey, record.enqueueSequence) {
-			filtered = append(filtered, record)
-		}
-	}
-	records = filtered
-	if len(records) == 0 {
-		return dirtyDirectories, nil
-	}
-	if mode == upsertExactSource {
-		prepared := make([]SessionRecord, 0, len(records))
-		for _, raw := range records {
-			record, skip, projectionDirty, err := c.prepareExactPathProjection(ctx, raw)
-			if err != nil {
-				return dirtyDirectories, err
-			}
-			if projectionDirty {
-				dirtyDirectories[c.pathKey(record.Directory)] = DirectoryTarget{
-					Path: record.Directory, Scope: record.Scope, WorkspaceRoot: record.WorkspaceRoot,
-				}
-			}
-			if !skip {
-				prepared = append(prepared, record)
-			}
-		}
-		records = prepared
-		if len(records) == 0 {
-			return dirtyDirectories, nil
-		}
+	var err error
+	records, err = c.prepareUpsertRecords(ctx, records, dirtyDirectories, mode)
+	if err != nil || len(records) == 0 {
+		return dirtyDirectories, err
 	}
 	tx, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
