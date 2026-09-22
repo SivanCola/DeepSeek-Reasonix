@@ -68,9 +68,13 @@ try {
   view.setVisible(!background);
   await view.page.loadURL(`http://127.0.0.1:${address.port}`);
   const id = view.page.id;
-  const snapshot = await takeSnapshot(view.page, "test", 1, "", new DocumentRegistry());
-  assert.match(snapshot.tree, /Save/);
-  await view.page.mainFrame.executeJavaScript(`Promise.all(["http://127.0.0.1:${address.port}/child", "http://localhost:${address.port}/child"].map(url => new Promise(resolve => { const frame = document.createElement("iframe"); frame.onload = resolve; frame.src = url; document.body.append(frame); }))).then(() => true)`);
+  // Match the host's observation lease before reading a hidden macOS page.
+  const releaseInitialObservation = view.prepareObservation?.();
+  try {
+    const snapshot = await takeSnapshot(view.page, "test", 1, "", new DocumentRegistry());
+    assert.match(snapshot.tree, /Save/);
+    await view.page.mainFrame.executeJavaScript(`Promise.all(["http://127.0.0.1:${address.port}/child", "http://localhost:${address.port}/child"].map(url => new Promise(resolve => { const frame = document.createElement("iframe"); frame.onload = resolve; frame.src = url; document.body.append(frame); }))).then(() => true)`);
+  } finally { releaseInitialObservation?.(); }
   const frameLease = await view.prepareCapture!(new AbortController().signal);
   const frameDocuments = new DocumentRegistry();
   const frames = await takeSnapshot(view.page, "test", 1, "", frameDocuments);
