@@ -12,10 +12,9 @@ import (
 )
 
 func TestNativeIdentityMigrationRebuildsOnlyProjectionOnce(t *testing.T) {
-	// Version 13 already includes the identity-invalidating migration.  The
-	// stale-row assertion below therefore applies to the last pre-invalidation
-	// schema only; TestSchemaV13RebuildsFilesystemIdentityProjection covers the
-	// migration boundary itself.
+	// Version 13 already includes the identity-invalidating migration, so the
+	// stale-row assertion covers only the last pre-invalidation schema. The
+	// migration boundary itself is covered by TestSchemaV13RebuildsFilesystemIdentityProjection.
 	for _, version := range []int{12} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			ctx := context.Background()

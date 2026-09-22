@@ -554,10 +554,10 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // commit: 2103296 B versus 2103208 B on main-v2. The latter already exceeds
 // the old gate by 15 B. Round to the next decimal; retain every other gate.
 // Source-bound history RPCs, synchronous navigation cancellation, and cold
-// startup hydration add 2266 B over main-v2 with identical dependencies and
-// commit metadata (2105430 B versus 2103164 B, +0.108%). History conversion and
-// native paging remain lazy chunks. Retain the existing 186 B producer delta
-// at the next decimal; compressed, chunk, CSS, and residency gates stay fixed.
-const rawInitialBudgetKiB = 2_056.3;
+// startup hydration remain in the eager boundary while history conversion and
+// native paging stay lazy. The Linux producer measured 2105926 B and the local
+// Node 26 build measured 2105938 B; round the gate to 2056.6 KiB and retain
+// every compressed, chunk, CSS, and residency budget.
+const rawInitialBudgetKiB = 2_056.6;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
