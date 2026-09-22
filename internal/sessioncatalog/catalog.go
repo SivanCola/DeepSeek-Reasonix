@@ -35,6 +35,8 @@ type Catalog struct {
 	// concurrent readers, but repair, metadata, and reconcile mutations must not
 	// race into avoidable SQLITE_BUSY failures.
 	mutationMu        sync.Mutex
+	metadataSyncOnce  sync.Once
+	metadataSyncGate  chan struct{} // serializes observations without holding the database writer
 	removedPaths      sync.Map
 	repairCh          chan string
 	repairQueued      sync.Map
@@ -85,6 +87,8 @@ type Catalog struct {
 	testPathMutationLoadedHook func(string)
 	// testScanProgressWriteHook runs after acquiring the shared writer boundary.
 	testScanProgressWriteHook func()
+	// Runs between committed metadata slices, after releasing the writer.
+	testMetadataSliceHook func(int)
 }
 
 type sessionPathRequest struct {

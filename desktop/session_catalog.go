@@ -328,12 +328,13 @@ func listCatalogSessionsForDirectory(ctx context.Context, catalog *sessioncatalo
 	return []sessioncatalog.SessionRecord{}, nil
 }
 
-// syncSessionCatalogMetadataBounded is the only form the long-lived catalog
-// goroutine may use. SyncMetadata runs under the catalog's single-writer mutex,
-// so one transaction that never returns silently wedges every later index,
-// reconcile, and revision bump — and the sidebar then stops updating for the
-// rest of the process lifetime instead of failing loudly.
+// Metadata-only projection bounds each writer slice inside the catalog. A
+// whole-observation timeout would repeatedly restart large registries at their
+// first batch. Older catalog modes retain their whole-transaction deadline.
 func (a *App) syncSessionCatalogMetadataBounded(ctx context.Context, catalog *sessioncatalog.Catalog) error {
+	if catalog.MetadataOnly() {
+		return a.syncSessionCatalogMetadata(ctx, catalog)
+	}
 	ctx, cancel := context.WithTimeout(ctx, sessionCatalogMetadataSyncTimeout)
 	defer cancel()
 	return a.syncSessionCatalogMetadata(ctx, catalog)

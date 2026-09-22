@@ -91,7 +91,7 @@ func TestMetadataRefreshLeavesSourceRetirementToMutationOwner(t *testing.T) {
 	}
 }
 
-func TestMetadataRefreshUsesOldWritersFlagsAndRollsBackAtomically(t *testing.T) {
+func TestMetadataRefreshUsesOldWritersFlagsAndRollsBackFailedSlice(t *testing.T) {
 	c, err := Open(t.Context(), Options{InMemory: true, MetadataOnly: true, StartPaused: true})
 	if err != nil {
 		t.Fatal(err)

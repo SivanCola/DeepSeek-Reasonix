@@ -7,15 +7,31 @@ import (
 	"strings"
 )
 
-// SyncMetadata projects the small desktop project/topic registries. It never
-// removes session-derived topics: an older CLI or a concurrently running
-// Reasonix process may have written authoritative sidecars not yet reflected in
-// desktop-projects.json.
+// SyncMetadata projects desktop project/topic registries. Advisory metadata
+// catalogs publish bounded slices; cancellation retains unvisited membership.
+// Other modes retain atomic refreshes. Neither removes session-derived topics:
+// older writers may have saved sidecars not yet reflected in the registry.
 func (c *Catalog) SyncMetadata(ctx context.Context, projects []ProjectRecord, topics []TopicMetadata) (result error) {
 	if c == nil || c.db == nil {
 		return nil
 	}
 	defer func() { c.observeDatabaseError(result) }()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if c.workerCtx != nil {
+		stop := context.AfterFunc(c.workerCtx, cancel)
+		defer stop()
+	}
+	c.metadataSyncOnce.Do(func() { c.metadataSyncGate = make(chan struct{}, 1) })
+	select {
+	case c.metadataSyncGate <- struct{}{}:
+		defer func() { <-c.metadataSyncGate }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if c.opts.MetadataOnly {
+		return c.syncMetadataIncremental(ctx, projects, topics)
+	}
 	c.mutationMu.Lock()
 	defer c.mutationMu.Unlock()
 	tx, err := c.db.BeginTx(ctx, nil)
@@ -27,8 +43,7 @@ func (c *Catalog) SyncMetadata(ctx context.Context, projects []ProjectRecord, to
 		_ = tx.Rollback()
 		return err
 	}
-	previousMetadata, err := c.beginMetadataTopicRefresh(ctx, tx)
-	if err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE catalog_topics SET metadata_present=0`); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
@@ -65,7 +80,7 @@ func (c *Catalog) SyncMetadata(ctx context.Context, projects []ProjectRecord, to
 		}
 		roots[topic.WorkspaceRoot] = struct{}{}
 	}
-	if err := c.finishMetadataTopicRefresh(ctx, tx, previousMetadata); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM catalog_topics WHERE `+orphanMetadataPredicate); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
