@@ -43,24 +43,15 @@ func historicalLifecycleID(t *testing.T, app *App, title string) string {
 
 func awaitHistoricalBatch(t *testing.T, app *App) HistoricalImportStatus {
 	t.Helper()
-	deadline := time.NewTimer(10 * time.Second)
-	defer deadline.Stop()
-	tick := time.NewTicker(5 * time.Millisecond)
-	defer tick.Stop()
-	for {
-		status, err := app.ListHistoricalSessions()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !status.Running {
-			return status
-		}
-		select {
-		case <-deadline.C:
-			t.Fatalf("historical queue did not finish: %+v", status)
-		case <-tick.C:
-		}
+	// Start/Resume admits its worker before returning. Join that owner instead
+	// of launching directory discovery to poll it; discovery is intentionally
+	// rejected after shutdown and is not evidence that a batch has drained.
+	app.historicalImports.workers.Wait()
+	status := app.GetHistoricalImportStatus()
+	if status.Running {
+		t.Fatalf("historical worker drained while batch remained running: %+v", status)
 	}
+	return status
 }
 
 func TestHistoricalBatchContinuesPastBusySource(t *testing.T) {
