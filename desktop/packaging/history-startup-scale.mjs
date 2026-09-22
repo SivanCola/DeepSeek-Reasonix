@@ -110,9 +110,7 @@ try {
     for (let run = 1; run <= runs; run++) {
       const { page, started } = await launch();
       const elapsed = () => now() - started;
-      // Trial click checks enabled/stable/hit-target state without creating a
-      // session. Visibility alone can precede an overlay releasing the UI.
-      const interactive = page.locator(".sidebar__quick-action").click({ trial: true }).then(elapsed);
+      const interactive = page.locator(".sidebar__quick-action").waitFor({ state: "visible" }).then(elapsed);
       const firstPage = waitForSmokeCondition(async () => {
         const value = await invoke(page, "ListProjectTopics", [{ scope: "global", limit: 50 }]);
         assert.ok(value.items.length <= 50, "first-page limit exceeded");
