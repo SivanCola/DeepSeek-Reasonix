@@ -6986,10 +6986,6 @@ func loadPinnedTabSession(dir, sessionPath string) (*agent.Session, string, bool
 	return loadPinnedTabSessionWithPreloadAndMigrationFallback(dir, sessionPath, loadedTabSession{}, true)
 }
 
-func loadPinnedTabSessionWithPreload(dir, sessionPath string, preloaded loadedTabSession) (*agent.Session, string, bool, error) {
-	return loadPinnedTabSessionWithPreloadAndMigrationFallback(dir, sessionPath, preloaded, false)
-}
-
 func loadPinnedTabSessionWithPreloadAndMigrationFallback(dir, sessionPath string, preloaded loadedTabSession, allowMigrationFallback bool) (*agent.Session, string, bool, error) {
 	return loadPinnedTabSessionContext(context.Background(), dir, sessionPath, preloaded, allowMigrationFallback)
 }

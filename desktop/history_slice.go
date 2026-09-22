@@ -20,7 +20,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"time"
 	"unicode/utf8"
 )
 
@@ -1537,103 +1536,4 @@ func (a *App) legacyHistoryFieldValue(sessionPath, sessionDir string, row int, r
 		return "", false
 	}
 	return historyEntryFieldValue(&messages[row], ref.Field, ref.ToolCallID)
-}
-
-// startHistoryIndexMigration arms the startup background worker that builds
-// display indexes for session files that predate the sidecar. Like
-// enableDeferredRebuildRetry it is only called from the Wails startup hook, so
-// test-constructed Apps never spawn the worker.
-func (a *App) startHistoryIndexMigration() {
-	if a.ctx == nil {
-		return
-	}
-	a.historySliceMu.Lock()
-	if a.historyIndexMigrationCancel != nil {
-		a.historySliceMu.Unlock()
-		return
-	}
-	ctx, cancel := context.WithCancel(a.ctx)
-	a.historyIndexMigrationCancel = cancel
-	a.historySliceMu.Unlock()
-	a.goSafe("historyIndexMigration", func() { a.historyIndexMigrationLoop(ctx) })
-}
-
-// stopHistoryIndexMigration stops the startup migration worker; called from
-// shutdown. The worker also stops with the Wails context.
-func (a *App) stopHistoryIndexMigration() {
-	a.historySliceMu.Lock()
-	cancel := a.historyIndexMigrationCancel
-	a.historySliceMu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
-}
-
-// historyIndexMigrationLoop walks every known session dir once, building
-// missing or stale display indexes. It is single-concurrency, yields between
-// sessions, and is idempotent: a valid index (loadable + transcript size
-// match) is left untouched.
-func (a *App) historyIndexMigrationLoop(ctx context.Context) {
-	for _, dir := range a.knownSessionDirs() {
-		if ctx.Err() != nil {
-			return
-		}
-		// ListSessionOrder is the lightweight listing: it never decodes
-		// transcript content, which keeps this worker cheap on dirs full of
-		// legacy sessions.
-		infos, err := agent.ListSessionOrder(dir)
-		if err != nil {
-			continue
-		}
-		for _, info := range infos {
-			if ctx.Err() != nil {
-				return
-			}
-			path := info.Path
-			if !store.IsSessionTranscriptName(filepath.Base(path)) {
-				continue
-			}
-			if historySessionIndexOnDiskValid(path) || historySessionLooksEventFormat(path) {
-				continue
-			}
-			if err := agent.RepairSessionDisplayReadModel(path); err != nil {
-				slog.Debug("desktop: history read-model migration failed", "path", path, "err", err)
-			}
-			timer := time.NewTimer(25 * time.Millisecond)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return
-			case <-timer.C:
-			}
-		}
-	}
-}
-
-// historySessionIndexOnDiskValid reports whether the on-disk display index
-// loads and describes the current transcript file size. The size guard is the
-// Phase A stale-anchor rule: append-only saves leave the .jsonl anchor behind
-// the canonical transcript, and the reverse (a rewritten anchor with an old
-// index) must not be sliced by stale offsets either.
-func historySessionIndexOnDiskValid(sessionPath string) bool {
-	indexPath := store.SessionDisplayIndex(sessionPath)
-	idx, err := agent.LoadSessionDisplayIndex(indexPath)
-	if err != nil {
-		return false
-	}
-	info, err := os.Stat(sessionPath)
-	if err != nil {
-		return false
-	}
-	if idx.TranscriptSize != info.Size() || !historyIndexTimestampValid(indexPath, sessionPath, info, idx, false) {
-		return false
-	}
-	identity, known, err := agent.SessionContentIdentity(sessionPath)
-	if err != nil {
-		return false
-	}
-	if !known {
-		return !idx.RevisionKnown
-	}
-	return agent.ValidateSessionDisplayIndex(idx, identity.Revision, identity.RevisionKnown, identity.Digest, info.Size())
 }

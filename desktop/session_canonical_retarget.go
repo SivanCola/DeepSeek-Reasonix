@@ -37,14 +37,6 @@ func (a *App) sessionHasLiveController(path string) bool {
 	return a.liveRuntimeTabMatchingLocked(nil, path) != nil
 }
 
-func (a *App) skipContinuationRebind(tab *WorkspaceTab, target string) bool {
-	if tab == nil || tab.Ctrl == nil {
-		return false
-	}
-	next := a.continuePathForOpen(tab.currentSessionPath())
-	return next != "" && sessionRuntimeKey(next) == sessionRuntimeKey(target)
-}
-
 func (a *App) continuePathForOpen(path string) string {
 	path = strings.TrimSpace(path)
 	if path == "" {

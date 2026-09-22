@@ -3,6 +3,7 @@ package workspacestate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -53,7 +54,7 @@ func TestReadSnapshotOverlappingValidationSharesFlightAndCancellation(t *testing
 	cancellations := 0
 	for range 8 {
 		r := <-results
-		if r.err == context.Canceled {
+		if errors.Is(r.err, context.Canceled) {
 			cancellations++
 			continue
 		}

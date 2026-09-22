@@ -56,22 +56,6 @@ func waitForTabReady(t *testing.T, app *App, tabID string) *WorkspaceTab {
 	return nil
 }
 
-func waitForTopicDirMarker(t *testing.T, dir, marker string) {
-	t.Helper()
-	markerPath := filepath.Join(dir, marker)
-	deadline := time.Now().Add(5 * time.Second)
-	var last error
-	for {
-		if _, last = os.Stat(markerPath); last == nil {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("expected %s after migration: %v", marker, last)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-}
-
 func writeTopicSession(t *testing.T, dir, name, topicID, topicTitle, workspaceRoot string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -18,7 +19,7 @@ func TestNativeHistoryPromptBoundsPreview(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := nativeHistoryPrompt(ctx, strings.Repeat("\u2003", 100000)); err != context.Canceled {
+	if _, err := nativeHistoryPrompt(ctx, strings.Repeat("\u2003", 100000)); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled normalization: %v", err)
 	}
 }

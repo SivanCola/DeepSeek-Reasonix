@@ -91,9 +91,10 @@ func (a *App) lazyProjectTopicSnapshot(req ProjectTopicPageRequest, reader works
 	// The retained page closure only needs the encoded membership predicate.
 	// Do not keep another copy of every organization's member slice alive.
 	req.groupAll, req.groupSelected = nil, nil
-	if req.GroupFilter == "group" {
+	switch req.GroupFilter {
+	case "group":
 		query.IncludeSourceKeysJSON = groupJSON
-	} else if req.GroupFilter == "ungrouped" {
+	case "ungrouped":
 		query.ExcludeSourceKeysJSON = groupJSON
 	}
 	// Freeze the localized default along with the search predicate. SQLite's

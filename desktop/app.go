@@ -304,9 +304,8 @@ type App struct {
 	// single-flight display-index rebuilds for live sessions and the startup
 	// index-migration worker's cancel handle. Never held while calling
 	// controller or session methods.
-	historySliceMu              sync.Mutex
-	historyIndexRebuilds        map[string]chan struct{}
-	historyIndexMigrationCancel context.CancelFunc
+	historySliceMu       sync.Mutex
+	historyIndexRebuilds map[string]chan struct{}
 
 	// detachedSessions keeps live session runtimes whose visible tab was closed.
 	// It is process-local by design: shutdown closes every detached controller.
