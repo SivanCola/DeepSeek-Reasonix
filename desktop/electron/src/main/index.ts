@@ -47,7 +47,8 @@ import { claimShellInstance } from "./singleInstance.js";
 import { TrayHost } from "./tray.js";
 import { DEFAULT_GEOMETRY, MainWindow } from "./window.js";
 import { AppZoomStore } from "./zoomStore.js";
-import { GraphicsSettingsStore, loadGraphicsBootstrap } from "./graphics.js";
+import { consumeGraphicsRecoveryArg, GraphicsSettingsStore, loadGraphicsBootstrap } from "./graphics.js";
+import { confirmRecoveryDraftLoss, installGraphicsRecovery } from "./graphicsRecoveryHost.js";
 import { initialShellStatus, listenShellStatus, QUIT_REQUEST } from "./shellStatus.js";
 import { supersededLauncher } from "./recovery.js";
 import { startupLifecycle, startupPresentation, type StartupPresentReason } from "./startupPresentation.js";
@@ -82,11 +83,12 @@ if (home === "") {
 
 function bootstrap(dataHome: string): void {
   const graphicsBootstrap = loadGraphicsBootstrap(app.getPath("userData"), process.env, process.argv);
+  const graphicsTemporary = consumeGraphicsRecoveryArg(process.argv);
   const graphics = new GraphicsSettingsStore(graphicsBootstrap.configPath, graphicsBootstrap);
   const logsDir = join(app.getPath("userData"), "logs");
   const log = createLogger(new RotatingFile(join(logsDir, "shell.log")), !app.isPackaged);
   log.info(
-    `graphics acceleration: saved=${graphics.current.hardwareAcceleration} startup=${graphics.current.startupEnabled} override=${graphics.current.override} warning=${graphics.current.warning ?? "none"}`,
+    `graphics acceleration: saved=${graphics.current.hardwareAcceleration} startup=${graphics.current.startupEnabled} override=${graphics.current.override} recovery=${graphicsTemporary} warning=${graphics.current.warning ?? "none"}`,
   );
   app.on("gpu-info-update", () => {
     try {
@@ -158,6 +160,7 @@ function bootstrap(dataHome: string): void {
   let mainWindow: MainWindow;
   let browser: BrowserSurfaceManager;
   let lifecycle: QuitSequencer;
+  let graphicsRecovery: ReturnType<typeof installGraphicsRecovery>;
   let guestViews: ElectronGuestViewFactory;
   mainWindow = new MainWindow({
     isQuitting: () => lifecycle.isQuitting,
@@ -166,6 +169,9 @@ function bootstrap(dataHome: string): void {
     platform: process.platform,
     icon: windowIcon,
     log,
+    onRendererFailure: (details, canReload) => graphicsRecovery.recovery.fault({ role: "renderer", ...details }, canReload),
+    onUnresponsive: () => graphicsRecovery.recovery.unresponsive(),
+    onResponsive: () => graphicsRecovery.recovery.responsive(),
     onRendererLost: (reason) => {
       status.healthy = false;
       status.rendererVersion = "";
@@ -305,6 +311,7 @@ function bootstrap(dataHome: string): void {
     },
     flushRenderer: () => mainWindow.flushSessionDraft(),
     resumeRenderer: () => mainWindow.resumeSessionDraftEditing(),
+    confirmRecoveryDraftLoss,
     onWindowClosePrevented: () => mainWindow.hide(),
     onPrepareFailed: async (message) => {
       const parent = mainWindow.browserWindow;
@@ -569,6 +576,8 @@ function bootstrap(dataHome: string): void {
       : undefined;
   app.on("will-quit", () => statusServer?.close());
 
+  graphicsRecovery = installGraphicsRecovery({ graphics, lifecycle, log, logsDir, build: buildVersion, temporary: graphicsTemporary });
+
   void app.whenReady().then(() => {
       if (lifecycle.isQuitting) return;
       if (process.platform === "darwin") {
@@ -632,6 +641,7 @@ function bootstrap(dataHome: string): void {
             if (!firstHeartbeat) firstHeartbeat = Date.now();
             else if (Date.now() - firstHeartbeat >= 2000 && status.lifecycle === "ready") {
               status.healthy = true;
+              graphicsRecovery.healthy();
               clearTimeout(startupTimer);
             }
             if (status.rendererVersion === "")
