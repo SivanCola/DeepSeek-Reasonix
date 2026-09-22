@@ -11,10 +11,9 @@ import (
 	"strings"
 )
 
-// coldHistorySlice pages a session file with no running controller. It never
-// loads the whole session: a valid on-disk display index + byte-offset reads
-// serve the window; a missing/stale/corrupt index is rebuilt by streaming
-// scan (constant memory) and the first page is served from the scan result.
+// coldHistorySlice pages a session file with no running controller. Supported
+// formats use the bounded native pager. Explicitly unsupported formats retain
+// the compatibility adapter below, which may require a full display replay.
 func (a *App) coldHistorySlice(sessionDir, path string, req HistorySliceRequest) (HistorySlice, error) {
 	sessionDir, sessionPath, err := a.historyReadSource(sessionDir, path)
 	if err != nil {

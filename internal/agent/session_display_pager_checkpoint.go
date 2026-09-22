@@ -47,6 +47,18 @@ func buildCheckpointDisplayPager(ctx context.Context, db *sql.DB, source, finger
 				}
 				if message.Role == "" {
 					err = errors.New("checkpoint message has no role")
+					// Ancient event rows use kind/type instead of provider roles.
+					// Classify only the first record as an unsupported format;
+					// a foreign record after valid messages is damaged content.
+					if idx.MessageCount == 0 {
+						var event struct {
+							Kind string `json:"kind"`
+							Type string `json:"type"`
+						}
+						if json.Unmarshal(line, &event) == nil && (event.Kind != "" || event.Type != "") {
+							err = ErrDisplayFormatUnsupported
+						}
+					}
 					break
 				}
 				var entry DisplayIndexEntry

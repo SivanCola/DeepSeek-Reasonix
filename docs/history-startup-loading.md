@@ -8,6 +8,8 @@ Ordinary startup does not migrate transcript formats. Existing JSONL, DAG, and d
 - **History readable:** a validated display window is available for the selected session. Preparation runs independently of its execution controller and can be canceled.
 - **Execution ready:** the complete execution context and write authority have been restored. Reading history does not authorize sending. Draft editing and navigation remain available during recovery.
 
+Execution failures, including an external writer's lease, do not settle history preparation as a read error. Passive metadata refreshes join an existing cold read for the same navigation and source; they do not replace it with a controller-dependent Follow request. Rebuild notifications also respect the unavailable runtime. An actual cold-read failure produces local retry state; a later ready runtime can replace that cut through the existing live handoff.
+
 Discovery reads file identity, attributes, and bounded metadata sidecars. Unknown fields remain unknown; an unknown turn count is not zero. A failed or interrupted scan cannot declare the unvisited remainder missing. A parseable prefix of damaged authoritative content is not published as a complete history.
 
 ## Maintenance boundaries implemented
@@ -54,6 +56,8 @@ Unbound compatibility field reads for formats accepted by the native pager also 
 
 Cold compatibility readers resolve the captured historical path against known source directories. A global tab's current workspace directory does not replace the original global history directory. Paging, field reads, and older preview RPCs share that resolution; unknown roots and symlinks escaping known roots remain rejected.
 
+Only explicit unsupported-format results permit the compatibility reader. Cache, I/O and parse failures in an admitted native source remain read failures, instead of silently starting full replay. Ancient kind/type event envelopes are explicitly classified at the first record; a foreign row after valid checkpoint messages is damage, not an unsupported format. Removed or renamed catalog roots explicitly release their native watch before registering a replacement at the same path.
+
 Maintenance diagnostics contain counters and resource usage, not transcript bodies. `historyMaintenance.instrumentedReadBytes` counts actual controlled-reader bytes, not stat sizes presented as I/O measurements.
 
 ## Registry reads and ownership resolution
@@ -79,6 +83,8 @@ The September 22, 2026 history.12 run completed 30 samples for 100 and 10,000 se
 The history.13 package (`d3522a790`) completed 30 samples each for 100 and 10,000 sessions: first-page p95 was 1,227/1,302 ms, visible-button 1,330/1,330 ms, trusted-window 1,344/1,385 ms, and send-ready 1,357/1,371 ms. At 100,000 sessions discovery reached its first EOF around 245 seconds, then restarted and exceeded the unchanged 300-second warmup limit. No 100,000-session startup sample was collected. The retained fixture and progress trace distinguish this incomplete result from passing acceptance. The subsequently identified duplicate recovery notification and registry refresh changes require a new package measurement.
 
 The history.14 package (`8bf67d4a4`) also completed only the two smaller 30-run cohorts: first-page p95 was 1,256/1,424 ms and visible-button 1,340/1,437 ms. Its 100,000-session discovery restarted after roughly 242 seconds and timed out before sampling. Removing the recovery notification was therefore insufficient. The subsequent platform watcher and dispatch-coalescing changes passed focused race tests, including native macOS registration for 512 files under a 256-descriptor process limit; their production-scale result is separate evidence still to obtain.
+
+The history.15 package (`29e62fc10`) passed native navigation but failed the external-writer fixture when switching to schema-1 event history. The selected session was lease-blocked and passive refresh replaced its pending cold read with a rejected live Follow. A deterministic lifecycle test reproduces that ordering and now passes with the reader/runtime separation above. This is repair evidence, not a passing result for the original package or the outstanding scale cohort.
 
 The implementation must not yet be described as complete performance governance. Custom ordering and multi-head sidebars still use the original full snapshot adapter. Importing old source-dependent organization preferences can still enumerate legacy pages. The ordinary all-sessions view still reads all current-format member headers; historical directory discovery still needs integration into the persistent incremental projection. A shell still collects all explicitly pinned rows. These remaining paths prevent a claim that every startup/list configuration is independent of library size.
 

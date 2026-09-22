@@ -14,8 +14,14 @@ import (
 
 type recoveringCatalogWatch struct {
 	workspaceWatcher
-	fail bool
-	adds int
+	fail    bool
+	adds    int
+	removes []string
+}
+
+func (w *recoveringCatalogWatch) Remove(path string) error {
+	w.removes = append(w.removes, path)
+	return nil
 }
 
 func (w *recoveringCatalogWatch) Add(string, bool) error {
@@ -75,7 +81,7 @@ func TestCatalogWatchCanonicalEventKeepsRegisteredAccessPath(t *testing.T) {
 	targets := refreshCatalogWatchTargets(nil, nil, []sessioncatalog.DirectoryTarget{{Path: dir, Scope: "global"}}, watched, dirty)
 	clear(dirty)
 	key := canonicalWorkspaceRoot(dir)
-	admitCatalogWatchEvent(catalog, fsnotify.Event{Name: filepath.Join(key, "session.jsonl.meta"), Op: fsnotify.Write}, targets, watched, dirty)
+	admitCatalogWatchEvent(catalog, fsnotify.Event{Name: filepath.Join(key, "session.jsonl.meta"), Op: fsnotify.Write}, targets, watched, dirty, nil)
 	if len(dirty) != 0 {
 		t.Fatalf("exact metadata event scheduled a root scan: %v", dirty)
 	}
@@ -91,8 +97,17 @@ func TestCatalogWatchCanonicalEventKeepsRegisteredAccessPath(t *testing.T) {
 	// A removed root must drop its watch and schedule reconciliation even
 	// when there is no current filesystem object to canonicalize.
 	watched[key] = true
-	admitCatalogWatchEvent(catalog, fsnotify.Event{Name: key, Op: fsnotify.Remove}, targets, watched, dirty)
+	watcher := &recoveringCatalogWatch{}
+	admitCatalogWatchEvent(catalog, fsnotify.Event{Name: key, Op: fsnotify.Remove}, targets, watched, dirty, watcher)
 	if watched[key] || !dirty[key] {
 		t.Fatalf("root removal lost invalidation: watched=%v dirty=%v", watched, dirty)
+	}
+	if len(watcher.removes) != 1 || watcher.removes[0] != key {
+		t.Fatalf("root removal retained the native subscription: %v", watcher.removes)
+	}
+	clear(dirty)
+	refreshCatalogWatchTargets(watcher, targets, []sessioncatalog.DirectoryTarget{{Path: dir, Scope: "global"}}, watched, dirty)
+	if watcher.adds != 1 || !watched[key] || !dirty[key] {
+		t.Fatal("replacement directory did not re-register and reconcile")
 	}
 }

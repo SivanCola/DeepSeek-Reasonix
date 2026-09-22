@@ -32,8 +32,10 @@ func (a *App) pagedColdHistorySlice(ctx context.Context, sessionDir, path string
 }
 
 func nativeHistoryPreparationFailure(err error) bool {
-	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
-		errors.Is(err, agent.ErrDisplaySourceChanged) || errors.Is(err, agent.ErrSessionDisplayReadModelDamaged)
+	// Only a positively identified unsupported format may use the legacy
+	// adapter. I/O, parse and cache failures must not silently trigger a full
+	// replay after the bounded reader has failed.
+	return err != nil && !errors.Is(err, agent.ErrDisplayFormatUnsupported)
 }
 
 // Compatibility paging and field reads borrow the same preparation and cache

@@ -11,7 +11,42 @@ import (
 	"reasonix/internal/config"
 	"reasonix/internal/provider"
 	"reasonix/internal/session"
+	"reasonix/internal/store"
 )
+
+func TestNativeHistoryCacheFailureDoesNotFallBackToFullReplay(t *testing.T) {
+	a := historySliceTestApp(t)
+	t.Cleanup(a.closeHistoryReaders)
+	tab := newColdHistoryTab(t, a)
+	_, tab.SessionPath = saveHistorySliceSession(t, tabSessionDir(tab), "cache-error.jsonl", []provider.Message{historySliceUser(0, "original history")})
+	// The fixture writer creates a sidecar; exercise a cold source without it.
+	if err := os.Remove(store.SessionDisplayIndex(tab.SessionPath)); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(tab.SessionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(cache, []byte("cache unavailable"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("REASONIX_CACHE_HOME", cache)
+	request := normalizeHistorySliceRequest(HistorySliceRequest{Entries: 1, Turns: 1})
+	if _, err := a.coldHistorySlice(tabSessionDir(tab), tab.SessionPath, request); err == nil {
+		t.Fatal("cache failure silently fell back to full compatibility replay")
+	}
+	if _, found, stale := a.coldHistoryFieldValue(tabSessionDir(tab), tab.SessionPath, 0, 0, HistoryContentRef{Field: "content"}); found || !stale {
+		t.Fatal("cache failure silently fell back to a compatibility content read")
+	}
+	after, err := os.ReadFile(tab.SessionPath)
+	if err != nil || string(after) != string(before) {
+		t.Fatalf("read failure changed authoritative history: %v", err)
+	}
+	if _, err := os.Stat(store.SessionDisplayIndex(tab.SessionPath)); !os.IsNotExist(err) {
+		t.Fatalf("read failure wrote a compatibility sidecar: %v", err)
+	}
+}
 
 func TestNativeHistoryReadersSharePreparationUntilLastRelease(t *testing.T) {
 	a := historySliceTestApp(t)

@@ -92,7 +92,7 @@ func (a *App) watchSessionCatalog(ctx context.Context, catalog *sessioncatalog.C
 				clear(watched)
 				continue
 			}
-			admitCatalogWatchEvent(catalog, event, targets, watched, dirty)
+			admitCatalogWatchEvent(catalog, event, targets, watched, dirty, watcher)
 			armBatch()
 		case _, ok := <-failures:
 			if !ok {
@@ -134,7 +134,7 @@ func (a *App) watchSessionCatalog(ctx context.Context, catalog *sessioncatalog.C
 	}
 }
 
-func admitCatalogWatchEvent(catalog *sessioncatalog.Catalog, event fsnotify.Event, targets map[string]sessioncatalog.DirectoryTarget, watched, dirty map[string]bool) {
+func admitCatalogWatchEvent(catalog *sessioncatalog.Catalog, event fsnotify.Event, targets map[string]sessioncatalog.DirectoryTarget, watched, dirty map[string]bool, watcher workspaceWatcher) {
 	key := filepath.Clean(filepath.Dir(event.Name))
 	// A transcript/sidecar write invalidates one session, not its root.
 	if target, exists := targets[key]; exists {
@@ -148,6 +148,12 @@ func admitCatalogWatchEvent(catalog *sessioncatalog.Catalog, event fsnotify.Even
 	if _, exists := targets[filepath.Clean(event.Name)]; exists {
 		key = filepath.Clean(event.Name)
 		if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
+			// Native backends retain subscriptions until explicitly removed.
+			// Drop the backend entry as well as our admission flag so Add can
+			// watch a newly created directory at this same path.
+			if watcher != nil {
+				_ = watcher.Remove(key)
+			}
 			delete(watched, key)
 		}
 	}

@@ -16,6 +16,33 @@ import (
 	"reasonix/internal/store"
 )
 
+func TestDisplayPagerDistinguishesAncientEventsFromDamagedCheckpoint(t *testing.T) {
+	for _, tc := range []struct {
+		name, body  string
+		unsupported bool
+	}{
+		{"kind", "{\"kind\":\"user.message\",\"text\":\"old\"}\n", true},
+		{"type", "{\"type\":\"model.final\",\"content\":\"old\"}\n", true},
+		{"missing-role", "{\"content\":\"broken\"}\n", false},
+		{"mixed", "{\"role\":\"user\",\"content\":\"valid\"}\n{\"kind\":\"model.final\",\"content\":\"foreign\"}\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "source.jsonl")
+			if err := os.WriteFile(path, []byte(tc.body), 0600); err != nil {
+				t.Fatal(err)
+			}
+			pager, err := OpenDisplayPager(t.Context(), path, filepath.Join(t.TempDir(), "cache.sqlite"))
+			if pager != nil {
+				pager.Close()
+				t.Fatal("invalid checkpoint published a pager")
+			}
+			if err == nil || errors.Is(err, ErrDisplayFormatUnsupported) != tc.unsupported {
+				t.Fatalf("unsupported=%v: %v", tc.unsupported, err)
+			}
+		})
+	}
+}
+
 func TestDisplayPagerRejectsSameSizeRewriteWithRestoredMtime(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "source.jsonl")
 	before := []byte("{\"role\":\"user\",\"content\":\"one\"}\n")

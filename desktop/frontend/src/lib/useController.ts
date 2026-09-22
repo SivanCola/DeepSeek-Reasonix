@@ -761,6 +761,13 @@ export function runtimeReadyForSubmit(meta?: Meta): boolean {
   return !meta.runtime || meta.runtime.phase === "ready";
 }
 
+// A local durable identity remains readable when execution cannot acquire a
+// lease or finish recovery. Remote tabs keep their negotiated reader route.
+function needsColdHistory(meta?: Meta | TabMeta): boolean {
+  return Boolean(meta && !meta.remote && (!meta.ready || meta.startupErr)
+    && (meta.sessionPath || meta.session?.sessionId));
+}
+
 export { normalizeTurnSubmit } from "./inboxSubmit";
 
 const frontendSubmissionEpoch = typeof globalThis.crypto?.randomUUID === "function"
@@ -2587,6 +2594,9 @@ export function useController() {
   const historyWindowSeq = useRef(new Map<string, number>());
   const cancelHydrateSeq = useRef(new Map<string, number>());
   const sessionLoadInFlight = useRef(new Map<string, { identityKey: string; revision?: number; digest?: string; promise: Promise<void> }>());
+  const coldHistoryInFlight = useRef(new Map<string, {
+    key: string; current: () => boolean; promise: Promise<"cached" | "loaded" | "miss" | "failed">;
+  }>());
   const transcriptSubscriptions = useRef(new Map<string, () => void>());
   const bumpMetaRefreshSeq = useCallback((tabId: string): number => {
     const seq = (metaRefreshSeq.current.get(tabId) ?? 0) + 1;
@@ -2863,65 +2873,77 @@ export function useController() {
   ): Promise<"cached" | "loaded" | "miss" | "failed"> => {
     const sessionPath = (target.sessionPath ?? "").trim();
     const identity = sessionIdentityFields(target);
+    const key = JSON.stringify([sessionIdentityStableKey(target), target.sessionRevision, target.sessionDigest, navigationIntent]);
+    const pending = coldHistoryInFlight.current.get(tabId);
+    if (pending?.key === key && pending.current()) return pending.promise;
     const seq = bumpSessionLoadSeq(tabId);
     const stillCurrent = () => current()
       && sessionLoadCurrent(tabId, seq)
       && hydrateIdentityCurrent(identity, statesRef.current.get(tabId)?.meta);
     if (!stillCurrent()) return "miss";
-    ensureTranscriptSubscription(tabId, { path: sessionPath, key: sessionIdentityStableKey(target) });
-    const store = getTranscriptStore();
-    const startedAt = Date.now();
-    const resident = target.sessionDigest ? store.peek(tabId, sessionPath, {
-      revision: target.sessionRevision,
-      digest: target.sessionDigest,
-    }) : undefined;
-    noteNavigationHistoryRequested(navigationIntent, Boolean(resident));
-    recordFrontendDiagnostic("navigation", resident ? "navigation.history-cache-hit" : "navigation.history-cache-miss", {
-      tabId,
-      reason,
-    });
-    if (resident) {
-      if (!stillCurrent()) return "miss";
-      dispatchTo(tabId, historyReplaceAction(resident));
-      dispatchTo(tabId, { type: "hydrate_done" });
-      noteNavigationHistoryReadable(navigationIntent, true);
-      recordFrontendDiagnostic("navigation", "navigation.history-readable", {
+    const promise = (async (): Promise<"cached" | "loaded" | "miss" | "failed"> => {
+      ensureTranscriptSubscription(tabId, { path: sessionPath, key: sessionIdentityStableKey(target) });
+      const store = getTranscriptStore();
+      const startedAt = Date.now();
+      const resident = target.sessionDigest ? store.peek(tabId, sessionPath, {
+        revision: target.sessionRevision,
+        digest: target.sessionDigest,
+      }) : undefined;
+      noteNavigationHistoryRequested(navigationIntent, Boolean(resident));
+      recordFrontendDiagnostic("navigation", resident ? "navigation.history-cache-hit" : "navigation.history-cache-miss", {
         tabId,
         reason,
-        source: "cache",
-        durationMs: Date.now() - startedAt,
       });
-      return "cached";
-    }
+      if (resident) {
+        if (!stillCurrent()) return "miss";
+        dispatchTo(tabId, historyReplaceAction(resident));
+        dispatchTo(tabId, { type: "hydrate_done" });
+        noteNavigationHistoryReadable(navigationIntent, true);
+        recordFrontendDiagnostic("navigation", "navigation.history-readable", {
+          tabId,
+          reason,
+          source: "cache",
+          durationMs: Date.now() - startedAt,
+        });
+        return "cached";
+      }
+      try {
+        const projection = await store.loadLatest(tabId, sessionPath, {
+          preferResident: true,
+          expectedRevision: target.sessionRevision,
+          expectedDigest: target.sessionDigest,
+          current: stillCurrent,
+        });
+        if (!projection || !stillCurrent()) return "miss";
+        dispatchTo(tabId, historyReplaceAction(projection));
+        dispatchTo(tabId, { type: "hydrate_done" });
+        noteNavigationHistoryReadable(navigationIntent, false);
+        recordFrontendDiagnostic("navigation", "navigation.history-readable", {
+          tabId,
+          reason,
+          source: "disk",
+          durationMs: Date.now() - startedAt,
+        });
+        return "loaded";
+      } catch (error) {
+        // Only the reader owns history errors. A subsequent ready runtime may
+        // replace this failed cut, but execution failure must not settle it.
+        addBreadcrumb("tab.hydrate", `readable baseline failed ${reason} ${tabId}: ${errorMessage(error)}`);
+        recordFrontendDiagnostic("navigation", "navigation.history-readable-failed", {
+          tabId,
+          reason,
+          durationMs: Date.now() - startedAt,
+        });
+        if (!stillCurrent()) return "miss";
+        dispatchTo(tabId, { type: "hydrate_error", reason, error: t("history.failedLoadHistory") });
+        return "failed";
+      }
+    })();
+    coldHistoryInFlight.current.set(tabId, { key, current: stillCurrent, promise });
     try {
-      const projection = await store.loadLatest(tabId, sessionPath, {
-        preferResident: true,
-        expectedRevision: target.sessionRevision,
-        expectedDigest: target.sessionDigest,
-        current: stillCurrent,
-      });
-      if (!projection || !stillCurrent()) return "miss";
-      dispatchTo(tabId, historyReplaceAction(projection));
-      dispatchTo(tabId, { type: "hydrate_done" });
-      noteNavigationHistoryReadable(navigationIntent, false);
-      recordFrontendDiagnostic("navigation", "navigation.history-readable", {
-        tabId,
-        reason,
-        source: "disk",
-        durationMs: Date.now() - startedAt,
-      });
-      return "loaded";
-    } catch (error) {
-      // Runtime activation may still succeed and its protocol-v2 follower will
-      // retry from the controller-owned cut. Keep the target skeleton instead
-      // of turning an early-read miss into a terminal navigation failure.
-      addBreadcrumb("tab.hydrate", `readable baseline failed ${reason} ${tabId}: ${errorMessage(error)}`);
-      recordFrontendDiagnostic("navigation", "navigation.history-readable-failed", {
-        tabId,
-        reason,
-        durationMs: Date.now() - startedAt,
-      });
-      return stillCurrent() ? "failed" : "miss";
+      return await promise;
+    } finally {
+      if (coldHistoryInFlight.current.get(tabId)?.promise === promise) coldHistoryInFlight.current.delete(tabId);
     }
   }, [bumpSessionLoadSeq, dispatchTo, ensureTranscriptSubscription, sessionLoadCurrent]);
 
@@ -3055,14 +3077,10 @@ export function useController() {
     // Startup has no activation ticket. Use the same bounded cold reader as
     // navigation while execution is recovering; the ready event will bind the
     // live follower. Never manufacture a subscription or executable runtime.
-    if (!active.ready && !active.startupErr && !active.remote && (active.sessionPath || active.session?.sessionId)) {
+    if (needsColdHistory(active)) {
       dispatchTo(active.id, { type: "hydrate_start", reason: "startup" });
       const current = () => isNavigationIntentCurrent(expectedNavigationSeq) && activeTabIdRef.current === active.id;
-      const read = primeReadableHistoryForTab(active.id, active, "startup", expectedNavigationSeq, current).then(result => {
-        if (result === "failed" && current() && !statesRef.current.get(active.id)?.meta?.ready) {
-          dispatchTo(active.id, { type: "hydrate_error", reason: "startup", error: t("history.failedLoadHistory") });
-        }
-      });
+      const read = primeReadableHistoryForTab(active.id, active, "startup", expectedNavigationSeq, current);
       if (options.deferHydration) void read;
       else await read;
       return active.id;
@@ -3283,7 +3301,6 @@ export function useController() {
       // already published, keep that transcript selected and make only the
       // write side unavailable. Treating this as a history failure used to
       // restore the source surface and throw away a perfectly readable target.
-      if (current?.hydrating) dispatchTo(tabId, { type: "hydrate_error", reason: "open-topic", error: safeError });
       if (current?.meta) {
         dispatchTo(tabId, {
           type: "meta",
@@ -3392,7 +3409,7 @@ export function useController() {
         invalidateSharedQuery("MetaForTab", [rebuiltTabId]);
         if (runtimeEpoch) runtimeEpochByTabRef.current.set(rebuiltTabId, runtimeEpoch);
         dispatchTo(rebuiltTabId, { type: "controller_rebuilt" });
-        if (!statesRef.current.get(rebuiltTabId)?.hydrating && !statesRef.current.get(rebuiltTabId)?.backendActivationPending) void startTranscriptFollow(rebuiltTabId, statesRef.current.get(rebuiltTabId)?.meta?.sessionPath ?? "").catch(error => dispatchTo(rebuiltTabId, { type: "transcript_connection", status: "disconnected", error: String(error) }));
+        if (!needsColdHistory(statesRef.current.get(rebuiltTabId)?.meta) && !statesRef.current.get(rebuiltTabId)?.hydrating && !statesRef.current.get(rebuiltTabId)?.backendActivationPending) void startTranscriptFollow(rebuiltTabId, statesRef.current.get(rebuiltTabId)?.meta?.sessionPath ?? "").catch(error => dispatchTo(rebuiltTabId, { type: "transcript_connection", status: "disconnected", error: String(error) }));
       } else {
         if (runtimeEpoch) {
           for (const id of Array.from(statesRef.current.keys())) runtimeEpochByTabRef.current.set(id, runtimeEpoch);
@@ -3402,7 +3419,7 @@ export function useController() {
           followers.current.delete(id);
           invalidateSharedQuery("MetaForTab", [id]);
           dispatchTo(id, { type: "controller_rebuilt" });
-          if (!statesRef.current.get(id)?.hydrating && !statesRef.current.get(id)?.backendActivationPending) void startTranscriptFollow(id, statesRef.current.get(id)?.meta?.sessionPath ?? "").catch(error => dispatchTo(id, { type: "transcript_connection", status: "disconnected", error: String(error) }));
+          if (!needsColdHistory(statesRef.current.get(id)?.meta) && !statesRef.current.get(id)?.hydrating && !statesRef.current.get(id)?.backendActivationPending) void startTranscriptFollow(id, statesRef.current.get(id)?.meta?.sessionPath ?? "").catch(error => dispatchTo(id, { type: "transcript_connection", status: "disconnected", error: String(error) }));
         }
       }
     });
@@ -3433,12 +3450,22 @@ export function useController() {
       runtime: (tab, snapshotAt) => {
         dispatchRuntimeStatusForTab(tab.id, tab, snapshotAt);
       },
-      resynchronize: async tab => { await startTranscriptFollow(tab.id, tab.sessionPath ?? ""); },
+      resynchronize: async tab => {
+        if (needsColdHistory(tab)) return;
+        await startTranscriptFollow(tab.id, tab.sessionPath ?? "");
+      },
       reset: id => { followers.current.get(id)?.stop(); followers.current.delete(id); },
-      hydrate: (tab, recoveryCurrent) => loadSessionDataForTab(tab.id, true, "startup", {
-        ...sessionIdentityFields(tab), sessionRevision: tab.sessionRevision,
-        sessionDigest: tab.sessionDigest, sessionGeneration: tab.sessionGeneration, recoveryCurrent,
-      }),
+      hydrate: async (tab, recoveryCurrent) => {
+        if (needsColdHistory(tab)) {
+          dispatchTo(tab.id, { type: "hydrate_start", reason: "startup" });
+          await primeReadableHistoryForTab(tab.id, tab, "startup", activeNavigationSeqRef.current, recoveryCurrent);
+        } else {
+          await loadSessionDataForTab(tab.id, true, "startup", {
+            ...sessionIdentityFields(tab), sessionRevision: tab.sessionRevision,
+            sessionDigest: tab.sessionDigest, sessionGeneration: tab.sessionGeneration, recoveryCurrent,
+          });
+        }
+      },
     });
 
     // Passive hydration must not invalidate the concurrent draft-restore probe.
@@ -3467,7 +3494,7 @@ export function useController() {
       offTabMeta();
       offRecovery();
     };
-  }, [dispatchRuntimeStatusForTab, dispatchTo, handleTopicActivationEvent, loadSessionDataForTab, refreshBalanceForTab, refreshCheckpoints, refreshMetaForTab, syncActiveTabFromBackend, startTranscriptFollow]);
+  }, [dispatchRuntimeStatusForTab, dispatchTo, handleTopicActivationEvent, loadSessionDataForTab, primeReadableHistoryForTab, refreshBalanceForTab, refreshCheckpoints, refreshMetaForTab, syncActiveTabFromBackend, startTranscriptFollow]);
 
   // Track the visible tab in the transcript store: the active tab is pinned
   // out of LRU eviction. (In-flight loads of background tabs still complete

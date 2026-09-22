@@ -70,24 +70,24 @@ test("a replaced source retires the stale preparation before a fresh window", as
 
 test("native anchors carry the outline cut only after capability negotiation", async () => {
   let navigation = false;
-  let request: Record<string, unknown> | undefined;
+  const requests: Record<string, unknown>[] = [];
   commands.BeginSessionHistoryReadForTab = () => ({ ...handle("native"), storageBackend: "legacy",
     capabilities: ["history-read-binding-v1", ...(navigation ? ["history-native-navigation-v1"] : [])] });
   commands.ReadSessionHistorySlice = (_id: string, req: Record<string, unknown>) => {
-    request = req;
+    requests.push(req);
     return { status: "ready", page: { entries: [], hasOlder: false, hasNewer: true, totalTurns: 200, startTurn: 17, endTurn: 17, revision: 9, revisionKnown: true, digest: "proof" } };
   };
   assert.equal((await readBoundHistoryWindow("native", { anchor: "turn", turn: 17 }))?.status, "unsupported");
-  assert.equal(request, undefined);
+  assert.equal(requests.length, 0);
   releaseHistoryRead("native");
   navigation = true;
   const result = await readBoundHistoryWindow("native", { anchor: "turn", turn: 17, generation: "bound-cut", snapshotSequence: 9, limit: 32 });
   assert.equal(result?.status, "ready");
-  assert.equal(request?.anchor, "turn");
-  assert.equal(request?.turn, 17);
-  assert.equal(request?.generation, "bound-cut");
-  assert.equal(request?.snapshotSequence, 9);
+  assert.equal(requests[requests.length - 1]?.anchor, "turn");
+  assert.equal(requests[requests.length - 1]?.turn, 17);
+  assert.equal(requests[requests.length - 1]?.generation, "bound-cut");
+  assert.equal(requests[requests.length - 1]?.snapshotSequence, 9);
   await readBoundHistoryWindow("native", { anchor: "message", messageId: "sone:r9:m32:o0", generation: "bound-cut" });
-  assert.equal(request?.messageId, "sone:r9:m32:o0");
+  assert.equal(requests[requests.length - 1]?.messageId, "sone:r9:m32:o0");
   releaseHistoryRead("native");
 });
