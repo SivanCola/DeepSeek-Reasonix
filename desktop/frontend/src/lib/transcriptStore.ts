@@ -259,7 +259,10 @@ export class TranscriptStore {
     const evictable = (): SessionTranscript[] =>
       Array.from(this.sessions.values()).filter((s) => s.records.length > 0 && !this.isPinned(s));
     let candidates = evictable();
-    let resident = candidates.length;
+    // Pins protect owners from eviction, but their windows still occupy the
+    // same cache. Counting only evictable entries allowed an extra active
+    // window (and one more for every live tab) beyond the resident budget.
+    let resident = this.residentSessionCount();
     while (resident > this.maxResidentSessions && candidates.length > 0) {
       const victim = candidates.shift();
       if (!victim) break;
