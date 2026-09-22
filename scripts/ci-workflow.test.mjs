@@ -464,6 +464,18 @@ test("every prepared frontend consumer uses the producer's exact Node runtime", 
   }
 });
 
+test("memory shards and aggregation use their build producer's exact Node runtime", () => {
+  const prepare = job(appMemory, "prepare");
+  assert.match(prepare, /node_version: \$\{\{ steps\.memory-toolchain\.outputs\.node_version \}\}/);
+  assert.match(prepare, /echo "node_version=\$\(node --version\)" >> "\$GITHUB_OUTPUT"/);
+  assert.ok(prepare.indexOf("actions/setup-node@") < prepare.indexOf("id: memory-toolchain"));
+  for (const name of ["shard", "app-memory"]) {
+    const body = job(appMemory, name);
+    assert.match(body, /node-version: \$\{\{ needs\.prepare\.outputs\.node_version \}\}/, name);
+    assert.equal(body.match(/node-version:/g)?.length, 1, name);
+  }
+});
+
 test("browser matrix preserves five entry points and fails closed through desktop-browser", () => {
   const groups = job(ci, "desktop-browser-group");
   assert.match(groups, /max-parallel: 2/);
