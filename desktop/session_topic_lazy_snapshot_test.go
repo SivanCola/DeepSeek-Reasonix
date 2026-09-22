@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +14,88 @@ import (
 	"reasonix/internal/session"
 	"reasonix/internal/sessioncatalog"
 )
+
+func TestMetadataTopicTextFilterUsesLazyUnicodeSnapshot(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	root := t.TempDir()
+	if err := addProject(root, "Text filter"); err != nil {
+		t.Fatal(err)
+	}
+	app := NewApp()
+	catalog, err := sessioncatalog.Open(t.Context(), sessioncatalog.Options{Path: filepath.Join(t.TempDir(), "catalog.sqlite"), MetadataOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.sessionCatalog.Store(catalog)
+	t.Cleanup(func() { app.desktopSessions.readSnapshots.close(); app.stopSessionCatalog(time.Second) })
+	rows := make([]sessioncatalog.SessionRecord, 123)
+	for i := range rows {
+		title, preview := "unrelated", ""
+		if i == 121 || i == 3 {
+			title = "ÜBER 历史"
+		}
+		if i == 60 {
+			preview = "über preview"
+		}
+		rows[i] = sessioncatalog.SessionRecord{Path: filepath.Join(root, fmt.Sprintf("unread-%03d.jsonl", i)), Directory: root,
+			Scope: "project", WorkspaceRoot: root, TopicID: fmt.Sprint(i), TopicTitle: title, Preview: preview,
+			CreatedAt: int64(i + 1), LastActivityAt: int64(i + 1), OrdinaryVisible: true, Health: sessioncatalog.HealthOK}
+		if err := catalog.UpsertSession(t.Context(), rows[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	req := ProjectTopicPageRequest{Scope: "project", WorkspaceRoot: root, Query: " üBeR ", Limit: 1}
+	first, err := app.ListProjectTopics(req)
+	if err != nil || len(first.Items) != 1 || first.Items[0].SessionPath != rows[121].Path || first.NextCursor == "" {
+		t.Fatalf("Unicode first page: %+v %v", first, err)
+	}
+	store := &app.desktopSessions.readSnapshots
+	store.mu.Lock()
+	snapshot := store.entries[first.SnapshotID].data
+	store.mu.Unlock()
+	if snapshot.readPage == nil || snapshot.count != 0 || len(snapshot.rows) != 0 || snapshot.db != nil {
+		t.Fatal("text filter materialized the history library")
+	}
+	rows[120].TopicTitle = "ÜBER newly matching"
+	if err := catalog.UpsertSession(t.Context(), rows[120]); err != nil {
+		t.Fatal(err)
+	}
+	page := first
+	for _, index := range []int{60, 3} {
+		req.Cursor = page.NextCursor
+		page, err = app.ListProjectTopics(req)
+		if err != nil || len(page.Items) != 1 || page.Items[0].SessionPath != rows[index].Path {
+			t.Fatalf("fixed text snapshot continuation: %+v %v", page, err)
+		}
+	}
+	if page.NextCursor != "" {
+		t.Fatal("filtered tail advertised more matches")
+	}
+	app.ReleaseReadSnapshot(first.SnapshotID)
+	req.Cursor, req.Query = "", strings.ToUpper(desktopSourceKey(rows[50].Path, ""))
+	identity, err := app.ListProjectTopics(req)
+	if err != nil || len(identity.Items) != 1 || identity.Items[0].SessionPath != rows[50].Path {
+		t.Fatalf("physical source key search changed: %+v %v", identity, err)
+	}
+	app.ReleaseReadSnapshot(identity.SnapshotID)
+	req.Query = "missing term"
+	empty, err := app.ListProjectTopics(req)
+	if err != nil || len(empty.Items) != 0 || empty.NextCursor != "" {
+		t.Fatalf("empty text result: %+v %v", empty, err)
+	}
+	app.ReleaseReadSnapshot(empty.SnapshotID)
+	app.setDesktopLocale("en")
+	if err := catalog.SyncMetadata(t.Context(), nil, []sessioncatalog.TopicMetadata{{Scope: "project", WorkspaceRoot: root,
+		TopicID: rows[0].TopicID, Title: defaultTopicTitle, TitleSource: topicTitleSourceAuto}}); err != nil {
+		t.Fatal(err)
+	}
+	req.Query = defaultTopicTitleEn
+	localized, err := app.ListProjectTopics(req)
+	if err != nil || len(localized.Items) != 1 || localized.Items[0].SessionPath != rows[0].Path || localized.Items[0].Label != defaultTopicTitleEn {
+		t.Fatalf("localized auto-title filter changed: %+v %v", localized, err)
+	}
+	app.ReleaseReadSnapshot(localized.SnapshotID)
+}
 
 func TestMetadataTopicSnapshotReadsPagesWithoutMaterializingHistory(t *testing.T) {
 	isolateDesktopUserDirs(t)

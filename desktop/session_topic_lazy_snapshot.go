@@ -23,7 +23,7 @@ type topicPagePosition struct {
 // copy of the whole result is needed to return the first fifty rows.
 func (a *App) lazyProjectTopicSnapshot(req ProjectTopicPageRequest, reader workspaceSessionInfoReader, snap *readSnapshot, state workspacestate.State, workspaceID string, org workspacestate.Organization, versions *workspacestate.ReadVersions) (ProjectTopicPage, func() error, bool, error) {
 	catalog := a.sessionCatalog.Load()
-	if catalog == nil || !catalog.MetadataOnly() || org.ManualOrderEnabled || req.Query != "" {
+	if catalog == nil || !catalog.MetadataOnly() || org.ManualOrderEnabled {
 		return ProjectTopicPage{}, nil, false, nil
 	}
 	if err := applyOrganizationGroupFilter(&req, org); err != nil {
@@ -97,6 +97,25 @@ func (a *App) lazyProjectTopicSnapshot(req ProjectTopicPageRequest, reader works
 	} else if req.GroupFilter == "ungrouped" {
 		query.ExcludeSourceKeysJSON = groupJSON
 	}
+	// Freeze the localized default along with the search predicate. SQLite's
+	// lower() does not implement the existing Go Unicode matching semantics.
+	defaultTitle := a.localizedDefaultTopicTitle()
+	recordTitle := func(record sessioncatalog.OrdinaryRecord) string {
+		if title := strings.TrimSpace(record.CustomTitle); title != "" {
+			return title
+		}
+		if strings.TrimSpace(record.TitleSource) == topicTitleSourceAuto && isDefaultTopicTitle(record.Title) {
+			return defaultTitle
+		}
+		return record.Title
+	}
+	var match func(sessioncatalog.OrdinaryRecord) bool
+	if text := strings.ToLower(strings.TrimSpace(req.Query)); text != "" {
+		match = func(record sessioncatalog.OrdinaryRecord) bool {
+			key := "source\x00" + localDesktopHostID + "\x00" + record.SourceKey()
+			return strings.Contains(strings.ToLower(recordTitle(record)+"\n"+record.Preview+"\n"+key), text)
+		}
+	}
 	positions := map[int]topicPagePosition{0: {}}
 	// Snapshot memory accounts for retained metadata and cursor checkpoints,
 	// including roots retained while a caller has not yet requested page two.
@@ -106,7 +125,7 @@ func (a *App) lazyProjectTopicSnapshot(req ProjectTopicPageRequest, reader works
 	if err != nil {
 		return ProjectTopicPage{}, nil, true, err
 	}
-	if err := store.reserve(snap, int64(len(encoded)+len(excludedJSON)+len(groupJSON)+1024)); err != nil {
+	if err := store.reserve(snap, int64(len(encoded)+len(excludedJSON)+len(groupJSON)+2*len(req.Query)+1024)); err != nil {
 		return ProjectTopicPage{}, nil, true, err
 	}
 	snap.readPage = func(readCtx context.Context, offset, limit int) ([][]byte, bool, error) {
@@ -116,7 +135,7 @@ func (a *App) lazyProjectTopicSnapshot(req ProjectTopicPageRequest, reader works
 		}
 		request := query
 		request.Cursor, request.Limit = position.cursor, min(limit+1, sessioncatalog.MaxLimit)
-		records, err := catalog.ListOrdinarySessions(lease.Context(readCtx), request)
+		records, err := catalog.ListMatchingOrdinarySessions(lease.Context(readCtx), request, match)
 		if err != nil {
 			return nil, false, err
 		}
@@ -128,12 +147,9 @@ func (a *App) lazyProjectTopicSnapshot(req ProjectTopicPageRequest, reader works
 			if req.Scope == "global" {
 				kind = "global_topic"
 			}
-			title := strings.TrimSpace(record.CustomTitle)
-			if title == "" {
-				title = a.localizedTopicTitle(record.Title, record.TitleSource)
-			}
+			title := recordTitle(record)
 			legacy = append(legacy, ProjectNode{Key: projectSessionNodeKey(req.Scope, record.Path), Kind: kind, Label: title, Root: req.WorkspaceRoot, TopicID: record.TopicID, SessionPath: record.Path,
-				Historical: true, Source: &SessionSourceRef{HostID: localDesktopHostID, Path: record.Path, SourceKey: desktopSourceKey(record.Path, "")},
+				Historical: true, Source: &SessionSourceRef{HostID: localDesktopHostID, Path: record.Path, SourceKey: record.SourceKey()},
 				Preview: record.Preview, Turns: record.Turns, TurnsState: string(record.TurnsState), Health: string(record.Health), CreatedAt: record.CreatedAt, LastActivityAt: record.LastActivityAt, Pinned: record.Pinned, SortOrder: -1,
 				Recovered: record.Recovered, RecoveryReason: record.RecoveryReason, RecoveryDigest: record.RecoveryDigest, RecoveryParentID: record.ParentID, Open: overlay.open, Running: overlay.running, Status: overlay.status, Children: []ProjectNode{}})
 		}

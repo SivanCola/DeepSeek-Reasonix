@@ -146,6 +146,11 @@ sys.stdin.read()
     .filter(node => fixtures.some(fixture => fixture.path === node.sessionPath));
   assert.equal(sources.length, 2);
   for (const node of sources) await mutate({ kind: "set-group", groupId: "native-fixtures", target: { source: node.source } });
+  const filtered = await invoke("ListProjectTopics", [{ scope: "global", groupFilter: "group", groupId: "native-fixtures", query: "CHECKPOINT", limit: 1 }]);
+  assert.equal(filtered.items.length, 1);
+  assert.equal(filtered.items[0].sessionPath, fixtures.find(fixture => fixture.kind === "checkpoint").path);
+  assert.equal(filtered.nextCursor ?? "", "");
+  await invoke("ReleaseReadSnapshot", [filtered.snapshotId]);
   const groupedRequest = { scope: "global", groupFilter: "group", groupId: "native-fixtures", limit: 1 };
   const first = await invoke("ListProjectTopics", [groupedRequest]);
   assert.equal(first.items.length, 1);
@@ -162,7 +167,7 @@ sys.stdin.read()
   assert.equal(fresh.items[0].sessionPath, first.items[0].sessionPath);
   assert.equal(fresh.nextCursor ?? "", "");
   await invoke("ReleaseReadSnapshot", [fresh.snapshotId]);
-  console.log("PASS native group paging: source membership, retained cursor, refreshed membership");
+  console.log("PASS native group paging: source membership, text filtering, retained cursor, refreshed membership");
   const ready = parseServiceReady(readFileSync(join(home, "desktop-shell/logs/shell.log"), "utf8"));
   assert.ok(ready);
   await closeAndVerify(application, { shellPid: await application.evaluate(() => process.pid), servicePid: ready.pid });

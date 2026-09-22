@@ -46,6 +46,56 @@ type OrdinaryRecord struct {
 	Cursor             string
 }
 
+// SourceKey uses the catalog's captured physical identity. Inspecting listing
+// metadata must not stat or resolve each candidate transcript again.
+func (r OrdinaryRecord) SourceKey() string {
+	return agent.SessionSourceKeyFromIdentity(r.pathKey, "")
+}
+
+// ListMatchingOrdinarySessions preserves Go/display-layer matching semantics
+// without materializing an entire search result. Callers supply a read lease
+// for fixed-snapshot paging. Sparse matches may inspect many metadata pages,
+// but only a bounded batch and the requested matches remain resident.
+func (c *Catalog) ListMatchingOrdinarySessions(ctx context.Context, req OrdinaryPageRequest, match func(OrdinaryRecord) bool) ([]OrdinaryRecord, error) {
+	if match == nil {
+		return c.ListOrdinarySessions(ctx, req)
+	}
+	limit := req.Limit
+	if limit <= 0 {
+		limit = DefaultLimit
+	}
+	limit = min(limit, MaxLimit)
+	req.Limit = max(limit, DefaultLimit)
+	result := make([]OrdinaryRecord, 0, limit)
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		rows, err := c.ListOrdinarySessions(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if match(row) {
+				result = append(result, row)
+				if len(result) == limit {
+					if err := ctx.Err(); err != nil {
+						return nil, err
+					}
+					return result, nil
+				}
+			}
+		}
+		if len(rows) < req.Limit {
+			return result, nil
+		}
+		req.Cursor = rows[len(rows)-1].Cursor
+	}
+}
+
 type ordinaryCursor struct {
 	Pinned   int    `json:"p"`
 	Activity int64  `json:"a"`
