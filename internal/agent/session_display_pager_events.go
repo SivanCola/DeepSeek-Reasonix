@@ -20,142 +20,34 @@ import (
 // replace array is decoded one message at a time; SQLite holds the live order.
 // No migration, normalization, or repair writes are made to source files.
 func buildEventDisplayPager(ctx context.Context, db *sql.DB, source, fingerprint string, checkpointSize int64) error {
-	_, err := db.ExecContext(ctx, `CREATE TABLE event_locations(position INTEGER PRIMARY KEY,offset INTEGER NOT NULL,length INTEGER NOT NULL,at INTEGER NOT NULL);
-	CREATE TABLE event_pending(position INTEGER PRIMARY KEY,offset INTEGER NOT NULL,length INTEGER NOT NULL);`)
-	if err != nil {
-		return err
-	}
+	return buildEventDisplayPagerObserved(ctx, db, source, fingerprint, checkpointSize, nil)
+}
+
+func buildEventDisplayPagerObserved(ctx context.Context, db *sql.DB, source, fingerprint string, checkpointSize int64, observed func(string, int)) error {
 	f, err := os.Open(store.SessionEventLog(source))
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	decoder := json.NewDecoder(&historywork.Reader{Context: ctx, Source: f})
-	count := 0
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		token, err := decoder.Token()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil || token != json.Delim('{') {
-			return errors.Join(ErrSessionDisplayReadModelDamaged, err)
-		}
-		var record sessionEventRecord
-		pending := 0
-		if _, err := db.ExecContext(ctx, `DELETE FROM event_pending`); err != nil {
-			return err
-		}
-		for decoder.More() {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			field, err := decoder.Token()
-			if err != nil {
-				return fmt.Errorf("schema-1 field: %w", ErrSessionDisplayReadModelDamaged)
-			}
-			switch field {
-			case "schema_version":
-				err = decoder.Decode(&record.SchemaVersion)
-			case "type":
-				err = decoder.Decode(&record.Type)
-			case "message_index":
-				err = decoder.Decode(&record.MessageIndex)
-			case "created_at":
-				err = decoder.Decode(&record.CreatedAt)
-			case "messages":
-				pending, err = stageEventDisplayMessages(ctx, db, decoder)
-			default:
-				err = skipDisplayJSONValue(ctx, decoder)
-			}
-			if err != nil {
-				return errors.Join(ErrSessionDisplayReadModelDamaged, err)
-			}
-		}
-		if _, err := decoder.Token(); err != nil {
-			return fmt.Errorf("schema-1 record end: %w", ErrSessionDisplayReadModelDamaged)
-		}
-		if record.SchemaVersion != sessionEventSchemaVersion {
-			return fmt.Errorf("schema-1 version %d: %w", record.SchemaVersion, ErrSessionDisplayReadModelDamaged)
-		}
-		at := int64(0)
-		switch record.Type {
-		case sessionEventTypeReplace:
-			if _, err := db.ExecContext(ctx, `DELETE FROM event_locations`); err != nil {
-				return err
-			}
-			count = 0
-		case sessionEventTypeAppend:
-			if record.MessageIndex != count {
-				return fmt.Errorf("schema-1 append position %d != %d: %w", record.MessageIndex, count, ErrSessionDisplayReadModelDamaged)
-			}
-			if !record.CreatedAt.IsZero() {
-				at = record.CreatedAt.UnixMilli()
-			}
-		default:
-			return fmt.Errorf("schema-1 event %q: %w", record.Type, ErrSessionDisplayReadModelDamaged)
-		}
-		if _, err := db.ExecContext(ctx, `INSERT INTO event_locations SELECT position+?,offset,length,? FROM event_pending`, count, at); err != nil {
-			return err
-		}
-		count += pending
+	if err := validateEventPagerFile(source, f, fingerprint); err != nil {
+		return err
 	}
-	return finishEventDisplayPager(ctx, db, f, source, fingerprint, checkpointSize, count)
-}
-
-func stageEventDisplayMessages(ctx context.Context, db *sql.DB, decoder *json.Decoder) (count int, result error) {
-	// Like encoding/json, the last occurrence of a messages field wins.
-	if _, err := db.ExecContext(ctx, `DELETE FROM event_pending`); err != nil {
-		return 0, err
+	info, err := f.Stat()
+	if err != nil {
+		return err
 	}
-	token, err := decoder.Token()
-	if err != nil || token == nil { // missing/null messages are an empty list
-		return 0, err
+	progress, err := restoreEventPagerScan(ctx, db, fingerprint, info.Size())
+	if err != nil {
+		return err
 	}
-	if token != json.Delim('[') {
-		return 0, ErrSessionDisplayReadModelDamaged
+	scanner := &eventPagerScanner{ctx: ctx, db: db, progress: progress, observed: observed}
+	if err := scanner.scan(f); err != nil {
+		return err
 	}
-	var tx *sql.Tx
-	defer func() {
-		if tx != nil {
-			_ = tx.Rollback()
-		}
-	}()
-	for decoder.More() {
-		if err := ctx.Err(); err != nil {
-			return count, err
-		}
-		start := decoder.InputOffset()
-		var message provider.Message
-		if err := decoder.Decode(&message); err != nil {
-			return count, err
-		}
-		if tx == nil {
-			tx, err = db.BeginTx(ctx, nil)
-			if err != nil {
-				return count, err
-			}
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO event_pending VALUES(?,?,?)`, count, start, decoder.InputOffset()-start); err != nil {
-			return count, err
-		}
-		count++
-		if count%historywork.BatchEntries == 0 {
-			if err := tx.Commit(); err != nil {
-				return count, err
-			}
-			tx = nil
-		}
+	if err := finishEventDisplayPager(ctx, db, f, source, fingerprint, checkpointSize, scanner.progress.Count, observed); err != nil {
+		return err
 	}
-	if _, err := decoder.Token(); err != nil {
-		return count, err
-	}
-	if tx != nil {
-		return count, tx.Commit()
-	}
-	return count, nil
+	return validateEventPagerFile(source, f, fingerprint)
 }
 
 // Unknown event fields are skipped token by token rather than buffering the
@@ -225,11 +117,14 @@ func readDisplayEventMessage(ctx context.Context, file *os.File, loc displayEven
 	return message, err
 }
 
-func finishEventDisplayPager(ctx context.Context, db *sql.DB, file *os.File, source, fingerprint string, checkpointSize int64, count int) error {
+func finishEventDisplayPager(ctx context.Context, db *sql.DB, file *os.File, source, fingerprint string, checkpointSize int64, count int, observed func(string, int)) error {
 	idx := SessionDisplayIndex{SchemaVersion: SessionDisplayIndexSchemaVersion, TranscriptSize: checkpointSize, ListingPreviewKnown: true}
 	hash := sha256.New()
 	users := 0
-	for lo := 0; lo < count; lo += historywork.BatchEntries {
+	if err := restoreEventProjection(ctx, db, &idx, &users, hash, count); err != nil {
+		return err
+	}
+	for lo := idx.MessageCount; lo < count; lo += historywork.BatchEntries {
 		locations, err := eventDisplayLocations(ctx, db, lo, min(lo+historywork.BatchEntries, count))
 		if err != nil {
 			return err
@@ -264,6 +159,9 @@ func finishEventDisplayPager(ctx context.Context, db *sql.DB, file *os.File, sou
 			}
 			idx.MessageCount++
 		}
+		if err == nil {
+			err = saveEventProjection(ctx, tx, idx, users, hash)
+		}
 		if err != nil {
 			_ = tx.Rollback()
 			return err
@@ -271,6 +169,12 @@ func finishEventDisplayPager(ctx context.Context, db *sql.DB, file *os.File, sou
 		if err := tx.Commit(); err != nil {
 			return err
 		}
+		if observed != nil {
+			observed("projection", idx.MessageCount)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	idx.ContentDigest = fmt.Sprintf("%x", hash.Sum(nil))
 	identity, known, err := SessionContentIdentity(source)
@@ -287,7 +191,7 @@ func finishEventDisplayPager(ctx context.Context, db *sql.DB, file *os.File, sou
 	if err != nil {
 		return err
 	}
-	_, err = db.ExecContext(ctx, `INSERT INTO metadata VALUES('source',?),('header',?),('kind','schema1'); DROP TABLE event_pending`, fingerprint, string(body))
+	_, err = db.ExecContext(ctx, `INSERT OR REPLACE INTO metadata VALUES('source',?),('header',?),('kind','schema1'); DROP TABLE IF EXISTS event_pending`, fingerprint, string(body))
 	return err
 }
 

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +24,22 @@ type cancelEventRead struct {
 	source io.Reader
 	cancel context.CancelFunc
 	reads  int
+}
+
+func stageEventDisplayMessages(ctx context.Context, db *sql.DB, decoder *json.Decoder) (int, error) {
+	scanner := &eventPagerScanner{ctx: ctx, db: db, decoder: decoder}
+	defer func() {
+		if scanner.tx != nil {
+			_ = scanner.tx.Rollback()
+		}
+	}()
+	if err := scanner.transaction(); err != nil {
+		return 0, err
+	}
+	if err := scanner.messages(); err != nil {
+		return scanner.progress.Pending, err
+	}
+	return scanner.progress.Pending, scanner.tx.Commit()
 }
 
 func (r *cancelEventRead) Read(p []byte) (int, error) {
