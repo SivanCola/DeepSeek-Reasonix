@@ -580,7 +580,7 @@ func (a *App) catalogTopicPage(catalog *sessioncatalog.Catalog, req ProjectTopic
 			Limit: limit, Query: req.Query, TimeFilter: req.TimeFilter, SortMode: req.SortMode,
 			ManualOrder: manualOrder, IncludeTopicIDsJSON: req.groupIncludeJSON,
 			ExcludeTopicIDsJSON: req.groupExcludeJSON, ExcludePinned: req.ExcludePinned,
-			PinnedOnly: req.pinnedOnly,
+			PinnedOnly:    req.pinnedOnly,
 			CursorBinding: req.groupCursorBind,
 		})
 		if err != nil {
