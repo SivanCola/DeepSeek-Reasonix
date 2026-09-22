@@ -322,7 +322,7 @@ func TestReadSnapshotEvictionOrdersEqualTimestampsAndPageAccess(t *testing.T) {
 		snap.lifetime.used = sharedTime
 	}
 	var victims []*readSnapshot
-	for range len(ordered) {
+	for range ordered {
 		victims = append(victims, store.evictOldestLocked())
 	}
 	store.mu.Unlock()
