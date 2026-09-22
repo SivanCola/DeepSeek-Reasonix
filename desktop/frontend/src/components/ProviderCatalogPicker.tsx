@@ -32,6 +32,9 @@ const productKeys: Record<string, DictKey> = {
   api: "settings.catalog.productAPI", coding: "settings.catalog.productCoding", token: "settings.catalog.productToken",
   go: "settings.catalog.productGo", zen: "settings.catalog.productZen", local: "settings.catalog.productLocal",
 };
+const clusterKeys: Record<string, DictKey> = {
+  cn: "settings.catalog.clusterChina", sgp: "settings.catalog.clusterSingapore", ams: "settings.catalog.clusterEurope",
+};
 
 export function ProviderCatalogPicker({ choices, busy, onConnect, onView, onReset }: {
   choices: CatalogChoice[];
@@ -53,9 +56,9 @@ export function ProviderCatalogPicker({ choices, busy, onConnect, onView, onRese
     c.catalog.brandId === "token-rhythm" ? t("settings.addProvider.preset.tokenRhythmLabel") : c.catalog.brandLabel])).entries()], [choices, t]);
   if (!selected) return null;
   const genericFormat = (value: string) => value === "dashscope-responses" ? "responses" : value;
-  // The official DeepSeek connection starts with Chat Completions regardless
+  // Official DeepSeek and MiMo connections start with Chat Completions regardless
   // of which protocol-specific preset supplied the brand's first catalog row.
-  const defaultFormat = selected.catalog.brandId === "deepseek" && selected.catalog.product === "api"
+  const defaultFormat = (selected.catalog.brandId === "deepseek" && selected.catalog.product === "api") || selected.catalog.brandId === "mimo"
     ? "openai" : genericFormat(selected.catalog.format);
   const format = formatDrafts[selected.id] ?? defaultFormat;
   const protocols = protocolsForCatalog(selected.catalog);
@@ -65,8 +68,8 @@ export function ProviderCatalogPicker({ choices, busy, onConnect, onView, onRese
   try { const u = new URL(baseURL); validURL = (u.protocol === "https:" || u.protocol === "http:") && Boolean(u.hostname) && !u.username && !u.password; } catch { /* invalid draft */ }
   const key = keyDraft.id === selected.id && keyDraft.keyEnv === selected.keyEnv ? keyDraft.value : "";
   const siblings = choices.filter(c => c.catalog.brandId === selected.catalog.brandId);
-  const regionChoices = siblings.filter(c => c.catalog.region === selected.catalog.region);
-  const formatChoices = regionChoices.filter(c => c.catalog.product === selected.catalog.product);
+  const productChoices = siblings.filter(c => c.catalog.product === selected.catalog.product);
+  const formatChoices = productChoices.filter(c => c.catalog.region === selected.catalog.region);
   const pick = (choice: CatalogChoice | undefined) => {
     if (!choice) return;
     setSelectedID(choice.id);
@@ -74,21 +77,26 @@ export function ProviderCatalogPicker({ choices, busy, onConnect, onView, onRese
     setConfirmReset(false);
   };
   const chooseDimension = (dimension: "region" | "product" | "format", value: string) => {
-    const candidates = (dimension === "region" ? siblings : dimension === "product" ? regionChoices : formatChoices)
+    const candidates = (dimension === "product" ? siblings : dimension === "region" ? productChoices : formatChoices)
       .filter(c => c.catalog[dimension] === value);
-    pick(candidates.find(c => c.catalog.product === selected.catalog.product && c.catalog.format === selected.catalog.format)
-      ?? candidates.find(c => c.catalog.format === selected.catalog.format) ?? candidates[0]);
+    const choice = candidates.find(c => c.catalog.region === selected.catalog.region && genericFormat(c.catalog.format) === format)
+      ?? candidates.find(c => genericFormat(c.catalog.format) === format)
+      ?? candidates.find(c => c.catalog.region === selected.catalog.region) ?? candidates[0];
+    pick(choice);
+    if (choice && genericFormat(choice.catalog.format) === format) {
+      setFormatDrafts(prev => ({...prev, [choice.id]: format}));
+    }
   };
   const field = (dimension: "region" | "product" | "format", label: DictKey, candidates: CatalogChoice[]) => {
     const values = [...new Set(candidates.map(c => c.catalog[dimension]))];
+    const labels = dimension === "region" ? (label === "settings.catalog.cluster" ? clusterKeys : regionKeys) : productKeys;
     return <div className="provider-catalog__field">
       <label className="set-label" htmlFor={`${uid}-${dimension}`}>{t(label)}</label>
       <SettingsSelect id={`${uid}-${dimension}`} className="mem-select" disabled={busy || values.length < 2}
         value={selected.catalog[dimension]} onValueChange={value => chooseDimension(dimension, value)}>
         {values.map(value => <option key={value} value={value}>{dimension === "format"
           ? value === "bundle" ? t("settings.catalog.formatBundle") : apiFormatLabel(value)
-          : (dimension === "region" ? regionKeys[value] : productKeys[value])
-            ? t((dimension === "region" ? regionKeys[value] : productKeys[value])) : value}</option>)}
+          : labels[value] ? t(labels[value]) : value}</option>)}
       </SettingsSelect>
     </div>;
   };
@@ -108,10 +116,11 @@ export function ProviderCatalogPicker({ choices, busy, onConnect, onView, onRese
     </aside>
     <section className="provider-catalog__detail" aria-label={selected.catalog.brandLabel}>
       <strong className="provider-catalog__title">{selected.catalog.brandLabel}</strong>
-      {(new Set(siblings.map(c => c.catalog.region)).size > 1 || new Set(regionChoices.map(c => c.catalog.product)).size > 1) && <div className="provider-catalog__options">
-        {new Set(siblings.map(c => c.catalog.region)).size > 1 && field("region", "settings.catalog.region", siblings)}
-        {new Set(regionChoices.map(c => c.catalog.product)).size > 1 && field("product", "settings.catalog.product", regionChoices)}
+      {(new Set(siblings.map(c => c.catalog.product)).size > 1 || new Set(productChoices.map(c => c.catalog.region)).size > 1) && <div className="provider-catalog__options">
+        {new Set(siblings.map(c => c.catalog.product)).size > 1 && field("product", "settings.catalog.product", siblings)}
+        {new Set(productChoices.map(c => c.catalog.region)).size > 1 && field("region", selected.catalog.brandId === "mimo" && selected.catalog.product === "token" ? "settings.catalog.cluster" : "settings.catalog.region", productChoices)}
       </div>}
+      {selected.catalog.brandId === "mimo" && selected.catalog.product === "token" && <div className="mem-hint">{t("settings.catalog.mimoTokenPlanHint")}</div>}
       <div className="provider-catalog__field">
         <label className="set-label" htmlFor={`${uid}-format`}>{t("settings.providerProtocol")}</label>
         <SettingsSelect id={`${uid}-format`} className="mem-select" disabled={busy} value={format}

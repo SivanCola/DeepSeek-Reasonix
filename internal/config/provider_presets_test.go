@@ -649,8 +649,12 @@ func TestCuratedProviderPresetCapabilities(t *testing.T) {
 	if !mimo.NoProxy {
 		t.Fatal("mimo-api preset should bypass configured proxy for China-only endpoint")
 	}
-	if mimo.DefaultModel() != "mimo-v2.5-pro" || !mimo.HasVisionModel("mimo-v2.5") || mimo.HasVisionModel("mimo-v2.5-pro") {
+	if mimo.DefaultModel() != "mimo-v2.6-pro" || !mimo.HasVisionModel("mimo-v2.6-pro") ||
+		!mimo.HasVisionModel("mimo-v2.6-flash") || !mimo.HasVisionModel("mimo-v2.5") || mimo.HasVisionModel("mimo-v2.5-pro") {
 		t.Fatalf("mimo vision capability mismatch: %+v", mimo.VisionModels)
+	}
+	if price := mimo.PriceForModel("mimo-v2.6-flash"); price == nil || price.Currency != "¥" || price.Input != 1 || price.Output != 2 || price.CacheHit != 0.02 {
+		t.Fatalf("mimo-v2.6-flash price = %+v, want current RMB pricing", price)
 	}
 	if price := mimo.PriceForModel("mimo-v2.5-pro"); price == nil || price.Currency != "¥" {
 		t.Fatalf("mimo-v2.5-pro price = %+v, want RMB pricing", price)
@@ -666,7 +670,7 @@ func TestCuratedProviderPresetCapabilities(t *testing.T) {
 	if !ok {
 		t.Fatal("mimo-token-plan-cn provider missing")
 	}
-	if !mimoPlan.NoProxy || mimoPlan.APIKeyEnv != "MIMO_TOKEN_PLAN_API_KEY" || !mimoPlan.HasVisionModel("mimo-v2.5") {
+	if !mimoPlan.NoProxy || mimoPlan.APIKeyEnv != "MIMO_TOKEN_PLAN_API_KEY" || !mimoPlan.HasVisionModel("mimo-v2.6-pro") || !mimoPlan.HasVisionModel("mimo-v2.5") {
 		t.Fatalf("mimo-token-plan-cn capability mismatch: %+v", mimoPlan)
 	}
 	mimoSGP, ok := cfg.Provider("mimo-token-plan-sgp")

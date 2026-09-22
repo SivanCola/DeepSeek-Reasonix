@@ -104,6 +104,14 @@ func rawTOMLSet(body string, path []string, value any) (string, error) {
 	keys := make([]string, len(path)-1)
 	for i, k := range path[:len(path)-1] {
 		keys[i] = strconv.Quote(k)
+		// Keep ordinary section names in the canonical form emitted by the
+		// renderer. Previous incremental writers identify nested sections by
+		// their bare parent prefix (for example providers.prices).
+		if k != "" && strings.IndexFunc(k, func(r rune) bool {
+			return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-')
+		}) == -1 {
+			keys[i] = k
+		}
 	}
 	return strings.TrimRight(body, "\n") + "\n[" + strings.Join(keys, ".") + "]\n" + assignment + "\n", nil
 }
