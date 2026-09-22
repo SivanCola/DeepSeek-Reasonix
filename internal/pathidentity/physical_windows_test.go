@@ -69,6 +69,36 @@ func TestResolveWindowsJunctionPreservesOnlyLeaf(t *testing.T) {
 	}
 }
 
+func TestResolveWindowsCrossVolumeJunction(t *testing.T) {
+	root := t.TempDir()
+	// GitHub's Windows runners place RUNNER_TEMP on the work drive and the
+	// process temp directory on the system drive. Local single-drive machines
+	// still execute the unconditional junction cases above.
+	other := os.Getenv("RUNNER_TEMP")
+	if !filepath.IsAbs(other) || strings.EqualFold(filepath.VolumeName(root), filepath.VolumeName(other)) {
+		if os.Getenv("GITHUB_ACTIONS") == "true" {
+			t.Fatal("Windows CI must provide temporary directories on two volumes")
+		}
+		t.Skip("no temporary directory on a second volume")
+	}
+	target, err := os.MkdirTemp(other, "reasonix-junction-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(target) })
+	alias := filepath.Join(root, "alias")
+	if out, err := exec.Command("cmd", "/c", "mklink", "/J", alias, target).CombinedOutput(); err != nil {
+		t.Fatalf("create cross-volume junction: %v: %s", err, out)
+	}
+	for _, tail := range []string{"", `missing\new.lock`} {
+		left, err := Resolve(filepath.Join(alias, tail), Options{FollowLeaf: true})
+		right, rightErr := Resolve(filepath.Join(target, tail), Options{FollowLeaf: true})
+		if err != nil || rightErr != nil || left.Key != right.Key || left.PhysicalPath != right.PhysicalPath {
+			t.Fatalf("cross-volume identity split: %+v / %+v, %v / %v", left, right, err, rightErr)
+		}
+	}
+}
+
 func TestResolveWindowsRejectsDanglingJunction(t *testing.T) {
 	alias, target := junctionFixture(t)
 	if err := os.Remove(target); err != nil {
