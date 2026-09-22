@@ -178,7 +178,11 @@ func catchUpCatalogWatch(watcher workspaceWatcher, events <-chan fsnotify.Event,
 	}
 }
 
-func admitCatalogWatchEvent(catalog *sessioncatalog.Catalog, event fsnotify.Event, targets map[string]sessioncatalog.DirectoryTarget, watched, dirty map[string]bool, watcher workspaceWatcher, initialDiscovery bool) {
+type catalogWatchPathQueue interface {
+	TryRequestIndexSession(sessioncatalog.DirectoryTarget, string) bool
+}
+
+func admitCatalogWatchEvent(catalog catalogWatchPathQueue, event fsnotify.Event, targets map[string]sessioncatalog.DirectoryTarget, watched, dirty map[string]bool, watcher workspaceWatcher, initialDiscovery bool) {
 	key := filepath.Clean(filepath.Dir(event.Name))
 	// A transcript/sidecar write invalidates one session, not its root.
 	if target, exists := targets[key]; exists {
@@ -189,7 +193,12 @@ func admitCatalogWatchEvent(catalog *sessioncatalog.Catalog, event fsnotify.Even
 			}
 			// Platform events use the canonical watch path; retain the registered
 			// access spelling when publishing the exact session identity.
-			catalog.RequestIndexSession(target, filepath.Join(target.Path, filepath.Base(path)))
+			if !catalog.TryRequestIndexSession(target, filepath.Join(target.Path, filepath.Base(path))) {
+				// The event loop owns overflow, just like an unscoped directory
+				// event. Journal one coalesced root in the next batch and retain
+				// it if admission fails, rather than blocking on every notice.
+				dirty[key] = true
+			}
 			return
 		}
 	}

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -26,6 +27,29 @@ type catchUpCatalogWatcher struct {
 }
 
 func (w *catchUpCatalogWatcher) CatchUp() { w.catchUp() }
+
+type saturatedCatalogPathQueue struct {
+	attempts int
+}
+
+func (q *saturatedCatalogPathQueue) TryRequestIndexSession(sessioncatalog.DirectoryTarget, string) bool {
+	q.attempts++
+	return false
+}
+
+func TestCatalogWatchPathOverflowCoalescesAtEventOwner(t *testing.T) {
+	root := canonicalWorkspaceRoot(t.TempDir())
+	target := sessioncatalog.DirectoryTarget{Path: root, Scope: "global"}
+	targets := map[string]sessioncatalog.DirectoryTarget{root: target}
+	watching, dirty := map[string]bool{root: true}, map[string]bool{}
+	queue := &saturatedCatalogPathQueue{}
+	for i := range 4096 {
+		admitCatalogWatchEvent(queue, fsnotify.Event{Name: filepath.Join(root, fmt.Sprintf("%d.jsonl", i)), Op: fsnotify.Write}, targets, watching, dirty, nil, false)
+	}
+	if queue.attempts != 4096 || len(dirty) != 1 || !dirty[root] {
+		t.Fatalf("overflow lost its coalesced root: attempts=%d dirty=%v", queue.attempts, dirty)
+	}
+}
 
 func TestCatalogWatchInitialBacklogCoalescesBeforeDiscovery(t *testing.T) {
 	dir, other := t.TempDir(), t.TempDir()
