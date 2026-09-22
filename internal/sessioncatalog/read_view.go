@@ -65,7 +65,7 @@ func (c *Catalog) OpenReadLease(ctx context.Context) (_ *ReadLease, result error
 	}
 	var revision uint64
 	if err := tx.QueryRowContext(lifetime, `SELECT revision FROM catalog_state WHERE id=1`).Scan(&revision); err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		stop()
 		cancel()
 		db.Close()
@@ -87,7 +87,7 @@ func (l *ReadLease) Close() {
 	l.once.Do(func() {
 		l.stop()
 		l.cancel()
-		l.view.tx.Rollback()
+		_ = l.view.tx.Rollback()
 		l.db.Close()
 		c := l.view.owner
 		c.readLeasesMu.Lock()

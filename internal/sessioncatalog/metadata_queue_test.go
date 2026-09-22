@@ -84,7 +84,7 @@ func TestMetadataIteratorAdmissionPreservesProgressAndVisibleSlot(t *testing.T) 
 		}
 		run(key, job)
 	}
-	key, job := selectMetadataQueueJob(jobs, now, false, priority)
+	_, job := selectMetadataQueueJob(jobs, now, false, priority)
 	if job == nil || job.scan == nil {
 		t.Fatal("background discovery consumed the visible-workspace reserve")
 	}
@@ -94,7 +94,7 @@ func TestMetadataIteratorAdmissionPreservesProgressAndVisibleSlot(t *testing.T) 
 			break
 		}
 	}
-	key, job = selectMetadataQueueJob(jobs, now, true, priority)
+	key, job := selectMetadataQueueJob(jobs, now, true, priority)
 	if job == nil || key != visible || job.scan != nil {
 		t.Fatal("foreground preparation blocked the visible root's reserved slot")
 	}
@@ -125,7 +125,7 @@ func TestMetadataIteratorAdmissionPreservesProgressAndVisibleSlot(t *testing.T) 
 
 func TestMetadataQueueRotatesBeforeLargeRootCompletes(t *testing.T) {
 	large, small := t.TempDir(), t.TempDir()
-	for i := 0; i < 400; i++ {
+	for i := range 400 {
 		if err := os.WriteFile(filepath.Join(large, fmt.Sprintf("%04d.jsonl", i)), []byte("unreadable body"), 0600); err != nil {
 			t.Fatal(err)
 		}

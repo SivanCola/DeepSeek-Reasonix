@@ -144,6 +144,7 @@ type SessionRecord struct {
 	Path              string `json:"path"`
 	pathKey           string
 	enqueueSequence   uint64
+	metadataUnchanged bool
 	Directory         string     `json:"directory"`
 	Scope             string     `json:"scope"`
 	WorkspaceRoot     string     `json:"workspaceRoot,omitempty"`

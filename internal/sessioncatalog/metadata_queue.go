@@ -10,11 +10,29 @@ import (
 )
 
 type metadataQueueJob struct {
-	target   DirectoryTarget
-	scan     *metadataScan
-	ready    time.Time
-	turn     uint64
-	failures int
+	target          DirectoryTarget
+	scan            *metadataScan
+	ready           time.Time
+	turn            uint64
+	failures        int
+	restartDeadline time.Time
+}
+
+// A known-invalid iterator must not consume an entire large root before the
+// replacement can start. Coalesce a burst between slices, with bounded delay
+// so a continuously changing root still gets discovery work admitted.
+func deferMetadataRestart(job *metadataQueueJob, now time.Time) {
+	if job.restartDeadline.IsZero() {
+		job.restartDeadline = now.Add(time.Second)
+	}
+	job.ready = minTime(now.Add(historywork.PauseDuration), job.restartDeadline)
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
 }
 
 // Keep one slot available for a newly visible workspace. Existing iterators
@@ -91,6 +109,28 @@ func (c *Catalog) metadataReconcileLoop() {
 		}
 		turn++
 		next.turn = turn
+		c.reconcileDirtyMu.Lock()
+		latest, invalidated := c.reconcileDirty[selected]
+		if invalidated && (next.scan != nil || !next.restartDeadline.IsZero()) {
+			delete(c.reconcileDirty, selected)
+		} else {
+			invalidated = false
+		}
+		c.reconcileDirtyMu.Unlock()
+		if invalidated {
+			if next.scan != nil {
+				// Abandoning an incomplete observation cannot confirm missing
+				// rows. Keep its journal and visible prefix until the new EOF.
+				c.observeDiscovery(next.target, "superseded", "", "")
+				next.scan.close(c.workerCtx, nil)
+				next.scan = nil
+			}
+			next.target = newestReconcileTarget(next.target, latest)
+			deferMetadataRestart(next, now)
+			if next.ready.After(now) {
+				continue
+			}
+		}
 		var err error
 		if next.scan == nil {
 			// Waiting for an iterator or priority slot is not a running scan.
@@ -102,6 +142,7 @@ func (c *Catalog) metadataReconcileLoop() {
 				continue
 			}
 			next.target = target
+			next.restartDeadline = time.Time{}
 			c.observeDiscovery(next.target, "started", "", "")
 			if c.testReconcileStartHook != nil {
 				c.testReconcileStartHook(next.target)

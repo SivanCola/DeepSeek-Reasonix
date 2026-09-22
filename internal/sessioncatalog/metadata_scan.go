@@ -264,6 +264,7 @@ func (s *metadataScan) step(ctx context.Context) (done bool, bytes int64, result
 			if existing.TurnsState != TurnsUnknown {
 				record.Turns, record.Preview, record.TurnsState = existing.Turns, existing.Preview, existing.TurnsState
 			}
+			record.metadataUnchanged = sameMetadataProjection(existing, record)
 		}
 		record.enqueueSequence = s.sequence
 		records = append(records, record)

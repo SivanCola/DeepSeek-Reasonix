@@ -11,6 +11,11 @@ func (c *Catalog) updateDirectoryScanProgress(ctx context.Context, path string, 
 		c.testScanProgressWriteHook()
 	}
 	_, err := c.db.ExecContext(ctx, `UPDATE catalog_directories SET indexed=? WHERE path_key=? AND scan_generation=?`, total, c.pathKey(path), generation)
+	if err == nil && c.opts.MetadataOnly {
+		// Unchanged metadata batches only mark presence, so progress must not
+		// depend on a redundant session/topic publication to become visible.
+		c.refreshCounts(ctx)
+	}
 	return err
 }
 

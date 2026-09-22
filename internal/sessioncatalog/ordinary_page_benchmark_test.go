@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"sort"
+	"slices"
 	"testing"
 	"time"
 )
@@ -46,7 +46,7 @@ func BenchmarkOrdinaryFirstPage(b *testing.B) {
 				samples = append(samples, time.Since(start))
 			}
 			b.StopTimer()
-			sort.Slice(samples, func(i, j int) bool { return samples[i] < samples[j] })
+			slices.Sort(samples)
 			if len(samples) > 0 {
 				b.ReportMetric(float64(samples[(len(samples)*95+99)/100-1])/float64(time.Millisecond), "p95-ms")
 			}
