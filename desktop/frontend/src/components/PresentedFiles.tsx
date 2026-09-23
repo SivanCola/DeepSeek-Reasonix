@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import {
   ChevronDown, ChevronUp, Code2, ExternalLink, FileArchive, FileAudio,
   FileImage, FileText, FileVideo, FolderSearch, Globe, Save,
@@ -29,7 +29,7 @@ function iconFor(path: string) {
   return FileText;
 }
 
-export function PresentedFiles({ files, tabId, hostId }: { files: readonly PresentedFileView[]; tabId?: string; hostId?: string }) {
+export const PresentedFiles = memo(function PresentedFiles({ files, tabId, hostId }: { files: readonly PresentedFileView[]; tabId?: string; hostId?: string }) {
   const t = useT();
   const [expanded, setExpanded] = useState(false);
   const shown = expanded ? files : files.slice(0, 4);
@@ -44,9 +44,9 @@ export function PresentedFiles({ files, tabId, hostId }: { files: readonly Prese
       {t(expanded ? "present.collapse" : "present.showAll", { count: files.length })}
     </button>}
   </section>;
-}
+});
 
-export function ModifiedFiles({ files, summary, onOpenReview }: {
+export const ModifiedFiles = memo(function ModifiedFiles({ files, summary, onOpenReview }: {
   files: readonly TurnFileView[];
   summary?: WireCompletionSummary;
   tabId?: string;
@@ -105,7 +105,7 @@ export function ModifiedFiles({ files, summary, onOpenReview }: {
     </button>}
     {error && <p className="turn-files__error" role="status">{error}</p>}
   </section>;
-}
+});
 
 function FileEntry({ refValue, description }: { refValue: FileResourceRef; description?: string }) {
   const t = useT();
