@@ -95,6 +95,8 @@ assert.equal(buildComposerSurface({ ...surfaceInput, tab: { ...missingTab, model
 assert.equal(buildComposerSurface({ ...surfaceInput, tab: { ...missingTab, modelSettingsPending: true }, view: { ...surfaceInput.view, controllerReady: false } }).props.submitDisabled, true, "pending settings never bypass controller readiness");
 assert.equal(buildComposerSurface({ ...surfaceInput, view: { ...surfaceInput.view, hero: false } }).props.workspaceContext, undefined, "established sessions use the compact follow-up composer");
 assert.equal(buildComposerSurface(surfaceInput).props.persistentDraft, undefined, "formal composer never mounts a legacy draft owner");
+const canonicalTab = { session: { hostId: "local", sessionId: "canonical-input" }, sessionPath: "", sessionGeneration: 3 };
+assert.equal(buildComposerSurface({ ...surfaceInput, tab: canonicalTab }).props.inboxSessionPath, "session-id:canonical-input", "canonical follow-ups use the session identity when no legacy path exists");
 
 const rootElement = document.getElementById("root");
 assert(rootElement);

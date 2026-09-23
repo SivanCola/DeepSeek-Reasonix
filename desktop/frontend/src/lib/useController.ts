@@ -87,7 +87,7 @@ import { applyHydrateErrorState, hydratePlaceholderItems as resolveHydratePlaceh
 import { isHostRecoveryGuidance } from "./hostRecoverySteer";
 import { canAdoptUnboundLiveSurface, hasCachedLiveTurn, hasReusableCachedTranscript, sameSessionHydrateIdentity, sameSessionPlaceholderItems, type HydrateSurfacePolicy } from "./hydrateHistoryApply";
 import { useSessionCatalogActions } from "./useSessionCatalogActions";
-import { hydrateIdentityCurrent, sessionIdentityFields, sessionIdentityStableKey, type SessionHydrationOptions } from "./sessionIdentity";
+import { hydrateIdentityCurrent, sessionIdentityFields, sessionIdentityRoute, sessionIdentityStableKey, type SessionHydrationOptions } from "./sessionIdentity";
 import { loadHistoryWindow } from "./historyWindowController";
 import { useHistoryTurnNavigation } from "./useHistoryTurnNavigation";
 import { reduceHistoryWindowState } from "./historyWindowState";
@@ -3720,7 +3720,7 @@ export function useController() {
   const steerForTab = useCallback(async (tabId: string, text: string) => {
     if (!tabId) throw new Error(t("composer.workspaceStarting"));
     const state = statesRef.current.get(tabId);
-    const target = await app.CaptureInboxTarget?.(tabId, state?.meta?.sessionPath ?? "");
+    const target = await app.CaptureInboxTarget?.(tabId, sessionIdentityRoute(state?.meta) ?? "");
     const { enqueueGuidanceForTarget } = await import("./inboxGuidanceSubmit");
     await enqueueGuidanceForTarget(app, target, tabId, text, state?.activeTurnId);
     // queued_followup is success: the instruction is durable and will run at

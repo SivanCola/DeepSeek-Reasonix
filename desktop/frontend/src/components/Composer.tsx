@@ -1,5 +1,5 @@
 import { emptyComposerDraft, persistentComposerDraft, persistentSnapshot } from "./composerDraftState";
-import { SessionInputCopies } from "./SessionInputCopies";
+import { SessionInputRecovery } from "./SessionInputRecovery";
 import { recoveryStatusText, type RecoveryRetry } from "../lib/recoveryStatus";
 import { useRuntimeSession } from "../lib/useRuntimeState";
 import { isCompactCommand } from "../lib/sessionMaintenanceOperation";
@@ -16,6 +16,7 @@ import { attachmentExt, attachmentName, baseName, formatAttachmentDisplayReferen
 import type { PastedBlock, PersistentComposerDraft, PersistentComposerTarget, WorkspaceReference } from "../lib/composerDraftTypes";
 import { sendPersistedComposer, useSessionComposerPersistence } from "../lib/sessionComposerPersistence";
 import type { SessionRef } from "../lib/sessionRef";
+import type { SessionIdentity } from "../lib/sessionIdentity";
 import type { ComposerTarget } from "../generated/desktopContract.generated";
 import { desktopHost } from "../lib/desktopHost";
 import { steerInboxItemForActiveTurn } from "../lib/inboxSubmit";
@@ -564,6 +565,7 @@ export function Composer({
   onPrepareSubmit,
   persistentDraft: legacyPersistentDraft,
   formalSessionRef,
+  sessionIdentity,
   composerTarget,
 }: {
   running: boolean;
@@ -686,6 +688,7 @@ export function Composer({
   workspaceContext?: ComposerWorkspaceContext;
   persistentDraft?: PersistentComposerTarget;
   formalSessionRef?: SessionRef;
+  sessionIdentity?: SessionIdentity;
   composerTarget?: ComposerTarget;
 }) {
   const { t, locale } = useI18n();
@@ -715,7 +718,7 @@ export function Composer({
 		: { kind: "session", draftId: "", tabId: composerTarget?.tabId ?? tabId ?? "", session: formalSessionRef },
 	[composerTarget?.kind, composerTarget?.kind === "draft" ? composerTarget.draftId : composerTarget?.tabId, persistentDraft?.generation, tabId, formalSessionRef?.hostId, formalSessionRef?.sessionId]);
 	const bridgeTargetKey = `${bridgeTarget.kind}:${bridgeTarget.draftId}:${bridgeTarget.tabId}:${bridgeTarget.generation ?? 0}`;
-  const runtimeState = useRuntimeSession(tabId, inboxSessionPath);
+  const runtimeState = useRuntimeSession(tabId, sessionIdentity ?? inboxSessionPath);
   const finishing = runtimeState.finishing;
   const maintenanceActive = Boolean(runtimeState.state?.maintenance);
   const [queueEditingScope, setQueueEditingScope] = useState<string | null>(null);
@@ -725,6 +728,9 @@ export function Composer({
   const pendingKeyRef = useRef(pendingKey);
   pendingKeyRef.current = pendingKey;
   const pendingFollowup = useSyncExternalStore(pendingFollowups.subscribe, () => pendingFollowups.get(pendingKey));
+  useEffect(() => {
+    if (pendingFollowup && savedInput.settledId === pendingFollowup.key) pendingFollowups.clear(pendingKey, pendingFollowup);
+  }, [pendingFollowup, pendingKey, savedInput.settledId]);
   const inboxSessionKey = [pendingKey, inboxScopeKey(inboxSessionPath, workspaceScopeKey)].filter(Boolean).join("\u0000");
   const now = useTick(running);
   const persistentOwner = useRef(persistentDraft);
@@ -2210,6 +2216,7 @@ export function Composer({
           const receiptTracker = guidanceReceiptTrackerRef.current;
           receiptTracker?.start(submitDraftKey);
           let unresolvedRequest: PendingFollowup | undefined;
+          let enqueueAttempted = false;
           try {
             const { enqueueComposerGuidance } = await import("../lib/inboxGuidanceSubmit");
             const request: PendingFollowup = { key: structured?.attachmentSubmissionId || `followup-${crypto.randomUUID()}`, target,
@@ -2219,6 +2226,7 @@ export function Composer({
               pendingFollowups.set(submitPendingKey, request);
             }
             const enqueue = async () => {
+              enqueueAttempted = true;
               const receipt = await enqueueComposerGuidance(app, request, queueOnly, turnId);
               if (receipt?.error) throw new Error(receipt.error);
               if (!receipt?.itemId) throw new Error("Follow-up receipt unconfirmed");
@@ -2252,7 +2260,8 @@ export function Composer({
             if (queueOnly || receipt.disposition === "queued_followup") showToast(t("runtime.queued"), "info");
           } catch (error) {
             if (followupNotSubmitted(error)) attachmentSubmit?.settleImageSubmission(submitDraftKey, attachmentSubmissionId);
-            if (unresolvedRequest && followupNotSubmitted(error)) pendingFollowups.clear(submitPendingKey, unresolvedRequest);
+            // Registration still needs reconciliation, but no inbox receipt exists before enqueue starts.
+            if (unresolvedRequest && (!enqueueAttempted || followupNotSubmitted(error))) pendingFollowups.clear(submitPendingKey, unresolvedRequest);
             showToast(formatInboxError(error, locale), "warn");
             // Keep draft on durable failure.
           } finally {
@@ -2270,7 +2279,7 @@ export function Composer({
 			if (!persistentDraft && followupDraftFingerprint(submitDraftKey) === submittedDraft) clearSubmittedDraft(submitDraftKey);
     } catch (error) {
       if (followupNotSubmitted(error)) attachmentSubmit?.settleImageSubmission(submitDraftKey, attachmentSubmissionId);
-      if (savedInput.target) savedInput.reportSubmissionError(formatInboxError(error, locale));
+      if (savedInput.target) showToast(formatInboxError(error, locale), "warn");
       else if (persistentDraft?.onTaskError) persistentDraft.onTaskError(persistentDraft.draftId, persistentDraft.generation, formatInboxError(error, locale));
       else showToast(formatInboxError(error, locale), "warn");
 		} finally {
@@ -4132,13 +4141,7 @@ export function Composer({
       data-native-drop-target={attachmentInputEnabled ? "" : undefined}
       onDropCapture={onFileDropCapture}
     >
-      <SessionInputCopies copies={savedInput.conflictCopies} blocked={savedInput.blocked} restore={savedInput.restoreConflict} />
-      {(savedInput.error || savedInput.attention) && <div role="alert" className="session-draft-surface__error">
-        <span>{savedInput.error || t("draft.resultUnknown")}</span>
-        <button type="button" onClick={() => void savedInput.retry().catch(() => {})}>{t("draft.checkSubmission")}</button>
-        <button type="button" onClick={() => void savedInput.useSaved().catch(() => {})}>{t("draft.useSaved")}</button>
-        <button type="button" onClick={() => void savedInput.keepLocal().catch(() => {})}>{t("draft.keepLocal")}</button>
-      </div>}
+      <SessionInputRecovery input={savedInput} />
       <input
         ref={fileInputRef}
         className="composer-content-file-input"
