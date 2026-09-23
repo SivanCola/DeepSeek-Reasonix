@@ -129,7 +129,6 @@ func TestNativeSessionNewRegistersCurrentStoreAndWorkspace(t *testing.T) {
 		t.Run(map[bool]string{false: "jsonl", true: "stored-directory"}[directory], func(t *testing.T) {
 			isolateDesktopUserDirs(t)
 			app := NewApp()
-			t.Cleanup(app.closeSessionServices)
 			current := app.desktopSessionService("")
 			historical := current
 			path := filepath.Join(t.TempDir(), "old.jsonl")
@@ -147,6 +146,9 @@ func TestNativeSessionNewRegistersCurrentStoreAndWorkspace(t *testing.T) {
 			} else if err := os.WriteFile(path, []byte("{\"role\":\"user\",\"content\":\"old\"}\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
+			// The app's historical service must release its ownership file before
+			// TempDir removes the source root on Windows.
+			t.Cleanup(app.closeSessionServices)
 			exec := agent.New(nil, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
 			ctrl := control.New(control.Options{Runner: exec, Executor: exec, Sink: event.Discard,
 				SessionService: historical, SessionCreateService: current, ExclusiveSession: directory, NativeLegacySession: !directory,
