@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 11;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:1da3a2258e067c5d9de53e379849596ff1588581a436bf63fd74b62060c7a8f3";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:a3624554aaa4ae1a90028e1b14e85943b05768ea9d11cbca2e8825cf0f7850eb";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -3022,6 +3022,7 @@ export interface ManualSessionCreationView {
   error?: string;
   settings: SessionDraftSettings;
   progress?: ManualCreationProgress | null;
+  surfaceReady?: boolean;
 }
 
 export interface MarkdownImageView {

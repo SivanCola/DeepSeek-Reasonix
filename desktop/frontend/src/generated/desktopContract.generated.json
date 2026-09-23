@@ -33363,6 +33363,13 @@
             },
             "kind": "nullable"
           }
+        },
+        {
+          "name": "surfaceReady",
+          "optional": true,
+          "type": {
+            "kind": "boolean"
+          }
         }
       ]
     },
