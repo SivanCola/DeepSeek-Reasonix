@@ -52,7 +52,7 @@ if (matches?.length !== 1) {
 const zoneID = matches[0].id;
 report("zone", { name: "reasonix.io", id: zoneID });
 
-for (const phase of ["http_request_firewall_custom", "http_request_firewall_managed", "http_request_sbfm"]) {
+for (const phase of ["http_config_settings", "http_request_firewall_custom", "http_request_firewall_managed", "http_request_sbfm"]) {
   const response = await request(`/zones/${zoneID}/rulesets/phases/${phase}/entrypoint`);
   if (!response) continue;
   const ruleset = response.result;
