@@ -21,8 +21,8 @@ type historicalCatalogEntry struct {
 	sourceChanged bool
 }
 
-// Discovery publishes metadata only; ordinary pagination never visits source
-// directories or replays a historical log. Refreshes share one bounded worker.
+// Discovery repairs incomplete adoption before publishing metadata. Ordinary
+// pagination never visits source directories or replays a historical log.
 func (a *App) requestHistoricalCatalog() {
 	a.requestHistoricalCatalogWithContext(a.bootContext())
 }
@@ -76,44 +76,11 @@ func (a *App) discoverHistoricalSessions(ctx context.Context, includeLegacy bool
 		positions[entry.node.Key] = i
 	}
 	c.mu.Unlock()
-	publish := func(batch []historicalCatalogEntry) {
-		c.mu.Lock()
-		if c.stopped || ctx.Err() != nil {
-			c.mu.Unlock()
-			return
-		}
-		changed := false
-		for _, entry := range batch {
-			if i, exists := positions[entry.node.Key]; exists {
-				if !reflect.DeepEqual(c.catalog[i], entry) {
-					c.catalog[i], changed = entry, true
-				}
-			} else {
-				positions[entry.node.Key] = len(c.catalog)
-				c.catalog = append(c.catalog, entry)
-				changed = true
-			}
-		}
-		if changed {
-			c.catalogRevision++
-		}
-		c.mu.Unlock()
-		if changed {
-			a.emitProjectTreeChangedEvent()
-		}
-	}
+	publish := a.historicalCatalogPublisher(ctx, positions)
 	sources := map[string]historicalSource{}
-	discovered := make([]historicalCatalogEntry, 0, historywork.BatchEntries)
 	add := func(path, format, scope, root, head string) {
 		key := desktopSourceKey(path, head)
 		sources[key] = historicalSource{path: path, format: format, scope: scope, root: root, head: head}
-		if _, known := positions["source_"+key]; format == "canonical" && !known {
-			discovered = append(discovered, historicalCatalogPlaceholder(key, sources[key]))
-			if len(discovered) >= historywork.BatchEntries {
-				publish(discovered)
-				discovered = discovered[:0]
-			}
-		}
 	}
 	canonical, legacy := a.desktopHistoricalRoots()
 	var joined error
@@ -128,7 +95,24 @@ func (a *App) discoverHistoricalSessions(ctx context.Context, includeLegacy bool
 		}
 	}
 	addHistoricalRegistrySources(state, add)
-	catalog := readHistoricalCanonicalCatalog(ctx, sources, &a.historyMaintenance, publish, state)
+	joined = errors.Join(joined, a.addHistoricalCatalogReceipts(ctx, add))
+	joined = errors.Join(joined, addHistoricalLegacyReceiptHeads(sources, add))
+	if err := a.reconcileHistoricalLegacyCatalog(ctx, sources); err != nil {
+		return HistoricalImportStatus{Items: []HistoricalSessionView{}}, err
+	}
+	publishRecovered := func(batch []historicalCatalogEntry) {
+		if err := a.reconcileHistoricalCatalog(ctx, batch, sources); err == nil {
+			publish(batch)
+		}
+	}
+	catalog := readHistoricalCanonicalCatalog(ctx, sources, &a.historyMaintenance, publishRecovered, state)
+	if err := a.reconcileHistoricalCatalog(ctx, catalog, sources); err != nil {
+		return HistoricalImportStatus{Items: []HistoricalSessionView{}}, err
+	}
+	state, err = a.workspaceRegistry().Load(ctx)
+	if err != nil {
+		return HistoricalImportStatus{Items: []HistoricalSessionView{}}, err
+	}
 	saved, presentationErr := readHistoricalSidecar()
 	if err := ctx.Err(); err != nil {
 		return HistoricalImportStatus{Items: []HistoricalSessionView{}}, err
@@ -311,7 +295,10 @@ func (a *App) historicalCanonicalTopicsFromProjection(scope, root string, state 
 			continue
 		}
 		node := entry.node
-		if _, adopted, err := historicalMappingForSource(state, node.Source.SourceKey); (adopted && !entry.sourceChanged) || err != nil {
+		if node.Health == "unavailable" {
+			continue
+		}
+		if _, adopted, err := historicalMappingForSource(state, node.Source.SourceKey); adopted || err != nil {
 			continue
 		}
 		node.PreparationStatus = "available"

@@ -99,6 +99,7 @@ func (a *App) lazyProjectTopicSnapshot(req ProjectTopicPageRequest, reader works
 	case "ungrouped":
 		query.ExcludeSourceKeysJSON = groupJSON
 	}
+	query.ExcludeSourceKeysJSON = a.excludeUnavailableHistoricalSources(query.ExcludeSourceKeysJSON)
 	// Freeze the localized default along with the search predicate. SQLite's
 	// lower() does not implement the existing Go Unicode matching semantics.
 	recordTitle := ordinaryRecordTitle(a.localizedDefaultTopicTitle())

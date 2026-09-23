@@ -94,15 +94,9 @@ func (a *App) reconcileCanonicalConversion(ctx context.Context, source desktopMi
 	if err != nil {
 		return true, errors.Join(newSessionOperationError("source_unavailable", "The historical source could not be verified. Its files were retained."), err)
 	}
-	target := ""
-	for _, receipt := range receipts {
-		if receipt.ContentDigest != digest || receipt.TargetSessionID == "" {
-			continue
-		}
-		if target != "" && target != receipt.TargetSessionID {
-			return true, errors.Join(newSessionOperationError("source_ambiguous", "Conflicting migration receipts prevent identifying this historical source."), workspacestate.ErrMutationConflict)
-		}
-		target = receipt.TargetSessionID
+	target, err := a.selectCanonicalConversionTarget(ctx, source, path, digest, receipts)
+	if err != nil {
+		return true, err
 	}
 	if target == "" {
 		return false, nil

@@ -62,6 +62,7 @@ type historicalImportCoordinator struct {
 	mu                       sync.Mutex
 	discoveryMu              sync.Mutex
 	discoveryPending         bool
+	legacyReconcile          historicalLegacyReconcileState
 	catalogEnabled           bool
 	catalogAt                time.Time
 	catalogRevision          uint64
@@ -81,6 +82,7 @@ type historicalImportCoordinator struct {
 	queueRevision            uint64
 	queueRelease             func()
 	presentations            map[string]historicalSourcePresentation
+	unavailableSources       map[string]bool
 	running, paused, stopped bool
 	wake                     chan struct{}
 	workers                  sync.WaitGroup
@@ -260,6 +262,7 @@ func (c *historicalImportCoordinator) initialize(ctx context.Context) {
 	c.updates = map[string]*historicalSourceUpdateCall{}
 	c.updateWorker = make(chan struct{}, 1)
 	c.presentations = map[string]historicalSourcePresentation{}
+	c.unavailableSources = map[string]bool{}
 	c.ctx, c.cancel = context.WithCancel(ctx)
 	c.wake = make(chan struct{}, 1)
 }

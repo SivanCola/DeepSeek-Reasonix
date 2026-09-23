@@ -46,6 +46,52 @@ func (s *Store) RecordSource(ctx context.Context, mapping SourceMapping, present
 	})
 }
 
+// RecordRecoveredSource repairs a missing current receipt without changing the
+// destination's content, presentation or lifecycle. The caller proves adoption
+// from frozen content; the transaction fences competing owners and lifecycle.
+func (s *Store) RecordRecoveredSource(ctx context.Context, mapping SourceMapping, generation uint64) error {
+	return s.mutate(ctx, func(state *State) error {
+		if state.Generation != generation || mapping.SourceKey == "" || mapping.Fingerprint == "" {
+			return ErrMutationConflict
+		}
+		if existing, found := state.SourceMappings[mapping.SourceKey]; found {
+			if existing.SessionID != mapping.SessionID || existing.Fingerprint != mapping.Fingerprint {
+				return ErrMutationConflict
+			}
+			return nil
+		}
+		lifecycle := state.SessionStates[mapping.SessionID].Lifecycle
+		if !validLifecycle(lifecycle) {
+			return ErrMutationConflict
+		}
+		if lifecycle != Deleted {
+			if owner, found := sessionOwner(*state, mapping.SessionID); !found || owner != mapping.WorkspaceID {
+				return ErrMutationConflict
+			}
+		}
+		for _, old := range state.SourceMappings {
+			if !slices.Contains(state.SourceKeys(old.SourceKey), mapping.SourceKey) {
+				continue
+			}
+			if old.SessionID == mapping.SessionID && old.WorkspaceID == mapping.WorkspaceID && old.Fingerprint == mapping.Fingerprint {
+				continue
+			} else if state.SessionStates[old.SessionID].Lifecycle != Deleted {
+				return ErrMutationConflict
+			}
+		}
+		for _, op := range state.PendingOperations {
+			if op.Phase != "committed" && op.Mapping != nil && slices.Contains(state.SourceKeys(op.Mapping.SourceKey), mapping.SourceKey) {
+				return ErrMutationConflict
+			}
+		}
+		if err := backupHistoricalVersionRegistry(s.path); err != nil {
+			return err
+		}
+		state.SourceMappings[mapping.SourceKey] = mapping
+		return nil
+	})
+}
+
 // RecordRetiredSource repairs a missing receipt without recreating membership
 // or presentation. The caller proves source content while holding its read lock;
 // the generation fence protects the observed lifecycle and competing mappings.

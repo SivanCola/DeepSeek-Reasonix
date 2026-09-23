@@ -468,6 +468,9 @@ func (a *App) unadoptedLegacyTopics(req ProjectTopicPageRequest, adopted, adopte
 		}
 		for _, node := range expanded {
 			if node.Source != nil {
+				if a.unavailableHistoricalSource(node.Source.SourceKey) {
+					continue
+				}
 				node.PreparationStatus = a.historicalPreparationStatus(node.Source.SourceKey)
 				if !adopted[projectNodeSessionKey(node)] {
 					legacy.Items = append(legacy.Items, node)
@@ -518,6 +521,9 @@ func (a *App) canonicalTopicNodes(req ProjectTopicPageRequest, state workspacest
 			continue
 		}
 		info, found := infos[id]
+		if !found || info.MetadataStatus == session.MetadataFailed {
+			continue
+		}
 		row := workspaceSessionRow(workspaceID, id, info, found, false, service)
 		if found && cutoff > 0 && max(row.CreatedAt, row.UpdatedAt) < cutoff {
 			continue
