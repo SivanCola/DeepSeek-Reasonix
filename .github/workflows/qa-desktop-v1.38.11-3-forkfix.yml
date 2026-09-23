@@ -1,0 +1,210 @@
+name: QA desktop v1.38.11-3 repeated-fork fix
+
+# One-off, non-publishing packages from main-v2 plus the repeated-fork fix.
+on:
+  push:
+    branches: [chore/qa-desktop-v1.38.11-3-forkfix]
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_SHA: 0318f58f1bd26a32067714be1e05bc78e2ccf68a
+  QA_VERSION: v1.38.11-3
+
+jobs:
+  windows:
+    name: Windows x64 package and installer acceptance
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          fetch-depth: 1
+      - name: Verify exact product source
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: desktop/go.mod
+          cache: true
+          cache-dependency-path: desktop/go.sum
+      - uses: pnpm/action-setup@v6.1.0
+        with:
+          version: 10
+          run_install: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
+      - name: Install NSIS
+        run: pwsh -NoProfile -File scripts/install-nsis.ps1
+      - name: Build Windows x64 package
+        timeout-minutes: 35
+        run: scripts/desktop-build.sh windows/amd64 "$QA_VERSION" canary
+      - name: Verify portable package
+        run: node desktop/packaging/verify.mjs dist/Reasonix-windows-amd64.zip
+      - name: Install, launch, repair, and upgrade old data
+        shell: pwsh
+        run: |
+          go -C desktop build -o "$env:RUNNER_TEMP/windows-upgrade-fixture.exe" ./cmd/windows-upgrade-fixture
+          if ($LASTEXITCODE -ne 0) { throw 'Upgrade fixture build failed' }
+          ./scripts/test-windows-installer-startup.ps1 `
+            -InstallerPath dist/Reasonix-windows-amd64-installer.exe `
+            -ExpectedVersion $env:QA_VERSION `
+            -FixtureBuilderPath "$env:RUNNER_TEMP/windows-upgrade-fixture.exe" `
+            -EvidenceDirectory "$env:RUNNER_TEMP/reasonix-installer-acceptance"
+      - name: Prepare Windows handoff
+        run: |
+          mkdir -p handoff
+          cp dist/Reasonix-windows-amd64-installer.exe "handoff/Reasonix-${QA_VERSION}-windows-x64-installer.exe"
+          cp dist/Reasonix-windows-amd64.zip "handoff/Reasonix-${QA_VERSION}-windows-x64-portable.zip"
+          cp desktop/build/windows/signing-payload/app/resources/build.json handoff/windows-build.json
+          (cd handoff && sha256sum *.exe *.zip > SHA256SUMS.txt)
+          {
+            echo "version=$QA_VERSION"
+            echo "source_sha=$SOURCE_SHA"
+            echo "platform=windows/amd64"
+            echo "channel=canary"
+            echo "authenticode_signed=false"
+            echo "native_installer_acceptance=passed"
+            echo "Test package only; no release or updater publication."
+          } > handoff/QA-HANDOFF.txt
+      - name: Upload Windows acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: Reasonix-v1.38.11-3-windows-x64-acceptance
+          path: |
+            ${{ runner.temp }}/reasonix-installer-acceptance/**/*.json
+            ${{ runner.temp }}/reasonix-installer-acceptance/**/*.png
+            ${{ runner.temp }}/reasonix-installer-acceptance/**/*.log
+            !${{ runner.temp }}/reasonix-installer-acceptance/installed/**
+            !${{ runner.temp }}/reasonix-installer-acceptance/**/cache/**
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload Windows test package
+        uses: actions/upload-artifact@v7
+        with:
+          name: Reasonix-v1.38.11-3-windows-x64
+          path: handoff/*
+          if-no-files-found: error
+          retention-days: 14
+
+  macos:
+    name: macOS Universal package and Apple Silicon acceptance
+    runs-on: macos-15
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          fetch-depth: 1
+      - name: Verify exact product source
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: desktop/go.mod
+          cache: true
+          cache-dependency-path: desktop/go.sum
+      - uses: pnpm/action-setup@v6.1.0
+        with:
+          version: 10
+          run_install: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
+      - name: Install create-dmg
+        run: brew install create-dmg
+      - name: Build macOS Universal DMG
+        timeout-minutes: 55
+        run: scripts/desktop-build.sh darwin/universal "$QA_VERSION" canary
+      - name: Mount and smoke-test final DMG
+        run: |
+          mount_dir="$RUNNER_TEMP/reasonix-qa-mount"
+          app_dir="$RUNNER_TEMP/reasonix-qa-app/Reasonix.app"
+          mkdir -p "$mount_dir" "$(dirname "$app_dir")"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount_dir" dist/Reasonix-darwin-universal.dmg
+          trap 'hdiutil detach "$mount_dir"' EXIT
+          ditto "$mount_dir/Reasonix.app" "$app_dir"
+          codesign --verify --deep --strict "$app_dir"
+          node desktop/packaging/verify.mjs "$app_dir" --kind darwin-app-dir
+          node desktop/packaging/smoke.mjs "$app_dir"
+          node desktop/packaging/smoke.mjs "$app_dir"
+          test "$(jq -r .version "$app_dir/Contents/Resources/build.json")" = "$QA_VERSION"
+      - name: Prepare macOS handoff
+        run: |
+          mkdir -p handoff
+          cp dist/Reasonix-darwin-universal.dmg "handoff/Reasonix-${QA_VERSION}-macOS-universal.dmg"
+          cp desktop/build/candidate/darwin-universal/Reasonix.app/Contents/Resources/build.json handoff/macos-build.json
+          (cd handoff && shasum -a 256 *.dmg > SHA256SUMS.txt)
+          {
+            echo "version=$QA_VERSION"
+            echo "source_sha=$SOURCE_SHA"
+            echo "platform=darwin/universal"
+            echo "channel=canary"
+            echo "developer_id_signed=false"
+            echo "notarized=false"
+            echo "native_apple_silicon_acceptance=passed"
+            echo "Test package only; no release or updater publication."
+          } > handoff/QA-HANDOFF.txt
+      - name: Upload macOS test package
+        uses: actions/upload-artifact@v7
+        with:
+          name: Reasonix-v1.38.11-3-macOS-universal
+          path: handoff/*
+          if-no-files-found: error
+          retention-days: 14
+
+  macos-intel:
+    name: Smoke-test Universal DMG on Intel Mac
+    needs: macos
+    runs-on: macos-15-intel
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+      - uses: pnpm/action-setup@v6.1.0
+        with:
+          version: 10
+          run_install: false
+      - name: Install packaged smoke dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+        run: pnpm --dir desktop install --frozen-lockfile
+      - uses: actions/download-artifact@v8
+        with:
+          name: Reasonix-v1.38.11-3-macOS-universal
+          path: ${{ runner.temp }}/macos-qa
+      - name: Mount and smoke-test exact DMG
+        run: |
+          dmg="$RUNNER_TEMP/macos-qa/Reasonix-${QA_VERSION}-macOS-universal.dmg"
+          (cd "$RUNNER_TEMP/macos-qa" && shasum -a 256 -c SHA256SUMS.txt)
+          mount_dir="$RUNNER_TEMP/reasonix-qa-mount"
+          app_dir="$RUNNER_TEMP/reasonix-qa-app/Reasonix.app"
+          mkdir -p "$mount_dir" "$(dirname "$app_dir")"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount_dir" "$dmg"
+          trap 'hdiutil detach "$mount_dir"' EXIT
+          ditto "$mount_dir/Reasonix.app" "$app_dir"
+          codesign --verify --deep --strict "$app_dir"
+          node desktop/packaging/verify.mjs "$app_dir" --kind darwin-app-dir
+          node desktop/packaging/smoke.mjs "$app_dir"
+          test "$(jq -r .version "$app_dir/Contents/Resources/build.json")" = "$QA_VERSION"
