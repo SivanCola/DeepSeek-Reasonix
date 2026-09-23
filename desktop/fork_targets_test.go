@@ -309,6 +309,7 @@ func TestRepeatedForkPublishesSidebarMembershipWithoutRestart(t *testing.T) {
 				t.Fatalf("first fork = %+v, err = %v", first, err)
 			}
 			checkEvent(first.SessionID)
+			checkEvent(first.SessionID)
 			if err := app.AcknowledgeForkOperation("test", first.OperationID); err != nil {
 				t.Fatal(err)
 			}
@@ -322,14 +323,19 @@ func TestRepeatedForkPublishesSidebarMembershipWithoutRestart(t *testing.T) {
 				t.Fatalf("second fork = %+v, err = %v", second, err)
 			}
 			checkEvent(second.SessionID)
+			checkEvent(second.SessionID)
 			page, err := app.ListProjectTopics(ProjectTopicPageRequest{Scope: scope, WorkspaceRoot: root, Limit: 20})
 			if err != nil {
 				t.Fatal(err)
 			}
 			seen := map[string]bool{}
+			wantTitle := app.forkTopicTitle("Source topic")
 			for _, item := range page.Items {
 				if item.Session != nil {
 					seen[item.Session.SessionID] = true
+					if (item.Session.SessionID == first.SessionID || item.Session.SessionID == second.SessionID) && item.Label != wantTitle {
+						t.Fatalf("fork %q label = %q, want %q", item.Session.SessionID, item.Label, wantTitle)
+					}
 				}
 			}
 			if !seen[first.SessionID] || !seen[second.SessionID] {
