@@ -219,6 +219,14 @@ func (a *App) openForkedSessionTabWithWorkspace(sourceTab *WorkspaceTab, locator
 	if identity, ok := sourceTab.Ctrl.(control.IdentityLifecycle); ok {
 		exclusiveV3 = identity.UsesExclusiveSession()
 	}
+	if exclusiveV3 {
+		// The registry owns the canonical row's topic and title. Publish both
+		// before the tab/runtime event so a fresh sidebar page cannot keep the
+		// fallback preview name until the next restart or catalog revision.
+		if err := a.workspaceRegistry().EnsureSessionTopic(a.bootContext(), locator.SessionID, topicID, topicTitle); err != nil {
+			return forkedSessionTabOpen{}, err
+		}
+	}
 	titleRoot := workspaceRoot
 	if scope == "global" {
 		titleRoot = ""
@@ -296,6 +304,11 @@ func (a *App) openForkedSessionTabWithWorkspace(sourceTab *WorkspaceTab, locator
 	if childPath != "" {
 		a.emitProjectTreeChangedForSessionDirs(sessionDirectoryForPath(childPath))
 	} else {
+		root := ""
+		if scope == "project" {
+			root = workspaceRoot
+		}
+		a.emitProjectTreeChangedV2(a.currentSessionCatalogStatus().Revision, []string{root}, "membership")
 		a.emitProjectTreeChangedEvent()
 	}
 	a.startTabControllerBuild(tab)
