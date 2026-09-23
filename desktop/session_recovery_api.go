@@ -524,6 +524,11 @@ func (a *App) replayDesktopSessionOperation(ctx context.Context, state workspace
 		}
 		return nil
 	}
+	releaseSources, err := freezeArchiveDependencies(ctx, state, op)
+	if err != nil {
+		return err
+	}
+	defer releaseSources()
 	if err := validateDesktopOperationSources(state, op); err != nil {
 		return err
 	}
@@ -570,6 +575,9 @@ func (a *App) replayDesktopSessionOperation(ctx context.Context, state workspace
 				return err
 			}
 		}
+	}
+	if err := a.validateRecoveredHistoricalArchive(ctx, state, op); err != nil {
+		return err
 	}
 	if op.Phase == "prepared" {
 		if err := a.workspaceRegistry().PrepareOperationContent(ctx, op.ID, op.SessionIDs, op.Mapping, op.Presentation); err != nil {
