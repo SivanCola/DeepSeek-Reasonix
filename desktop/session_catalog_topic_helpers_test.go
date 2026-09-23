@@ -9,6 +9,13 @@ const sessionCatalogTestDeadline = 30 * time.Second
 
 func waitForInitialCatalogReconcile(t *testing.T, app *App) bool {
 	t.Helper()
+	// Own cleanup before admission can fail. Publication/readiness assertions
+	// must not leave a late SQLite opener running into temporary-dir cleanup.
+	t.Cleanup(func() {
+		if !app.stopSessionCatalog(sessionCatalogTestDeadline) {
+			t.Error("session catalog fixture did not stop cleanly")
+		}
+	})
 	app.catalogLifecycleMu.Lock()
 	alreadyStarted := app.catalogInitialReconcileDone != nil
 	app.catalogLifecycleMu.Unlock()
@@ -55,7 +62,6 @@ func waitForCatalogReconcileJobs(t *testing.T, app *App) {
 func waitForCatalogTopic(t *testing.T, app *App, scope, workspaceRoot, topicID string) []ProjectNode {
 	t.Helper()
 	waitForInitialCatalogReconcile(t, app)
-	t.Cleanup(func() { app.stopSessionCatalog(time.Second) })
 	waitForCatalogReconcileJobs(t, app)
 	nodes := mustListProjectTree(t, app)
 	for _, folder := range nodes {
