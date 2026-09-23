@@ -435,12 +435,8 @@ type App struct {
 	browserExecMu    sync.Mutex
 	browserExecutors map[string]*hostBrowserExecutor
 	browserOps       *browserops.Ledger
-	// fileBrowserPreviews serializes file-to-browser publication and remembers
-	// the task-owned tab for each session-scoped resource. It is deliberately
-	// separate from App.mu: host RPC may wait on Electron and must never hold the
-	// chat runtime lock while doing so.
-	fileBrowserPreviewMu sync.Mutex
-	fileBrowserPreviews  map[string]fileBrowserPreviewBinding
+	// Browser operations and lifecycle invalidation have separate lock domains.
+	filePreviews fileBrowserPreviewRegistry
 	// browserControl is the shell-pushed switch that decides whether new
 	// sessions may drive the built-in browser at all.
 	browserControl browserControl
@@ -485,7 +481,6 @@ func NewApp() *App {
 		detachedSessions:        map[string]*WorkspaceTab{},
 		mediaTokens:             newMediaTokenStore(),
 		presentPreview:          newWorkspacePreviewOrigin(),
-		fileBrowserPreviews:     map[string]fileBrowserPreviewBinding{},
 		botInstalls:             map[string]*botInstallSession{},
 		botRuntime:              newDesktopBotRuntime(),
 		remoteWindows:           newRemoteWindowRegistry(),
