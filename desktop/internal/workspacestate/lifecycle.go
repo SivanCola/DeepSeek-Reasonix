@@ -452,19 +452,6 @@ func (s *Store) BeginPurge(ctx context.Context, id string, expected uint64) erro
 	return s.beginOrResumePurge(ctx, id, expected, nil, false)
 }
 
-// PurgeSourceCleanup records the exact adopted sources eligible for an explicit
-// deletion request. Older purge journals without this request retain originals.
-// Multi-file legacy DAGs are retained: their independent heads and artifacts
-// cannot be deleted as one canonical session directory.
-type PurgeSourceCleanup struct {
-	Version int             `json:"sourceCleanupVersion"`
-	Sources []SourceMapping `json:"sources"`
-}
-
-func (s *Store) BeginPurgeWithSources(ctx context.Context, id string, expected uint64) error {
-	return s.beginOrResumePurge(ctx, id, expected, nil, true)
-}
-
 // ResumePurge continues only the observed operation. It cannot recreate a
 // deletion intent after a restore superseded that operation.
 func (s *Store) ResumePurge(ctx context.Context, id string, observed Operation) error {
@@ -516,16 +503,8 @@ func (s *Store) beginOrResumePurge(ctx context.Context, id string, expected uint
 			}
 			op := Operation{ID: key, Kind: "purge", Phase: "tombstoned", Lifecycle: Deleted, SessionIDs: []string{id}, ExpectedGeneration: status.Generation}
 			if cleanupSources {
-				plan := PurgeSourceCleanup{Version: 1}
-				for _, mapping := range state.SourceMappings {
-					if mapping.SessionID == id && mapping.Format == "canonical" && mapping.HeadID == "" {
-						mapping.RetainedArtifacts = nil
-						plan.Sources = append(plan.Sources, mapping)
-					}
-				}
-				slices.SortFunc(plan.Sources, func(a, b SourceMapping) int { return strings.Compare(a.SourceKey, b.SourceKey) })
 				var err error
-				op.Request, err = json.Marshal(plan)
+				op.Request, err = purgeSourceCleanupRequest(*state, id)
 				if err != nil {
 					return err
 				}

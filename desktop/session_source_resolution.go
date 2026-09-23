@@ -53,42 +53,45 @@ func (a *App) resolveSourceSessionTarget(selector SessionSelector, allowArchived
 		}
 	}
 	if source.HeadID != "" {
-		dir, validated, err := a.sessionDirForPath(source.Path)
-		if err != nil {
-			return SessionTarget{}, err
-		}
-		if _, _, err = validateSessionPath(dir, validated); err != nil {
-			return SessionTarget{}, err
-		}
-		heads, err := agent.ListSessionHeads(validated)
-		if err != nil {
-			return SessionTarget{}, err
-		}
-		found := false
-		for _, head := range heads {
-			if head.ID == source.HeadID && !head.Retired {
-				found = true
-			}
-		}
-		if !found {
-			return SessionTarget{}, newSessionOperationError("target_not_found", "This historical head is no longer available.")
-		}
-		copy := *source
-		copy.Path, copy.HostID, copy.SourceKey = validated, localDesktopHostID, key
-		target := SessionTarget{Source: &copy, SessionPath: validated, Scope: "global"}
-		for _, project := range loadProjectsFile().Projects {
-			if canonicalRuntimeRoot(dir) == canonicalRuntimeRoot(desktopSessionDir(project.Root)) {
-				target.Scope, target.WorkspaceRoot = "project", project.Root
-				break
-			}
-		}
-		if meta, ok, err := agent.LoadBranchMeta(validated); err == nil && ok {
-			target.TopicID = meta.TopicID
-			if meta.Scope != "" {
-				target.Scope, target.WorkspaceRoot = meta.Scope, meta.WorkspaceRoot
-			}
-		}
-		return target, nil
+		return a.resolveHistoricalHeadTarget(*source, key)
 	}
 	return a.resolveLegacySessionTarget(source.Path, selector.TopicID, allowArchived)
+}
+
+func (a *App) resolveHistoricalHeadTarget(source SessionSourceRef, key string) (SessionTarget, error) {
+	dir, validated, err := a.sessionDirForPath(source.Path)
+	if err != nil {
+		return SessionTarget{}, err
+	}
+	if _, _, err = validateSessionPath(dir, validated); err != nil {
+		return SessionTarget{}, err
+	}
+	heads, err := agent.ListSessionHeads(validated)
+	if err != nil {
+		return SessionTarget{}, err
+	}
+	found := false
+	for _, head := range heads {
+		if head.ID == source.HeadID && !head.Retired {
+			found = true
+		}
+	}
+	if !found {
+		return SessionTarget{}, newSessionOperationError("target_not_found", "This historical head is no longer available.")
+	}
+	source.Path, source.HostID, source.SourceKey = validated, localDesktopHostID, key
+	target := SessionTarget{Source: &source, SessionPath: validated, Scope: "global"}
+	for _, project := range loadProjectsFile().Projects {
+		if canonicalRuntimeRoot(dir) == canonicalRuntimeRoot(desktopSessionDir(project.Root)) {
+			target.Scope, target.WorkspaceRoot = "project", project.Root
+			break
+		}
+	}
+	if meta, ok, err := agent.LoadBranchMeta(validated); err == nil && ok {
+		target.TopicID = meta.TopicID
+		if meta.Scope != "" {
+			target.Scope, target.WorkspaceRoot = meta.Scope, meta.WorkspaceRoot
+		}
+	}
+	return target, nil
 }
