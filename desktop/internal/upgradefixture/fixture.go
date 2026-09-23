@@ -36,12 +36,10 @@ type fixtureReport struct {
 	Home           string `json:"home"`
 	RegistryPath   string `json:"registryPath"`
 	RegistrySHA256 string `json:"registrySha256"`
-	SessionID      string `json:"sessionId"`
 	TopicID        string `json:"topicId"`
 	VisibleText    string `json:"visibleText"`
 	ProjectRoot    string `json:"projectRoot"`
 	LegacyPath     string `json:"legacyPath"`
-	LegacySHA256   string `json:"legacySha256"`
 }
 
 type legacyMessage struct {
@@ -185,8 +183,7 @@ func createFixture(ctx context.Context, home, reportPath string) error {
 		return err
 	}
 	digest := sha256.Sum256(registry)
-	legacyDigest := sha256.Sum256(legacy)
-	report := fixtureReport{Home: home, RegistryPath: registryPath, RegistrySHA256: hex.EncodeToString(digest[:]), TopicID: fixtureTopicID, VisibleText: fixtureText, ProjectRoot: projectRoot, LegacyPath: legacyPath, LegacySHA256: hex.EncodeToString(legacyDigest[:])}
+	report := fixtureReport{Home: home, RegistryPath: registryPath, RegistrySHA256: hex.EncodeToString(digest[:]), TopicID: fixtureTopicID, VisibleText: fixtureText, ProjectRoot: projectRoot, LegacyPath: legacyPath}
 	return writeJSON(reportPath, report)
 }
 
