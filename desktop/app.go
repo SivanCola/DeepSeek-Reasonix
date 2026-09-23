@@ -6167,27 +6167,11 @@ func firstNonEmpty(values ...string) string {
 }
 
 func (a *App) ContextUsageForTab(tabID string) ContextInfo {
-	a.mu.RLock()
-	tab := a.tabByIDLocked(tabID)
-	var ctrl control.SessionAPI
-	if tab != nil {
-		ctrl = tab.Ctrl
-	}
-	a.mu.RUnlock()
-
+	read := a.captureContextRead(tabID)
+	ctrl := read.ctrl
 	var info ContextInfo
-	var snap tabTelemetrySnapshot
-	if tab != nil {
-		// Re-key first: a controller-side rotation (typed /new) may have
-		// swapped sessions without the App noticing, and the stale totals
-		// would otherwise be reported — and then persisted — under the new
-		// session (#5850).
-		if ctrl != nil {
-			if sp := ctrl.SessionPath(); sp != "" {
-				tab.syncTelemetryToSession(sp)
-			}
-		}
-		snap = tab.displayTelemetrySnapshot()
+	if read.tab != nil {
+		snap := read.telemetry
 		info.SessionTokens = snap.Usage.TotalTokens
 		info.SessionCost = snap.Usage.SessionCost
 		info.SessionCurrency = snap.Usage.SessionCurrency
@@ -6211,6 +6195,9 @@ func (a *App) ContextUsageForTab(tabID string) ContextInfo {
 	info.Maintenance = contextMaintenanceInfo(snapshot)
 	if snapshot.ContextBudget != nil {
 		info.ContextBudget = contextBudgetInfo(snapshot.ContextBudget)
+	}
+	if !read.current(a) {
+		return ContextInfo{}
 	}
 	return info
 }

@@ -1,5 +1,12 @@
 import type { WireUsage, TurnUsage } from "./types";
 
+// Failed-attempt estimates remain billable but cannot replace calibrated
+// context occupancy. Context* counters describe only the latest attempt.
+export function measuredContextPromptTokens(usage?: WireUsage): number | undefined {
+  if (!usage || usage.estimated) return undefined;
+  return (usage.contextPromptTokens ?? 0) > 0 ? usage.contextPromptTokens : usage.promptTokens ?? 0;
+}
+
 export function usageTotalTokens(usage?: WireUsage): number {
   if (!usage) return 0;
   if (usage.totalTokens > 0) return usage.totalTokens;
