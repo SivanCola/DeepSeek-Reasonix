@@ -20,7 +20,9 @@ function mergeFollowEntries(canonical: HistoryEntry[], snapshot: HistoryEntry[],
   const ordered = [...canonical].sort((a, b) => a.order - b.order).map(entry => merged.get(entry.entryId)!);
   const present = new Set(canonicalIds);
   for (let snapshotIndex = 0; snapshotIndex < snapshot.length; snapshotIndex++) {
-    const entry = snapshot[snapshotIndex];
+    // Multiple projection aliases can normalize to one durable identity. The
+    // merge map owns its body/ref precedence; this pass only places that owner.
+    const entry = merged.get(snapshot[snapshotIndex].entryId)!;
     if (present.has(entry.entryId)) continue;
     let at = -1;
     for (let index = snapshotIndex - 1; index >= 0; index--) {
@@ -191,7 +193,9 @@ export class TranscriptSessionFollowerRuntime {
       order = snapshotOrder ?? this.nextOrder;
       this.nextOrder = Math.max(this.nextOrder, order + 1);
       this.orders.set(entryId, order);
-      if (message.role === "user") this.turn++;
+      // A snapshot's total already includes users outside its history page.
+      // Only newly followed user records advance the turn counter.
+      if (message.role === "user" && snapshotOrder === undefined) this.turn++;
       // Only the resident tail needs an order index. Older pages carry their
       // canonical positions and are owned by the bounded transcript store.
       while (this.orders.size > 192) this.orders.delete(this.orders.keys().next().value!);
@@ -254,7 +258,11 @@ export class TranscriptSessionFollowerRuntime {
         revision: snapshot.coveredThroughSeq, revKnown: true, digest: snapshot.snapshotId, transcriptRef: ref }));
       merged.set(entry.entryId, entry);
     }
-    const all = mergeFollowEntries(entries, snapshotEntries, merged);
+    // Native pages and activeRecords share the frozen snapshot's order space.
+    // Keep those positions so pages fetched into an active-prefix gap can sort
+    // between its original neighbors.
+    const all = nativeWindow ? [...merged.values()].sort((a, b) => a.order - b.order)
+      : mergeFollowEntries(entries, snapshotEntries, merged);
     this.orders.clear();
     for (const entry of all.slice(-192)) this.orders.set(entry.entryId, entry.order);
     this.nextOrder = Math.max(this.nextOrder, ...all.map(entry => entry.order + 1));
