@@ -1063,7 +1063,7 @@ export const zh: Record<DictKey, string> = {
   "status.tpsLabel": "吞吐速度",
   "status.tpsTitle": "最近请求的输出吞吐（含推理 token）。",
   "status.turnTpsLabel": "本轮吞吐",
-  "status.turnTpsTitle": "本轮累计输出吞吐（含推理 token）；已完成请求用精确值，流式期间按字符密度估算。",
+  "status.turnTpsTitle": "模型输出吞吐（含推理 token），不含工具执行时间。流式输出按字符密度估算；恢复会话后按新收到的输出采样。",
   "status.turnOutputTokensLabel": "本轮输出 tokens",
   "status.turnOutputTokensTitle": "本轮模型输出的 tokens（含推理 token），不含输入；流式期间为估算值。",
   "status.outputTokensLabel": "输出",

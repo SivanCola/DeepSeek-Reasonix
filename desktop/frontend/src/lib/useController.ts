@@ -20,7 +20,8 @@ import { desktopHost } from "./desktopHost";
 import { app, onEvent, onReady, onRuntimeRebuilt, onTabMeta, onTopicActivation } from "./bridge";
 import { startControllerEventRecovery } from "./controllerEventRecovery";
 import { metaFromTab } from "./controllerTabMeta";
-import { tokensFromQuarters, unbilledOutputTokens } from "./turnMetrics";
+import { outputQuarters, tokensFromQuarters, unbilledOutputTokens, type TurnRateSample } from "./turnMetrics";
+import { beginTurnModelActivity, endTurnModelActivity, sampleTurnArguments } from "./turnRateSample";
 import { normalizeToolApprovalMode } from "./types";
 export { metaFromTab } from "./controllerTabMeta";
 import { invalidateCache } from "./composerHistory";
@@ -291,6 +292,7 @@ export type ControllerLiveStore = {
   subscribe: (tabId: string | undefined, listener: () => void) => () => void;
   getSnapshot: (tabId: string | undefined) => LiveStream | undefined;
   getModelActiveAt?: (tabId: string | undefined) => number | undefined;
+  getRateOutputQuarters?: (tabId: string | undefined) => number | undefined;
 };
 export type HistoryMutationKind = "replace" | "prepend" | "append" | "patch";
 export type HistoryMutation = { seq: number; kind: HistoryMutationKind };
@@ -519,6 +521,7 @@ export interface State extends ReadStatusHost, ForkTurnState {
   // gaps between provider requests are intentionally excluded from TPS.
   turnModelActiveAt?: number;
   turnModelActiveMs: number;
+  turnRateSample?: TurnRateSample;
   // Time spent waiting on the user (approval/ask) within the current turn.
   // Closed intervals accumulate here; an open interval uses promptWaitStartedAt
   // so background tabs keep counting while not rendered by Composer.
@@ -907,7 +910,9 @@ function applyDeltaSegments(s: State, segments: StreamSegment[]): State {
   const base = active.live!;
   const now = Date.now();
   const deltaChars = segments.reduce((total, segment) => total + segment.delta.length, 0);
-  const next = { ...active, live: applyLiveSegments(base, segments, now), turnOutputChars: active.turnOutputChars + deltaChars };
+  const next = { ...active, live: applyLiveSegments(base, segments, now), turnOutputChars: active.turnOutputChars + deltaChars,
+    turnRateSample: active.turnRateSample ? { ...active.turnRateSample,
+      outputQuarters: active.turnRateSample.outputQuarters + segments.reduce((sum, segment) => sum + outputQuarters(segment.delta), 0) } : undefined };
   return deltaChars > 0 ? beginTurnModelActivity(next, now) : next;
 }
 
@@ -962,19 +967,6 @@ function endPromptWait(s: State, now = Date.now()): State {
 function endPromptWaitIfIdle(s: State, now = Date.now()): State {
   if (s.approval || s.ask || s.mcpInteraction) return s;
   return endPromptWait(s, now);
-}
-
-function beginTurnModelActivity(s: State, now = Date.now()): State {
-  return s.turnModelActiveAt && s.turnModelActiveAt > 0
-    ? s
-    : { ...s, turnModelActiveAt: now };
-}
-
-function endTurnModelActivity(s: State, now = Date.now(), stashForUsage = false): State {
-  if (!s.turnModelActiveAt || s.turnModelActiveAt <= 0) return s;
-  const closedMs = Math.max(0, now - s.turnModelActiveAt);
-  return { ...s, turnModelActiveAt: undefined, turnModelActiveMs: Math.max(0, s.turnModelActiveMs) + closedMs,
-    pendingRequestModelMs: stashForUsage ? closedMs : s.pendingRequestModelMs };
 }
 
 function snapshotCompletedTurnTelemetry(s: State, now = Date.now()): State {
@@ -1095,6 +1087,7 @@ function applyStreamAttempt(s: State, e: WireEvent): State {
         turnActive: true,
         cancellable: true,
         turnStartAt: s.turnStartAt || Date.now(),
+        turnRateSample: active.turnRateSample ? { ...active.turnRateSample, argChars: 0 } : undefined,
         streamAttemptJournal: {
           id: sa.id,
           baselineLive,
@@ -1111,7 +1104,7 @@ function applyStreamAttempt(s: State, e: WireEvent): State {
         const ownsCurrent = s.currentAssistant === id;
         const ownsJournal = journal?.id === sa.id;
         return {
-          ...s,
+          ...(ownsCurrent ? endTurnModelActivity(s) : s),
           items: s.items.filter((item) => item.id !== id && !(item.kind === "tool" &&
             (item.messageId === e.messageId || (ownsJournal && !item.messageId && journal.createdToolIds.includes(item.id))))),
           live: s.live?.id === id ? undefined : s.live,
@@ -1463,8 +1456,8 @@ function applyEvent(s: State, e: WireEvent, preserveToolPayloads = false): State
       // dispatch that follows merges by ID and fills in args/summary.
       if (t.partial) {
         const samplingState = t.parentId || s.currentAssistant ? s : ensureActiveAssistant(s);
-        const activeState = t.parentId ? samplingState : beginTurnModelActivity(samplingState);
         const turnArgChars = t.argChars && t.argChars > 0 ? t.argChars : s.turnArgChars;
+        const activeState = t.parentId ? samplingState : sampleTurnArguments(beginTurnModelActivity(samplingState), t.argChars);
         // Some OpenAI-compatible streams surface the call name before its ID.
         // Without a stable ID the card could never be merged with the full
         // dispatch (a synthetic `tool${seq}` id would orphan it as a forever-
@@ -1616,8 +1609,11 @@ function applyEvent(s: State, e: WireEvent, preserveToolPayloads = false): State
       // usageSeq, but must not close or inflate the executor TPS interval.
       const settled = updateContextGauge ? endTurnModelActivity(s, Date.now(), true) : s;
       const hasRequestCompletion = (e.usage?.contextCompletionTokens ?? 0) > 0;
-      const requestModelMs = updateContextGauge ? (settled.pendingRequestModelMs ?? 0) : 0;
-      const requestTokens = updateContextGauge ? (hasRequestCompletion ? (e.usage?.contextCompletionTokens ?? 0) : (e.usage?.completionTokens ?? 0)) : 0;
+      const sample = settled.turnRateSample;
+      const requestModelMs = updateContextGauge ? (sample ? settled.turnModelActiveMs - sample.requestStartModelMs : settled.pendingRequestModelMs ?? 0) : 0;
+      const requestTokens = updateContextGauge ? (sample
+        ? tokensFromQuarters(sample.outputQuarters - sample.requestStartQuarters)
+        : hasRequestCompletion ? (e.usage?.contextCompletionTokens ?? 0) : (e.usage?.completionTokens ?? 0)) : 0;
       const lastRequestTps = updateContextGauge ? (requestTokens > 0 && requestModelMs >= 500 ? requestTokens / (requestModelMs / 1000) : null) : s.lastRequestTps;
       const used = settled.context.window && updateContextGauge
         ? measuredContextPromptTokens(e.usage) ?? settled.context.used : settled.context.used;
@@ -1643,7 +1639,8 @@ function applyEvent(s: State, e: WireEvent, preserveToolPayloads = false): State
       const turnUsage = mergeChatTurnUsage(settled.turnUsage, e.usage);
       // The completed round's usage now accounts for the streamed tool-call
       // arguments, so drop the live estimate rather than double-count it.
-      return { ...settled, usage, context: { ...settled.context, used, sessionTokens }, turnTokens, turnOutputTokens, turnOutputCharsAtUsage, turnOutputEstimated, turnTotalTokens, turnUsage, turnCost, turnRateBand, turnArgChars: updateContextGauge ? 0 : settled.turnArgChars, sessionTokens, sessionCost, sessionCurrency, usageSeq: settled.usageSeq + 1, lastRequestTps, pendingRequestModelMs: updateContextGauge ? undefined : settled.pendingRequestModelMs };
+      return { ...settled, usage, context: { ...settled.context, used, sessionTokens }, turnTokens, turnOutputTokens, turnOutputCharsAtUsage, turnOutputEstimated, turnTotalTokens, turnUsage, turnCost, turnRateBand, turnArgChars: updateContextGauge ? 0 : settled.turnArgChars, sessionTokens, sessionCost, sessionCurrency, usageSeq: settled.usageSeq + 1, lastRequestTps, pendingRequestModelMs: updateContextGauge ? undefined : settled.pendingRequestModelMs,
+        turnRateSample: updateContextGauge && sample ? { ...sample, requestStartQuarters: sample.outputQuarters, requestStartModelMs: settled.turnModelActiveMs, argChars: 0 } : sample };
     }
     case "read_status":
       return applyReadStatusEvent(s, e);
@@ -1736,8 +1733,9 @@ function applyEvent(s: State, e: WireEvent, preserveToolPayloads = false): State
       s = snapshotCompletedTurnTelemetry(s, now);
       const workDurationMs = s.turnDoneAt ? Math.max(1, s.turnDoneAt - s.turnStartAt - (s.lastTurnWaitAccumMs ?? 0)) : undefined;
       const turnDurationMs = s.turnDoneAt && s.turnStartAt > 0 ? Math.max(1, s.turnDoneAt - s.turnStartAt) : undefined;
-      const tokensPerSecond = s.lastTurnOutputTokens > 0 && s.lastTurnModelMs > 0
-        ? s.lastTurnOutputTokens / (s.lastTurnModelMs / 1000)
+      const rateTokens = s.turnRateSample ? tokensFromQuarters(s.turnRateSample.outputQuarters) : s.lastTurnOutputTokens;
+      const tokensPerSecond = rateTokens > 0 && s.lastTurnModelMs >= 500
+        ? rateTokens / (s.lastTurnModelMs / 1000)
         : undefined;
       const settleItems = s.items.map((it) => {
         if (it.kind === "assistant") {
@@ -2399,6 +2397,9 @@ export function useController() {
     },
     getModelActiveAt(tabId) {
       return tabId ? statesRef.current.get(tabId)?.turnModelActiveAt : undefined;
+    },
+    getRateOutputQuarters(tabId) {
+      return tabId ? statesRef.current.get(tabId)?.turnRateSample?.outputQuarters : undefined;
     },
   }), []);
   const beginActiveNavigation = useCallback(() => {

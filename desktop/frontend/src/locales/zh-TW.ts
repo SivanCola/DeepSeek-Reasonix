@@ -2897,7 +2897,7 @@ export const zhTW: Record<DictKey, string> = {
   "status.tpsLabel": "tps",
   "status.tpsTitle": "最近請求的輸出吞吐（含推理 token）。",
   "status.turnTpsLabel": "本輪吞吐",
-  "status.turnTpsTitle": "本輪累計輸出吞吐（含推理 token）；已完成請求用精確值，串流期間按字元密度估算。",
+  "status.turnTpsTitle": "模型輸出吞吐（含推理 token），不含工具執行時間。串流輸出按字元密度估算；恢復會話後按新收到的輸出取樣。",
   "status.turnOutputTokensLabel": "本輪輸出 tokens",
   "status.turnOutputTokensTitle": "本輪模型輸出的 tokens（含推理 token），不含輸入；串流期間為估算值。",
   "status.outputTokensLabel": "輸出",

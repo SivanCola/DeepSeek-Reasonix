@@ -1062,7 +1062,7 @@ export const en = {
   "status.tpsLabel": "tps",
   "status.tpsTitle": "Output token throughput for the most recent request (completion + reasoning tokens per second).",
   "status.turnTpsLabel": "turn tps",
-  "status.turnTpsTitle": "Turn-cumulative output throughput (completion + reasoning tokens): settled values for completed requests plus a character-density estimate while streaming.",
+  "status.turnTpsTitle": "Model output throughput (including reasoning tokens), excluding tool execution time. Streaming output is estimated by character density; restored sessions sample newly received output.",
   "status.turnOutputTokensLabel": "turn output tokens",
   "status.turnOutputTokensTitle": "Model output tokens for this turn, including reasoning but excluding input. Estimated while streaming.",
   "status.outputTokensLabel": "out",

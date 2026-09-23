@@ -45,6 +45,7 @@ import {
 } from "../lib/invocationDisplay";
 import { formatTokens, formatTps } from "../lib/format";
 import { formatElapsedMs, turnMetrics } from "../lib/turnMetrics";
+import { useLiveTurnMetrics } from "../lib/useLiveTurnMetrics";
 import type { CancelOutcome } from "../lib/inboxCancel";
 import type { ControllerLiveStore } from "../lib/useController";
 import { clearLayoutSize, loadOptionalLayoutSize, saveLayoutSize } from "../lib/layoutPreferences";
@@ -528,6 +529,7 @@ export function Composer({
   turnOutputCharsAtUsage,
   turnModelActiveAt,
   turnModelActiveMs = 0,
+  turnRateOutputQuarters,
   liveStore,
   turnArgChars = 0,
   turnOutputEstimated,
@@ -639,6 +641,7 @@ export function Composer({
   // Active provider-output time for the current turn; excludes tool gaps.
   turnModelActiveAt?: number;
   turnModelActiveMs?: number;
+  turnRateOutputQuarters?: number;
   // Live-stream subscription for the character-density TPS fallback (see
   // lib/turnMetrics) when the provider does not emit per-chunk usage events
   // with token counts during streaming. Subscribing here keeps text deltas off
@@ -3962,21 +3965,7 @@ export function Composer({
     setShowPastChats(false);
     closeIntentMenu();
   }, [suspendedByDecision, closeIntentMenu]);
-  // Live text+reasoning character count for the run-strip TPS fallback. Reads
-  // through the live store's own subscription so stream deltas re-render only
-  // this component — the controller's bump path stays text-delta-free.
-  const subscribeLiveText = useCallback(
-    (cb: () => void) => liveStore?.subscribe(tabId, cb) ?? (() => {}),
-    [liveStore, tabId],
-  );
-  const liveOutput = useSyncExternalStore(
-    subscribeLiveText,
-    () => liveStore?.getSnapshot(tabId),
-  );
-  const liveModelActiveAt = useSyncExternalStore(
-    subscribeLiveText,
-    () => liveStore?.getModelActiveAt?.(tabId),
-  );
+  const { liveOutput, liveModelActiveAt, liveRateOutputQuarters } = useLiveTurnMetrics(liveStore, tabId);
   const turnPhaseLabel = turnPhaseStatusLabel(turnPhase, t);
   const readStatusText = readStatusLabel(readStatuses, t);
   const runStateText = runtimeState.unknown ? t("runtime.unknown") : compactSubmitting ? t("compaction.preparing") : runtimeState.kind === "maintenance_finalizing" ? t("compaction.saving") : runtimeState.kind === "maintenance_cancelling" ? t("compaction.stopping") : runtimeState.kind === "maintenance_running" ? t("compaction.working") : finishing ? t("runtime.finishing") : runtimeState.kind === "cancelling" ? t("status.jobStopping") : runtimeState.kind === "background_job" ? t("runtime.background", { count: runtimeState.state?.backgroundJobs ?? 0 }) : retry
@@ -3996,6 +3985,7 @@ export function Composer({
       now, turnStartAt, turnDoneAt, running: running && !maintenanceActive, waitAccumMs, lastTurnWaitAccumMs,
       turnTokens, turnOutputTokens, lastTurnOutputTokens, turnOutputCharsAtUsage,
       turnArgChars, turnModelActiveMs, turnModelActiveAt, liveModelActiveAt,
+      turnRateOutputQuarters: liveRateOutputQuarters ?? turnRateOutputQuarters,
       live: liveOutput, turnOutputEstimated, lastTurnOutputEstimated,
     });
     if (!metrics) return null;
@@ -4022,13 +4012,14 @@ export function Composer({
       tokens: metrics.tokens > 0
         ? `${metrics.estimated ? "≈" : ""}${formatTokens(metrics.tokens)} ${t("status.tokens")}`
         : null,
-      tps: formatTps(metrics.tps, metrics.estimated),
+      tps: formatTps(metrics.tps, metrics.estimated || (liveRateOutputQuarters ?? turnRateOutputQuarters) !== undefined),
       stripParts,
       stripSpeed,
     };
   }, [metricsTick, running, maintenanceActive, turnStartAt, turnDoneAt, waitAccumMs, lastTurnWaitAccumMs,
     turnTokens, turnOutputTokens, lastTurnOutputTokens, turnOutputCharsAtUsage, turnArgChars,
     turnModelActiveMs, turnModelActiveAt, liveModelActiveAt, liveOutput, turnOutputEstimated,
+    turnRateOutputQuarters, liveRateOutputQuarters,
     lastTurnOutputEstimated, t]);
   // The strip's own sr-only sibling keeps announcing the stable state alone, so
   // these churning numbers stay out of the live region.
