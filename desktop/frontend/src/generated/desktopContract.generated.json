@@ -1883,6 +1883,40 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/model_application_actions.go",
+      "name": "CancelModelApplicationBlockers",
+      "owner": "App.CancelModelApplicationBlockers",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "object",
+          "ref": "control.ModelApplicationChoice"
+        },
+        {
+          "elem": {
+            "kind": "string"
+          },
+          "kind": "array"
+        }
+      ],
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID",
+          "choice",
+          "ids"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.CancelModelApplicationBlockers"
+      },
+      "sources": [
+        "desktop/model_application_actions.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/remote_tab.go",
       "name": "CancelRemoteTab",
       "owner": "App.CancelRemoteTab",
@@ -19016,6 +19050,46 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/model_application_submit.go",
+      "name": "StartTurnWithModelApplication",
+      "owner": "App.StartTurnWithModelApplication",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "object",
+          "ref": "control.SubmissionRequest"
+        },
+        {
+          "kind": "object",
+          "ref": "control.ModelApplicationChoice"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.TurnStartView"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID",
+          "submissionID",
+          "req",
+          "choice"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.StartTurnWithModelApplication"
+      },
+      "sources": [
+        "desktop/model_application_submit.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/app.go",
       "name": "Steer",
       "owner": "App.Steer",
@@ -19918,6 +19992,41 @@
       },
       "sources": [
         "desktop/remote_tab_exact_interactions.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/remote_model_application.go",
+      "name": "SubmitRemoteTabWithModelApplication",
+      "owner": "App.SubmitRemoteTabWithModelApplication",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "object",
+          "ref": "control.ModelApplicationChoice"
+        }
+      ],
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID",
+          "text",
+          "submissionID",
+          "choice"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.SubmitRemoteTabWithModelApplication"
+      },
+      "sources": [
+        "desktop/remote_model_application.go"
       ]
     },
     {
@@ -23109,6 +23218,127 @@
           "name": "offset",
           "type": {
             "kind": "integer"
+          }
+        }
+      ]
+    },
+    "control.ModelApplicationChoice": {
+      "fields": [
+        {
+          "name": "mode",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "expectedAppliedRevision",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "expectedDesiredRevision",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "expectedRuntimeIdentity",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "confirmationToken",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
+    "control.ModelApplicationDetails": {
+      "fields": [
+        {
+          "name": "code",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "runtimeIdentity",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "confirmationToken",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "appliedRevision",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "desiredRevision",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "model",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "connectionTarget",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "blockingJobs",
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "jobs.View"
+            },
+            "kind": "array"
+          }
+        },
+        {
+          "name": "canUseApplied",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "continuationUnavailable",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "applying",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "availableActions",
+          "type": {
+            "elem": {
+              "kind": "string"
+            },
+            "kind": "array"
           }
         }
       ]
@@ -27173,6 +27403,40 @@
           "name": "lastBackgroundSliceMs",
           "type": {
             "kind": "number"
+          }
+        }
+      ]
+    },
+    "jobs.View": {
+      "fields": [
+        {
+          "name": "id",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "kind",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "label",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "status",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "startedAt",
+          "type": {
+            "kind": "integer"
           }
         }
       ]
@@ -34234,6 +34498,17 @@
     },
     "main.ModelSettingsTarget": {
       "fields": [
+        {
+          "name": "details",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "control.ModelApplicationDetails"
+            },
+            "kind": "nullable"
+          }
+        },
         {
           "name": "tabId",
           "type": {

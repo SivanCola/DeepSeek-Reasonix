@@ -482,6 +482,13 @@ func (m *chatTUI) runtimeSwitchBusy() bool {
 	return status.Running || status.PendingPrompt || status.BackgroundJobs > 0 || m.pendingApproval != nil || m.chooser != nil
 }
 
+func (m *chatTUI) modelReplacementBusy() bool {
+	if m == nil {
+		return false
+	}
+	return control.ModelReplacementBlocked(m.ctrl) || m.pendingApproval != nil || m.chooser != nil
+}
+
 // agentEventMsg is one typed event from the agent's run loop.
 type agentEventMsg event.Event
 

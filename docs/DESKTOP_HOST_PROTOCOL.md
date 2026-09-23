@@ -278,6 +278,10 @@ interface ReasonixDesktopHost {
   readonly contract: { protocolVersion: number; digest: string; commands: readonly string[] };
   readonly platform: { os: "darwin" | "windows" | "linux"; arch: string; versions: Record<string, string> };
   invoke(method: string, args: unknown[]): Promise<unknown>;
+  // Optional: preserve structured RPC errors across Electron contextBridge.
+  invokeResult?(method: string, args: unknown[]): Promise<
+    { ok: true; value: unknown } | { ok: false; message: string; code?: number; data?: unknown }
+  >;
   on(name: string, cb: (...args: unknown[]) => void): () => void;
   native: {
     openExternal(url: string): Promise<void>;

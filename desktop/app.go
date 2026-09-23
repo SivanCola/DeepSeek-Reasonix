@@ -9050,6 +9050,15 @@ func (e *rebuildBusyError) Error() string {
 
 func rebuildControllerActiveWorkErrorFor(ctrl control.SessionAPI, setting string) error {
 	work := controllerActiveRuntimeWork(ctrl)
+	if setting == "model" || setting == "saved model settings" {
+		if !control.ModelReplacementBlocked(ctrl) {
+			return nil
+		}
+		if concrete, ok := ctrl.(*control.Controller); ok {
+			work.backgroundJobs = len(concrete.ModelReplacementJobs())
+		}
+		return &rebuildBusyError{setting: setting, work: work}
+	}
 	if !work.active() {
 		return nil
 	}

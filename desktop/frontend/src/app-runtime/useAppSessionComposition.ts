@@ -92,7 +92,7 @@ export type AppSessionCompositionInput = {
     remoteSurfaceActive: boolean;
     remoteSession: RemoteSessionApi;
     remoteComposerReady: boolean;
-    remoteSend: (text: string) => Promise<void>;
+    remoteSend: (text: string, submitText?: string, choice?: import("../lib/modelApplication").ModelApplicationChoice) => Promise<void>;
     remoteCancel: (queuedItemIDs?: string[]) => Promise<import("../lib/inboxCancel").CancelOutcome>;
     activeSessionIdentity: string;
     sessionSurfaceFence: ReturnType<typeof import("./sessionTarget").createSessionSurfaceFence>;

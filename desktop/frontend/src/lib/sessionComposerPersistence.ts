@@ -4,10 +4,11 @@ import type { SessionRef } from "./sessionRef";
 import type { PersistentComposerDraft, PersistentComposerTarget } from "./composerDraftTypes";
 import type { SessionComposerState } from "../generated/desktopContract.generated";
 import { followupNotSubmitted } from "./pendingFollowup";
+import { submissionOutcome, modelApplicationError, type ModelApplicationDetails } from "./modelApplication";
 
 export const emptySessionInput = (): PersistentComposerDraft => ({ text: "", invocations: [], attachments: [], workspaceRefs: [], pastedBlocks: [], openPastedLabels: [], sessionRefs: [], selectedTextRefs: [] });
 type Entry = { ref: SessionRef; state?: SessionComposerState; content: PersistentComposerDraft; generation: number; version: number; saved: number; users: number; touched: number; acknowledgeHistory?: boolean; conflictCopies?: string[];
-  error?: string; notice?: string; unreadable?: boolean; registering?: boolean; conflict?: SessionComposerState; tasks: Set<Promise<unknown>>; loading?: Promise<void>; saving?: Promise<void>; timer?: ReturnType<typeof setTimeout> };
+  application?:ModelApplicationDetails; error?: string; notice?: string; unreadable?: boolean; registering?: boolean; conflict?: SessionComposerState; tasks: Set<Promise<unknown>>; loading?: Promise<void>; saving?: Promise<void>; timer?: ReturnType<typeof setTimeout> };
 const entries = new Map<string, Entry>();
 const tabs = new Map<string, string>();
 const tabOwners = new Map<string, symbol>();
@@ -24,7 +25,8 @@ export function sendPersistedComposer<T>(tabId: string, display: string, submit:
     return result;
   } catch (error) {
     const message=String(error);
-    const rejected=followupNotSubmitted(error) || /^(?:Error:\s*)?submission not accepted(?:\n|$)/.test(message);
+    const outcome = submissionOutcome(error);
+    const rejected = outcome ? outcome === "not_accepted" : followupNotSubmitted(error) || /^(?:Error:\s*)?submission not accepted(?:\n|$)/.test(message);
     await complete?.(rejected ? "not_accepted" : "unknown");
     throw error;
   }
@@ -119,7 +121,7 @@ async function flush(entry: Entry) {
 }
 function edit(entry: Entry, content: PersistentComposerDraft) {
   if (locked(entry)) return;
-  entry.content = content; entry.version++; entry.error = undefined; entry.notice = undefined;
+  entry.content = content; entry.version++; entry.error = undefined; entry.notice = undefined; entry.application=undefined;
   if (entry.timer) clearTimeout(entry.timer);
   entry.timer = setTimeout(() => { void flush(entry).catch(() => {}); }, 250);
   notify();
@@ -200,7 +202,10 @@ export function useSessionComposerPersistence(ref: SessionRef | undefined, tabId
     onTaskError:(_id,_generation,error) => { entry.error=error; notify(); },
   } : undefined;
   return { target, blocked:entry ? exiting || locked(entry) : false, error:entry?.error || entry?.notice,
-    reportSubmissionError:(message:string) => { if (entry) {entry.notice=message;notify();} },
+    application:entry?.application,
+    setApplication:(value:ModelApplicationDetails|undefined)=>{if(entry){entry.application=value;entry.notice=undefined;notify();}},
+    hasDraftConflict:Boolean(entry?.conflict || entry?.state?.historyChanged),
+    reportSubmissionError:(message:string,error?:unknown) => { if (entry) {entry.application=modelApplicationError(error);entry.notice=entry.application ? undefined : message;notify();} },
     conflictCopies:entry?.conflictCopies || [],
     restoreConflict:async (index:number) => {
       if (!entry || locked(entry)) return;

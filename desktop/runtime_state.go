@@ -391,4 +391,7 @@ func (s *tabEventSink) RuntimeStateChanged(snapshot event.RuntimeStateSnapshot) 
 		return
 	}
 	app.queueRuntimeProjection(localRuntimeUpdate{tab: tab, ctrl: ctrl, state: current, generation: generation, path: path, sessionID: sessionID})
+	if !current.Running && app.deferredRebuildPending(id) {
+		app.kickDeferredRebuildRetry()
+	}
 }
