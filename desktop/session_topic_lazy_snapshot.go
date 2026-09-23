@@ -86,7 +86,12 @@ func (a *App) lazyProjectTopicSnapshot(req ProjectTopicPageRequest, reader works
 		}
 	}
 	excludedJSON, _ := json.Marshal(excluded)
+	var deletedTopicsJSON []byte
+	if deleted := loadProjectsFile().DeletedTopics; len(deleted) > 0 {
+		deletedTopicsJSON, _ = json.Marshal(deleted)
+	}
 	query := sessioncatalog.OrdinaryPageRequest{Scope: req.Scope, WorkspaceRoot: req.WorkspaceRoot, SortMode: req.SortMode, PinnedOnly: req.pinnedOnly, ExcludePinned: req.ExcludePinned, ExcludedPathsJSON: string(excludedJSON), MinActivity: req.timeCutoff}
+	query.ExcludedTopicIDsJSON = string(deletedTopicsJSON)
 	groupJSON := ordinaryGroupSourceKeys(req)
 	// The retained page closure only needs the encoded membership predicate.
 	// Do not keep another copy of every organization's member slice alive.
@@ -115,7 +120,7 @@ func (a *App) lazyProjectTopicSnapshot(req ProjectTopicPageRequest, reader works
 	if err != nil {
 		return ProjectTopicPage{}, nil, true, err
 	}
-	if err := store.reserve(snap, int64(len(encoded)+len(excludedJSON)+len(groupJSON)+2*len(req.Query)+1024)); err != nil {
+	if err := store.reserve(snap, int64(len(encoded)+len(excludedJSON)+len(deletedTopicsJSON)+len(groupJSON)+2*len(req.Query)+1024)); err != nil {
 		return ProjectTopicPage{}, nil, true, err
 	}
 	snap.readPage = (&lazyTopicPageReader{app: a, catalog: catalog, lease: lease, req: req,

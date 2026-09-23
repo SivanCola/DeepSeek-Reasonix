@@ -23,6 +23,8 @@ type OrdinaryPageRequest struct {
 	// Empty means no filter; [] explicitly includes no sources. These keys
 	// describe physical single-head sources, never topics or adopted sessions.
 	IncludeSourceKeysJSON, ExcludeSourceKeysJSON string
+	// Explicit legacy topic tombstones override retained source metadata.
+	ExcludedTopicIDsJSON string
 }
 
 func init() {
@@ -146,6 +148,10 @@ func (c *Catalog) ListOrdinarySessions(ctx context.Context, req OrdinaryPageRequ
 	if req.ExcludedPathsJSON != "" {
 		where += ` AND s.path NOT IN (SELECT value FROM json_each(?))`
 		args = append(args, req.ExcludedPathsJSON)
+	}
+	if req.ExcludedTopicIDsJSON != "" && req.ExcludedTopicIDsJSON != "[]" {
+		where += ` AND s.topic_id NOT IN (SELECT value FROM json_each(?))`
+		args = append(args, req.ExcludedTopicIDsJSON)
 	}
 	if req.IncludeSourceKeysJSON != "" {
 		where += ` AND reasonix_catalog_source_key(s.path_key) IN (SELECT value FROM json_each(?))`
