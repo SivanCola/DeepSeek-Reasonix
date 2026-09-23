@@ -1,5 +1,5 @@
 import { app } from "./bridge";
-import type { ManualSessionCreationRequest } from "../generated/desktopContract.generated";
+import type { ManualSessionCreationRequest, ManualSessionCreationView } from "../generated/desktopContract.generated";
 
 // Unacknowledged requests remain retryable with the same identity even when
 // the creation-intent database could not be written. They are not successes.
@@ -16,7 +16,10 @@ export async function beginManualCreation(request:ManualSessionCreationRequest) 
  catch(error){failed.set(request.operationId,{request,error:String(error)});notify();throw error;}
 }
 
-export async function createManualSession(request: ManualSessionCreationRequest) {
+export async function createManualSession(request: ManualSessionCreationRequest, options?: {
+ onSurfaceReady: (operation: ManualSessionCreationView) => Promise<void>;
+ isObservationCurrent?: () => boolean;
+}) {
  let operation;
  try { operation = await beginManualCreation(request); }
  catch (error) {
@@ -24,9 +27,24 @@ export async function createManualSession(request: ManualSessionCreationRequest)
    try { operation = await app.GetManualSessionCreation(request.operationId); acknowledgeManualCreation(request.operationId); }
    catch { throw error; }
  }
- while (operation.phase === "reserved" || operation.phase === "starting") {
+ let surfaceOpened = false;
+ while (true) {
+   // Acknowledgement transfers creation to the host. Leaving this surface
+   // stops only its observer, never the durable operation or its recovery.
+   if (options?.isObservationCurrent?.() === false) return operation;
+   // The host publishes a formal session before constructing its runtime. Open
+   // that identity once so typing can start; completion must never reselect it.
+   // Older hosts only publish a usable surface at ready.
+   if (!surfaceOpened && (operation.surfaceReady || operation.phase === "ready")) {
+     surfaceOpened = true;
+     await options?.onSurfaceReady(operation);
+   }
+   const status = operation.progress?.status;
+   const recovering = status && ["queued", "running", "waiting_lock", "waiting_workspace", "retrying_storage"].includes(status);
+   if (options?.isObservationCurrent?.() === false || operation.phase === "ready" || status === "blocked" || status === "stopped" || status === "stopping"
+     || (!recovering && operation.phase !== "reserved" && operation.phase !== "starting")) return operation;
    await new Promise(resolve => setTimeout(resolve, 150));
+   if (options?.isObservationCurrent?.() === false) return operation;
    operation = await app.GetManualSessionCreation(request.operationId);
  }
- return operation;
 }

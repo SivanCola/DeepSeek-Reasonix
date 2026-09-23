@@ -9,6 +9,8 @@ import type { ControlResult, SessionMeta, TabMeta } from "../lib/types";
 import type { TopicShortcutEntry } from "../lib/topicShortcuts";
 import { useRef, type Dispatch, type SetStateAction } from "react";
 import type { SessionRef } from "../lib/sessionRef";
+import { t } from "../lib/i18n";
+import { manualCreationPresentation } from "../lib/manualCreationPresentation";
 
 const loadNavigationOwner = () => import("./navigationOwner");
 
@@ -56,17 +58,24 @@ export function useSessionNavigationCommands(input: SessionNavigationCommandsInp
     // UI preferences use the actual directory; global navigation uses an empty wire root.
     input.prepareBlankWorkspace(workspaceRoot);
     input.enterConversation();
+    input.beginNavigationSurface(seq);
     // Creation is an explicit mutation, not a coalescible navigation request.
     // Even if another click wins selection, this accepted operation survives.
     try {
       const { createManualSession } = await import("../lib/manualCreationRequests");
-      const operation = await createManualSession({ operationId, workspaceId: "", scope, workspaceRoot: targetRoot });
+      const operation = await createManualSession({ operationId, workspaceId: "", scope, workspaceRoot: targetRoot }, {
+        isObservationCurrent: () => input.isNavigationIntentCurrent(seq),
+        onSurfaceReady: async (reserved) => {
+          if (!input.isNavigationIntentCurrent(seq)) return;
+          await navigation.enqueueNavigationWithIntent({ kind: "canonical-session", ref: reserved.ref }, seq);
+        },
+      });
       input.markProjectChanged(value => value + 1);
-      if (operation.phase === "failed") throw new Error(operation.error || "Session creation failed");
-      if (!input.isNavigationIntentCurrent(seq)) return;
-      await navigation.enqueueNavigationWithIntent({ kind: "canonical-session", ref: operation.ref }, seq);
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : String(error), "error");
+      if (operation.phase === "failed" && input.isNavigationIntentCurrent(seq)) showToast(t(manualCreationPresentation(operation).key), "error");
+    } catch {
+      if (input.isNavigationIntentCurrent(seq)) showToast(t("creation.requestError"), "error");
+    } finally {
+      input.settleNavigationSurface(seq);
     }
   });
 

@@ -49,9 +49,9 @@ export function ManualSessionRecovery() {
   };
   if (!items.length && !error && !failed.length) return null;
   return <div className="management-notice" role="status">
-    {error && <div role="alert">{t("creation.requestError")} {error}</div>}
-    {failed.map(({ request, error: failure }) => <div key={request.operationId}>
-      {request.workspaceRoot || request.scope} — {failure}
+    {error && <div role="alert">{t("creation.requestError")}</div>}
+    {failed.map(({ request }) => <div key={request.operationId}>
+      {request.workspaceRoot || request.scope} — {t("creation.failed")}
       <button className="btn btn--small" disabled={busy.has(request.operationId)} onClick={() => void run(request.operationId, async () => {
         const result = await beginManualCreation(request); await retry(result.operationId);
       })}>{t("common.retry")}</button>
@@ -60,12 +60,14 @@ export function ManualSessionRecovery() {
       const state = manualCreationPresentation(item);
       return <div key={item.operationId}>
         {item.workspaceRoot || item.scope} — {t(state.key)}
-        {item.phase === "failed" && !item.progress && item.error ? `: ${item.error}` : ""}
         {state.retryable && <button className="btn btn--small" disabled={busy.has(item.operationId)}
           onClick={() => void run(item.operationId, () => retry(item.operationId))}>{t("common.retry")}</button>}
       </div>;
     })}
-    <button className="btn btn--small" disabled={busy.has("export")}
-      onClick={() => void run("export", () => app.ExportManualCreationDiagnostics())}>{t("creation.export")}</button>
+    <details>
+      <summary>{t("sessionRecovery.details")}</summary>
+      <button className="btn btn--small" disabled={busy.has("export")}
+        onClick={() => void run("export", () => app.ExportManualCreationDiagnostics())}>{t("creation.export")}</button>
+    </details>
   </div>;
 }

@@ -21,5 +21,5 @@ installDesktopHostStub({
   },
   ExportManualCreationDiagnostics: async () => { exports++; return "creation-diagnostics.json"; },
 });
-Object.assign(window, { creationFixture: { finish: () => release?.(), counts: () => ({ retries, exports }) } });
+Object.assign(window, { creationFixture: { finish: () => release?.(), setStatus: (next: string) => { status = next; }, counts: () => ({ retries, exports }) } });
 createRoot(document.getElementById("root")!).render(<LocaleProvider><ManualSessionRecovery /></LocaleProvider>);

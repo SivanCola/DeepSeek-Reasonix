@@ -17,6 +17,13 @@ assert.equal(manualCreationPresentation({ ...item, phase: "failed", progress: pr
 assert.equal(manualCreationPresentation({ ...item, progress: progress("retrying_storage") }).retryable, false);
 assert.equal(manualCreationPresentation({ ...item, progress: progress("retrying_storage") }).key, "creation.storageRetry");
 assert.equal(manualCreationPresentation({ ...item, progress: { ...progress("retrying_storage"), stage: "persisting_result" } }).key, "creation.saving");
+assert.equal(manualCreationPresentation({ ...item, progress: progress("waiting_lock") }).retryable, false, "host-owned waiting never asks users to retry");
+assert.deepEqual(manualCreationPresentation({ ...item, progress: progress("waiting_workspace") }), { key: "creation.workspaceUnavailable", retryable: false });
+assert.equal(manualCreationPresentation(item).retryable, false, "observing pending creation does not require a user choice");
+for (const code of ["workspace_removed", "workspace_changed", "creation_cancelled", "creation_owner_conflict"]) {
+  assert.equal(manualCreationPresentation({ ...item, phase: "failed", error: `session_operation:${code}:private detail` }).retryable, false, `${code} cannot recover by replaying the same operation`);
+  assert.equal(manualCreationPresentation({ ...item, phase: "failed", error: `session_operation:${code}:private detail`, progress: progress("queued") }).key, "creation.queued", "active recovery progress supersedes an earlier failure");
+}
 
 const dom = new JSDOM("<div id='root'></div>", { url: "http://localhost" });
 Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
@@ -32,7 +39,13 @@ const stub = installDesktopHostStub({
 const root = createRoot(document.getElementById("root")!);
 try {
   await act(async () => root.render(<LocaleProvider><ManualSessionRecovery /></LocaleProvider>));
-  assert.match(document.body.textContent!, /Another process/);
+  assert.match(document.body.textContent!, /continue automatically/);
+  assert.equal([...document.querySelectorAll("button")].some(button => button.textContent === "Retry"), false);
+  assert.equal(document.querySelector("details")?.open, false, "diagnostics are a secondary disclosure, not a creation decision");
+  await act(async () => root.render(null));
+  stub.commands.ListManualSessionCreations = async () => [{ ...item, phase: "failed", error: "session_operation:target_changed: /private/writer", progress: progress("blocked") }];
+  await act(async () => root.render(<LocaleProvider><ManualSessionRecovery /></LocaleProvider>));
+  assert.doesNotMatch(document.body.textContent!, /session_operation|\/private\/writer/, "internal failures stay out of the normal creation UI");
   const retry = document.querySelector("button")!;
   act(() => { retry.click(); retry.click(); });
   assert.equal(retryCount, 1, "duplicate retry is suppressed while the RPC is pending");

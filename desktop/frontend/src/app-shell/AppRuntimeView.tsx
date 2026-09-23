@@ -385,6 +385,8 @@ export function AppRuntimeView(props: AppRuntimeViewProps) {
               view: {
                 hidden: composerSurfaceHidden,
                 inert: runtimeTransitioning,
+                targetInputReady: Boolean(activeTab?.session) && core.surface.surface?.phase === "target-masked"
+                  && !state.backendActivationPending,
                 hero: session.transcript.emptyHero,
                 headline: t("welcome.creation.title"),
                 remote: core.remoteSurfaceActive,
