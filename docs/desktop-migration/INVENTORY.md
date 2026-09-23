@@ -104,7 +104,7 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 | `Capabilities` | `() CapabilitiesView` | desktop/app.go:6819 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `CapabilityDiagnostics` | `(includeSessionRuntime bool) capdiag.Report` | desktop/capdiag_app.go:12 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `CaptureAttachmentTarget` | `(composer ComposerTarget) (AttachmentTargetView, error)` | desktop/attachment_targets.go:81 | keep-business (保留业务实现) | hostrpc desktop/invoke |
-| `CaptureInboxTarget` | `(tabID string, expectedPath string) (InboxTargetView, error)` | desktop/inbox_target.go:25 | keep-business (保留业务实现) | hostrpc desktop/invoke |
+| `CaptureInboxTarget` | `(tabID string, expectedPath string) (InboxTargetView, error)` | desktop/inbox_target.go:34 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `CheckHistoricalSourceUpdate` | `(selector SessionSelector) (HistoricalSourceUpdateView, error)` | desktop/session_preparation.go:219 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `CheckRemotePlatform` | `(hostID string) error` | desktop/remote_platform.go:14 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `CheckUpdate` | `(selectedChannel string) (*UpdateInfo, error)` | desktop/updater_app.go:87 | keep-business (保留业务实现) | hostrpc desktop/invoke |
@@ -179,7 +179,7 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 | `EffortForTab` | `(tabID string) EffortInfo` | desktop/app.go:9445 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `EnqueueForAttachmentTarget` | `(token string, submissionID string, input string, display string, invocations []control.InvocationRequest, attachments []control.SubmissionAttachment) (InboxReceiptView, error)` | desktop/attachment_targets.go:369 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `EnqueueInboxFollowup` | `(tabID string, display string, submit string, idempotency string) (InboxReceiptView, error)` | desktop/inbox_app.go:181 | keep-business (保留业务实现) | hostrpc desktop/invoke |
-| `EnqueueInboxFollowupForTarget` | `(target InboxTargetView, display string, submit string, invocations []InvocationRequest, key string) (InboxReceiptView, error)` | desktop/inbox_target.go:64 | keep-business (保留业务实现) | hostrpc desktop/invoke |
+| `EnqueueInboxFollowupForTarget` | `(target InboxTargetView, display string, submit string, invocations []InvocationRequest, key string) (InboxReceiptView, error)` | desktop/inbox_target.go:73 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `EnqueueInboxFollowupWithInvocations` | `(tabID string, display string, submit string, invocations []InvocationRequest, idempotency string) (InboxReceiptView, error)` | desktop/inbox_app.go:187 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `EnqueueInboxSteer` | `(tabID string, display string, submit string, idempotency string) (InboxReceiptView, error)` | desktop/inbox_app.go:192 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `EnqueueInboxSteerForTurn` | `(tabID string, turnID string, display string, submit string, idempotency string) (InboxReceiptView, error)` | desktop/inbox_app.go:201 | keep-business (保留业务实现) | hostrpc desktop/invoke |
@@ -298,7 +298,7 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 | `ListRecoveryEntries` | `(query string, cursor string, limit int) (RecoveryEntryPage, error)` | desktop/session_recovery_api.go:109 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `ListRemoteDir` | `(hostID string, path string) ([]RemoteDirEntry, error)` | desktop/remote_app.go:441 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `ListRemoteProjects` | `() ([]RemoteProjectView, error)` | desktop/remote_project_registry.go:13 | keep-business (保留业务实现) | hostrpc desktop/invoke |
-| `ListSessionComposerConflicts` | `(ref session.SessionRef) ([]string, error)` | desktop/session_composer_conflicts.go:8 | keep-business (保留业务实现) | hostrpc desktop/invoke |
+| `ListSessionComposerConflicts` | `(ref session.SessionRef) ([]string, error)` | desktop/session_composer_conflicts.go:6 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `ListSessionDraftSummaries` | `() ([]SessionDraftSummary, error)` | desktop/session_draft.go:349 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `ListSessions` | `() []SessionMeta` | desktop/session_history_listing.go:12 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `ListSessionsForTab` | `(tabID string) []SessionMeta` | desktop/session_history_listing.go:24 | keep-business (保留业务实现) | hostrpc desktop/invoke |
@@ -317,7 +317,7 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 | `LocateSessionHistoryMessage` | `(id string, messageID string, snapshot uint64) (session.MessageLocation, error)` | desktop/session_history_binding.go:268 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `LocateSessionMessageForTab` | `(tabID string, messageID string, snapshot uint64) (session.MessageLocation, error)` | desktop/session_history_service.go:129 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `LocateSessionMessageForTarget` | `(selector SessionSelector, messageID string, snapshot uint64) (session.MessageLocation, error)` | desktop/session_history_service.go:139 | keep-business (保留业务实现) | hostrpc desktop/invoke |
-| `LookupInboxFollowupForTarget` | `(target InboxTargetView, key string) (InboxReceiptView, error)` | desktop/inbox_target.go:94 | keep-business (保留业务实现) | hostrpc desktop/invoke |
+| `LookupInboxFollowupForTarget` | `(target InboxTargetView, key string) (InboxReceiptView, error)` | desktop/inbox_target.go:103 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `MCPAppCallToolForTab` | `(tabID string, instanceToken string, toolName string, args json.RawMessage) (string, error)` | desktop/mcp_apps_app.go:147 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `MCPAppResourceDigest` | `(instanceToken string) (string, error)` | desktop/mcp_apps_app.go:93 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `MCPAppResourceDigestForTab` | `(tabID string, instanceToken string) (string, error)` | desktop/mcp_apps_app.go:105 | keep-business (保留业务实现) | hostrpc desktop/invoke |

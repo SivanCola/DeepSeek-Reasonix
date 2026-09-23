@@ -1,5 +1,6 @@
 import type { Todo } from "../lib/tools";
 import { modelSettingsAllowSubmission } from "../lib/authenticationTypes";
+import { sessionIdentityFields, sessionIdentityRoute } from "../lib/sessionIdentity";
 import type { RewindUndoState } from "../lib/rewindTypes";
 import type { WorkspaceConflictView } from "../lib/types";
 import type { DecisionSurfaceKind as MockDecisionSurfaceKind } from "../lib/decisionSurfaceMock";
@@ -299,6 +300,7 @@ export function buildComposerSurface(input: ComposerSurfaceInput): DecisionFoote
       goal: profile.goal,
       tabId: input.tabId,
       formalSessionRef: view.remote ? undefined : input.tab?.session ?? undefined,
+      sessionIdentity: input.tab ? sessionIdentityFields(input.tab) : undefined,
       workspaceRoot: input.tab?.workspaceRoot,
       onSend: view.remote ? remoteComposer.send : router.handleSend,
       onInvocationMetadataChange: input.onInvocationMetadataChange,
@@ -327,7 +329,7 @@ export function buildComposerSurface(input: ComposerSurfaceInput): DecisionFoote
       suspendedByDecision: view.decisionActive,
       transientDismissSignal: input.transientDismissSignal,
       sessionKey: input.sessionKey,
-      inboxSessionPath: input.tab?.sessionPath,
+      inboxSessionPath: sessionIdentityRoute(input.tab),
       inboxHostId: input.tab?.remote?.hostId,
       inboxWorkspace: input.tab?.remote?.workspace,
       workspaceScopeKey: input.workspaceScopeKey,

@@ -661,7 +661,7 @@
       "kind": "command",
       "name": "CaptureInboxTarget",
       "detail": "(tabID string, expectedPath string) (InboxTargetView, error)",
-      "location": "desktop/inbox_target.go:25",
+      "location": "desktop/inbox_target.go:34",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1261,7 +1261,7 @@
       "kind": "command",
       "name": "EnqueueInboxFollowupForTarget",
       "detail": "(target InboxTargetView, display string, submit string, invocations []InvocationRequest, key string) (InboxReceiptView, error)",
-      "location": "desktop/inbox_target.go:64",
+      "location": "desktop/inbox_target.go:73",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2213,7 +2213,7 @@
       "kind": "command",
       "name": "ListSessionComposerConflicts",
       "detail": "(ref session.SessionRef) ([]string, error)",
-      "location": "desktop/session_composer_conflicts.go:8",
+      "location": "desktop/session_composer_conflicts.go:6",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2365,7 +2365,7 @@
       "kind": "command",
       "name": "LookupInboxFollowupForTarget",
       "detail": "(target InboxTargetView, key string) (InboxReceiptView, error)",
-      "location": "desktop/inbox_target.go:94",
+      "location": "desktop/inbox_target.go:103",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
