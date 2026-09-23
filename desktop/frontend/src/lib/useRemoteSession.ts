@@ -477,8 +477,10 @@ export function useRemoteSession(tabId: string | undefined, initial?: RemoteTabS
     const before = getTranscriptStore().states.get(tabId) ?? initialState;
     const binding = submitBindingRef.current;
     const current = () => submitBindingRef.current === binding && getTranscriptStore().states.get(tabId)?.sessionGen === before.sessionGen;
-    const unresolved=Object.values(before.localSubmissions).find(item=>item.status==="unknown" || item.status==="sending");
-    if(unresolved && (choice || unresolved.status==="sending" || (unresolved.submitText ?? unresolved.text).trim()!==trimmed)) {
+    const submissions = Object.values(before.localSubmissions);
+    if (submissions.some(item => item.status === "sending" && (item.submitText ?? item.text).trim() === trimmed)) return;
+    const unresolved = submissions.find(item => item.status === "unknown");
+    if(unresolved && (choice || (unresolved.submitText ?? unresolved.text).trim()!==trimmed)) {
       throw Object.assign(new Error("Confirm the previous submission before sending another message"),{data:{submissionOutcome:"unknown"}});
     }
     const submissionId = unresolved?.submissionId ?? createTurnSubmissionId(tabId, before.sessionGen, before.seq, before.meta?.runtime?.epoch);

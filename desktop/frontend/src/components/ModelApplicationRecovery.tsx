@@ -3,7 +3,6 @@ import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import { appliedOnce, type ModelApplicationChoice, type ModelApplicationDetails } from "../lib/modelApplication";
 import { useModelApplicationStatus } from "../lib/useModelApplicationStatus";
-import "./ModelApplicationRecovery.css";
 
 type RemoteApplication = { key: string; text: string; details: ModelApplicationDetails };
 export function ComposerModelApplicationRecovery({ tabId, local, remote, setRemote, draftKey, text, running, onUseApplied }: {
