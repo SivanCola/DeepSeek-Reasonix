@@ -190,9 +190,7 @@ type App struct {
 	// completion can tell whether it still owns publication; the pending
 	// request/tab pair identifies the in-flight ticketed activation whose
 	// completion may still prune and emit "ready".
-	activationGen             uint64
-	latestActivationRequestID string
-	pendingActivationTabID    string
+	topicActivationState
 	// activationEventHook is test-only: when set it replaces the
 	// "topic:activation" runtime event emission so tests capture events
 	// synchronously. Set before starting concurrent work, never mutate after.

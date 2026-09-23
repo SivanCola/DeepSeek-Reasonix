@@ -22,6 +22,11 @@ with the same result and lock. It does not repeat runtime construction. Invalid
 identities, incompatible states and unsupported database versions remain visible
 as blocked operations. Archived or deleted sessions are not revived.
 
+Recovery never changes the selected session. A newer navigation intent wins over
+an earlier creation's completion. A topic activation claims its terminal event
+before publishing readiness, so switching again while background pruning is
+pending cannot emit a second cancellation for an already-ready request.
+
 ## Progress and diagnostics
 
 The existing Begin/Get/List/Retry RPCs retain their arguments and add an optional
