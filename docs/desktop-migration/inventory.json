@@ -325,7 +325,7 @@
       "kind": "command",
       "name": "ArchiveSessionTarget",
       "detail": "(selector SessionSelector) (SessionMutationResult, error)",
-      "location": "desktop/session_operations.go:188",
+      "location": "desktop/session_operations.go:192",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -957,7 +957,7 @@
       "kind": "command",
       "name": "ControlHistoricalImport",
       "detail": "(action string) (HistoricalImportStatus, error)",
-      "location": "desktop/historical_import.go:659",
+      "location": "desktop/historical_import.go:669",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1133,7 +1133,7 @@
       "kind": "command",
       "name": "DeleteSessionTarget",
       "detail": "(selector SessionSelector) (SessionMutationResult, error)",
-      "location": "desktop/session_operations.go:346",
+      "location": "desktop/session_operations.go:357",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1565,7 +1565,7 @@
       "kind": "command",
       "name": "GetHistoricalImportStatus",
       "detail": "() HistoricalImportStatus",
-      "location": "desktop/historical_import.go:88",
+      "location": "desktop/historical_import.go:89",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1989,7 +1989,7 @@
       "kind": "command",
       "name": "ImportHistoricalSession",
       "detail": "(id string) (SessionRestoreResult, error)",
-      "location": "desktop/historical_import.go:285",
+      "location": "desktop/historical_import.go:286",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2149,7 +2149,7 @@
       "kind": "command",
       "name": "ListHistoricalSessions",
       "detail": "() (HistoricalImportStatus, error)",
-      "location": "desktop/historical_import.go:106",
+      "location": "desktop/historical_import.go:107",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2589,7 +2589,7 @@
       "kind": "command",
       "name": "MoveSessionTarget",
       "detail": "(selector SessionSelector, workspaceID string, beforeSessionID string) (SessionMutationResult, error)",
-      "location": "desktop/session_operations.go:292",
+      "location": "desktop/session_operations.go:303",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -3717,7 +3717,7 @@
       "kind": "command",
       "name": "RenameSessionTarget",
       "detail": "(selector SessionSelector, title string) (SessionMutationResult, error)",
-      "location": "desktop/session_operations.go:99",
+      "location": "desktop/session_operations.go:103",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -4101,7 +4101,7 @@
       "kind": "command",
       "name": "RestoreSessionTarget",
       "detail": "(selector SessionSelector) (SessionMutationResult, error)",
-      "location": "desktop/session_operations.go:228",
+      "location": "desktop/session_operations.go:239",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -5597,7 +5597,7 @@
       "kind": "command",
       "name": "StartHistoricalImport",
       "detail": "(ids []string) (HistoricalImportStatus, error)",
-      "location": "desktop/historical_import.go:544",
+      "location": "desktop/historical_import.go:554",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -6592,7 +6592,7 @@
     {
       "kind": "persistence",
       "name": "events.jsonl",
-      "location": "desktop/session_v5_migration_checkpoint.go:124",
+      "location": "desktop/session_v5_migration_checkpoint.go:136",
       "class": "keep-business",
       "owner": "format unchanged; read by both shells"
     },
@@ -6606,7 +6606,7 @@
     {
       "kind": "persistence",
       "name": "header.json",
-      "location": "desktop/session_v5_migration_checkpoint.go:124",
+      "location": "desktop/session_v5_migration_checkpoint.go:136",
       "class": "keep-business",
       "owner": "format unchanged; read by both shells"
     },
@@ -6690,14 +6690,14 @@
     {
       "kind": "persistence",
       "name": "snapshot.sqlite",
-      "location": "desktop/session_source_compatibility.go:390",
+      "location": "desktop/session_source_compatibility.go:419",
       "class": "keep-business",
       "owner": "format unchanged; read by both shells"
     },
     {
       "kind": "persistence",
       "name": "writer.lock",
-      "location": "desktop/historical_version_recovery.go:46",
+      "location": "desktop/historical_source_lock.go:39",
       "class": "keep-business",
       "owner": "format unchanged; read by both shells"
     },
