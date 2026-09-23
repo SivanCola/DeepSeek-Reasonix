@@ -372,18 +372,18 @@ export function AppRuntimeView(props: AppRuntimeViewProps) {
               onSurfacePaintReady: session.transcript.handleSurfacePaintReady,
             }}
           />
-          {!core.remoteSurfaceActive && !sidebarImDetailConnection && <Suspense fallback={null}>
-            <ManualSessionRecovery
-              key={`${runtime.navigation.currentNavigationIntent()}:${activeTab?.session?.sessionId ?? ""}`}
-              sessionId={core.surface.surface?.phase === "source-retained" ? undefined : activeTab?.session?.sessionId}
-              attempt={navigationCommands.manualCreation}
-              onRetry={navigationCommands.retryCreation}
-              onNew={navigationCommands.handleNewTab}
-              onChooseProject={navigation.projectTopicCommands.onAddProject}
-            />
-          </Suspense>}
           <DecisionFooterRegion
             hidden={Boolean(sidebarImDetailConnection)}
+            creationNotice={!core.remoteSurfaceActive && !sidebarImDetailConnection ? <Suspense fallback={null}>
+              <ManualSessionRecovery
+                key={`${runtime.navigation.currentNavigationIntent()}:${activeTab?.session?.sessionId ?? ""}`}
+                sessionId={core.surface.surface?.phase === "source-retained" ? undefined : activeTab?.session?.sessionId}
+                attempt={navigationCommands.manualCreation}
+                onRetry={navigationCommands.retryCreation}
+                onNew={navigationCommands.handleNewTab}
+                onChooseProject={navigation.projectTopicCommands.onAddProject}
+              />
+            </Suspense> : null}
             className={["footer", terminalSurfaceOpen ? "footer--compact" : "", visibleDecisionSurface ? "footer--decision" : "", presentationTransitioning ? "footer--navigation-hidden" : ""].filter(Boolean).join(" ")}
             footerRef={footerRef}
             style={core.surface.surface?.phase === "source-retained" && footerHeight > 0 ? { height: footerHeight, minHeight: footerHeight, boxSizing: "border-box" } : undefined}
