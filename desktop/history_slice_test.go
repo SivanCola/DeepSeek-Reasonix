@@ -804,7 +804,13 @@ func TestHistorySliceSourceField(t *testing.T) {
 	}
 
 	t.Run("cold index hit", func(t *testing.T) {
-		app, _, _ := newSession(t, "src-index.jsonl")
+		app, _, path := newSession(t, "src-index.jsonl")
+		// Equal filesystem timestamps cannot certify that the sidecar follows
+		// the event log. Give this index-hit fixture an unambiguous order.
+		indexTime := agent.SessionContentModTime(path).Add(time.Second)
+		if err := os.Chtimes(store.SessionDisplayIndex(path), indexTime, indexTime); err != nil {
+			t.Fatal(err)
+		}
 		if page := app.HistorySliceForTab("cold", HistorySliceRequest{}); page.Source != "index" {
 			t.Fatalf("Source = %q, want index", page.Source)
 		}

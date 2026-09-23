@@ -42,7 +42,7 @@ try {
   }
   function Invoke-UpgradeStartup([string]$installRoot, [string]$version, [string]$fixtureHome, [string]$text, [string]$evidence, [bool]$prepareHistorical) {
     Assert-True ($text -eq 'assistant-only marker') 'Startup must require the assistant marker.'
-    Assert-True ($prepareHistorical -eq ((Split-Path $evidence -Leaf) -eq 'first')) 'Only the first launch explicitly prepares old content; canonical restart restores automatically.'
+    Assert-True ($prepareHistorical -eq ((Split-Path $evidence -Leaf) -eq 'first')) 'Only the first launch may need explicit preparation; restart must reopen the legacy history.'
     $script:calls.Add('startup-' + (Split-Path $evidence -Leaf))
   }
   $evidence = Join-Path $testRoot 'success'
