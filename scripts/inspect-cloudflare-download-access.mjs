@@ -7,6 +7,14 @@ if (!token) throw new Error("CLOUDFLARE_API_TOKEN is not configured");
 const api = "https://api.cloudflare.com/client/v4";
 const report = (kind, data) => console.log(JSON.stringify({ kind, ...data }));
 
+function errorClass(error) {
+  const message = String(error.message || "");
+  if (/cannot query field|unknown field|not defined by type|unknown argument/i.test(message)) return "query-schema";
+  if (/permission|unauthori[sz]ed|access denied|authentication|forbidden/i.test(message)) return "permission";
+  if (/cannot request data older|maximum.*(window|duration)|time range/i.test(message)) return "query-window";
+  return "unknown";
+}
+
 async function request(endpoint, body) {
   const response = await fetch(`${api}${endpoint}`, {
     method: body ? "POST" : "GET",
@@ -17,8 +25,9 @@ async function request(endpoint, body) {
   });
   const json = await response.json();
   if (!response.ok || json.success === false || json.errors?.length) {
-    // Error messages can reflect request data; publish only numeric API codes.
-    report("api-unavailable", { endpoint, status: response.status, codes: (json.errors || []).map(error => error.code ?? "graphql-error") });
+    // Error messages may contain visitor data. Publish only codes and classes.
+    report("api-unavailable", { endpoint, status: response.status,
+      errors: (json.errors || []).map(error => ({ code: Number.isInteger(error.code) ? error.code : null, class: errorClass(error) })) });
     return null;
   }
   return json;
@@ -69,19 +78,22 @@ if (bots) report("bot-management", {
 const events = await request("/graphql", {
   query: `query ManifestChallenges($zoneTag: string, $filter: FirewallEventsAdaptiveFilter_InputObject) {
     viewer { zones(filter: { zoneTag: $zoneTag }) {
-      firewallEventsAdaptive(filter: $filter, limit: 20, orderBy: [datetime_DESC]) {
-        action source ruleId rayName datetime
+      firewallEventsAdaptive(filter: $filter, limit: 500, orderBy: [datetime_DESC]) {
+        action source datetime clientRequestHTTPHost clientRequestPath
       }
     } }
   }`,
   variables: {
     zoneTag: zoneID,
     filter: {
-      datetime_geq: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+      datetime_geq: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
       datetime_leq: new Date().toISOString(),
-      clientRequestHTTPHost: "dl.reasonix.io",
-      clientRequestPath: "/latest/latest.json",
     },
   },
 });
-if (events) report("manifest-security-events", { events: events.data?.viewer?.zones?.[0]?.firewallEventsAdaptive ?? [] });
+if (events) {
+  const entries = events.data?.viewer?.zones?.[0]?.firewallEventsAdaptive ?? [];
+  const matching = entries.filter(event => event.clientRequestHTTPHost === "dl.reasonix.io" && event.clientRequestPath === "/latest/latest.json");
+  report("manifest-security-events", { inspected: entries.length,
+    events: matching.map(({ action, source, datetime }) => ({ action, source, datetime })) });
+}
