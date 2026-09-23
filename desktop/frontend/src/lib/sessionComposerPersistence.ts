@@ -251,7 +251,8 @@ export function useSessionComposerPersistence(ref: SessionRef | undefined, tabId
     onTaskError:(_id,_generation,error) => { entry.error=error; notify(); },
   } : undefined;
   return { target, blocked:entry ? exiting || locked(entry) : false, error:entry?.error,
-    goalDraft:entry?.content.goalDraft,
+    // Editable retained text does not authorize restoring a mode from older history.
+    goalDraft:!entry?.state?.historyChanged && entry?.content.goalDraft,
     setGoalDraft:(enabled:boolean) => { if (entry) edit(entry,{...entry.content,goalDraft:enabled}); },
     settleSubmission:async (id:string) => { if (entry?.state?.submissionId === id) await settleSubmission(entry,id,"accepted",entry.version); },
     attention: Boolean(entry?.state?.submissionId),
