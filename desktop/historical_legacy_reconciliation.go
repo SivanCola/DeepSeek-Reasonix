@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"sort"
+	"strings"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/historywork"
@@ -24,6 +25,7 @@ func (a *App) addHistoricalCatalogReceipts(ctx context.Context, add func(string,
 	if err != nil || len(ledger.Records) == 0 {
 		return err
 	}
+	receipts := historicalCompletedReceiptKeys(ledger)
 	return catalog.WithReadView(ctx, func(ctx context.Context) error {
 		req := sessioncatalog.SessionPageRequest{Scope: "all", Limit: 200}
 		for {
@@ -32,7 +34,7 @@ func (a *App) addHistoricalCatalogReceipts(ctx context.Context, add func(string,
 				return err
 			}
 			for _, record := range page.Items {
-				if historicalLegacyHasReceipt(ledger, record.Path, "") {
+				if historicalLegacyHasReceipt(receipts, record.Path, "") {
 					add(record.Path, "legacy", record.Scope, record.WorkspaceRoot, "")
 				}
 				heads, err := catalog.ListHeads(ctx, record.Path)
@@ -40,7 +42,7 @@ func (a *App) addHistoricalCatalogReceipts(ctx context.Context, add func(string,
 					return err
 				}
 				for _, head := range heads {
-					if historicalLegacyHasReceipt(ledger, record.Path, head.ID) {
+					if historicalLegacyHasReceipt(receipts, record.Path, head.ID) {
 						add(record.Path, "legacy", record.Scope, record.WorkspaceRoot, head.ID)
 					}
 				}
@@ -53,17 +55,25 @@ func (a *App) addHistoricalCatalogReceipts(ctx context.Context, add func(string,
 	})
 }
 
-func historicalLegacyHasReceipt(ledger desktopMigrationLedger, path, head string) bool {
+// Index completion once per discovery, rather than scanning the entire ledger
+// for each catalog path and head. Reviewed versions retain their base identity.
+func historicalCompletedReceiptKeys(ledger desktopMigrationLedger) map[string]bool {
+	keys := map[string]bool{}
+	for id, receipt := range ledger.Records {
+		if receipt.Status == "completed" || receipt.PreviousCompletion != nil {
+			key, _, _ := strings.Cut(id, ":review:")
+			keys[key] = true
+		}
+	}
+	return keys
+}
+
+func historicalLegacyHasReceipt(receipts map[string]bool, path, head string) bool {
 	key := desktopLegacyMigrationKey(path)
 	if head != "" {
 		key = desktopLegacyHeadKey(path, head)
 	}
-	for id, receipt := range ledger.Records {
-		if historicalSourceKeyMatches(id, key) && (receipt.Status == "completed" || receipt.PreviousCompletion != nil) {
-			return true
-		}
-	}
-	return false
+	return receipts[key]
 }
 
 // Explicit discovery can run before the metadata catalog exists. A bounded,
@@ -73,6 +83,7 @@ func addHistoricalLegacyReceiptHeads(sources map[string]historicalSource, add fu
 	if err != nil || len(ledger.Records) == 0 {
 		return err
 	}
+	receipts := historicalCompletedReceiptKeys(ledger)
 	for _, source := range sources {
 		if source.format != "legacy" || source.head != "" {
 			continue
@@ -85,7 +96,7 @@ func addHistoricalLegacyReceiptHeads(sources map[string]historicalSource, add fu
 			continue
 		}
 		for _, head := range index.Heads {
-			if historicalLegacyHasReceipt(ledger, source.path, head.ID) {
+			if historicalLegacyHasReceipt(receipts, source.path, head.ID) {
 				add(source.path, "legacy", source.scope, source.root, head.ID)
 			}
 		}

@@ -2,8 +2,22 @@ package main
 
 import (
 	"path/filepath"
+	"reflect"
 	"testing"
 )
+
+func TestHistoricalCompletedReceiptIndexPreservesVersionEvidence(t *testing.T) {
+	ledger := desktopMigrationLedger{Records: map[string]desktopMigrationRecord{
+		"complete":                   {Status: "completed"},
+		"version:review:fingerprint": {Status: "completed"},
+		"interrupted":                {Status: "pending", PreviousCompletion: &desktopMigrationReceipt{TargetSessionID: "old-target"}},
+		"unfinished":                 {Status: "pending"},
+	}}
+	want := map[string]bool{"complete": true, "version": true, "interrupted": true}
+	if got := historicalCompletedReceiptKeys(ledger); !reflect.DeepEqual(got, want) {
+		t.Fatalf("receipt identities: %v", got)
+	}
+}
 
 func TestHistoricalUnavailableHeadHiddenByBothSidebarAdapters(t *testing.T) {
 	isolateDesktopUserDirs(t)
