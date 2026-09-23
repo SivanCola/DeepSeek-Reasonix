@@ -170,17 +170,28 @@ try {
   await unmount();
   console.log("  PASS  background refresh is silent, preserves expanded rows, and keeps foreground/error feedback");
 
-  await mount();
-  rows[roots[0]] = [];
-  await event();
-  const emptyRefresh = deferred<ProjectTopicPage>();
-  intercept = () => emptyRefresh.promise;
-  await event();
-  assert.equal(container.querySelectorAll(".project-tree__skeleton, .project-tree__topic-window-status").length, 0,
-    "a settled empty folder does not flash its cold-start skeleton on background refresh");
-  await act(async () => emptyRefresh.resolve(page(calls.at(-1)!))); await flush();
-  await unmount();
-  console.log("  PASS  an empty resident page refreshes without a cold-start placeholder");
+  for (const remaining of [0, 1]) {
+    await mount();
+    rows[roots[0]] = rows[roots[0]].slice(0, remaining);
+    await event();
+    const exhaustedRefresh = deferred<ProjectTopicPage>();
+    intercept = () => exhaustedRefresh.promise;
+    await event();
+    assert.equal(labels().length, remaining, "an exhausted list retains its resident rows during refresh");
+    assert.equal(container.querySelectorAll(".project-tree__skeleton, .project-tree__topic-window-status").length, 0,
+      "a settled exhausted folder refreshes without a loading placeholder");
+    const exhaustedPage = page(calls.at(-1)!);
+    assert.equal(exhaustedPage.nextCursor, undefined);
+    await act(async () => exhaustedRefresh.resolve(exhaustedPage)); await flush();
+    const settledCalls = count();
+    await advance(360_000);
+    assert.equal(count(), settledCalls, "an exhausted list does not keep requesting nonexistent pages");
+    assert.equal(labels().length, remaining);
+    assert.equal(container.querySelectorAll(".project-tree__skeleton, .project-tree__topic-window-status").length, 0);
+    assert.equal(container.querySelector('[aria-label="Show more in A"]'), null);
+    await unmount();
+  }
+  console.log("  PASS  empty and single-row exhausted pages refresh quietly and stop loading");
 
   await mount();
   rows[roots[0]] = Array.from({ length: 70 }, (_, i) => topic(`Search-${i}`));
@@ -202,8 +213,12 @@ try {
   await unmount();
   console.log("  PASS  search results distinguish background refresh from explicit pagination");
 
-  for (const completion of ["old-first", "fresh-first", "old-error"] as const) {
+  const archiveCases = [12, 2, 1].flatMap(size =>
+    (["old-first", "fresh-first", "old-error"] as const).map(completion => ({ size, completion })));
+  for (const { size, completion } of archiveCases) {
     await mount(false, true);
+    rows[roots[0]] = rows[roots[0]].slice(0, size);
+    await event();
     await folder("B");
     const oldRequest = deferred<ProjectTopicPage>(), freshRequest = deferred<ProjectTopicPage>();
     let requestIndex = 0;
@@ -215,7 +230,7 @@ try {
     await flush();
     await click('[role="menuitem"].context-menu__item--danger', document);
     await click('[role="menuitem"].context-menu__item--danger', document);
-    assert.equal(labels().filter(label => label?.startsWith("A-")).length, 4, "the committed archive removes one of the five visible rows immediately");
+    assert.equal(labels().filter(label => label?.startsWith("A-")).length, Math.min(size, 5) - 1, "the committed archive removes one visible row immediately");
     await advance(500);
     if (completion !== "fresh-first") {
       await act(async () => completion === "old-error" ? oldRequest.reject(new Error("obsolete read failed")) : oldRequest.resolve(oldPage));
@@ -226,7 +241,7 @@ try {
     await flush(); await advance(500);
     assert.equal(container.querySelectorAll(".project-tree__topic-window-status").length, 0,
       "archiving during an in-flight page must finish loading after the replacement page settles");
-    assert.deepEqual(labels().filter(label => label?.startsWith("A-")), ["A-1", "A-2", "A-3", "A-4", "A-5"], "the next row replenishes the five-row window");
+    assert.deepEqual(labels().filter(label => label?.startsWith("A-")), rows[roots[0]].slice(0, 5).map(row => row.label), "replacement reads replenish the window or settle at the remaining row count");
     if (completion === "fresh-first") {
       await act(async () => oldRequest.resolve(oldPage)); await flush();
       assert.ok(!labels().includes("A-0"), "a late pre-archive response cannot resurrect the archived session");
@@ -234,8 +249,16 @@ try {
     assert.equal(count(roots[1]), 1, "archiving A leaves the sibling project's cache intact");
     if (completion !== "old-error") assert.ok(releasedSnapshots.includes(oldPage.snapshotId), "the discarded read releases its snapshot");
     intercept = req => req.workspaceRoot === roots[0] ? Promise.resolve({ ...page(req), snapshotId: freshPage.snapshotId }) : undefined;
-    await click('[aria-label="Show more in A"]');
-    assert.equal(labels().filter(label => label?.startsWith("A-")).length, 10, "pagination remains usable after archive");
+    if (size > 5) {
+      await click('[aria-label="Show more in A"]');
+      assert.equal(labels().filter(label => label?.startsWith("A-")).length, 10, "pagination remains usable after archive");
+    } else {
+      assert.equal(container.querySelector('[aria-label="Show more in A"]'), null, "an exhausted archive result has no next-page control");
+      const settledCalls = count();
+      await advance(360_000);
+      assert.equal(count(), settledCalls, "archiving to one or zero rows does not leave an automatic loading loop");
+      assert.equal(container.querySelectorAll(".project-tree__skeleton, .project-tree__topic-window-status").length, 0);
+    }
     await unmount();
   }
   console.log("  PASS  session archive retires pending pages for either completion order and obsolete errors");
