@@ -33,9 +33,11 @@ jobs:
         with:
           node-version: "22"
       - name: Validate executable contracts and public access before approval
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
           bash scripts/validate-release-control-plane.sh
-          bash scripts/check-release-public-access.sh
+          bash scripts/check-release-public-access.sh "$VERSION"
       - name: Bind existing public tags to protected history
         id: identity
         env:

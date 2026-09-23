@@ -51,7 +51,7 @@ verify_site() {
 	local homepage="$tmp_dir/homepage.html"
 	local changelog="$tmp_dir/changelog.html"
 	local cask="$tmp_dir/reasonix.rb"
-	curl -fsSL https://dl.reasonix.io/latest/latest.json >"$manifest"
+	bash "$script_dir/fetch-stable-release-manifest.sh" "$version" "$manifest"
 	jq -e --arg version "v$version" '
 		.version == $version and
 		([.platforms[], (.native_packages // {})[], (.downloads // {})[]] |
@@ -125,7 +125,7 @@ if [ "${DESKTOP_MANUAL_ONLY:-false}" = "true" ]; then
 		echo "::error::GitHub latest advanced to the manual release $desktop_tag" >&2
 		exit 1
 	fi
-	curl -fsSL https://dl.reasonix.io/latest/latest.json > "$tmp_dir/desktop-pointer.json"
+	bash "$script_dir/fetch-stable-release-manifest.sh" "$version" "$tmp_dir/desktop-pointer.json"
 	jq -e --arg v "v$version" '.version != $v' "$tmp_dir/desktop-pointer.json" >/dev/null
 	gh release view "$desktop_tag" --repo "$repository" --json body --jq .body | grep -F 'manual-download only'
 fi

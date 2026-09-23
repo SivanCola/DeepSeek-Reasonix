@@ -29,7 +29,9 @@ fi
   writeFileSync(path.join(scripts, "release-event.mjs"), `import {writeFileSync} from 'node:fs'; writeFileSync(process.argv[process.argv.indexOf('--output')+1], '{}');`);
   writeFileSync(path.join(bin, "curl"), `#!/usr/bin/env node
 const args=process.argv.slice(2);
-if (!args.includes('--connect-timeout') || !args.includes('--max-time') || args.at(-1)!=='https://dl.reasonix.io/latest/latest.json') process.exit(99);
+if (!args.includes('--connect-timeout') || !args.includes('--max-time') ||
+    args[args.indexOf('-A')+1] !== 'Reasonix-Updater/v1.2.3 (linux/amd64; build=stable; update=stable)' ||
+    args.at(-1)!=='https://dl.reasonix.io/latest/latest.json') process.exit(99);
 if(process.env.HTTP_FAIL==='true') process.exit(22);
 process.stdout.write(process.env.MANIFEST_BODY || JSON.stringify({version:process.env.POINTER || 'v1.2.3'}));
 `, { mode: 0o755 });
@@ -115,7 +117,7 @@ test("full recovery may create the missing event with the immutable asset filena
 test("public access preflight accepts the previous stable version but rejects challenges and invalid JSON", t => {
   const f = fixture(t);
   for (const [extra, success] of [[{ POINTER: "v1.0.0" }, true], [{ HTTP_FAIL: "true" }, false], [{ MANIFEST_BODY: "{}" }, false], [{ MANIFEST_BODY: "html" }, false]]) {
-    const result = spawnSync("bash", [path.join(f.scripts, "check-release-public-access.sh")], { env: { ...f.env, ...extra }, encoding: "utf8" });
+    const result = spawnSync("bash", [path.join(f.scripts, "check-release-public-access.sh"), "1.2.3"], { env: { ...f.env, ...extra }, encoding: "utf8" });
     assert.equal(result.status === 0, success, result.stderr);
   }
 });
