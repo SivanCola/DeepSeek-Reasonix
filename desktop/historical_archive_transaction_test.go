@@ -208,8 +208,8 @@ func TestHistoricalArchiveDiscoversLaterWorkWithoutDuplicateMetadataCopy(t *test
 		t.Fatal(err)
 	}
 	rows := app.historicalCanonicalTopicsFromProjection("global", "", state, workspacestate.NewWorkspaceIndex(state))
-	if len(rows) != 1 {
-		t.Fatalf("later work is hidden: %+v", rows)
+	if len(rows) != 0 {
+		t.Fatalf("an adopted source must not return as a second ordinary conversation: %+v", rows)
 	}
 	third, err := app.ArchiveSessionTarget(selector)
 	if err != nil || third.TargetKey == first.TargetKey || third.Outcome != "archived_copy" {

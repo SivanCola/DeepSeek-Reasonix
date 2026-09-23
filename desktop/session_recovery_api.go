@@ -657,6 +657,15 @@ func (a *App) replayPreparedImport(ctx context.Context, state workspacestate.Sta
 		scope = "global"
 	}
 	source := desktopMigrationSource{scope: scope, workspaceRoot: workspace.Root, operationID: op.ID, headID: mapping.HeadID}
+	if strings.HasPrefix(op.ID, "repair-") {
+		source.registeredSourceKey = mapping.SourceKey
+		old, ref, finish, err := openHistoricalReconciliationSource(ctx, historicalSource{path: mapping.Path, format: mapping.Format, head: mapping.HeadID})
+		if err != nil {
+			return err
+		}
+		defer finish()
+		return a.repairMissingHistoricalTarget(ctx, old, ref, source, mapping.Path, mapping.SessionID, mapping.Fingerprint)
+	}
 	if mapping.SourceKey == desktopSourceKey(mapping.Path, mapping.HeadID)+":review:"+mapping.Fingerprint {
 		source.versionFingerprint = mapping.Fingerprint
 	}
