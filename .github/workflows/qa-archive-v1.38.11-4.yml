@@ -1,0 +1,112 @@
+name: QA historical archive v1.38.11-4
+
+on:
+  push:
+    branches: [chore/qa-archive-v1.38.11-4]
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  QA_SOURCE_SHA: d5a95e899378943839e59c13a8dbb83fb72cc7b1
+
+jobs:
+  archive:
+    name: Historical archive on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: Reasonix-v1.38.11-4-windows-x64
+          - os: macos-15
+            artifact: Reasonix-v1.38.11-4-macOS-universal
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.QA_SOURCE_SHA }}
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: .qa-control
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /desktop/historical_archive_feedback_test.go
+            /desktop/packaging/historical-archive-smoke.mjs
+            /scripts/qa-archive-fixture.go
+      - name: Install acceptance additions
+        run: |
+          test "$(git rev-parse HEAD)" = "$QA_SOURCE_SHA"
+          cp .qa-control/desktop/historical_archive_feedback_test.go desktop/
+          cp .qa-control/desktop/packaging/historical-archive-smoke.mjs desktop/packaging/
+          cp .qa-control/scripts/qa-archive-fixture.go scripts/
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: desktop/go.mod
+          cache-dependency-path: desktop/go.sum
+      - name: Verify native historical archive regressions
+        run: |
+          go -C desktop test . -run '^TestArchive(ColdHistoricalSessionFromSidebar|HistoricalSessionWithPreviousIdentityAfterRestart)$' -count=1 -timeout=3m
+          go build -o "$RUNNER_TEMP/qa-archive-fixture.exe" ./scripts/qa-archive-fixture.go
+      - uses: pnpm/action-setup@v6.1.0
+        with:
+          version: 10
+          run_install: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
+      - name: Install acceptance dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+        run: pnpm --dir desktop install --frozen-lockfile
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ matrix.artifact }}
+          run-id: 35834353938
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/original-package
+      - name: Verify original package checksums
+        working-directory: ${{ runner.temp }}/original-package
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            sha256sum -c SHA256SUMS.txt
+          else
+            shasum -a 256 -c SHA256SUMS.txt
+          fi
+      - name: Verify Windows archive through the packaged sidebar
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Expand-Archive -Path "$env:RUNNER_TEMP/original-package/Reasonix-v1.38.11-4-windows-x64-portable.zip" -DestinationPath "$env:RUNNER_TEMP/archive-package"
+          $exe = Get-ChildItem "$env:RUNNER_TEMP/archive-package" -Filter Reasonix.exe -Recurse | Select-Object -First 1
+          if (-not $exe) { throw 'Packaged executable missing' }
+          node desktop/packaging/historical-archive-smoke.mjs $exe.FullName "$env:RUNNER_TEMP/qa-archive-fixture.exe" "$env:RUNNER_TEMP/archive-evidence"
+          if ($LASTEXITCODE -ne 0) { throw 'Historical archive acceptance failed' }
+      - name: Verify macOS archive through the packaged sidebar
+        if: runner.os == 'macOS'
+        run: |
+          mount_dir="$RUNNER_TEMP/archive-mount"
+          app_dir="$RUNNER_TEMP/archive-app/Reasonix.app"
+          mkdir -p "$mount_dir" "$(dirname "$app_dir")"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount_dir" "$RUNNER_TEMP/original-package/Reasonix-v1.38.11-4-macOS-universal.dmg"
+          trap 'hdiutil detach "$mount_dir"' EXIT
+          ditto "$mount_dir/Reasonix.app" "$app_dir"
+          codesign --verify --deep --strict "$app_dir"
+          node desktop/packaging/historical-archive-smoke.mjs "$app_dir/Contents/MacOS/Reasonix" "$RUNNER_TEMP/qa-archive-fixture.exe" "$RUNNER_TEMP/archive-evidence"
+      - name: Upload archive acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: archive-v1.38.11-4-${{ matrix.os }}
+          path: ${{ runner.temp }}/archive-evidence/*
+          if-no-files-found: warn
+          retention-days: 14

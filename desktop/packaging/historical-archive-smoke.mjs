@@ -25,7 +25,7 @@ const originals = ids.flatMap(id => ["manifest.json", "events.frames"].map(name 
   return [file, readFileSync(file)];
 }));
 const checks = [];
-let application, page, pids, version;
+let application, page, pids, version, build;
 const rpc = (method, ...args) => page.evaluate(({ method, args }) => window.reasonixDesktop.invoke(method, args), { method, args });
 async function launch() {
   application = await electron.launch({ executablePath: resolve(executable), env, timeout: 60000 });
@@ -41,7 +41,9 @@ async function launch() {
   const identity = await application.evaluate(({ app }) => ({ packaged: app.isPackaged, resources: process.resourcesPath, pid: process.pid }));
   assert.equal(identity.packaged, true);
   assert.notEqual(version, "dev");
-  assert.equal(version, JSON.parse(readFileSync(join(identity.resources, "build.json"), "utf8")).version);
+  build = JSON.parse(readFileSync(join(identity.resources, "build.json"), "utf8"));
+  assert.equal(version, build.version);
+  if (process.env.QA_SOURCE_SHA) assert.equal(build.commit, process.env.QA_SOURCE_SHA);
   const ready = parseServiceReady(readFileSync(join(home, "desktop-shell", "logs", "shell.log"), "utf8").split("\n").filter(line => line.includes("desktop service ready:")).at(-1) || "");
   assert.ok(ready);
   pids = { shellPid: identity.pid, servicePid: ready.pid };
@@ -113,7 +115,7 @@ try {
   checks.push("restart preserves archive; restore recovers full content; original source bytes unchanged");
   await page.screenshot({ path: join(evidence, "restored.png") });
   await close();
-  writeFileSync(join(evidence, "results.json"), JSON.stringify({ version, platform: process.platform, arch: process.arch, checks }, null, 2));
+  writeFileSync(join(evidence, "results.json"), JSON.stringify({ version, commit: build.commit, platform: process.platform, arch: process.arch, checks }, null, 2));
   console.log(`PASS ${checks.join("; ")}`);
 } catch (error) {
   writeFileSync(join(evidence, "failure.txt"), String(error));
