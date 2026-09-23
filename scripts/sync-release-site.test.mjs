@@ -27,13 +27,14 @@ else
 fi
 `);
   writeFileSync(path.join(scripts, "release-event.mjs"), `import {writeFileSync} from 'node:fs'; writeFileSync(process.argv[process.argv.indexOf('--output')+1], '{}');`);
-  writeFileSync(path.join(bin, "curl"), `#!/usr/bin/env node
+  writeFileSync(path.join(bin, "go"), `#!/usr/bin/env node
 const args=process.argv.slice(2);
-if (!args.includes('--connect-timeout') || !args.includes('--max-time') ||
-    args[args.indexOf('-A')+1] !== 'Reasonix-Updater/v1.2.3 (linux/amd64; build=stable; update=stable)' ||
-    args.at(-1)!=='https://dl.reasonix.io/latest/latest.json') process.exit(99);
+if (args[0]!=='run' || !args[1].endsWith('/release-manifest-fetch/main.go') || args[2]!=='1.2.3') process.exit(99);
 if(process.env.HTTP_FAIL==='true') process.exit(22);
-process.stdout.write(process.env.MANIFEST_BODY || JSON.stringify({version:process.env.POINTER || 'v1.2.3'}));
+const body=process.env.MANIFEST_BODY || JSON.stringify({version:process.env.POINTER || 'v1.2.3'});
+try { if(!/^v[0-9]+\\.[0-9]+\\.[0-9]+$/.test(JSON.parse(body).version)) process.exit(1); }
+catch { process.exit(1); }
+require('node:fs').writeFileSync(args[3],body);
 `, { mode: 0o755 });
   writeFileSync(path.join(bin, "gh"), `#!/usr/bin/env node
 const fs=require('node:fs'), path=require('node:path');

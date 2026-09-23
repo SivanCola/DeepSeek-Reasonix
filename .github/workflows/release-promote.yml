@@ -52,6 +52,10 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
       - name: Validate executable contracts and public access before payload or approval
         env:
           CANDIDATE_ID: ${{ inputs.candidate_id }}
@@ -316,6 +320,10 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
       - name: Reconcile public artifacts, owned Pages deployment, and durable ledger
         env:
           GH_TOKEN: ${{ github.token }}
