@@ -35,7 +35,7 @@ import { ProjectTreeSessionArchiveMenu } from "./ProjectTreeSessionArchiveMenu";
 import { ProjectTreeHeaderAddControl, ProjectTreeRemoteAction, projectTreeHeaderAddItems } from "./ProjectTreeAddControls";
 import { activeRemoteProjectAncestorKeys, buildRemoteProjectMenuItems, useRemoteRuntimeTree, openRemoteSessionNode, remoteProjectKey, remoteServeBadgeState, renameRemoteProjectTitle, RemoteProjectEmptyState, remoteSessionActionIdentity, remoteSessionArchiveBlocked, useRemoteProjectGroups, useRemoteSessionActions } from "./ProjectTreeRemoteGroups";
 import type { ProjectTreeProps } from "./ProjectTreeProps";
-import { PROJECT_TREE_SEARCH_PAGE, PROJECT_TREE_WINDOW_INITIAL, PROJECT_TREE_WINDOW_STEP, forgetProjectTreeWindowLimits, loadProjectTreePageWindow, projectTreeListKey, projectTreeListNeedsInitialization, projectTreeProjectsNeedingInitialLoad, projectTreeWindowRows, reloadProjectTreeTopicLists, rememberProjectTreeWindowLimit, type ProjectTreeListPageState } from "../lib/projectTreeWindow";
+import { PROJECT_TREE_SEARCH_PAGE, PROJECT_TREE_WINDOW_INITIAL, PROJECT_TREE_WINDOW_STEP, forgetProjectTreeWindowLimits, loadProjectTreePageWindow, projectTreeListKey, projectTreeListNeedsInitialization, projectTreeListShowsLoading, projectTreeProjectsNeedingInitialLoad, projectTreeWindowRows, reloadProjectTreeTopicLists, rememberProjectTreeWindowLimit, type ProjectTreeListPageState } from "../lib/projectTreeWindow";
 import { useProjectTreeReadActivity } from "./useProjectTreeReadActivity";
 import { useProjectTreeListRuntime } from "../lib/useProjectTreeListRuntime";
 import { activeSessionAncestorKeys, collapsibleProjectTreeFolderKeys, defaultExpandedProjectTreeKeys, projectTreeNodeKey as projectNodeKey } from "../lib/projectTreeExpansion";
@@ -182,7 +182,7 @@ export function ProjectTree({
   const activeSummaryRequestRef = useRef("");
   const refreshRef = useRef<ProjectTreeRefresh>(async () => {});
   const { trashingTopics, trashingSessions, currentArchiveTombstones, trashTopic, trashSession, inspectTopicRemoval, topicRemovalInspections } = useProjectTreeArchiveController({
-    treeRef, topicLoadSeqRef, topicLoadPendingRef, topicPageStateRef, updateTopicPageState, refreshRef,
+    treeRef, invalidateProjectTopicLists, refreshRef,
     optimisticallyRemoveTopic: (topicId) => setTree((current) => projectTreeWithoutTopic(current, topicId)),
     optimisticallyRemoveSession: (node) => setTree((current) => projectTreeWithoutSession(current, node)),
     closeMenu, onTopicsChanged, showToast,
@@ -277,7 +277,8 @@ export function ProjectTree({
     const seq = (topicLoadSeqRef.current[listKey] ?? 0) + 1;
     topicLoadSeqRef.current[listKey] = seq;
     topicLoadPendingRef.current[listKey] = seq;
-    updateTopicPageState(listKey, { ...pageState, loading: true, error: undefined });
+    updateTopicPageState(listKey, { ...pageState, loading: true,
+      refreshing: background && !append && pageState?.itemKeys !== undefined, error: undefined });
     const emitRequest = createProjectTreeRequestDiagnostic({ projectKind: project.kind, creationTopics, sequence: seq, stats: () => topicRequestLimiterRef.current.stats() });
     try {
       const page = await topicRequestLimiterRef.current.run(() => {
@@ -331,7 +332,7 @@ export function ProjectTree({
       if (page.complete !== false) {
         topicCompletePageRef.current[listKey] = { signature: requestSignature, revision: page.revision };
       }
-      if (!appendPage && pageState?.initialized && !readAnchorRef.current) readAnchorRef.current = captureListReadAnchor(projectTreeRef.current);
+      if (!appendPage && pageState?.itemKeys !== undefined && !readAnchorRef.current) readAnchorRef.current = captureListReadAnchor(projectTreeRef.current);
       setTree((current) => applyRuntimeProjection(current.map((node) => {
         if (node.key !== key) return node;
         const previous = new Set(previousKeys);
@@ -1702,7 +1703,7 @@ export function ProjectTree({
         />;
         // While the first topic page is still loading (cold start, catalog
         // reconcile in flight), show a skeleton instead of a blank folder.
-        if (backendPage?.loading) {
+        if (projectTreeListShowsLoading(backendPage)) {
           return (
             <div className={`project-tree__children${isExpanded ? " project-tree__children--expanded" : ""}`}>
               <div className="project-tree__children-inner">
@@ -1739,7 +1740,7 @@ export function ProjectTree({
                 aria-label={`${t("projectTree.loadMoreResults")} · ${projectLabel}`}
                 onClick={() => void loadProjectTopics(node, true)}
               >
-                {backendPage.loading ? t("projectTree.loadingMore") : t("projectTree.loadMoreResults")}
+                {projectTreeListShowsLoading(backendPage) ? t("projectTree.loadingMore") : t("projectTree.loadMoreResults")}
               </button>
             )}
           </div>
