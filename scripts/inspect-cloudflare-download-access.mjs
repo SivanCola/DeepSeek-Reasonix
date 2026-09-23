@@ -35,7 +35,8 @@ async function request(endpoint, body) {
 
 for (const [profile, userAgent] of [
   ["node-default", undefined],
-  ["desktop-updater", "Reasonix-Updater/1.38.11 (linux/amd64; build=stable; update=stable)"],
+  ["desktop-updater-current", "Reasonix-Updater/v1.38.11 (linux/amd64; build=stable; update=stable)"],
+  ["desktop-updater-target", "Reasonix-Updater/v1.38.12 (linux/amd64; build=stable; update=stable)"],
 ]) {
   const probe = await fetch("https://dl.reasonix.io/latest/latest.json", {
     headers: userAgent ? { "User-Agent": userAgent } : undefined,
