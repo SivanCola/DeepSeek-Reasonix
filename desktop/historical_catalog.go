@@ -16,8 +16,9 @@ import (
 )
 
 type historicalCatalogEntry struct {
-	scope string
-	node  ProjectNode
+	scope         string
+	node          ProjectNode
+	sourceChanged bool
 }
 
 // Discovery publishes metadata only; ordinary pagination never visits source
@@ -127,7 +128,7 @@ func (a *App) discoverHistoricalSessions(ctx context.Context, includeLegacy bool
 		}
 	}
 	addHistoricalRegistrySources(state, add)
-	catalog := readHistoricalCanonicalCatalog(ctx, sources, &a.historyMaintenance, publish)
+	catalog := readHistoricalCanonicalCatalog(ctx, sources, &a.historyMaintenance, publish, state)
 	saved, presentationErr := readHistoricalSidecar()
 	if err := ctx.Err(); err != nil {
 		return HistoricalImportStatus{Items: []HistoricalSessionView{}}, err
@@ -192,8 +193,9 @@ func historicalCatalogPlaceholder(key string, source historicalSource) historica
 	}}
 }
 
-func readHistoricalCanonicalCatalog(ctx context.Context, sources map[string]historicalSource, maintenance *historywork.Coordinator, publish func([]historicalCatalogEntry)) []historicalCatalogEntry {
+func readHistoricalCanonicalCatalog(ctx context.Context, sources map[string]historicalSource, maintenance *historywork.Coordinator, publish func([]historicalCatalogEntry), states ...workspacestate.State) []historicalCatalogEntry {
 	rows := []historicalCatalogEntry{}
+	ledger, ledgerErr := readDesktopMigrationLedger()
 	batchStart, count, bytes := 0, 0, int64(0)
 	var release func(int64)
 	var started time.Time
@@ -250,12 +252,44 @@ func readHistoricalCanonicalCatalog(ctx context.Context, sources map[string]hist
 			node.CreatedAt, node.LastActivityAt = stat.ModTime().UnixMilli(), stat.ModTime().UnixMilli()
 			node.Health = "degraded"
 		}
-		rows = append(rows, historicalCatalogEntry{scope: source.scope, node: node})
+		changed := false
+		if len(states) > 0 && ledgerErr == nil {
+			changed = historicalCanonicalSourceChanged(states[0], ledger, key, source.path)
+		}
+		rows = append(rows, historicalCatalogEntry{scope: source.scope, node: node, sourceChanged: changed})
 	}
 	// The final batch is published with completion metadata by the caller.
 	// Intermediate budget boundaries publish independently for large roots.
 	sort.Slice(rows, func(i, j int) bool { return rows[i].node.Key < rows[j].node.Key })
 	return rows
+}
+
+func historicalCanonicalSourceChanged(state workspacestate.State, ledger desktopMigrationLedger, key, path string) bool {
+	// Registry receipts outlive purged source directories. Missing files
+	// are not a new source revision and must not recreate a sidebar row.
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	if _, mapped, err := historicalMappingForSource(state, key); !mapped || err != nil {
+		return false
+	}
+	baseKey := desktopCanonicalMigrationKey(filepath.Dir(path), filepath.Base(path))
+	revision, err := desktopMigrationSourceRevision(canonicalMigrationSourceFiles(filepath.Dir(path), filepath.Base(path)))
+	if err != nil {
+		return false
+	}
+	known := false
+	for receiptKey, receipt := range ledger.Records {
+		if !historicalSourceKeyMatches(receiptKey, baseKey) || receipt.Status != "completed" {
+			continue
+		}
+		known = true
+		if receipt.SourceRevision == revision {
+			return false
+		}
+	}
+	return known
 }
 
 func (a *App) historicalCanonicalTopics(scope, root string, state workspacestate.State) []ProjectNode {
@@ -277,7 +311,7 @@ func (a *App) historicalCanonicalTopicsFromProjection(scope, root string, state 
 			continue
 		}
 		node := entry.node
-		if _, adopted, err := historicalMappingForSource(state, node.Source.SourceKey); adopted || err != nil {
+		if _, adopted, err := historicalMappingForSource(state, node.Source.SourceKey); (adopted && !entry.sourceChanged) || err != nil {
 			continue
 		}
 		node.PreparationStatus = "available"

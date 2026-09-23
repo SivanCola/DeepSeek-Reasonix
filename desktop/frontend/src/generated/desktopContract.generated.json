@@ -40259,6 +40259,13 @@
     "main.SessionMutationResult": {
       "fields": [
         {
+          "name": "outcome",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
           "name": "targetKey",
           "type": {
             "kind": "string"

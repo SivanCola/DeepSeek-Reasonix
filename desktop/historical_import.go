@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -369,6 +370,12 @@ func (a *App) runHistoricalPreparation(call *historicalImportCall, id string, so
 	c.views[id] = view
 	c.mu.Unlock()
 	result, err := a.importHistoricalSource(call.ctx, id, source)
+	if err != nil && !errors.Is(err, context.Canceled) && !historicalSourceBusyError(err) {
+		// Preparation can fail before the archive/open mutation is reached.
+		// Keep its cause in the local host log, correlated by opaque source ID.
+		slog.Warn("desktop: historical session preparation failed", "source_key", id,
+			"operation", call.operationID, "format", source.format, "err", err)
+	}
 	var presentationErr error
 	if err == nil {
 		presentationErr = a.applyHistoricalSourcePresentation(desktopSourceKey(source.path, source.head), result.Session)
@@ -508,6 +515,9 @@ func (a *App) importHistoricalSource(ctx context.Context, id string, source hist
 	}
 	if !ok {
 		return SessionRestoreResult{}, errors.New("historical import has not committed")
+	}
+	if lifecycle := state.SessionStates[mapping.SessionID].Lifecycle; lifecycle != workspacestate.Active {
+		return SessionRestoreResult{}, historicalRetiredError(lifecycle)
 	}
 	return SessionRestoreResult{Session: session.SessionRef{HostID: localDesktopHostID, SessionID: mapping.SessionID}, WorkspaceID: mapping.WorkspaceID, Generation: state.Generation}, nil
 }
@@ -739,30 +749,6 @@ func (a *App) stopHistoricalImports() {
 	c.mu.Unlock()
 	// Cancellation and draining happen before the runtime shutdown barrier.
 	c.workers.Wait()
-}
-
-func acquireHistoricalSource(ctx context.Context, id string, source historicalSource) (func(), error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	lockDir := filepath.Join(desktopConfigDir(), "desktop", "historical-import-locks")
-	if err := os.MkdirAll(lockDir, 0700); err != nil {
-		return nil, err
-	}
-	lockKey := desktopSourceKey(source.path, source.head)
-	release, err := identitylock.TryAcquire(filepath.Join(lockDir, lockKey+".lock"))
-	if err != nil {
-		return nil, err
-	}
-	if source.format != "canonical" {
-		return release, nil
-	}
-	ownership, err := identitylock.TryAcquireMode(filepath.Join(filepath.Dir(source.path), "."+filepath.Base(source.path)+".ownership.lock"), identitylock.ModeShared)
-	if err != nil {
-		release()
-		return nil, err
-	}
-	return func() { ownership(); release() }, nil
 }
 
 // Legacy recovery RPCs share cancellation/draining with the on-demand queue.
