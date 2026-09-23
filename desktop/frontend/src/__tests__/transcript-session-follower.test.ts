@@ -306,6 +306,60 @@ function initial(subscription: string): TranscriptFollowResponse {
   };
 }
 
+for (const remote of [false, true]) test(`${remote ? "remote" : "local"} running tab reconnect keeps its user before live reasoning when history and snapshot orders differ`, async () => {
+  const tab = `running-order-${remote}`, path = `/session/${tab}`;
+  const response = initial(tab);
+  response.history!.totalTurns = 2;
+  response.history!.messages = [
+    { messageId: "previous", position: 10, version: 1, role: "assistant", eventSequence: 1, visibleTurn: 1,
+      inline: { role: "assistant", content: "previous answer" } },
+    { messageId: "user", position: 11, version: 1, role: "user", eventSequence: 2, visibleTurn: 2,
+      preview: "make a tiger fly", inline: { role: "user", content: "make a tiger fly" } },
+  ];
+  response.snapshot!.totalRecords = 3;
+  response.snapshot!.totalTurns = 2;
+  response.snapshot!.runtime = { status: "in_progress", turnId: "current", pendingEvents: [], samplingCount: 1, toolCount: 0 };
+  response.snapshot!.activeAttempts = [{ id: "attempt", messageId: "live", turnId: "current", nextIndex: 1 }];
+  response.snapshot!.records = [
+    { id: "m:previous", order: 0, message: { role: "assistant", messageId: "previous", content: "previous answer", historyTurn: 1 }, refs: [] },
+    { id: "m:user", order: 1, message: { role: "user", messageId: "user", content: "make a tiger fly", historyTurn: 2, turnId: "current" }, refs: [] },
+    { id: "m:live", order: 2, message: { role: "assistant", messageId: "live", content: "", reasoning: "thinking", historyTurn: 2, turnId: "current" }, refs: [] },
+  ];
+  const key = remote ? "RemoteTranscriptFollowForTab" : "TranscriptFollowForTab";
+  const pending = deferred<TranscriptFollowResponse>();
+  let polls = 0;
+  commands[key] = (_tab: string, request: FollowRequest) => request.close
+    ? Promise.resolve({ protocolVersion: 2, subscription: tab, changes: [], resetRequired: false })
+    : request.subscription ? polls++ === 0 ? pending.promise : new Promise<TranscriptFollowResponse>(() => {}) : Promise.resolve(response);
+  let state = initialState;
+  const follower = new TranscriptSessionFollower(tab, path, remote, action => { state = reducer(state, action); });
+  const source = new ChatSource(tab);
+  const assertVisibleOrder = () => {
+    source.update({ items: state.items, running: state.running, hydrating: false, hasOlder: false, loadingOlder: false });
+    const order = source.getOrderSnapshot();
+    assert.ok(order.indexOf("m:user") >= 0 && order.indexOf("m:user") < order.indexOf("m:live:reasoning"),
+      "the rendered reasoning stays in the user's turn");
+  };
+  try {
+    await follower.start();
+    assert.deepEqual(state.items.filter(item => item.kind === "user" || item.kind === "assistant").map(item => item.id),
+      ["m:previous", "m:user", "m:live"]);
+    assert.deepEqual(getTranscriptStore().peek(tab, path)?.items.map(item => item.id),
+      ["m:previous", "m:user", "m:live"]);
+    assertVisibleOrder();
+    pending.resolve({ protocolVersion: 2, subscription: tab, resetRequired: false, changes: [{
+      revision: 11, firstSeq: 5, commitSeq: 5, durableSeq: 5, index: 0,
+      records: [{ role: "assistant", messageId: "live", turnId: "current", historyTurn: 2,
+        content: "final answer", reasoning: "thinking", turnFinal: true }],
+      runtime: { status: "completed", turnId: "current", pendingEvents: [], samplingCount: 1, toolCount: 0 },
+    }] });
+    await microtasks();
+    assertVisibleOrder();
+    assert.deepEqual(state.items.filter(item => item.kind === "user" || item.kind === "assistant").map(item => item.id),
+      ["m:previous", "m:user", "m:live"]);
+  } finally { source.dispose(); follower.stop(); getTranscriptStore().evictTab(tab); }
+});
+
 for (const remote of [false, true]) for (const during of ["baseline", "baseline rejection", "delta", "retry", "load"] as const) {
   test(`${remote ? "remote" : "local"} stopping during ${during} fences current and future followers`, async t => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
