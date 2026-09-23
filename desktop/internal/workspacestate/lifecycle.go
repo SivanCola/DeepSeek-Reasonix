@@ -549,6 +549,15 @@ func (s *Store) CompletePurge(ctx context.Context, id string) error {
 		default:
 			return ErrMutationConflict
 		}
+		// Keep only the consumed topic identity in the existing purge receipt.
+		// Canonical sessions and runtime-adopted sources may have no import
+		// journal from which a future display reader could recover that identity.
+		if topicID := state.Presentation[id].TopicID; topicID != "" {
+			op.WorkspaceID, _ = sessionOwner(*state, id)
+			if op.Presentation == nil {
+				op.Presentation = &Presentation{TopicID: topicID}
+			}
+		}
 		for key, workspace := range state.Workspaces {
 			workspace.SessionIDs = remove(workspace.SessionIDs, id)
 			state.Workspaces[key] = workspace

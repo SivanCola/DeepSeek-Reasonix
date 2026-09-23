@@ -54,10 +54,7 @@ func (a *App) lazyProjectTopicSnapshot(req ProjectTopicPageRequest, reader works
 	if saved, err := readHistoricalSidecar(); err == nil {
 		applyHistoricalPresentations(sources, saved)
 	}
-	adoptedTopics := map[string]bool{}
-	for _, id := range state.Workspaces[workspaceID].SessionIDs {
-		adoptedTopics[state.Presentation[id].TopicID] = true
-	}
+	adoptedTopics := state.AdoptedTopicIDs(workspaceID)
 	// Unbacked user-created topics remain visible without inspecting a body.
 	for _, node := range a.withRemovablePlaceholderTopics(req, state, nil, adoptedTopics) {
 		found, err := catalog.HasTopicSessions(ctx, req.Scope, req.WorkspaceRoot, node.TopicID)

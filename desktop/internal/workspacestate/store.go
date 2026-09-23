@@ -67,7 +67,9 @@ type State struct {
 	RecoveryEntries    map[string]RecoveryEntry `json:"recoveryEntries"`
 	Presentation       map[string]Presentation  `json:"presentation"`
 	TopicRemovals      map[string]TopicRemoval  `json:"topicRemovals,omitempty"`
-	extra              map[string]json.RawMessage
+	// Immutable derived index for display copies; never serialized.
+	adoptedTopics map[string]map[string]bool
+	extra         map[string]json.RawMessage
 }
 
 type Store struct {
@@ -129,7 +131,8 @@ func (r *ReadSnapshot) cloneState(projection bool) State {
 	if projection {
 		state = State{Version: state.Version, Generation: state.Generation, Initialized: state.Initialized,
 			WorkspaceIDs: state.WorkspaceIDs, Workspaces: state.Workspaces,
-			SessionStates: state.SessionStates, SourceMappings: state.SourceMappings, Presentation: state.Presentation}
+			SessionStates: state.SessionStates, SourceMappings: state.SourceMappings, Presentation: state.Presentation,
+			adoptedTopics: r.adoptedTopics}
 	}
 	return cloneSnapshot(state)
 }
