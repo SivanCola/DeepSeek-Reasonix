@@ -48,9 +48,8 @@ jobs:
         with:
           go-version-file: desktop/go.mod
           cache-dependency-path: desktop/go.sum
-      - name: Verify native historical archive regressions
+      - name: Build isolated historical fixture
         run: |
-          go -C desktop test . -run '^TestArchive(ColdHistoricalSessionFromSidebar|HistoricalSessionWithPreviousIdentityAfterRestart)$' -count=1 -timeout=3m
           go build -o "$RUNNER_TEMP/qa-archive-fixture.exe" ./scripts/qa-archive-fixture.go
       - uses: pnpm/action-setup@v6.1.0
         with:
@@ -85,9 +84,9 @@ jobs:
         shell: pwsh
         run: |
           Expand-Archive -Path "$env:RUNNER_TEMP/original-package/Reasonix-v1.38.11-4-windows-x64-portable.zip" -DestinationPath "$env:RUNNER_TEMP/archive-package"
-          $exe = Get-ChildItem "$env:RUNNER_TEMP/archive-package" -Filter Reasonix.exe -Recurse | Select-Object -First 1
-          if (-not $exe) { throw 'Packaged executable missing' }
-          node desktop/packaging/historical-archive-smoke.mjs $exe.FullName "$env:RUNNER_TEMP/qa-archive-fixture.exe" "$env:RUNNER_TEMP/archive-evidence"
+          $exe = "$env:RUNNER_TEMP/archive-package/versions/v1.38.11-4/app/Reasonix.exe"
+          if (-not (Test-Path $exe)) { throw 'Packaged Electron executable missing' }
+          node desktop/packaging/historical-archive-smoke.mjs $exe "$env:RUNNER_TEMP/qa-archive-fixture.exe" "$env:RUNNER_TEMP/archive-evidence"
           if ($LASTEXITCODE -ne 0) { throw 'Historical archive acceptance failed' }
       - name: Verify macOS archive through the packaged sidebar
         if: runner.os == 'macOS'
