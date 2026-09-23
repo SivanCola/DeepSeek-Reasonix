@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"reasonix/internal/control"
 	"reasonix/internal/event"
@@ -264,6 +265,80 @@ func TestCreateForkForTabOpensChildInNewTab(t *testing.T) {
 	}
 }
 
+func TestRepeatedForkPublishesSidebarMembershipWithoutRestart(t *testing.T) {
+	for _, scope := range []string{"global", "project"} {
+		t.Run(scope, func(t *testing.T) {
+			isolateDesktopUserDirs(t)
+			ctrl := &forkTargetsStubController{tabScopedActionController: newTabScopedActionController(), childID: "fork-one"}
+			app := NewApp()
+			app.ctx = context.Background()
+			app.setTestCtrl(ctrl, "")
+			enableForkTargetPersistence(t, app, ctrl)
+			root := ""
+			if scope == "project" {
+				root = t.TempDir()
+				ctrl.cwd = root
+			}
+			app.tabs["test"].SessionID = "source-1"
+			app.tabs["test"].Scope = scope
+			app.tabs["test"].WorkspaceRoot = root
+			app.tabs["test"].TopicTitle = "Source topic"
+			events := make(chan ProjectTreeChangedV2, 4)
+			app.runtimeEvents.emit = func(_ context.Context, name string, payload ...any) {
+				if name == "project-tree:changed-v2" && len(payload) == 1 {
+					events <- payload[0].(ProjectTreeChangedV2)
+				}
+			}
+			lastRevision := uint64(0)
+			checkEvent := func(child string) {
+				t.Helper()
+				select {
+				case event := <-events:
+					if event.Revision <= lastRevision || len(event.Roots) != 1 || event.Roots[0] != root {
+						t.Fatalf("fork %q sidebar event = %+v, want root %q", child, event, root)
+					}
+					lastRevision = event.Revision
+				case <-time.After(5 * time.Second):
+					t.Fatalf("fork %q did not invalidate the sidebar topic page", child)
+				}
+			}
+
+			anchor := ForkAnchorView{SourceHostID: "host-1", SourceSessionID: "source-1", TurnID: "turn-7", BoundarySequence: 9}
+			first, err := app.CreateForkForTab("test", anchor)
+			if err != nil || !first.Opened {
+				t.Fatalf("first fork = %+v, err = %v", first, err)
+			}
+			checkEvent(first.SessionID)
+			if err := app.AcknowledgeForkOperation("test", first.OperationID); err != nil {
+				t.Fatal(err)
+			}
+			// The user returns to the original conversation before forking again.
+			app.mu.Lock()
+			app.activeTabID = "test"
+			app.mu.Unlock()
+			ctrl.childID = "fork-two"
+			second, err := app.CreateForkForTab("test", anchor)
+			if err != nil || !second.Opened || second.SessionID == first.SessionID {
+				t.Fatalf("second fork = %+v, err = %v", second, err)
+			}
+			checkEvent(second.SessionID)
+			page, err := app.ListProjectTopics(ProjectTopicPageRequest{Scope: scope, WorkspaceRoot: root, Limit: 20})
+			if err != nil {
+				t.Fatal(err)
+			}
+			seen := map[string]bool{}
+			for _, item := range page.Items {
+				if item.Session != nil {
+					seen[item.Session.SessionID] = true
+				}
+			}
+			if !seen[first.SessionID] || !seen[second.SessionID] {
+				t.Fatalf("sidebar page lacks repeated forks: %+v", page.Items)
+			}
+		})
+	}
+}
+
 func TestCreateForkForTabKeepsChildWhenTabAttachFails(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
@@ -273,11 +348,21 @@ func TestCreateForkForTabKeepsChildWhenTabAttachFails(t *testing.T) {
 		childID:                   childID,
 	}
 	app := NewApp()
+	app.ctx = context.Background()
 	app.setTestCtrl(ctrl, "")
 	enableForkTargetPersistence(t, app, ctrl)
 	app.tabs["test"].SessionID = "source-1"
 	app.tabs["test"].Scope = "global"
 	app.tabs["test"].TopicTitle = "Source topic"
+	changed := make(chan struct{}, 1)
+	app.runtimeEvents.emit = func(_ context.Context, name string, _ ...any) {
+		if name == "project-tree:changed-v2" {
+			select {
+			case changed <- struct{}{}:
+			default:
+			}
+		}
+	}
 	t.Cleanup(func() { forkTabBeforePublishHookForTest.Store(nil) })
 	// Closing the source tab mid-flight makes the attach a no-op, which is the
 	// same outcome as an attach that fails outright.
@@ -298,6 +383,11 @@ func TestCreateForkForTabKeepsChildWhenTabAttachFails(t *testing.T) {
 	}
 	if view.Opened {
 		t.Fatal("opened = true, want false when the new tab was not created")
+	}
+	select {
+	case <-changed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("durable fork membership did not invalidate the sidebar after tab attach failed")
 	}
 	if view.TabID != "" {
 		t.Fatalf("tabId = %q, want empty", view.TabID)

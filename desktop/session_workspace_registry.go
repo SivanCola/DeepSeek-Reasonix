@@ -327,7 +327,19 @@ func (a *App) attachForkedDesktopSession(ctx context.Context, source *WorkspaceT
 			break
 		}
 	}
-	return a.workspaceRegistry().AttachSession(ctx, "", workspaceID, childSessionID, beforeID)
+	if err := a.workspaceRegistry().AttachSession(ctx, "", workspaceID, childSessionID, beforeID); err != nil {
+		return err
+	}
+	// Canonical forks are read from workspace membership, not from the legacy
+	// session-directory catalog. Invalidate the paged sidebar at the same point
+	// that membership becomes durable, including when opening the child tab
+	// subsequently fails. A runtime-only event cannot refresh its item keys.
+	root := ""
+	if workspaceID != workspacestate.GlobalWorkspaceID {
+		root = workspace.Root
+	}
+	a.emitProjectTreeChangedV2(a.currentSessionCatalogStatus().Revision, []string{root}, "membership")
+	return nil
 }
 
 func (a *App) verifyCanonicalTabRegistryBeforePrune(tab *WorkspaceTab) error {

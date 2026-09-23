@@ -82,10 +82,10 @@ async function folder(label = "A") {
   assert.ok(target, `missing project ${label}`);
   await act(async () => target.click()); await flush();
 }
-async function event(stale = false) {
+async function event(stale = false, reason = "changed") {
   revision++;
   await act(async () => {
-    for (const callback of listeners.get("project-tree:changed-v2") ?? []) callback({ revision: stale ? 0 : revision, roots: [roots[0]], reason: "changed" });
+    for (const callback of listeners.get("project-tree:changed-v2") ?? []) callback({ revision: stale ? 0 : revision, roots: [roots[0]], reason });
   });
 	await advance(500);
 }
@@ -153,6 +153,16 @@ try {
   assert.equal(count(), 4); assert.equal(count(roots[1]), 1);
   await unmount();
   console.log("  PASS  project/global reopen caches, deferred invalidation and sibling isolation");
+
+  await mount();
+  rows[roots[0]] = [topic("Fork one"), ...rows[roots[0]]];
+  await event(false, "membership");
+  assert.ok(labels().includes("Fork one"), "the first fork enters the visible topic page");
+  rows[roots[0]] = [topic("Fork two"), ...rows[roots[0]]];
+  await event(false, "membership");
+  assert.ok(labels().includes("Fork one") && labels().includes("Fork two"), "a second fork from the original appears without restarting");
+  await unmount();
+  console.log("  PASS  repeated fork membership events refresh the visible topic page");
 
   await mount(true);
   assert.deepEqual(calls.map(req => req.groupId || "ungrouped").sort(), ["feature", "ungrouped"], "group and parent initialization share one request per list");
