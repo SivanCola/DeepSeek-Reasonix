@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
 import { installDesktopHostStub } from "./desktopHostStub";
-import { createManualSession, manualCreationFailures } from "../lib/manualCreationRequests";
+import { createManualSession } from "../lib/manualCreationRequests";
 import type { ManualSessionCreationRequest, ManualSessionCreationView } from "../generated/desktopContract.generated";
 
 const dom = new JSDOM("", { url: "http://localhost" });
@@ -26,7 +26,6 @@ try {
   assert.deepEqual(begins, [request.operationId], "lost acknowledgement never allocates another creation request");
   assert.deepEqual(reads, [request.operationId], "recovery reads the durable original request");
   assert.deepEqual(opened, ["same-session"], "older hosts without surfaceReady still open at ready");
-  assert.equal(manualCreationFailures().length, 0, "a recovered acknowledgement removes the manual retry notice");
   stub.commands.BeginManualSessionCreation = async () => ({ ...operation, phase: "starting", progress: {
     status: "blocked", stage: "preparing_storage", errorCode: "unsupported_ui_schema", stageStartedAt: 1, elapsedMs: 0, slow: false,
   } });
@@ -59,6 +58,20 @@ try {
     onSurfaceReady: async () => { observing = false; },
   });
   assert.equal(reads.length, 6, "leaving during surface activation stops observation without cancelling creation");
+  const retried: string[] = [];
+  const updates: string[] = [];
+  stub.commands.BeginManualSessionCreation = async () => ({ ...operation, phase: "failed" });
+  stub.commands.RetryManualSessionCreation = async (id: string) => {
+    retried.push(id);
+    return { ...operation, phase: "starting", surfaceReady: true, progress: { status: "running", stage: "building_runtime", elapsedMs: 1, stageStartedAt: 1, slow: false } };
+  };
+  let poll = 0;
+  stub.commands.GetManualSessionCreation = async () => ++poll === 1
+    ? { ...operation, phase: "starting", surfaceReady: true, progress: { status: "running", stage: "building_runtime", elapsedMs: 500, stageStartedAt: 1, slow: false } }
+    : { ...operation, surfaceReady: true };
+  await createManualSession(request, { retry: true, onSurfaceReady: async () => {}, onProgress: view => { updates.push(view.phase); } });
+  assert.deepEqual(retried, [request.operationId], "retry keeps the original durable request identity");
+  assert.deepEqual(updates, ["starting", "ready"], "elapsed time alone does not repaint the app or duplicate notices");
   console.log("PASS manual creation recovers lost acknowledgements with the original identity and older-host fallback");
 } finally {
   stub.uninstall();

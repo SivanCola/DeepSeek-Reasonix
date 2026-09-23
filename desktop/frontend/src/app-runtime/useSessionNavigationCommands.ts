@@ -7,10 +7,9 @@ import type { useDesktopNavigation } from "./useDesktopNavigation";
 import type { WorkspaceNavigationPorts } from "./navigationOwner";
 import type { ControlResult, SessionMeta, TabMeta } from "../lib/types";
 import type { TopicShortcutEntry } from "../lib/topicShortcuts";
-import { useRef, type Dispatch, type SetStateAction } from "react";
+import { useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { SessionRef } from "../lib/sessionRef";
-import { t } from "../lib/i18n";
-import { manualCreationPresentation } from "../lib/manualCreationPresentation";
+import type { ManualCreationObservation } from "../lib/manualCreationRequests";
 
 const loadNavigationOwner = () => import("./navigationOwner");
 
@@ -46,9 +45,33 @@ export type SessionNavigationCommandsInput = {
 export function useSessionNavigationCommands(input: SessionNavigationCommandsInput) {
   const { activeTab, showToast, navigation, ports } = input;
   const lastLocalTarget = useRef(draftLandingTargetForTab(activeTab));
+  const [creation, setCreation] = useState<(ManualCreationObservation & { seq: number }) | null>(null);
   if (activeTab && !activeTab.remote) lastLocalTarget.current = draftLandingTargetForTab(activeTab);
 
   const blankSessionTarget = useCommittedCommand(() => lastLocalTarget.current);
+
+  const observeCreation = useCommittedCommand(async (attempt: ManualCreationObservation & { seq: number }, retry = false) => {
+    const { seq, request } = attempt;
+    const current = () => input.isNavigationIntentCurrent(seq) === true;
+    setCreation({ ...attempt, pending: true, failed: false });
+    try {
+      const { createManualSession } = await import("../lib/manualCreationRequests");
+      await createManualSession(request, {
+        retry,
+        isObservationCurrent: current,
+        onProgress: operation => { if (current()) setCreation({ ...attempt, operation, pending: true, failed: false }); },
+        onSurfaceReady: async (reserved) => {
+          if (current()) await navigation.enqueueNavigationWithIntent({ kind: "canonical-session", ref: reserved.ref }, seq);
+        },
+      });
+      input.markProjectChanged(value => value + 1);
+    } catch {
+      if (current()) setCreation(value => value?.seq === seq ? { ...value, failed: true } : value);
+    } finally {
+      if (current()) setCreation(value => value?.seq === seq ? { ...value, pending: false } : value);
+      input.settleNavigationSurface(seq);
+    }
+  });
 
   const openBlankSession = useCommittedCommand(async (scope: string, workspaceRoot: string): Promise<void> => {
     const seq = input.noteNavigationIntent();
@@ -61,22 +84,10 @@ export function useSessionNavigationCommands(input: SessionNavigationCommandsInp
     input.beginNavigationSurface(seq);
     // Creation is an explicit mutation, not a coalescible navigation request.
     // Even if another click wins selection, this accepted operation survives.
-    try {
-      const { createManualSession } = await import("../lib/manualCreationRequests");
-      const operation = await createManualSession({ operationId, workspaceId: "", scope, workspaceRoot: targetRoot }, {
-        isObservationCurrent: () => input.isNavigationIntentCurrent(seq),
-        onSurfaceReady: async (reserved) => {
-          if (!input.isNavigationIntentCurrent(seq)) return;
-          await navigation.enqueueNavigationWithIntent({ kind: "canonical-session", ref: reserved.ref }, seq);
-        },
-      });
-      input.markProjectChanged(value => value + 1);
-      if (operation.phase === "failed" && input.isNavigationIntentCurrent(seq)) showToast(t(manualCreationPresentation(operation).key), "error");
-    } catch {
-      if (input.isNavigationIntentCurrent(seq)) showToast(t("creation.requestError"), "error");
-    } finally {
-      input.settleNavigationSurface(seq);
-    }
+    await observeCreation({ seq, request: { operationId, workspaceId: "", scope, workspaceRoot: targetRoot }, pending: true, failed: false });
+  });
+  const retryCreation = useCommittedCommand(async () => {
+    if (creation && !creation.pending && input.isNavigationIntentCurrent(creation.seq)) await observeCreation(creation, true);
   });
 
   const handleNewTab = useCommittedCommand(async () => {
@@ -188,6 +199,8 @@ export function useSessionNavigationCommands(input: SessionNavigationCommandsInp
   });
 
   return {
+    manualCreation: creation && input.isNavigationIntentCurrent(creation.seq) ? creation : null,
+    retryCreation,
     openCanonicalSession,
     openBlankSession,
     handleNewTab,

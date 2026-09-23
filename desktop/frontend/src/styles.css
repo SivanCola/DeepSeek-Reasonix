@@ -38154,6 +38154,31 @@ html[data-dock-launcher="full"] .app:not(.app--creation) .layout:not(.layout--wo
   text-align: center;
 }
 
+.creation-notice {
+  flex: 0 0 auto;
+  align-self: center;
+  width: min(100%, 800px);
+  box-sizing: border-box;
+  padding: 8px 16px;
+  color: var(--fg-dim);
+  font-size: var(--font-control-small);
+}
+
+.creation-notice__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.creation-notice details {
+  margin-top: 8px;
+}
+
+.creation-notice summary {
+  cursor: pointer;
+}
+
 .session-export-progress { position: fixed; right: 20px; bottom: 32px; z-index: var(--z-popover); max-width: min(480px, 90vw); padding: 12px 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); color: var(--fg); box-shadow: 0 4px 18px #0002; }
 .session-export-progress > div { display: flex; align-items: center; gap: 12px; }
 .session-export-progress button { flex-shrink: 0; padding: 5px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-soft); color: var(--fg); cursor: pointer; }

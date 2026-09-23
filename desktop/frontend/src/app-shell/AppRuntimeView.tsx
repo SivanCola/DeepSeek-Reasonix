@@ -306,11 +306,11 @@ export function AppRuntimeView(props: AppRuntimeViewProps) {
             shell,
             banners: session.bannerCommands,
             onboarding: navigation.onboardingCommands,
-          })} historical={core.remoteSurfaceActive ? undefined : { tab: activeTab, navigate: session.desktopNavigation.enqueueNavigation,
+          })} startupError={navigationCommands.manualCreation && navigationCommands.manualCreation.operation?.phase !== "ready" ? undefined : state.meta?.startupErr}
+          historical={core.remoteSurfaceActive ? undefined : { tab: activeTab, navigate: session.desktopNavigation.enqueueNavigation,
             captureNavigation: () => { const intent = runtime.navigation.currentNavigationIntent(); return () => runtime.navigation.isNavigationIntentCurrent(intent); },
           }} />
 
-          <Suspense fallback={null}><ManualSessionRecovery /></Suspense>
           <ChatPaneRegion
             // Local navigation is now history-first: keep the transcript
             // mounted while the controller is rebuilt in the background.  The
@@ -372,6 +372,16 @@ export function AppRuntimeView(props: AppRuntimeViewProps) {
               onSurfacePaintReady: session.transcript.handleSurfacePaintReady,
             }}
           />
+          {!core.remoteSurfaceActive && !sidebarImDetailConnection && <Suspense fallback={null}>
+            <ManualSessionRecovery
+              key={`${runtime.navigation.currentNavigationIntent()}:${activeTab?.session?.sessionId ?? ""}`}
+              sessionId={core.surface.surface?.phase === "source-retained" ? undefined : activeTab?.session?.sessionId}
+              attempt={navigationCommands.manualCreation}
+              onRetry={navigationCommands.retryCreation}
+              onNew={navigationCommands.handleNewTab}
+              onChooseProject={navigation.projectTopicCommands.onAddProject}
+            />
+          </Suspense>}
           <DecisionFooterRegion
             hidden={Boolean(sidebarImDetailConnection)}
             className={["footer", terminalSurfaceOpen ? "footer--compact" : "", visibleDecisionSurface ? "footer--decision" : "", presentationTransitioning ? "footer--navigation-hidden" : ""].filter(Boolean).join(" ")}

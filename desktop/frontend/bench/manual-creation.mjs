@@ -73,6 +73,12 @@ try {
   assert.equal(first.phase, "starting");
   await input.fill("First new session input while starting");
   assert.equal(await page.locator(".composer__btn--send").isDisabled(), true, "typing never sends before the new controller is ready");
+  const notice = page.getByTestId("creation-notice");
+  await notice.getByText(/You can type now/).waitFor();
+  assert.equal(await notice.locator("button").count(), 0, "preparation does not ask for any user choice");
+  const noticeBox = await notice.boundingBox();
+  const inputBox = await input.boundingBox();
+  assert.ok(noticeBox.y + noticeBox.height <= inputBox.y, "preparation explanation is adjacent to and above the composer");
   const evidence = process.env.REASONIX_CREATION_EVIDENCE ?? path.join(tmpdir(), "reasonix-manual-creation-evidence");
   await mkdir(evidence, { recursive: true });
   await page.screenshot({ path: path.join(evidence, "starting-editable.png") });
@@ -93,6 +99,7 @@ try {
   await page.evaluate(id => window.manualCreationFixture.finish(id), second.operationId);
   await page.waitForFunction(id => window.manualCreationFixture.observedReady(id), second.operationId);
   await page.waitForFunction(() => !document.querySelector(".composer__btn--send")?.disabled);
+  await notice.waitFor({ state: "detached" });
   assert.equal(await input.inputValue(), "Second new session input while starting", "runtime completion preserves typed input");
   assert.equal(await page.evaluate(() => window.manualCreationFixture.active()), second.ref.sessionId, "out-of-order startup never changes the user's selection");
   assert.equal(await page.evaluate(id => window.manualCreationFixture.reads(id), first.operationId), firstReads, "leaving a starting session stops its request polling while the host continues");

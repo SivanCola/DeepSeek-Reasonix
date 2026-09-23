@@ -130,6 +130,20 @@ try {
   assert.deepEqual(enqueued.at(-1)?.request, { kind: "canonical-session", ref: { hostId: "local", sessionId: "session-c" } });
   assert.deepEqual(notices, []);
 
+  const failedRequests: string[] = [];
+  stub.commands.BeginManualSessionCreation = async (request: ManualSessionCreationRequest) => {
+    failedRequests.push(request.operationId);
+    throw new Error("transport unavailable");
+  };
+  stub.commands.GetManualSessionCreation = async () => { throw new Error("still unavailable"); };
+  await act(async () => { await commands.handleNewTab(); });
+  assert.equal(commands.manualCreation?.failed, true, "unacknowledged creation has an inline retry state");
+  assert.equal(commands.manualCreation?.pending, false);
+  await act(async () => { await commands.retryCreation(); });
+  assert.equal(failedRequests.length, 2);
+  assert.equal(failedRequests[0], failedRequests[1], "retrying before acknowledgement does not allocate a new operation");
+  assert.deepEqual(notices, [], "inline failure is not duplicated in a toast");
+
   await act(async () => { root.unmount(); });
   console.log("session navigation: retired drafts are untouched; late formal creation preserves the newest selection");
 } finally {

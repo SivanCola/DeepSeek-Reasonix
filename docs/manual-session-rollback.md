@@ -137,6 +137,22 @@ specific terminal result. Diagnostic export lives under Details.
 目录暂不可用时自动等待；旧版 `target_changed` 失败会自动协调一次。
 无法协调的真实冲突给出明确结果，诊断导出收在“详情”中。
 
+Creation feedback is scoped to the selected navigation intent and shown next to
+the composer. The explicit creation observer also supplies UI progress; there is
+no second global recovery poll or in-memory failure catalog. Reopening a pending
+session discovers only its own operation and then observes that operation.
+Preparing has no actions, readiness removes the notice, and a terminal failure
+has one primary action (retry the same operation, choose a project, or create a
+new session). Closing a notice only hides it for the current selection; it never
+cancels host recovery or deletes input. New-session/project actions do not move
+input between sessions. Diagnostic export is available under Details on errors.
+
+创建提示只属于当前导航选择，并显示在输入框旁。创建请求的观察结果直接用于显示，
+不再另设全局恢复轮询或内存失败列表；重新打开未完成会话时，只查找并观察它自己的
+创建操作。准备中没有操作按钮，就绪后提示消失；失败只提供一个主要操作：复用原操作
+重试、选择项目或新建会话。关闭提示仅在当前选择下隐藏提示，不取消后台恢复、不删除
+输入；新建或选择项目不跨会话搬移输入。诊断导出只在错误的“详情”中提供。
+
 | Contract / 契约 | Compatibility / 兼容行为 |
 | --- | --- |
 | Creation journal / 创建记录 | Phases, identities and schema unchanged; unknown fields preserved. 阶段、身份和格式不变，保留未知字段。 |

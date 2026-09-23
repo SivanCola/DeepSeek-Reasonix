@@ -1,37 +1,38 @@
 import { app } from "./bridge";
 import type { ManualSessionCreationRequest, ManualSessionCreationView } from "../generated/desktopContract.generated";
 
-// Unacknowledged requests remain retryable with the same identity even when
-// the creation-intent database could not be written. They are not successes.
-const failed = new Map<string,{request:ManualSessionCreationRequest;error:string}>();
-const listeners = new Set<()=>void>();
-let version=0;
-const notify=()=>{version++;listeners.forEach(listener=>listener());};
-export const manualCreationFailures=()=>[...failed.values()];
-export const manualCreationSnapshot=()=>version;
-export const subscribeManualCreationFailures=(listener:()=>void)=>{listeners.add(listener);return()=>{listeners.delete(listener);};};
-export function acknowledgeManualCreation(id:string){if(failed.delete(id))notify();}
-export async function beginManualCreation(request:ManualSessionCreationRequest) {
- try {const result=await app.BeginManualSessionCreation(request);acknowledgeManualCreation(request.operationId);return result;}
- catch(error){failed.set(request.operationId,{request,error:String(error)});notify();throw error;}
-}
+/** Ephemeral presentation only; the host owns durable recovery and drafts. */
+export type ManualCreationObservation = {
+ request: ManualSessionCreationRequest;
+ operation?: ManualSessionCreationView;
+ pending: boolean;
+ failed: boolean;
+};
 
 export async function createManualSession(request: ManualSessionCreationRequest, options?: {
  onSurfaceReady: (operation: ManualSessionCreationView) => Promise<void>;
  isObservationCurrent?: () => boolean;
+ onProgress?: (operation: ManualSessionCreationView) => void;
+ retry?: boolean;
 }) {
  let operation;
- try { operation = await beginManualCreation(request); }
+ try { operation = await app.BeginManualSessionCreation(request); }
  catch (error) {
    // A lost response is resolved against the original persisted identity.
-   try { operation = await app.GetManualSessionCreation(request.operationId); acknowledgeManualCreation(request.operationId); }
+   try { operation = await app.GetManualSessionCreation(request.operationId); }
    catch { throw error; }
  }
+ if (options?.retry && operation.phase !== "ready") operation = await app.RetryManualSessionCreation(request.operationId);
  let surfaceOpened = false;
+ let lastProgress = "";
  while (true) {
    // Acknowledgement transfers creation to the host. Leaving this surface
    // stops only its observer, never the durable operation or its recovery.
    if (options?.isObservationCurrent?.() === false) return operation;
+   // Elapsed milliseconds change on every read; repaint only meaningful state.
+   const progress = JSON.stringify([operation.phase, operation.surfaceReady, operation.ref, operation.error,
+     operation.progress?.status, operation.progress?.slow, operation.progress?.errorCode]);
+   if (progress !== lastProgress) { lastProgress = progress; options?.onProgress?.(operation); }
    // The host publishes a formal session before constructing its runtime. Open
    // that identity once so typing can start; completion must never reselect it.
    // Older hosts only publish a usable surface at ready.
