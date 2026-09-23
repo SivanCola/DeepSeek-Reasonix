@@ -277,7 +277,7 @@ func (a *App) historicalCanonicalTopicsFromProjection(scope, root string, state 
 			continue
 		}
 		node := entry.node
-		if _, adopted := historicalMappingForSource(state, node.Source.SourceKey); adopted {
+		if _, adopted, err := historicalMappingForSource(state, node.Source.SourceKey); adopted || err != nil {
 			continue
 		}
 		node.PreparationStatus = "available"
@@ -313,7 +313,9 @@ func (a *App) historicalPinnedShellsFromProjection(req ProjectTopicPageRequest, 
 	}
 	adopted := map[string]bool{}
 	for _, mapping := range state.SourceMappings {
-		adopted["source\x00local\x00"+mapping.SourceKey] = true
+		for _, key := range state.SourceKeys(mapping.SourceKey) {
+			adopted["source\x00local\x00"+key] = true
+		}
 		if sourceMappingHasPathAlias(mapping) {
 			adopted[sessionRuntimeKey(mapping.Path)] = true
 		}

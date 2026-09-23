@@ -68,8 +68,9 @@ type State struct {
 	Presentation       map[string]Presentation  `json:"presentation"`
 	TopicRemovals      map[string]TopicRemoval  `json:"topicRemovals,omitempty"`
 	// Immutable derived index for display copies; never serialized.
-	adoptedTopics map[string]map[string]bool
-	extra         map[string]json.RawMessage
+	adoptedTopics    map[string]map[string]bool
+	sourceIdentities *sourceIdentityIndex
+	extra            map[string]json.RawMessage
 }
 
 type Store struct {
@@ -134,6 +135,7 @@ func (r *ReadSnapshot) cloneState(projection bool) State {
 			SessionStates: state.SessionStates, SourceMappings: state.SourceMappings, Presentation: state.Presentation,
 			adoptedTopics: r.adoptedTopics}
 	}
+	state.sourceIdentities = r.state.sourceIdentities
 	return cloneSnapshot(state)
 }
 

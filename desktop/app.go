@@ -2686,7 +2686,7 @@ func (a *App) ListTrashedSessions() []SessionMeta {
 			if !explicitlyDeletedLegacyEntry(path) {
 				continue
 			}
-			if _, adopted := state.SourceMappings[desktopSourceKey(path, "")]; adopted {
+			if _, adopted, err := state.ResolveSource(desktopSourceKey(path, "")); adopted || err != nil {
 				continue
 			}
 			infos, err := agent.ListSessions(filepath.Dir(path))
@@ -3293,7 +3293,7 @@ func (a *App) purgeTrashedSession(path string, requireRedundantRecovery bool) er
 	if err != nil {
 		return err
 	}
-	if _, adopted := state.SourceMappings[desktopSourceKey(path, "")]; adopted {
+	if _, adopted, err := state.ResolveSource(desktopSourceKey(path, "")); adopted || err != nil {
 		return errors.New("the historical source is preserved for its restored session")
 	}
 	if !explicitlyDeletedLegacyEntry(path) {

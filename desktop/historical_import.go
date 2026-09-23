@@ -227,7 +227,11 @@ func historicalImportView(state workspacestate.State, id string, source historic
 		view = HistoricalSessionView{ID: id, Title: filepath.Base(source.path), Format: source.format, Status: "available"}
 	}
 	view.Source = &SessionSourceRef{HostID: localDesktopHostID, SourceKey: desktopSourceKey(source.path, source.head), Path: source.path, HeadID: source.head}
-	mapping, ok := historicalMappingForSource(state, id)
+	mapping, ok, err := historicalMappingForSource(state, id)
+	if err != nil {
+		view.Status, view.ErrorCode, view.Session = "failed", "target_changed", nil
+		return view
+	}
 	if !ok {
 		return view
 	}
@@ -245,21 +249,24 @@ func historicalSourceKeyMatches(mappingKey, sourceID string) bool {
 	return mappingKey == sourceID || strings.HasPrefix(mappingKey, sourceID+":review:")
 }
 
-func historicalMappingForSource(state workspacestate.State, sourceID string) (workspacestate.SourceMapping, bool) {
-	if mapping, ok := state.SourceMappings[sourceID]; ok {
-		return mapping, true
+func historicalMappingForSource(state workspacestate.State, sourceID string) (workspacestate.SourceMapping, bool, error) {
+	if mapping, ok, err := state.ResolveSource(sourceID); ok || err != nil {
+		return mapping, ok, err
 	}
 	keys := make([]string, 0, len(state.SourceMappings))
 	for key := range state.SourceMappings {
-		if historicalSourceKeyMatches(key, sourceID) {
-			keys = append(keys, key)
+		for _, alias := range state.SourceKeys(key) {
+			if historicalSourceKeyMatches(alias, sourceID) {
+				keys = append(keys, key)
+				break
+			}
 		}
 	}
 	sort.Strings(keys)
 	if len(keys) == 0 {
-		return workspacestate.SourceMapping{}, false
+		return workspacestate.SourceMapping{}, false, nil
 	}
-	return state.SourceMappings[keys[0]], true
+	return state.SourceMappings[keys[0]], true, nil
 }
 
 func (c *historicalImportCoordinator) initialize(ctx context.Context) {
@@ -506,9 +513,10 @@ func (a *App) importHistoricalSource(ctx context.Context, id string, source hist
 	if result, handled, err := a.resumeConflictingHistoricalVersion(ctx, state, source, workspace); handled {
 		return result, err
 	}
-	migration := desktopMigrationSource{scope: source.scope, workspaceRoot: source.root, headID: source.head, versionFingerprint: source.version}
+	migration := desktopMigrationSource{scope: source.scope, workspaceRoot: source.root, headID: source.head, versionFingerprint: source.version, registeredSourceKey: id}
 	if resume := pendingHistoricalOperation(state, id); resume != nil {
 		migration.operationID = resume.ID
+		migration.registeredSourceKey = resume.Mapping.SourceKey
 	}
 	err = a.convertHistoricalSource(ctx, source, migration, workspace)
 	if err != nil {
@@ -518,7 +526,10 @@ func (a *App) importHistoricalSource(ctx context.Context, id string, source hist
 	if err != nil {
 		return SessionRestoreResult{}, err
 	}
-	mapping, ok := state.SourceMappings[id]
+	mapping, ok, err := state.ResolveSource(id)
+	if err != nil {
+		return SessionRestoreResult{}, err
+	}
 	if !ok {
 		return SessionRestoreResult{}, errors.New("historical import has not committed")
 	}

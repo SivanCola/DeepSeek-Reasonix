@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -29,6 +30,9 @@ func desktopSourceKey(path, head string) string {
 }
 
 func (source desktopMigrationSource) mappingKey(path string) string {
+	if source.registeredSourceKey != "" {
+		return source.registeredSourceKey
+	}
 	key := desktopSourceKey(path, source.headID)
 	if source.versionFingerprint != "" {
 		key += ":review:" + source.versionFingerprint
@@ -276,7 +280,7 @@ func (a *App) resolveDesktopImportTarget(ctx context.Context, query *session.Que
 	for _, op := range state.PendingOperations {
 		// Explicit source versions reserve their own mapping key. Recover the
 		// exact reservation even when the imported manifest has no provenance.
-		if op.Mapping == nil || op.Mapping.SourceKey != mappingKey || op.Mapping.Fingerprint != fingerprint || len(op.SessionIDs) != 1 {
+		if op.Mapping == nil || !slices.Contains(state.SourceKeys(op.Mapping.SourceKey), mappingKey) || op.Mapping.Fingerprint != fingerprint || len(op.SessionIDs) != 1 {
 			continue
 		}
 		id := op.SessionIDs[0]
@@ -300,7 +304,10 @@ func (a *App) legacyCanonicalRef(ctx context.Context, path string) (session.Sess
 	if err != nil {
 		return session.SessionRef{}, false, err
 	}
-	mapping, adopted := snapshot.Source(desktopSourceKey(path, ""))
+	mapping, adopted, err := snapshot.ResolveSource(desktopSourceKey(path, ""))
+	if err != nil {
+		return session.SessionRef{}, false, err
+	}
 	if !adopted {
 		// DAG migration records each head separately. A path-only legacy tab
 		// still refers to the selected head, not a new import of that path.
@@ -315,7 +322,10 @@ func (a *App) legacyCanonicalRef(ctx context.Context, path string) (session.Sess
 			}
 			for _, head := range heads {
 				if head.Selected && !head.Retired {
-					mapping, adopted = snapshot.Source(desktopSourceKey(path, head.ID))
+					mapping, adopted, err = snapshot.ResolveSource(desktopSourceKey(path, head.ID))
+					if err != nil {
+						return session.SessionRef{}, false, err
+					}
 					break
 				}
 			}

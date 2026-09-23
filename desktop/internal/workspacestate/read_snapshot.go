@@ -41,6 +41,7 @@ type snapshotVerification struct {
 }
 
 func (s *Store) publishSnapshotLocked(body []byte, state State) {
+	state.sourceIdentities = newSourceIdentityIndex(state)
 	r := &ReadSnapshot{state: state, owners: make(map[string]string), conflicts: make(map[string]bool), activeTopics: make(map[string]int), headSources: make(map[string]bool), versions: NewReadVersions(state)}
 	r.adoptedTopics = adoptedTopicIndex(state)
 	for key, workspace := range state.Workspaces {
@@ -146,8 +147,12 @@ func (r *ReadSnapshot) Session(id string) SessionMetadata {
 }
 
 func (r *ReadSnapshot) Source(key string) (SourceMapping, bool) {
-	mapping, ok := r.state.SourceMappings[key]
-	return cloneSourceMapping(mapping), ok
+	mapping, ok, _ := r.state.ResolveSource(key)
+	return mapping, ok
+}
+
+func (r *ReadSnapshot) ResolveSource(key string) (SourceMapping, bool, error) {
+	return r.state.ResolveSource(key)
 }
 
 func sourcePathKey(path string) (string, error) {

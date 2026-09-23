@@ -181,7 +181,9 @@ func (a *App) materializeProjectTopics(req ProjectTopicPageRequest, reader works
 	adoptedTopics := state.AdoptedTopicIDs(workspaceID)
 	for _, m := range state.SourceMappings {
 		if m.WorkspaceID == workspaceID {
-			adopted["source\x00local\x00"+m.SourceKey] = true
+			for _, key := range state.SourceKeys(m.SourceKey) {
+				adopted["source\x00local\x00"+key] = true
+			}
 			if sourceMappingHasPathAlias(m) {
 				adopted[sessionRuntimeKey(m.Path)] = true
 			}

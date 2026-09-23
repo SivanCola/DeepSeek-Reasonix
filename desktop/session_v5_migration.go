@@ -162,6 +162,7 @@ func slogWarnDesktopMigration(err error) {
 
 type desktopMigrationSource struct {
 	operationID         string
+	registeredSourceKey string
 	headID              string
 	deferArchive        bool
 	versionFingerprint  string

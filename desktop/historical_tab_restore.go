@@ -23,7 +23,7 @@ func (a *App) savedTabHistoricalSource(entry desktopTabEntry, evidence savedTabR
 	}
 	path := agent.CanonicalSessionPath(entry.SessionPath)
 	key := desktopSourceKey(path, entry.SessionHeadID)
-	if _, adopted := historicalMappingForSource(evidence.registry, key); adopted {
+	if _, adopted, err := historicalMappingForSource(evidence.registry, key); adopted || err != nil {
 		return nil
 	}
 	// The saved identity is already known. Stat just this source, without

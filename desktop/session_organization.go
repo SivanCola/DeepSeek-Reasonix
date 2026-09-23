@@ -204,7 +204,9 @@ func workspaceSourceAliases(state workspacestate.State, workspaceID string) map[
 		if m.WorkspaceID != workspaceID {
 			continue
 		}
-		result[m.SessionID] = append(result[m.SessionID], "source\x00local\x00"+m.SourceKey)
+		for _, key := range state.SourceKeys(m.SourceKey) {
+			result[m.SessionID] = append(result[m.SessionID], "source\x00local\x00"+key)
+		}
 		if sourceMappingHasPathAlias(m) {
 			result[m.SessionID] = append(result[m.SessionID], "path\x00"+m.Path)
 		}
@@ -221,7 +223,9 @@ func sourceAliases(state workspacestate.State, workspaceID, sessionID string) []
 		if m.WorkspaceID != workspaceID || m.SessionID != sessionID {
 			continue
 		}
-		aliases = append(aliases, "source\x00local\x00"+m.SourceKey)
+		for _, key := range state.SourceKeys(m.SourceKey) {
+			aliases = append(aliases, "source\x00local\x00"+key)
+		}
 		if sourceMappingHasPathAlias(m) {
 			aliases = append(aliases, "path\x00"+m.Path)
 		}
@@ -316,7 +320,7 @@ func applyResolvedOrganizationMutation(state *workspacestate.State, workspaceID 
 			if target.Source == nil || target.Source.SourceKey == "" {
 				return workspacestate.ErrMutationConflict
 			}
-			if _, adopted := state.SourceMappings[target.Source.SourceKey]; adopted {
+			if _, adopted, err := state.ResolveSource(target.Source.SourceKey); adopted || err != nil {
 				return workspacestate.ErrMutationConflict
 			}
 			continue

@@ -1,6 +1,7 @@
 package workspacestate
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -442,28 +443,41 @@ func cancelPreparedPurge(state *State, id string) {
 
 func samePurgeIdentity(left, right Operation) bool {
 	return left.ID == right.ID && left.Kind == "purge" && right.Kind == "purge" && left.Lifecycle == right.Lifecycle &&
-		left.ExpectedGeneration == right.ExpectedGeneration && slices.Equal(left.SessionIDs, right.SessionIDs)
+		left.ExpectedGeneration == right.ExpectedGeneration && slices.Equal(left.SessionIDs, right.SessionIDs) && bytes.Equal(left.Request, right.Request)
 }
 
 // BeginPurge atomically validates the archived generation, publishes the
 // deletion tombstone and records the resumable purge operation.
 func (s *Store) BeginPurge(ctx context.Context, id string, expected uint64) error {
-	return s.beginOrResumePurge(ctx, id, expected, nil)
+	return s.beginOrResumePurge(ctx, id, expected, nil, false)
+}
+
+// PurgeSourceCleanup records the exact adopted sources eligible for an explicit
+// deletion request. Older purge journals without this request retain originals.
+// Multi-file legacy DAGs are retained: their independent heads and artifacts
+// cannot be deleted as one canonical session directory.
+type PurgeSourceCleanup struct {
+	Version int             `json:"sourceCleanupVersion"`
+	Sources []SourceMapping `json:"sources"`
+}
+
+func (s *Store) BeginPurgeWithSources(ctx context.Context, id string, expected uint64) error {
+	return s.beginOrResumePurge(ctx, id, expected, nil, true)
 }
 
 // ResumePurge continues only the observed operation. It cannot recreate a
 // deletion intent after a restore superseded that operation.
 func (s *Store) ResumePurge(ctx context.Context, id string, observed Operation) error {
-	return s.beginOrResumePurge(ctx, id, observed.ExpectedGeneration, &observed)
+	return s.beginOrResumePurge(ctx, id, observed.ExpectedGeneration, &observed, false)
 }
 
 // ResumePurgeForRequest keeps both the request snapshot and the observed
 // transaction identity. Neither may be refreshed while waiting for locks.
 func (s *Store) ResumePurgeForRequest(ctx context.Context, id string, expected uint64, observed Operation) error {
-	return s.beginOrResumePurge(ctx, id, expected, &observed)
+	return s.beginOrResumePurge(ctx, id, expected, &observed, false)
 }
 
-func (s *Store) beginOrResumePurge(ctx context.Context, id string, expected uint64, observed *Operation) error {
+func (s *Store) beginOrResumePurge(ctx context.Context, id string, expected uint64, observed *Operation, cleanupSources bool) error {
 	stale := false
 	err := s.mutate(ctx, func(state *State) error {
 		key := "purge-" + id
@@ -500,7 +514,23 @@ func (s *Store) beginOrResumePurge(ctx context.Context, id string, expected uint
 			if !known || status.Lifecycle != Archived || status.Generation > expected {
 				return ErrMutationConflict
 			}
-			state.PendingOperations[key] = Operation{ID: key, Kind: "purge", Phase: "tombstoned", Lifecycle: Deleted, SessionIDs: []string{id}, ExpectedGeneration: status.Generation}
+			op := Operation{ID: key, Kind: "purge", Phase: "tombstoned", Lifecycle: Deleted, SessionIDs: []string{id}, ExpectedGeneration: status.Generation}
+			if cleanupSources {
+				plan := PurgeSourceCleanup{Version: 1}
+				for _, mapping := range state.SourceMappings {
+					if mapping.SessionID == id && mapping.Format == "canonical" && mapping.HeadID == "" {
+						mapping.RetainedArtifacts = nil
+						plan.Sources = append(plan.Sources, mapping)
+					}
+				}
+				slices.SortFunc(plan.Sources, func(a, b SourceMapping) int { return strings.Compare(a.SourceKey, b.SourceKey) })
+				var err error
+				op.Request, err = json.Marshal(plan)
+				if err != nil {
+					return err
+				}
+			}
+			state.PendingOperations[key] = op
 			setLifecycle(state, id, Deleted)
 			return nil
 		default:

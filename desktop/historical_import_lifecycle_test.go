@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -212,6 +214,16 @@ func TestHistoricalQueueRestartsPaused(t *testing.T) {
 }
 
 func TestHistoricalSourceUpdateImportsOneStableBranch(t *testing.T) {
+	for _, oldIdentity := range []bool{false, true} {
+		name := "current"
+		if oldIdentity {
+			name = "old-identity"
+		}
+		t.Run(name, func(t *testing.T) { testHistoricalSourceUpdateImportsOneStableBranch(t, oldIdentity) })
+	}
+}
+
+func testHistoricalSourceUpdateImportsOneStableBranch(t *testing.T, oldIdentity bool) {
 	isolateDesktopUserDirs(t)
 	old := coldV4MigrationFixture(t, config.SessionStoreDir(), "updated-source")
 	app := newHistoricalLifecycleApp(t)
@@ -222,6 +234,9 @@ func TestHistoricalSourceUpdateImportsOneStableBranch(t *testing.T) {
 	base, err := app.ImportHistoricalSession(list.Items[0].ID)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if oldIdentity {
+		rewriteHistoricalSourceIdentityForTest(t, app, list.Items[0].ID)
 	}
 	binding, err := old.Open(t.Context(), session.SessionRef{HostID: "migration-source", SessionID: "updated-source"})
 	if err != nil {
@@ -507,14 +522,19 @@ func TestHistoricalImportDoesNotReviveArchivedOrDeletedTarget(t *testing.T) {
 			if state.SessionStates[result.Session.SessionID].Lifecycle != lifecycle || len(state.Workspaces[workspacestate.GlobalWorkspaceID].SessionIDs) != retainedMemberships || len(state.SourceMappings) != 1 {
 				t.Fatalf("rescan/import revived target: %+v", state)
 			}
-			assertStartupHistorySourceUnchanged(t, root, "retained-source", original)
+			if lifecycle == workspacestate.Archived {
+				assertStartupHistorySourceUnchanged(t, root, "retained-source", original)
+			} else if _, err := os.Stat(filepath.Join(root, "retained-source")); !os.IsNotExist(err) {
+				t.Fatalf("exclusive original survived purge: %v", err)
+			}
 		})
 	}
 }
 
 func TestHistoricalImportResumesPriorDurablePhase(t *testing.T) {
-	for _, phase := range []string{"prepared", "content_ready", "content_ready_old_metadata"} {
-		t.Run(phase, func(t *testing.T) {
+	for _, scenario := range []string{"prepared", "content_ready", "content_ready_old_metadata", "prepared_old_identity", "content_ready_old_identity"} {
+		t.Run(scenario, func(t *testing.T) {
+			phase := strings.TrimSuffix(scenario, "_old_identity")
 			isolateDesktopUserDirs(t)
 			root := config.SessionStoreDir()
 			const sessionID = "interrupted-source"
@@ -559,6 +579,9 @@ func TestHistoricalImportResumesPriorDurablePhase(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
+			}
+			if strings.HasSuffix(scenario, "_old_identity") {
+				rewriteHistoricalSourceIdentityForTest(t, app, desktopSourceKey(path, ""))
 			}
 			before, err := app.workspaceRegistry().Load(t.Context())
 			if err != nil {

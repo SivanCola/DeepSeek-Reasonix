@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reasonix/internal/agent"
 	"reasonix/internal/session"
+	"slices"
 	"strings"
 )
 
@@ -17,14 +18,18 @@ func (a *App) resolveSourceSessionTarget(selector SessionSelector, allowArchived
 		return SessionTarget{}, newSessionOperationError("target_not_found", "The source no longer exists.")
 	}
 	key := desktopSourceKey(source.Path, source.HeadID)
-	if source.SourceKey != "" && source.SourceKey != key {
-		return SessionTarget{}, newSessionOperationError("target_changed", "The source identity changed.")
-	}
 	state, err := a.workspaceRegistry().Load(a.bootContext())
 	if err != nil {
 		return SessionTarget{}, err
 	}
-	if mapping, ok := state.SourceMappings[key]; ok {
+	if source.SourceKey != "" && !slices.Contains(state.SourceKeys(source.SourceKey), key) {
+		return SessionTarget{}, newSessionOperationError("target_changed", "The source identity changed.")
+	}
+	mapping, ok, err := state.ResolveSource(key)
+	if err != nil {
+		return SessionTarget{}, err
+	}
+	if ok {
 		return a.resolveCanonicalSessionTargetState(session.SessionRef{HostID: localDesktopHostID, SessionID: mapping.SessionID}, selector.TopicID, allowArchived)
 	}
 	if source.HeadID == "" {
