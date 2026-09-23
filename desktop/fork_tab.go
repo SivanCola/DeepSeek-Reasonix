@@ -11,6 +11,7 @@ import (
 	"reasonix/internal/agent"
 	"reasonix/internal/config"
 	"reasonix/internal/control"
+	"reasonix/internal/session"
 	"reasonix/internal/worktree"
 )
 
@@ -204,6 +205,7 @@ func (a *App) openForkedSessionTabWithWorkspace(sourceTab *WorkspaceTab, locator
 	toolApprovalMode := currentTabToolApprovalMode(sourceTab)
 	disabledMCP := cloneServerViewMap(sourceTab.disabledMCP)
 	mcpOrder := append([]string(nil), sourceTab.mcpOrder...)
+	sourceCtrl := sourceTab.Ctrl
 	a.mu.RUnlock()
 	if scope == "project" {
 		releaseAdmission, err := a.beginWorkspaceRuntimeAdmission(workspaceRoot)
@@ -215,9 +217,13 @@ func (a *App) openForkedSessionTabWithWorkspace(sourceTab *WorkspaceTab, locator
 
 	topicID := newTopicID()
 	topicTitle := a.forkTopicTitle(sourceTitle)
+	titleSource := topicTitleSourceManual
 	exclusiveV3 := false
-	if identity, ok := sourceTab.Ctrl.(control.IdentityLifecycle); ok {
+	if identity, ok := sourceCtrl.(control.IdentityLifecycle); ok {
 		exclusiveV3 = identity.UsesExclusiveSession()
+	}
+	if exclusiveV3 != (locator.SessionID != "") {
+		return forkedSessionTabOpen{}, fmt.Errorf("fork tab locator does not match the source session engine")
 	}
 	if exclusiveV3 {
 		// The registry owns the canonical row's topic and title. Publish both
@@ -226,6 +232,24 @@ func (a *App) openForkedSessionTabWithWorkspace(sourceTab *WorkspaceTab, locator
 		if err := a.workspaceRegistry().EnsureSessionTopic(a.bootContext(), locator.SessionID, topicID, topicTitle); err != nil {
 			return forkedSessionTabOpen{}, err
 		}
+		// Presentation is durable now, even if the source closes before tab
+		// publication. Invalidate any page loaded by the membership event.
+		root := ""
+		if scope == "project" {
+			root = workspaceRoot
+		}
+		a.emitProjectTreeChangedV2(a.currentSessionCatalogStatus().Revision, []string{root}, "membership")
+		// A previous attempt may have persisted the presentation without opening
+		// a tab. Reuse that identity and name instead of publishing a new topic
+		// that cannot address the existing sidebar row.
+		snapshot, err := a.workspaceRegistry().VerifySnapshot(a.bootContext())
+		if err != nil {
+			return forkedSessionTabOpen{}, err
+		}
+		presentation := snapshot.Session(locator.SessionID).Presentation
+		topicID = presentation.TopicID
+		topicTitle, titleSource = a.canonicalTabTitleWithPresentation(a.bootContext(), presentation,
+			session.SessionRef{HostID: localDesktopHostID, SessionID: locator.SessionID})
 	}
 	titleRoot := workspaceRoot
 	if scope == "global" {
@@ -265,17 +289,13 @@ func (a *App) openForkedSessionTabWithWorkspace(sourceTab *WorkspaceTab, locator
 	}
 	newTabID := a.newUniqueTabIDLocked()
 	childPath, childID := locator.SessionPath, locator.SessionID
-	if exclusiveV3 != (childID != "") {
-		a.mu.Unlock()
-		return opened, fmt.Errorf("fork tab locator does not match the source session engine")
-	}
 	tab := &WorkspaceTab{
 		ID:               newTabID,
 		Scope:            scope,
 		WorkspaceRoot:    workspaceRoot,
 		TopicID:          topicID,
 		TopicTitle:       topicTitle,
-		topicTitleSource: topicTitleSourceManual,
+		topicTitleSource: titleSource,
 		SessionPath:      childPath,
 		SessionID:        childID,
 		model:            model,
@@ -304,11 +324,6 @@ func (a *App) openForkedSessionTabWithWorkspace(sourceTab *WorkspaceTab, locator
 	if childPath != "" {
 		a.emitProjectTreeChangedForSessionDirs(sessionDirectoryForPath(childPath))
 	} else {
-		root := ""
-		if scope == "project" {
-			root = workspaceRoot
-		}
-		a.emitProjectTreeChangedV2(a.currentSessionCatalogStatus().Revision, []string{root}, "membership")
 		a.emitProjectTreeChangedEvent()
 	}
 	a.startTabControllerBuild(tab)

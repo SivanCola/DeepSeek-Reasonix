@@ -360,13 +360,10 @@ func TestCreateForkForTabKeepsChildWhenTabAttachFails(t *testing.T) {
 	app.tabs["test"].SessionID = "source-1"
 	app.tabs["test"].Scope = "global"
 	app.tabs["test"].TopicTitle = "Source topic"
-	changed := make(chan struct{}, 1)
-	app.runtimeEvents.emit = func(_ context.Context, name string, _ ...any) {
-		if name == "project-tree:changed-v2" {
-			select {
-			case changed <- struct{}{}:
-			default:
-			}
+	changed := make(chan ProjectTreeChangedV2, 4)
+	app.runtimeEvents.emit = func(_ context.Context, name string, payload ...any) {
+		if name == "project-tree:changed-v2" && len(payload) == 1 {
+			changed <- payload[0].(ProjectTreeChangedV2)
 		}
 	}
 	t.Cleanup(func() { forkTabBeforePublishHookForTest.Store(nil) })
@@ -390,10 +387,17 @@ func TestCreateForkForTabKeepsChildWhenTabAttachFails(t *testing.T) {
 	if view.Opened {
 		t.Fatal("opened = true, want false when the new tab was not created")
 	}
-	select {
-	case <-changed:
-	case <-time.After(5 * time.Second):
-		t.Fatal("durable fork membership did not invalidate the sidebar after tab attach failed")
+	// The invalidation must include the persisted title, even if an earlier
+	// membership event already caused the frontend to cache a placeholder row.
+	wantRevision := app.unifiedProjectRevision(app.currentSessionCatalogStatus().Revision)
+	deadline := time.After(5 * time.Second)
+	for refreshed := false; !refreshed; {
+		select {
+		case event := <-changed:
+			refreshed = event.Revision >= wantRevision
+		case <-deadline:
+			t.Fatal("durable fork presentation did not invalidate the sidebar after tab attach failed")
+		}
 	}
 	if view.TabID != "" {
 		t.Fatalf("tabId = %q, want empty", view.TabID)
@@ -532,8 +536,26 @@ func TestCreateForkForTabReopensCompletedOperationAfterAttachFailure(t *testing.
 	if err != nil || first.Opened || first.SessionID != "recovered-child" || ctrl.creates != 1 {
 		t.Fatalf("first attach = %+v err=%v creates=%d", first, err, ctrl.creates)
 	}
+	// The durable row is usable even when opening its tab failed. A retry
+	// must preserve a title chosen through that row in the meantime.
+	chosenTitle := "Chosen fork title"
+	if err := app.workspaceRegistry().UpdatePresentation(context.Background(), []string{first.SessionID}, &chosenTitle, nil); err != nil {
+		t.Fatal(err)
+	}
 	second, err := app.CreateForkForTab("test", anchor)
 	if err != nil || !second.Opened || second.SessionID != first.SessionID || second.OperationID != first.OperationID || ctrl.creates != 1 {
 		t.Fatalf("recovered attach = %+v err=%v creates=%d; first=%+v", second, err, ctrl.creates, first)
+	}
+	state, err := app.workspaceRegistry().Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	presentation := state.Presentation[second.SessionID]
+	app.mu.RLock()
+	tab := app.tabs[second.TabID]
+	topicID, title := tab.TopicID, tab.TopicTitle
+	app.mu.RUnlock()
+	if topicID != presentation.TopicID || title != presentation.Title {
+		t.Fatalf("retried tab presentation = %q / %q, durable sidebar = %q / %q", topicID, title, presentation.TopicID, presentation.Title)
 	}
 }
