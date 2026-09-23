@@ -1120,6 +1120,10 @@ func (a *App) repriceTabUsageForCurrentCurrency(tab *WorkspaceTab) {
 func (t *WorkspaceTab) telemetrySnapshot() tabTelemetrySnapshot {
 	t.telemMu.Lock()
 	defer t.telemMu.Unlock()
+	return t.telemetrySnapshotLocked()
+}
+
+func (t *WorkspaceTab) telemetrySnapshotLocked() tabTelemetrySnapshot {
 	records := make([]readFileRecord, len(t.readTelemetry))
 	copy(records, t.readTelemetry)
 	usage := t.usageTelemetry
@@ -1141,10 +1145,14 @@ func (t *WorkspaceTab) telemetrySnapshot() tabTelemetrySnapshot {
 // displayTelemetrySnapshot overlays the live wallet hint onto a copy used by
 // UI reads. The persisted snapshot remains the occurrence-time/original view.
 func (t *WorkspaceTab) displayTelemetrySnapshot() tabTelemetrySnapshot {
-	snapshot := t.telemetrySnapshot()
 	t.telemMu.Lock()
+	defer t.telemMu.Unlock()
+	return t.displayTelemetrySnapshotLocked()
+}
+
+func (t *WorkspaceTab) displayTelemetrySnapshotLocked() tabTelemetrySnapshot {
+	snapshot := t.telemetrySnapshotLocked()
 	quote := t.runtimeCostQuote
-	t.telemMu.Unlock()
 	if quote == nil {
 		return snapshot
 	}
@@ -6629,22 +6637,14 @@ type ChangedFileInfo struct {
 // ContextPanel returns the context usage, read files, and changed files for a
 // specific tab.
 func (a *App) ContextPanel(tabID string) ContextPanelInfo {
-	a.mu.RLock()
-	tab, ok := a.tabs[tabID]
-	var ctrl control.SessionAPI
-	if ok && tab != nil {
-		ctrl = tab.Ctrl
-	}
-	a.mu.RUnlock()
-	if !ok {
+	read := a.captureContextRead(tabID)
+	ctrl, telemetry := read.ctrl, read.telemetry
+	if read.tab == nil {
 		return ContextPanelInfo{ReadFiles: []readFileRecord{}, ChangedFiles: []ChangedFileInfo{}}
 	}
 
 	info := ContextPanelInfo{ReadFiles: []readFileRecord{}, ChangedFiles: []ChangedFileInfo{}}
 	if ctrl != nil {
-		if sp := ctrl.SessionPath(); sp != "" {
-			tab.syncTelemetryToSession(sp)
-		}
 		_, window := ctrl.ContextSnapshot()
 		info.WindowTokens = window
 		// This panel breaks the last turn down into segments, so its total must
@@ -6654,7 +6654,7 @@ func (a *App) ContextPanel(tabID string) ContextPanelInfo {
 			info.UsedTokens = u.PromptTokens + u.CompletionTokens
 		}
 		if info.UsedTokens == 0 {
-			if snap := tab.displayTelemetrySnapshot(); snap.Usage.LastUsedTokens > 0 {
+			if snap := telemetry; snap.Usage.LastUsedTokens > 0 {
 				info.UsedTokens = snap.Usage.LastUsedTokens
 			}
 		}
@@ -6669,7 +6669,7 @@ func (a *App) ContextPanel(tabID string) ContextPanelInfo {
 			// Executor rebuilt (session rebind): fall back to the telemetry-
 			// persisted per-turn breakdown so the donut chart and type
 			// breakdown show the last turn's composition instead of "other".
-			snap := tab.displayTelemetrySnapshot()
+			snap := telemetry
 			info.PromptTokens = snap.Usage.LastPromptTokens
 			info.CompletionTokens = snap.Usage.LastCompletionTokens
 			info.ReasoningTokens = snap.Usage.LastReasoningTokens
@@ -6679,7 +6679,6 @@ func (a *App) ContextPanel(tabID string) ContextPanelInfo {
 		}
 	}
 
-	telemetry := tab.displayTelemetrySnapshot()
 	if records := telemetry.ReadFiles; records != nil {
 		info.ReadFiles = records
 	}
@@ -6712,7 +6711,7 @@ func (a *App) ContextPanel(tabID string) ContextPanelInfo {
 	}
 
 	// Gather workspace changes for this tab's root.
-	if ctrl != nil && tab.WorkspaceRoot != "" {
+	if ctrl != nil && read.workspaceRoot != "" {
 		for _, meta := range ctrl.Checkpoints() {
 			for _, path := range meta.Paths {
 				info.ChangedFiles = append(info.ChangedFiles, ChangedFileInfo{
@@ -6726,6 +6725,9 @@ func (a *App) ContextPanel(tabID string) ContextPanelInfo {
 		}
 	}
 
+	if !read.current(a) {
+		return ContextPanelInfo{ReadFiles: []readFileRecord{}, ChangedFiles: []ChangedFileInfo{}}
+	}
 	return info
 }
 

@@ -1,6 +1,6 @@
 import { runtimeReadyForSubmit, needsColdHistory, metaWithoutCanonicalTodos } from "./controllerHistoryMeta";
 export { runtimeReadyForSubmit } from "./controllerHistoryMeta";
-import { usageTotalTokens, mergeChatTurnUsage } from "./controllerTurnUsage";
+import { usageTotalTokens, mergeChatTurnUsage, measuredContextPromptTokens } from "./controllerTurnUsage";
 import { reduceCompactionEvent, reduceMaintenanceRuntimeSnapshot, reconcileMaintenanceState } from "./sessionMaintenanceReducer";
 import { isCompactSubmission } from "./sessionMaintenanceOperation";
 import { isShellToolName } from "./shellToolIdentity";
@@ -1619,11 +1619,8 @@ function applyEvent(s: State, e: WireEvent, preserveToolPayloads = false): State
       const requestModelMs = updateContextGauge ? (settled.pendingRequestModelMs ?? 0) : 0;
       const requestTokens = updateContextGauge ? (hasRequestCompletion ? (e.usage?.contextCompletionTokens ?? 0) : (e.usage?.completionTokens ?? 0)) : 0;
       const lastRequestTps = updateContextGauge ? (requestTokens > 0 && requestModelMs >= 500 ? requestTokens / (requestModelMs / 1000) : null) : s.lastRequestTps;
-      // Context* is the latest sampling attempt; other token fields are billable aggregates.
-      let used = settled.context.used;
-      if (e.usage && settled.context.window && updateContextGauge) used = (e.usage.contextPromptTokens ?? 0) > 0
-        ? (e.usage.contextPromptTokens ?? 0)
-        : (e.usage.promptTokens ?? 0);
+      const used = settled.context.window && updateContextGauge
+        ? measuredContextPromptTokens(e.usage) ?? settled.context.used : settled.context.used;
       const turnTokens = settled.turnTokens + (e.usage?.completionTokens ?? 0);
       const turnOutputTokens = updateContextGauge
         ? settled.turnOutputTokens + (e.usage?.completionTokens ?? 0)
