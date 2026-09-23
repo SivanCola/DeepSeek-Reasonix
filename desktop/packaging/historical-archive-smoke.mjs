@@ -2,12 +2,12 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { packagedSmokeEnv } from "./smoke-env.mjs";
-import { closeAndVerify } from "./smoke-lifecycle.mjs";
+import { closeAndVerify, processAlive } from "./smoke-lifecycle.mjs";
 import { parseServiceReady, waitForSmokeCondition } from "./smoke-poll.mjs";
 
 const require = createRequire(new URL("../electron/package.json", import.meta.url));
@@ -26,6 +26,8 @@ const originals = ids.flatMap(id => ["manifest.json", "events.frames"].map(name 
 }));
 const checks = [];
 let application, page, pids, version, build;
+let failed = false;
+let phase = "fixture-created";
 const rpc = (method, ...args) => page.evaluate(({ method, args }) => window.reasonixDesktop.invoke(method, args), { method, args });
 async function launch() {
   application = await electron.launch({ executablePath: resolve(executable), env, timeout: 60000 });
@@ -51,6 +53,7 @@ async function launch() {
   await page.locator(".app").waitFor({ state: "visible", timeout: 60000 });
 }
 async function close() {
+  console.log(`Closing packaged application after ${phase}`);
   await closeAndVerify(application, pids);
   application = undefined;
 }
@@ -76,6 +79,7 @@ try {
   assert.ok(adopted?.source);
   const imported = await rpc("ImportHistoricalSession", adopted.id);
   await rpc("RenameSessionTarget", { ref: imported.session }, "QA previously migrated");
+  phase = "import-and-rename";
   await close();
 
   // Model a receipt from the older path-identity implementation, while the
@@ -98,6 +102,7 @@ try {
   await rpc("RestoreSessionTarget", { ref: imported.session });
   assert.equal((await rpc("ArchiveSessionTarget", { source: adopted.source })).committed, true);
   checks.push("previous receipt identity archives through sidebar and explicit historical selector");
+  phase = "archive";
   await page.screenshot({ path: join(evidence, "archived.png") });
   await close();
   await launch();
@@ -113,14 +118,31 @@ try {
   assert.equal((await rows()).length, 2);
   for (const [file, bytes] of originals) assert.deepEqual(readFileSync(file), bytes, "original history bytes must be preserved");
   checks.push("restart preserves archive; restore recovers full content; original source bytes unchanged");
+  phase = "restore";
   await page.screenshot({ path: join(evidence, "restored.png") });
   await close();
   writeFileSync(join(evidence, "results.json"), JSON.stringify({ version, commit: build.commit, platform: process.platform, arch: process.arch, checks }, null, 2));
   console.log(`PASS ${checks.join("; ")}`);
 } catch (error) {
-  writeFileSync(join(evidence, "failure.txt"), String(error));
+  failed = true;
+  const processes = Object.fromEntries(Object.entries(pids ?? {}).map(([name, pid]) => [name, { pid, alive: processAlive(pid) }]));
+  writeFileSync(join(evidence, "failure.txt"), JSON.stringify({ error: String(error), phase, processes }, null, 2));
+  for (const name of ["shell.log", "service.log", "recovery.log"]) {
+    const file = join(home, "desktop-shell", "logs", name);
+    if (existsSync(file)) copyFileSync(file, join(evidence, name));
+  }
+  console.error(`Archive acceptance failed during ${phase}: ${error}`);
   if (page && !page.isClosed()) await page.screenshot({ path: join(evidence, "failure.png") }).catch(() => {});
   throw error;
 } finally {
-  if (application) await close();
+  if (application && !failed) await close();
+  if (failed) {
+    // Failure cleanup is not evidence of normal shutdown. Limit termination to
+    // the exact isolated application and service identified by this harness.
+    for (const pid of Object.values(pids ?? {})) {
+      if (!processAlive(pid)) continue;
+      if (process.platform === "win32") execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"]);
+      else process.kill(pid, "SIGKILL");
+    }
+  }
 }

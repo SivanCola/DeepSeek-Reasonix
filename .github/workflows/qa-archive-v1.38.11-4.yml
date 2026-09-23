@@ -20,8 +20,6 @@ jobs:
         include:
           - os: windows-latest
             artifact: Reasonix-v1.38.11-4-windows-x64
-          - os: macos-15
-            artifact: Reasonix-v1.38.11-4-macOS-universal
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     defaults:
