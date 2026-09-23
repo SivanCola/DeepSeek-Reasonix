@@ -14,7 +14,7 @@ import { releaseReadSnapshot } from "../lib/readSnapshot";
 import { sessionCatalogNotice } from "../lib/sessionCatalogPresentation";
 import { sessionTitleErrorKey, sessionTitleTarget } from "../lib/sessionTitleOperation";
 import { useSessionTitleOperation } from "../lib/useSessionTitleOperation";
-import { isRuntimeSessionNode, isTopicNode, loadWorkbenchSortMode, mergeIncompleteProjectTopicPage, mergeProjectTopicPage, projectTreeDedupedExactTime, projectTreeEventAffectsFolder, projectTreeFolderDisclosure, projectTreeRevisionIsFresh, projectTreeShellChildren, projectTreeShellSignature, projectTreeShouldApplyShellSnapshot, projectTreeShouldRenderTopicActions, projectTreeShouldSuppressOpenForRename, projectTreeTopicArchiveBlocked, projectTreeTopicHasUnreadActivity, projectTreeTopicMenuOffersPin, projectTreeTopicMetaLine, projectTreeTopicOpenRequest, projectTreeTopicPageIsFresh, projectTreeWithoutSession, projectTreeWithoutTopic, projectTreeWithSessionTitle, projectTreeWithTopicTitle, topicActivityDateLabel, topicActivityLabel, topicIsActive, topicStatus, topicStatusLabel, topicUnknownTimeLabel, WORKBENCH_SORT_KEY, workspaceDraftBadge, type ProjectTreePendingTopicOpen, type WorkbenchSortMode } from "../lib/projectTreeTopic";
+import { isRuntimeSessionNode, isTopicNode, loadWorkbenchSortMode, mergeIncompleteProjectTopicPage, mergeProjectTopicPage, projectTreeDedupedExactTime, projectTreeEventAffectsFolder, projectTreeFolderDisclosure, projectTreeRevisionIsFresh, projectTreeShellChildren, projectTreeShellSignature, projectTreeShouldApplyShellSnapshot, projectTreeShouldRenderTopicActions, projectTreeShouldSuppressOpenForRename, projectTreeTopicArchiveBlocked, projectTreeTopicHasUnreadActivity, projectTreeTopicMenuOffersPin, projectTreeTopicMetaLine, projectTreeTopicOpenRequest, projectTreeTopicPageIsFresh, projectTreeWithoutSession, projectTreeWithoutTopic, projectTreeWithSessionTitle, projectTreeWithTopicTitle, topicActivityDateLabel, topicActivityLabel, topicIsActive, topicStatus, topicStatusLabel, topicUnknownTimeLabel, WORKBENCH_SORT_KEY, type ProjectTreePendingTopicOpen, type WorkbenchSortMode } from "../lib/projectTreeTopic";
 export * from "../lib/projectTreeTopic";
 import { arrangeWorkbenchTree, splitPinnedProjectTree, type PinnedTreeSections } from "../lib/projectTreePresentation";
 export * from "../lib/projectTreePresentation";
@@ -120,8 +120,6 @@ export function ProjectTree({
   showShortcutBadges = false,
   shortcutPlatform,
   onVisibleTopicsChange,
-  draftSummaries = [],
-  onOpenDraft,
 }: ProjectTreeProps) {
   const t = useT();
   const { showToast } = useToast();
@@ -1491,7 +1489,6 @@ export function ProjectTree({
     const projectPath = node.root ?? "";
     const colorTargetRoot = scope === "global" ? "" : projectPath;
     const projectLabel = scope === "global" && !node.remote ? defaultWorkspaceTitle(node.label) : node.label || "Untitled";
-    const workspaceDraft = workspaceDraftBadge(draftSummaries, scope, projectRoot);
     const projectPinned = Boolean(node.pinned);
     const projectActive = node.remote ? Boolean(activeRemote && remoteProjectKey(activeRemote) === remoteProjectKey(node.remote)) : activeScope === scope && (scope === "global" || activeWorkspaceRoot === node.root);
     const projectMenuOpen = menuProject?.key === key;
@@ -1817,19 +1814,6 @@ export function ProjectTree({
             <span className={`project-tree__folder-label${!hasChildren ? " project-tree__folder-label--empty" : ""}`}>
               {projectLabel}
               {node.isolatedWorktree && <WorktreeBadge size={11} />}
-              {workspaceDraft ? <span
-                className={`project-tree__draft-badge${workspaceDraft.state && workspaceDraft.state !== "saved" ? ` project-tree__draft-badge--${workspaceDraft.state}` : ""}`}
-                role="button"
-                tabIndex={0}
-                title={workspaceDraft.state && workspaceDraft.state !== "saved" ? workspaceDraft.state : undefined}
-                onClick={(event) => { event.stopPropagation(); void onOpenDraft?.(scope, projectRoot); }}
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter" && event.key !== " ") return;
-                  event.preventDefault();
-                  event.stopPropagation();
-                  void onOpenDraft?.(scope, projectRoot);
-                }}
-              >{t("draft.badge")}</span> : null}
               {node.remote ? <span className={`project-tree__remote-badge project-tree__remote-badge--${remoteServeBadgeState(remoteServers[node.remote.hostId]?.[node.remote.workspace], remoteGroupBusy[remoteProjectKey(node.remote)])}`} aria-hidden="true" /> : null}
             </span>
             <ProjectTreeFolderActivity folder={node} />

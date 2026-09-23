@@ -550,8 +550,19 @@ func (s *Store) CompletePurge(ctx context.Context, id string) error {
 			return ErrMutationConflict
 		}
 		for key, workspace := range state.Workspaces {
+			if slices.Contains(workspace.SessionIDs, id) {
+				op.WorkspaceID = workspace.ID
+			}
 			workspace.SessionIDs = remove(workspace.SessionIDs, id)
 			state.Workspaces[key] = workspace
+		}
+		// The content and presentation can go, but their topic ownership must
+		// survive: otherwise a residual metadata row looks like a new topic.
+		if topicID := state.Presentation[id].TopicID; topicID != "" {
+			if op.Presentation == nil {
+				op.Presentation = &Presentation{}
+			}
+			op.Presentation.TopicID = topicID
 		}
 		delete(state.Presentation, id)
 		op.Phase, op.ResultGeneration = "committed", state.Generation+1

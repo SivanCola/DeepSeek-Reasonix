@@ -2328,6 +2328,9 @@ func (a *App) openTopicTabWithActivation(scope, workspaceRoot, topicID, sessionP
 }
 
 func (a *App) openTopicTabWithHead(scope, workspaceRoot, topicID, sessionPath, headID string, activate bool, navigation ...uint64) (TabMeta, error) {
+	if err := a.validatePlaceholderTopicOpen(topicID, sessionPath); err != nil {
+		return TabMeta{}, err
+	}
 	target, canonical, err := a.canonicalTopicOpen(sessionPath)
 	if err != nil {
 		return TabMeta{}, err

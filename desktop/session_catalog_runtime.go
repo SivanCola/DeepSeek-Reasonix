@@ -93,6 +93,11 @@ func (a *App) metadataProjectTopics(scope, workspaceRoot string) []ProjectNode {
 	for _, topicID := range f.DeletedTopics {
 		deleted[topicID] = true
 	}
+	if state, err := a.workspaceRegistry().Load(a.bootContext()); err == nil {
+		for topicID := range purgedCanonicalTopicIDs(state) {
+			deleted[topicID] = true
+		}
+	}
 	ids := f.GlobalTopics
 	pinnedIDs := f.GlobalPinnedTopics
 	manualOrder := f.GlobalManualTopicOrder
