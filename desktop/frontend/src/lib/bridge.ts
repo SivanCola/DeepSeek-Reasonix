@@ -5361,6 +5361,7 @@ function makeMockApp(): MockAppBindings {
         topicId: _topicID,
         topicTitle: topicLabel(_topicID, t("mock.newSession")),
         sessionPath: `/mock/sessions/${_topicID}.jsonl`,
+        sessionGeneration: 1,
         projectColor: mockProjectTree.find((node) => node.root === workspaceRoot)?.projectColor,
         label: mockModelLabel(settings.defaultModel),
         ready: true,
