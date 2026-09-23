@@ -181,6 +181,58 @@ func normalizeForkedSessionLocator(sourceTab *WorkspaceTab, locator forkedSessio
 	return locator, nil
 }
 
+// prepareForkedTopic commits the presentation before a tab can publish it.
+// Retries reuse the durable topic identity rather than making a second one.
+func (a *App) prepareForkedTopic(locator forkedSessionLocator, scope, workspaceRoot, sourceTitle string, sourceCtrl control.SessionAPI) (string, string, string, error) {
+	topicID := newTopicID()
+	topicTitle := a.forkTopicTitle(sourceTitle)
+	titleSource := topicTitleSourceManual
+	exclusiveV3 := false
+	if identity, ok := sourceCtrl.(control.IdentityLifecycle); ok {
+		exclusiveV3 = identity.UsesExclusiveSession()
+	}
+	if exclusiveV3 != (locator.SessionID != "") {
+		return "", "", "", fmt.Errorf("fork tab locator does not match the source session engine")
+	}
+	if exclusiveV3 {
+		if err := a.workspaceRegistry().EnsureSessionTopic(a.bootContext(), locator.SessionID, topicID, topicTitle); err != nil {
+			return "", "", "", err
+		}
+		// Presentation is durable even if the source closes before tab publication.
+		root := ""
+		if scope == "project" {
+			root = workspaceRoot
+		}
+		a.emitProjectTreeChangedV2(a.currentSessionCatalogStatus().Revision, []string{root}, "membership")
+		snapshot, err := a.workspaceRegistry().VerifySnapshot(a.bootContext())
+		if err != nil {
+			return "", "", "", err
+		}
+		presentation := snapshot.Session(locator.SessionID).Presentation
+		topicID = presentation.TopicID
+		topicTitle, titleSource = a.canonicalTabTitleWithPresentation(a.bootContext(), presentation,
+			session.SessionRef{HostID: localDesktopHostID, SessionID: locator.SessionID})
+		return topicID, topicTitle, titleSource, nil
+	}
+	titleRoot := workspaceRoot
+	if scope == "global" {
+		titleRoot = ""
+	}
+	if err := setTopicTitle(titleRoot, topicID, topicTitle); err != nil {
+		return "", "", "", err
+	}
+	m, _ := agent.EnsureBranchMeta(locator.SessionPath)
+	m.Scope = scope
+	m.WorkspaceRoot = workspaceRoot
+	m.TopicID = topicID
+	m.TopicTitle = topicTitle
+	if err := agent.SaveBranchMeta(locator.SessionPath, m); err != nil {
+		return "", "", "", err
+	}
+	invalidateTopicSessionIndexForPath(locator.SessionPath)
+	return topicID, topicTitle, titleSource, nil
+}
+
 // openForkedSessionTabWithWorkspace attaches an already-written fork session to a new tab,
 // optionally overriding the workspace root (e.g. for isolated Git worktrees).
 func (a *App) openForkedSessionTabWithWorkspace(sourceTab *WorkspaceTab, locator forkedSessionLocator, workspaceRootOverride string) (forkedSessionTabOpen, error) {
@@ -215,59 +267,9 @@ func (a *App) openForkedSessionTabWithWorkspace(sourceTab *WorkspaceTab, locator
 		defer releaseAdmission()
 	}
 
-	topicID := newTopicID()
-	topicTitle := a.forkTopicTitle(sourceTitle)
-	titleSource := topicTitleSourceManual
-	exclusiveV3 := false
-	if identity, ok := sourceCtrl.(control.IdentityLifecycle); ok {
-		exclusiveV3 = identity.UsesExclusiveSession()
-	}
-	if exclusiveV3 != (locator.SessionID != "") {
-		return forkedSessionTabOpen{}, fmt.Errorf("fork tab locator does not match the source session engine")
-	}
-	if exclusiveV3 {
-		// The registry owns the canonical row's topic and title. Publish both
-		// before the tab/runtime event so a fresh sidebar page cannot keep the
-		// fallback preview name until the next restart or catalog revision.
-		if err := a.workspaceRegistry().EnsureSessionTopic(a.bootContext(), locator.SessionID, topicID, topicTitle); err != nil {
-			return forkedSessionTabOpen{}, err
-		}
-		// Presentation is durable now, even if the source closes before tab
-		// publication. Invalidate any page loaded by the membership event.
-		root := ""
-		if scope == "project" {
-			root = workspaceRoot
-		}
-		a.emitProjectTreeChangedV2(a.currentSessionCatalogStatus().Revision, []string{root}, "membership")
-		// A previous attempt may have persisted the presentation without opening
-		// a tab. Reuse that identity and name instead of publishing a new topic
-		// that cannot address the existing sidebar row.
-		snapshot, err := a.workspaceRegistry().VerifySnapshot(a.bootContext())
-		if err != nil {
-			return forkedSessionTabOpen{}, err
-		}
-		presentation := snapshot.Session(locator.SessionID).Presentation
-		topicID = presentation.TopicID
-		topicTitle, titleSource = a.canonicalTabTitleWithPresentation(a.bootContext(), presentation,
-			session.SessionRef{HostID: localDesktopHostID, SessionID: locator.SessionID})
-	}
-	titleRoot := workspaceRoot
-	if scope == "global" {
-		titleRoot = ""
-	}
-	if !exclusiveV3 {
-		if err := setTopicTitle(titleRoot, topicID, topicTitle); err != nil {
-			return forkedSessionTabOpen{}, err
-		}
-		m, _ := agent.EnsureBranchMeta(locator.SessionPath)
-		m.Scope = scope
-		m.WorkspaceRoot = workspaceRoot
-		m.TopicID = topicID
-		m.TopicTitle = topicTitle
-		if err := agent.SaveBranchMeta(locator.SessionPath, m); err != nil {
-			return forkedSessionTabOpen{}, err
-		}
-		invalidateTopicSessionIndexForPath(locator.SessionPath)
+	topicID, topicTitle, titleSource, err := a.prepareForkedTopic(locator, scope, workspaceRoot, sourceTitle, sourceCtrl)
+	if err != nil {
+		return forkedSessionTabOpen{}, err
 	}
 	opened := forkedSessionTabOpen{workspaceReferenced: strings.TrimSpace(workspaceRootOverride) != ""}
 

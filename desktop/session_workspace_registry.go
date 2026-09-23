@@ -330,10 +330,8 @@ func (a *App) attachForkedDesktopSession(ctx context.Context, source *WorkspaceT
 	if err := a.workspaceRegistry().AttachSession(ctx, "", workspaceID, childSessionID, beforeID); err != nil {
 		return err
 	}
-	// Canonical forks are read from workspace membership, not from the legacy
-	// session-directory catalog. Invalidate the paged sidebar at the same point
-	// that membership becomes durable, including when opening the child tab
-	// subsequently fails. A runtime-only event cannot refresh its item keys.
+	// Canonical forks use workspace membership, not the directory catalog.
+	// Invalidate the paged sidebar even if opening the child tab later fails.
 	root := ""
 	if workspaceID != workspacestate.GlobalWorkspaceID {
 		root = workspace.Root
