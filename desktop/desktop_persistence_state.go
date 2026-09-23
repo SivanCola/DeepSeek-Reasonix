@@ -19,6 +19,7 @@ type desktopPersistenceState struct {
 	sessionUI                   *sessionui.Store
 	manualCreationMu            sync.Mutex
 	manualCreationTasks         sync.WaitGroup
+	manualCreations             *manualCreationManager
 	legacyCleanup               *legacycleanup.Store
 	desktopMigrationDone        chan struct{}
 	desktopMigrationFailed      atomic.Bool

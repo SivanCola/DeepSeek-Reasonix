@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 11;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:95bcef7eb3db3e96d29aab7f6cd7925e4b8859387ae6099dd0a0c84900a6a528";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:8c90ac73c466f7ad3ca92c37ca711b538a6416a5f3346dcc8251199e0d099370";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -172,6 +172,7 @@ export const DESKTOP_COMMANDS = [
   "EnsureBlankTab",
   "EnsureRemoteProjectSessions",
   "ExportGoalDiagnostics",
+  "ExportManualCreationDiagnostics",
   "ExportScrollDiagnostics",
   "ExportThemePack",
   "ExtensionActions",
@@ -2993,6 +2994,16 @@ export interface MCPServerInput {
   toolTimeoutSeconds: Record<string, number>;
 }
 
+export interface ManualCreationProgress {
+  status: string;
+  stage: string;
+  stageStartedAt: number;
+  elapsedMs: number;
+  nextRetryAt?: number;
+  errorCode?: string;
+  slow: boolean;
+}
+
 export interface ManualSessionCreationRequest {
   operationId: string;
   workspaceId: string;
@@ -3010,6 +3021,7 @@ export interface ManualSessionCreationView {
   phase: string;
   error?: string;
   settings: SessionDraftSettings;
+  progress?: ManualCreationProgress | null;
 }
 
 export interface MarkdownImageView {
@@ -6085,6 +6097,7 @@ export interface GeneratedDesktopCommands {
   EnsureBlankTab(arg0: string, arg1: string): Promise<TabMeta>;
   EnsureRemoteProjectSessions(arg0: string, arg1: string): Promise<RemoteSessionView[]>;
   ExportGoalDiagnostics(): Promise<string>;
+  ExportManualCreationDiagnostics(): Promise<string>;
   ExportScrollDiagnostics(arg0: string): Promise<string>;
   ExportThemePack(arg0: string, arg1: string): Promise<string>;
   ExtensionActions(arg0: string): Promise<ExtensionActionView[]>;

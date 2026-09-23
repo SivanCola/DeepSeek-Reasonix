@@ -116,11 +116,13 @@ type WorkspaceTab struct {
 	// completions wait on it to learn that the controller build finished
 	// without polling. Guarded by App.mu alongside buildGeneration; always
 	// nil-ed after close so a replacement build can install a fresh channel.
-	buildDone    chan struct{}
-	buildDoneGen uint64
-	removed      bool       // set when the visible tab is pruned/closed before build completes
-	reconcileMu  sync.Mutex // serializes stale controller workspace repair for this tab
-	turnStartMu  sync.Mutex // serializes foreground turn admission for this tab
+	buildDone       chan struct{}
+	buildDoneGen    uint64
+	buildExecution  *tabBuildExecution              // actual completion, never closed by supersession
+	buildExecutions map[*tabBuildExecution]struct{} // includes superseded builds until actual exit
+	removed         bool                            // set when the visible tab is pruned/closed before build completes
+	reconcileMu     sync.Mutex                      // serializes stale controller workspace repair for this tab
+	turnStartMu     sync.Mutex                      // serializes foreground turn admission for this tab
 
 	ActivityStatus string // transient project-tree status for the in-flight turn
 
@@ -3392,11 +3394,15 @@ func (a *App) closeTabRuntimeAdmissionHeld(tab *WorkspaceTab) {
 // same way buildController works for the single-controller App. On success it
 // wires the controller and flips Ready; on failure it stores StartupErr.
 func (a *App) startTabControllerBuild(tab *WorkspaceTab) {
+	a.startTabControllerBuildMode(tab, false)
+}
+
+func (a *App) startTabControllerBuildMode(tab *WorkspaceTab, async bool) {
 	buildCtx, cancel := context.WithCancel(a.bootContext())
 	a.mu.Lock()
 	// Historical shells are not ordinary dormant tabs. Only explicit
 	// preparation may replace their source identity before a runtime starts.
-	if tab == nil || tab.removed || tab.HistoricalSource != nil {
+	if tab == nil || tab.removed || tab.HistoricalSource != nil || a.shuttingDown.Load() {
 		a.mu.Unlock()
 		cancel()
 		return
@@ -3412,12 +3418,22 @@ func (a *App) startTabControllerBuild(tab *WorkspaceTab) {
 	}
 	tab.buildDone = make(chan struct{})
 	tab.buildDoneGen = generation
+	execution := &tabBuildExecution{done: make(chan struct{}), cancel: cancel, generation: generation}
+	tab.buildExecution = execution
+	if tab.buildExecutions == nil {
+		tab.buildExecutions = make(map[*tabBuildExecution]struct{})
+	}
+	tab.buildExecutions[execution] = struct{}{}
 	a.mu.Unlock()
-	if a.ctx == nil {
+	run := func() {
+		defer a.finishTabBuildExecution(tab, execution)
 		a.buildTabControllerWithContext(tab, loadedTabSession{}, buildCtx, generation, cancel)
+	}
+	if a.ctx == nil && !async {
+		run()
 		return
 	}
-	go a.buildTabControllerWithContext(tab, loadedTabSession{}, buildCtx, generation, cancel)
+	go run()
 }
 
 func (a *App) buildTabController(tab *WorkspaceTab) {
@@ -3499,6 +3515,7 @@ func (a *App) buildTabControllerWithContextCore(tab *WorkspaceTab, loadedSession
 		hook(tab.ID)
 	}
 	appCtx := a.ctx
+	a.reportManualBuildStage(tab, buildGeneration, "building_runtime")
 	if a.tabBuildSuperseded(tab, buildGeneration) {
 		return
 	}
@@ -3677,6 +3694,7 @@ func (a *App) buildTabControllerWithContextCore(tab *WorkspaceTab, loadedSession
 	if a.handleTabControllerBootError(tab, registration, rootKey, buildGeneration, appCtx, err) {
 		return
 	}
+	defer finishUnpublishedTabController(ctrl, buildGeneration, &keepBuildContext)
 	if a.tabBuildSuperseded(tab, buildGeneration) {
 		registration.rollback()
 		a.abandonSupersededBuild(tab, ctrl, rootKey, "")
@@ -3882,6 +3900,7 @@ func (a *App) buildTabControllerWithContextCore(tab *WorkspaceTab, loadedSession
 	// Lifecycle admission protects only the compare-and-publish boundary. Slow
 	// config, history, lease, and extension work above remains cancellable and
 	// cannot prevent shutdown from acquiring the write side.
+	a.reportManualBuildStage(tab, buildGeneration, "publishing_controller")
 	releaseDraftPublication, draftPublicationErr := a.lockDraftRuntimePublication(tabCreateOperationID)
 	if draftPublicationErr != nil {
 		registration.rollback()

@@ -652,6 +652,7 @@ export interface AppBindings extends AttachmentBindings, SessionExportBindings, 
   SavePastedFile(name: string, dataUrl: string): Promise<string>;
   PickExportFile(defaultFilename: string, mimeType: string): Promise<string>;
   ExportGoalDiagnostics(): Promise<string>;
+  ExportManualCreationDiagnostics(): Promise<string>;
   SaveExportFile(path: string, payload: string, base64Encoded: boolean): Promise<void>;
   SaveSessionMarkdownForTab(tabID: string, path: string, title: string): Promise<void>;
   SaveExportImageFiles(path: string, payloads: string[]): Promise<void>;
@@ -4397,6 +4398,9 @@ function makeMockApp(): MockAppBindings {
     async ExportGoalDiagnostics() {
       return "goal-diagnostics.json";
     },
+    async ExportManualCreationDiagnostics() {
+      return "reasonix-creation-diagnostics.json";
+    },
     async SaveExportFile(path: string, payload: string, base64Encoded: boolean) {
       const a = document.createElement("a");
       let url = "";
@@ -5361,6 +5365,7 @@ function makeMockApp(): MockAppBindings {
         topicId: _topicID,
         topicTitle: topicLabel(_topicID, t("mock.newSession")),
         sessionPath: `/mock/sessions/${_topicID}.jsonl`,
+        sessionGeneration: 1,
         projectColor: mockProjectTree.find((node) => node.root === workspaceRoot)?.projectColor,
         label: mockModelLabel(settings.defaultModel),
         ready: true,
