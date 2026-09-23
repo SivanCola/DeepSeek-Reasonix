@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -124,8 +125,14 @@ func verifyCanonicalConversionClosure(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
-	defer service.Shutdown(context.Background())
+	defer shutdownHistoricalProofService(service)
 	return service.TryExportCold(ctx, session.SessionRef{HostID: "conversion-proof", SessionID: filepath.Base(path)}, filepath.Join(tmp, "verified"))
+}
+
+func shutdownHistoricalProofService(service *session.Service) {
+	if err := service.Shutdown(context.Background()); err != nil {
+		slog.Warn("desktop: historical proof service shutdown failed", "err", err)
+	}
 }
 
 func (a *App) proveRetiredImportOrigin(ctx context.Context, state workspacestate.State, path, head, target string) error {

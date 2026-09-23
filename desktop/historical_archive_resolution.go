@@ -59,7 +59,7 @@ func (a *App) reconcileRetiredArchiveVersion(ctx context.Context, source histori
 	if err != nil {
 		return workspacestate.SourceMapping{}, true, err
 	}
-	defer old.Shutdown(context.Background())
+	defer shutdownHistoricalProofService(old)
 	digest, err := canonicalMigrationDigest(ctx, old.Query(), session.SessionRef{HostID: "archive-proof", SessionID: id})
 	if err != nil {
 		return workspacestate.SourceMapping{}, true, err

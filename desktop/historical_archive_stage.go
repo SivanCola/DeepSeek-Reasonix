@@ -154,7 +154,7 @@ func (a *App) validateHistoricalArchiveContent(ctx context.Context, source histo
 		if err != nil {
 			return err
 		}
-		defer old.Shutdown(context.Background())
+		defer shutdownHistoricalProofService(old)
 		want, err := canonicalMigrationDigest(ctx, old.Query(), session.SessionRef{HostID: "archive-proof", SessionID: filepath.Base(source.path)})
 		if err != nil {
 			return err
