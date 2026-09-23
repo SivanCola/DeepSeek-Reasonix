@@ -443,6 +443,10 @@ func (a *App) unadoptedLegacyTopics(req ProjectTopicPageRequest, adopted, adopte
 	legacyReq := req
 	legacyReq.Cursor, legacyReq.Limit = "", 200
 	legacy := ProjectTopicPage{Items: []ProjectNode{}}
+	deleted := map[string]bool{}
+	for _, topicID := range loadProjectsFile().DeletedTopics {
+		deleted[topicID] = true
+	}
 	for {
 		page, err := a.listProjectTopics(legacyReq)
 		if err != nil {
@@ -452,7 +456,16 @@ func (a *App) unadoptedLegacyTopics(req ProjectTopicPageRequest, adopted, adopte
 		legacy.Revision = max(legacy.Revision, page.Revision)
 		expanded := []ProjectNode{}
 		for _, node := range page.Items {
-			expanded = append(expanded, expandSessionSourceRows(node)...)
+			if deleted[node.TopicID] {
+				continue
+			}
+			rows := expandSessionSourceRows(node)
+			// A single visible head is also addressed by its historical path.
+			// Preserve explicit sibling identities once the source has branched.
+			if len(rows) == 1 && rows[0].Source != nil && adopted[sessionRuntimeKey(node.SessionPath)] {
+				continue
+			}
+			expanded = append(expanded, rows...)
 		}
 		for _, node := range expanded {
 			if node.Source != nil {
