@@ -4548,6 +4548,25 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/manual_creation_export.go",
+      "name": "ExportManualCreationDiagnostics",
+      "owner": "App.ExportManualCreationDiagnostics",
+      "params": [],
+      "result": {
+        "kind": "string"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [],
+        "kind": "owner-state",
+        "resolver": "App.ExportManualCreationDiagnostics"
+      },
+      "sources": [
+        "desktop/manual_creation_export.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/scroll_diagnostics_export.go",
       "name": "ExportScrollDiagnostics",
       "owner": "App.ExportScrollDiagnostics",
@@ -32933,6 +32952,54 @@
         }
       ]
     },
+    "main.ManualCreationProgress": {
+      "fields": [
+        {
+          "name": "status",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "stage",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "stageStartedAt",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "elapsedMs",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "nextRetryAt",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "errorCode",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "slow",
+          "type": {
+            "kind": "boolean"
+          }
+        }
+      ]
+    },
     "main.ManualSessionCreationRequest": {
       "fields": [
         {
@@ -33020,6 +33087,17 @@
           "type": {
             "kind": "object",
             "ref": "main.SessionDraftSettings"
+          }
+        },
+        {
+          "name": "progress",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "main.ManualCreationProgress"
+            },
+            "kind": "nullable"
           }
         }
       ]

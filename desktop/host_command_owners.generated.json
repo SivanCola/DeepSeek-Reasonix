@@ -2413,6 +2413,18 @@
       "inputs": []
     }
   },
+  "ExportManualCreationDiagnostics": {
+    "domain": "desktop/manual_creation_export.go",
+    "owner": "App.ExportManualCreationDiagnostics",
+    "sources": [
+      "desktop/manual_creation_export.go"
+    ],
+    "scope": {
+      "kind": "owner-state",
+      "resolver": "App.ExportManualCreationDiagnostics",
+      "inputs": []
+    }
+  },
   "ExportScrollDiagnostics": {
     "domain": "desktop/scroll_diagnostics_export.go",
     "owner": "App.ExportScrollDiagnostics",

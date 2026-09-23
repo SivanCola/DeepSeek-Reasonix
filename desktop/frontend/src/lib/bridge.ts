@@ -652,6 +652,7 @@ export interface AppBindings extends AttachmentBindings, SessionExportBindings, 
   SavePastedFile(name: string, dataUrl: string): Promise<string>;
   PickExportFile(defaultFilename: string, mimeType: string): Promise<string>;
   ExportGoalDiagnostics(): Promise<string>;
+  ExportManualCreationDiagnostics(): Promise<string>;
   SaveExportFile(path: string, payload: string, base64Encoded: boolean): Promise<void>;
   SaveSessionMarkdownForTab(tabID: string, path: string, title: string): Promise<void>;
   SaveExportImageFiles(path: string, payloads: string[]): Promise<void>;
@@ -4396,6 +4397,9 @@ function makeMockApp(): MockAppBindings {
     },
     async ExportGoalDiagnostics() {
       return "goal-diagnostics.json";
+    },
+    async ExportManualCreationDiagnostics() {
+      return "reasonix-creation-diagnostics.json";
     },
     async SaveExportFile(path: string, payload: string, base64Encoded: boolean) {
       const a = document.createElement("a");

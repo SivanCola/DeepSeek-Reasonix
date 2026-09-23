@@ -78,7 +78,7 @@
       "test-file-size": 26
     },
     "desktop/frontend/src/__tests__/composer-session-draft.test.tsx": {
-      "test-file-size": 532
+      "test-file-size": 535
     },
     "desktop/frontend/src/__tests__/math-golden.test.ts": {
       "test-file-size": 106
