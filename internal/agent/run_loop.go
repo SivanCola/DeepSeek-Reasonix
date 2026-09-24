@@ -259,7 +259,7 @@ func (a *Agent) runToolLoop(ctx context.Context, state *turnRuntime) (runErr err
 			if err := a.recordTruncatedToolResults(withMessageIdentity(ctx, streamed.messageID), calls); err != nil {
 				return err
 			}
-			if truncatedRounds > maxStreamRecoveries {
+			if truncatedRounds > maxToolArgumentRepairs {
 				return fmt.Errorf("tool arguments remained truncated after three recovery rounds")
 			}
 			continue
@@ -308,29 +308,6 @@ func newStreamAttemptID(_ int) string {
 	// A successful attempt retains this local identity when its message is
 	// committed. Failed attempts have distinct identities and cannot alias it.
 	return NewMessageID()
-}
-
-// streamRetrySleep is the body-retry backoff. Tests replace it with a no-op so
-// recovery suites stay fast while production keeps the Codex-shaped delays.
-var streamRetrySleep = sleepStreamRetryBackoff
-
-// sleepStreamRetryBackoff waits ~0.5s, 1s, 2s, 4s, 8s with small jitter.
-// Returns false when ctx is cancelled during the wait.
-func sleepStreamRetryBackoff(ctx context.Context, attempt int) bool {
-	return recoverySleep(ctx, time.Duration(1<<min(max(attempt-1, 0), 2))*2*time.Second)
-}
-
-var recoverySleep = sleepRecovery
-
-func sleepRecovery(ctx context.Context, delay time.Duration) bool {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-timer.C:
-		return true
-	}
 }
 
 // handleFinalResponse processes a no-tool assistant turn: recovery pause,

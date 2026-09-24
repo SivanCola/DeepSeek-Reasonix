@@ -579,26 +579,28 @@ type Messages struct {
 	WriteEnvErr               string // "write .env:" — prefix for env-write failure
 
 	// provider HTTP error explanations — actionable, reason + fix per status code
-	ProviderErrBadRequest          string // 400
-	ProviderErrContextOverflowFmt  string // 400/413/422 shared-window overflow with numbers
-	ProviderErrAuth                string // 401 — no key configured / sent
-	ProviderErrAuthRejected        string // 401 — a key was sent but the server rejected it
-	ProviderErrModelFormatMismatch string // provider rejected the model on the selected wire format
-	ProviderErrOpenCodeGoGrokRoute string // recovery hint for OpenCode Go Grok routing
-	ProviderErrQuotaExhaustedFmt   string // provider name, actual HTTP status
-	ProviderErrReasonMissing       string
-	SearchSourcesNotProvided       string
-	SearchModelUnavailable         string
-	ProtocolRecoveryLabel          string
-	ProviderErrInsufficientBalance string // 402
-	ProviderErrNotFound            string // 404
-	ProviderErrUnprocessable       string // 422
-	ProviderErrInputSensitive      string // MiniMax 1026
-	ProviderErrOutputSensitive     string // MiniMax 1027
-	ProviderErrRateLimited         string // 429
-	ProviderErrServer              string // 500
-	ProviderErrServerBusy          string // 503
-	ProviderErrWaitExhaustedFmt    string // total time waited before giving up
+	ProviderErrBadRequest           string // 400
+	ProviderErrContextOverflowFmt   string // 400/413/422 shared-window overflow with numbers
+	ProviderErrAuth                 string // 401 — no key configured / sent
+	ProviderErrAuthRejected         string // 401 — a key was sent but the server rejected it
+	ProviderErrModelFormatMismatch  string // provider rejected the model on the selected wire format
+	ProviderErrOpenCodeGoGrokRoute  string // recovery hint for OpenCode Go Grok routing
+	ProviderErrQuotaExhaustedFmt    string // provider name, actual HTTP status
+	ProviderErrReasonMissing        string
+	ProviderErrStreamInterruptedFmt string
+	ProviderErrDisconnectedFmt      string
+	SearchSourcesNotProvided        string
+	SearchModelUnavailable          string
+	ProtocolRecoveryLabel           string
+	ProviderErrInsufficientBalance  string // 402
+	ProviderErrNotFound             string // 404
+	ProviderErrUnprocessable        string // 422
+	ProviderErrInputSensitive       string // MiniMax 1026
+	ProviderErrOutputSensitive      string // MiniMax 1027
+	ProviderErrRateLimited          string // 429
+	ProviderErrServer               string // 500
+	ProviderErrServerBusy           string // 503
+	ProviderErrWaitExhaustedFmt     string // total time waited before giving up
 
 	// selection menus
 	SelectOneHint      string // "(↑/↓ · Enter · q to cancel)"

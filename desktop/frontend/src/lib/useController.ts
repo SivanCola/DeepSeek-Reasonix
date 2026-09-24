@@ -3581,7 +3581,7 @@ export function useController() {
       void reconcileRuntimeAfterRejectedMutation(tabId);
       return;
     }
-    dispatchTo(tabId, { type: "turn_submit_rejected", submissionId, error: `Send failed: ${errorMessage(error)}` });
+    dispatchTo(tabId, { type: "turn_submit_rejected", submissionId, error: `${t("error.send")}\n${errorMessage(error)}` });
     void reconcileRuntimeAfterRejectedMutation(tabId);
   }, [dispatchTo, reconcileRuntimeAfterRejectedMutation]);
 
@@ -4012,7 +4012,7 @@ export function useController() {
       if (tabId) {
         dispatchTo(tabId, { type: "hydrate_error", reason: "new-session", error: errorMessage(err) });
         void loadSessionDataForTab(tabId, true, "new-session").then(() => {
-          dispatchTo(tabId, { type: "local_notice", level: "warn", text: `New session failed: ${errorMessage(err)}` });
+          dispatchTo(tabId, { type: "local_notice", level: "warn", text: `${t("error.newSession")}\n${errorMessage(err)}` });
         });
       }
       return; // backend refused (workspace starting / failed) — keep the transcript

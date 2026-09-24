@@ -1,5 +1,6 @@
 import { createContext, lazy, Suspense, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { FileText, Globe, GitBranch, PackageOpen, Search, Terminal, Users, Wrench, X } from "lucide-react";
+import { ErrorMessage } from "./ErrorMessage";
 import { ChatSource, type ChatNode } from "../lib/chatViewSource";
 import type { ChatContentLoader } from "../lib/chatContentLoader";
 import type { ChatScrollController } from "../lib/chatScrollController";
@@ -143,7 +144,7 @@ function ChatNotice({ node, actions, scroll }: { node: Extract<ChatNode, { kind:
   // Empty delivery accounting is not a chat result. Keep meaningful records in details.
   if (summary && !summary.mutations && !summary.changed_files && !summary.checks_passed && !summary.checks_failed) return null;
   if (item.level === "warn" || item.action === "recover_context") return <div className="chat-notice" role="status" data-level={item.level}>
-    {item.title && <strong>{item.title} </strong>}{item.text}
+    {item.title && <strong>{item.title} </strong>}<ErrorMessage error={item.text} />
     {summary && <details className="chat-notice__details"><summary>{t("chat.details")}</summary><pre>{JSON.stringify(summary, null, 2)}</pre></details>}
     {item.detail && <ChatDisclosure label={t("chat.details")}><pre>{item.detail}</pre></ChatDisclosure>}
     {item.action === "recover_context" && item.recoveryId && <button className="btn" onClick={() => actions.recover(item.recoveryId!)}>{t("notice.protocolRecoveryAction")}</button>}

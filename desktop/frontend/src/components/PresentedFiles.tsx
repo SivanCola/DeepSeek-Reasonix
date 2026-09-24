@@ -1,3 +1,4 @@
+import { ErrorMessage } from "./ErrorMessage";
 import { memo, useState } from "react";
 import {
   ChevronDown, ChevronUp, Code2, ExternalLink, FileArchive, FileAudio,
@@ -103,7 +104,7 @@ export const ModifiedFiles = memo(function ModifiedFiles({ files, summary, onOpe
       {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
       {t(expanded ? "present.collapse" : "present.showAll", { count: rows.length })}
     </button>}
-    {error && <p className="turn-files__error" role="status">{error}</p>}
+    {error && <p className="turn-files__error" role="status"><ErrorMessage error={error} /></p>}
   </section>;
 });
 
@@ -159,6 +160,6 @@ function FileEntry({ refValue, description }: { refValue: FileResourceRef; descr
       }}><ChevronDown size={13} /></button>
       <ContextMenu open={menu !== null} point={menu} items={menuItems} onClose={() => setMenu(null)} minWidth={208} ariaLabel={t("present.more")} />
     </div>
-    {error && <p className="presented-file__error" role="status">{error}</p>}
+    {error && <p className="presented-file__error" role="status"><ErrorMessage error={error} /></p>}
   </article>;
 }

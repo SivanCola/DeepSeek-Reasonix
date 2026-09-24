@@ -1,3 +1,4 @@
+import { ErrorMessage } from "./ErrorMessage";
 import { useEffect, useState } from "react";
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
@@ -72,6 +73,6 @@ export function ModelApplicationRecovery({ tabId, details, onChange, onUseApplie
     </div>}
     {!details.canUseApplied && details.continuationUnavailable &&
       <details><summary>{t("modelApply.details")}</summary>{details.continuationUnavailable}</details>}
-    {error && <span>{error}</span>}
+    {error && <span><ErrorMessage error={error} /></span>}
   </div>;
 }
