@@ -171,13 +171,14 @@ func (a *Agent) runToolLoop(ctx context.Context, state *turnRuntime) (runErr err
 		// steer is unavoidable — the model must see the new instruction.
 		if text, itemID, ok := a.consumeSteer(); ok {
 			steerMessage := provider.Message{
+				ID:   NewMessageID(),
 				Role: provider.RoleUser, Origin: provider.MessageOriginUser,
 				Content: a.withTurnPreferences(midTurnSteerMessage(text)), RawContent: text,
 			}
 			if err := a.appendCommittedMessages(ctx, "mid-turn-steer", steerMessage); err != nil {
 				return err
 			}
-			a.svc.sink.Emit(event.Event{Kind: event.Steer, Text: text, ItemID: itemID})
+			a.svc.sink.Emit(event.Event{Kind: event.Steer, MessageID: steerMessage.ID, Text: text, ItemID: itemID})
 		} else if itemID != "" {
 			// Loader failed after dequeue: durable entry stays for inspection
 			// (unapplied path marks uncertain + pause via the notice sink).

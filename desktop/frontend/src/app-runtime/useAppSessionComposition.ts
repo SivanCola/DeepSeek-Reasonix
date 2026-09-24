@@ -662,6 +662,7 @@ export function useAppSessionComposition(input: AppSessionCompositionInput) {
     hydratePlaceholderItems: state.hydratePlaceholderItems,
     hydratePlaceholderActive,
     items: state.items,
+    guidanceConsumed: remoteSurfaceActive ? remoteSession.transcript.guidanceConsumed : state.guidanceConsumed,
     remote: remoteSurfaceActive,
     remoteItems: remoteSession.transcript.items,
     activeTabId,
