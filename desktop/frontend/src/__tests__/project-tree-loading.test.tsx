@@ -120,7 +120,7 @@ async function mount(withGroups = false, withSessions = false, onTopicsChanged?:
   groups = withGroups ? [{ id: "feature", title: "Feature", topicIds: [] }] : [];
   resetProjectTreeRuntimeWindowLimits(); localStorage.clear();
   root = createRoot(container);
-  await act(async () => root.render(<ToastProvider><LocaleProvider><ProjectTree activeScope="project" activeWorkspaceRoot={roots[0]} onOpenTopic={() => {}} onAddProject={async () => {}} onTopicsChanged={onTopicsChanged} /></LocaleProvider></ToastProvider>));
+  await act(async () => root.render(<LocaleProvider><ToastProvider><ProjectTree activeScope="project" activeWorkspaceRoot={roots[0]} onOpenTopic={() => {}} onAddProject={async () => {}} onTopicsChanged={onTopicsChanged} /></ToastProvider></LocaleProvider>));
   await flush(); await advance();
 }
 async function unmount() { await act(async () => root.unmount()); }

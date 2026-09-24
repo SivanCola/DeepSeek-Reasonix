@@ -70,9 +70,9 @@ try {
     localStorage.clear();
     const root = createRoot(container);
     const render = async (refreshSignal: number) => {
-      await act(async () => root.render(<ToastProvider><LocaleProvider><ProjectTree
+      await act(async () => root.render(<LocaleProvider><ToastProvider><ProjectTree
         onOpenTopic={noop} onAddProject={addProject} refreshSignal={refreshSignal}
-      /></LocaleProvider></ToastProvider>));
+      /></ToastProvider></LocaleProvider>));
       await flush();
     };
     try {
