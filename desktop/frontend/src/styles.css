@@ -22336,7 +22336,9 @@ body > .mermaid-diagram--fullscreen {
 
 .topicbar__title-row h1 {
   margin: 0;
-  max-width: 100%;
+  min-width: 0;
+  /* Keep session names compact even when the window has room for a full prompt. */
+  max-width: min(100%, 24em);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -25637,7 +25639,6 @@ body > .mermaid-diagram--fullscreen {
 }
 
 .topicbar__title-row h1 {
-  max-width: 100%;
   font-size: 14.5px;
   font-weight: 660;
 }
@@ -26337,7 +26338,6 @@ body > .mermaid-diagram--fullscreen {
 }
 
 :root[data-theme-style] .topicbar__title-row h1 {
-  max-width: 100%;
   font-size: 14.5px;
   font-weight: 660;
 }
