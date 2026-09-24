@@ -41,7 +41,9 @@ const unapplied = (content: string) => canonicalMessage({ ...persistent, message
 const unappliedWithSpaces = unapplied(`${steerPrefix}\n  保留空格  `);
 assert.deepEqual({ role: unappliedWithSpaces.role, content: unappliedWithSpaces.content },
   { role: "notice", content: "\n  保留空格  " });
-assert.ok(historyMessagesToItems([unappliedWithSpaces], "test").items[0]?.text.endsWith("  保留空格  "));
+const unappliedItem = historyMessagesToItems([unappliedWithSpaces], "test").items[0];
+if (unappliedItem?.kind !== "notice") throw new Error("unapplied guidance must render as a notice");
+assert.ok(unappliedItem.text.endsWith("  保留空格  "));
 assert.equal(unapplied(`<response-language>zh</response-language>\n${steerPrefix}\n继续`).content, "\n继续");
 assert.equal(unapplied(`${steerPrefix}\nA tool failed. Use read-only diagnosis as needed`).role, "hidden");
 const compiler = `<memory-compiler-execution>${JSON.stringify({ planner_ir: { source_event: wrapped } })}</memory-compiler-execution>`;

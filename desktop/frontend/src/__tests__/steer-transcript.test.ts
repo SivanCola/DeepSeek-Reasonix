@@ -110,7 +110,7 @@ test("unapplied queue warnings join canonical records in either order", async ()
   ]);
   const warning = "Guidance was not applied because the turn ended before it could be processed. Send it again if it is still needed:\nSame guidance";
   for (const ordering of ["event-first", "record-first"] as const) {
-    let state = { ...initialState, transcriptProtocol: 2 as const };
+    let state: import("../lib/useController").State = { ...initialState, transcriptProtocol: 2 };
     const formal: import("../lib/useController").Item[] = [];
     for (const id of ["first", "second"]) {
       const event = { type: "event" as const, e: { kind: "notice" as const, code: "unapplied_steer", level: "warn" as const,
@@ -129,7 +129,7 @@ test("unapplied queue warnings join canonical records in either order", async ()
   }
 
   const oldRecordId = "m:old-warning:notice:0";
-  const legacy = { role: "notice", code: "unapplied_steer", level: "warn", content: warning, recordId: oldRecordId };
+  const legacy = { role: "notice", code: "unapplied_steer", level: "warn" as const, content: warning, recordId: oldRecordId };
   assert.equal(historyMessagesToItems([legacy], "snapshot:").items[0]?.id, "he:m:old-warning");
   const snapshot = initial("old-warning").snapshot!;
   snapshot.totalRecords = 1;
@@ -142,7 +142,9 @@ test("unapplied queue warnings join canonical records in either order", async ()
     { role: "notice", messageId: "queued", code: "unapplied_steer", content: "\nSame guidance" });
   const multiline = canonicalMessage({ messageId: "multiline", role: "tool", preview: "" } as import("../generated/desktopContract.generated").PersistentMessage,
     { id: "multiline", role: "tool", local_only: true, content: `${prefix}\nFirst line\nSecond line` });
-  assert.ok(historyMessagesToItems([multiline], "canonical:").items[0]?.text.endsWith("First line\nSecond line"));
+  const multilineItem = historyMessagesToItems([multiline], "canonical:").items[0];
+  if (multilineItem?.kind !== "notice") throw new Error("multiline guidance must render as a notice");
+  assert.ok(multilineItem.text.endsWith("First line\nSecond line"));
 });
 
 for (const remote of [false, true]) for (const ordering of ["record-first", "event-first"] as const) {
