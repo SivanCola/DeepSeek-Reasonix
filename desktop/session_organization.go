@@ -225,11 +225,16 @@ func workspaceSourceAliases(state workspacestate.State, workspaceID string) map[
 			result[m.SessionID] = append(result[m.SessionID], "source\x00local\x00"+key)
 		}
 		if sourceMappingHasPathAlias(m) {
-			result[m.SessionID] = append(result[m.SessionID], "path\x00"+m.Path)
+			// Lazy catalog pages use a path source key even for a single-head
+			// DAG. Include both displayed identities in runtime merges and
+			// lifecycle receipts, without claiming independent sibling heads.
+			result[m.SessionID] = append(result[m.SessionID], "path\x00"+m.Path,
+				"source\x00local\x00"+desktopSourceKey(m.Path, ""))
 		}
 	}
-	for _, aliases := range result {
+	for id, aliases := range result {
 		slices.Sort(aliases)
+		result[id] = slices.Compact(aliases)
 	}
 	return result
 }

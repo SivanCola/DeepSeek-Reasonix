@@ -177,18 +177,8 @@ func (a *App) materializeProjectTopics(req ProjectTopicPageRequest, reader works
 	}
 	workspace.SessionIDs = admittedWorkspaceTopicMembers(req, state, workspace)
 	infos, _ := listWorkspaceSessionInfo(a.bootContext(), reader, workspace.SessionIDs)
-	adopted := map[string]bool{}
+	adopted := adoptedSourceRows(state, workspaceID)
 	adoptedTopics := state.AdoptedTopicIDs(workspaceID)
-	for _, m := range state.SourceMappings {
-		if m.WorkspaceID == workspaceID {
-			for _, key := range state.SourceKeys(m.SourceKey) {
-				adopted["source\x00local\x00"+key] = true
-			}
-			if sourceMappingHasPathAlias(m) {
-				adopted[sessionRuntimeKey(m.Path)] = true
-			}
-		}
-	}
 	all := req
 	all.Cursor = ""
 	all.Query = ""
