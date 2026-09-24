@@ -141,9 +141,10 @@ func TestRejectedToolEvidenceFollowsCanonicalRemoval(t *testing.T) {
 			m := provider.Message{ID: "receipt", Role: provider.RoleTool, ToolCallID: "call", Name: "read", ToolRunState: provider.ToolRunNotStarted}
 			noteRejectedToolResult(&p, m)
 			body := map[string]any{"messageIds": []string{m.ID}}
-			if kind == "history/replace" {
+			switch kind {
+			case "history/replace":
 				body = map[string]any{"messages": []provider.Message{}}
-			} else if kind == "message/upsert" {
+			case "message/upsert":
 				m.ToolRunState = provider.ToolRunCompleted
 				body = map[string]any{"message": m}
 			}

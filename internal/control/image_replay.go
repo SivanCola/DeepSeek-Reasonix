@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/attachment"
@@ -18,8 +19,7 @@ type imageReadError struct{ error }
 func (e imageReadError) Unwrap() error { return e.error }
 
 func lastImageRequestTurn(messages []provider.Message) int {
-	for i := len(messages) - 1; i >= 0; i-- {
-		m := messages[i]
+	for i, m := range slices.Backward(messages) {
 		if m.Role == provider.RoleUser && !m.LocalOnly && !agent.IsHostGeneratedUserMessage(m) {
 			return i
 		}
