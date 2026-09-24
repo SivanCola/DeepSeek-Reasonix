@@ -70,21 +70,16 @@ func TestHistoricalImageLossDoesNotBlockTextOrHealthyImages(t *testing.T) {
 
 func TestImageRouteConfigurationErrorIsNotCached(t *testing.T) {
 	root := t.TempDir()
-	workspace := filepath.Join(root, "workspace")
-	if err := os.WriteFile(workspace, []byte("temporarily not a directory"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	c := &Controller{workspaceRoot: workspace}
+	// NUL makes path resolution fail on every supported OS. A regular file
+	// used as a parent is ENOTDIR on Unix but missing-path fallback on Windows.
+	c := &Controller{workspaceRoot: filepath.Join(root, "invalid\x00root")}
 	if _, err := c.imageRequestRoute("custom/vision-pro"); err == nil {
 		t.Fatal("unreadable configuration accepted")
 	}
-	if err := os.Remove(workspace); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(workspace, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	writeVisionTestConfig(t, workspace)
+	// Correct the source and retry on the same controller: the failed load
+	// must not mark its route snapshot ready or memoize the error.
+	c.workspaceRoot = root
+	writeVisionTestConfig(t, root)
 	got, err := c.imageRequestRoute("custom/vision-pro")
 	if err != nil || got.BaseURL != "https://example.invalid/v1" {
 		t.Fatalf("corrected config remained blocked: %+v, %v", got, err)
