@@ -32,14 +32,19 @@ type Messages struct {
 	InitHint string
 
 	// chat REPL
-	ChatTip                string // tip line under the chat banner
-	TurnCancelled          string // shown when Ctrl-C aborts the in-flight turn but the chat keeps running
-	InterruptedRecovery    string // replay notice for a durable interrupted turn
-	FinalReadinessRecovery string // replay hint for a durable final-readiness pause
-	ReadinessContinuing    string // host is automatically finishing known readiness gaps
-	RecoveryPaused         string // controlled Auto retry pause; user can continue in the next message
-	CompletionUncertain    string // completion validator could not confirm the result; work is kept
-	ReasoningReplayRepair  string // provider rejected replayed thinking blocks; history repaired and retried once
+	ChatTip                  string // tip line under the chat banner
+	TurnCancelled            string // shown when Ctrl-C aborts the in-flight turn but the chat keeps running
+	InterruptedRecovery      string // replay notice for a durable interrupted turn
+	FinalReadinessRecovery   string // replay hint for a durable final-readiness pause
+	ReadinessContinuing      string // host is automatically finishing known readiness gaps
+	RecoveryPaused           string // controlled Auto retry pause; user can continue in the next message
+	CompletionUncertain      string // completion validator could not confirm the result; work is kept
+	ReasoningReplayRepair    string // provider rejected replayed thinking blocks; history repaired and retried once
+	ImageRequestRecovery     string // current image cannot be included; request a fresh attachment
+	ExtensionRequestRecovery string // extension produced an invalid model request
+	ExtensionBlockRecovery   string // actionable hint following an explicit extension block
+	ContextLimitRecovery     string // automatic context recovery exhausted
+	SessionSaveRecovery      string // durability failure; preserve the live conversation
 	// Host guard/recovery notices (event.Notice texts the fronts render verbatim).
 	EmptyFinal                       string // empty_final: no visible answer; retrying
 	ExecutorHandoff                  string // executor_handoff: answered without using tools

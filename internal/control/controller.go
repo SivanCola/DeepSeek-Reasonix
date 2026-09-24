@@ -875,7 +875,7 @@ func New(opts Options) *Controller {
 	c.initializeOwnedResources(opts)
 	c.bindAttachmentService()
 	if opts.ImageRouteConfig != nil {
-		c.imageRoutesOnce.Do(func() { c.captureImageRoutes(opts.ImageRouteConfig) })
+		c.captureImageRoutes(opts.ImageRouteConfig)
 	}
 	return c
 }
