@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 11;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:857039e0868d57e1e367b080f009abd2d21baa856ae5d57e55fc8c3b1cef5734";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:b4fd48e18f5b4e766fb0da34f9d382961a0f9e07ee8385ac7b387babf63fa6e0";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -5202,6 +5202,7 @@ export interface FailureDiagnostic {
   providerDisplayName?: string;
   protocol?: string;
   requestPath?: string;
+  transportCode?: string;
 }
 
 export interface MCPAppPresentation {

@@ -38,6 +38,7 @@ func TestHTTP2FailureClassificationDoesNotEnableRetries(t *testing.T) {
 	for _, cause := range []error{
 		errors.New("invalid header field value: PROTOCOL_ERROR"),
 		&APIError{Body: "connection error: PROTOCOL_ERROR", Status: 400},
+		fmt.Errorf("connection error: PROTOCOL_ERROR: %w", &APIError{Status: 400}),
 		context.Canceled,
 	} {
 		if got := DiagnoseFailure(&url.Error{Op: "Post", URL: "https://example.test", Err: cause}); got.Kind == FailureKindTransportProtocol {

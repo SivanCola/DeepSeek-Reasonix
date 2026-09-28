@@ -45032,6 +45032,13 @@
           "type": {
             "kind": "string"
           }
+        },
+        {
+          "name": "transportCode",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
         }
       ]
     },

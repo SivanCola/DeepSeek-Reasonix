@@ -61,8 +61,9 @@ func maintenanceFixtureSession() *agent.Session {
 func TestManualCompactIsCancellableForegroundMaintenance(t *testing.T) {
 	prov := &blockingMaintenanceProvider{started: make(chan struct{}), cancelled: make(chan struct{})}
 	exec := agent.New(prov, nil, maintenanceFixtureSession(), agent.Options{ContextWindow: 32_000}, event.Discard)
-	dir := t.TempDir()
-	c := newOwnedTestController(t, Options{Executor: exec, SystemPrompt: "sys", SessionDir: dir, SessionPath: filepath.Join(dir, "session.jsonl"), Sink: event.Discard})
+	// Cancellation and foreground ownership do not require filesystem writes.
+	// TestMaintenanceLifecycleDurableOutsideTurn covers the durable boundary.
+	c := newOwnedTestController(t, Options{Executor: exec, SystemPrompt: "sys", Sink: event.Discard})
 
 	done := make(chan error, 1)
 	go func() { done <- c.Compact(context.Background(), "") }()

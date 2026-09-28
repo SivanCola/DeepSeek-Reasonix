@@ -13,10 +13,11 @@ var http2TransportError = regexp.MustCompile(`^(?:connection error: |stream erro
 // HTTP2TransportCode reports transport evidence only. It does not authorize
 // retries or classify provider response bodies as connection failures.
 func HTTP2TransportCode(err error) string {
+	var response *APIError
+	if errors.As(err, &response) {
+		return ""
+	}
 	for err != nil {
-		if _, ok := err.(*APIError); ok {
-			return ""
-		}
 		if match := http2TransportError.FindStringSubmatch(err.Error()); len(match) > 1 {
 			return match[1]
 		}

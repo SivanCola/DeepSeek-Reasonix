@@ -43,10 +43,10 @@ func newCheckpointEventController(t *testing.T, runner *checkpointEventRunner) (
 	t.Helper()
 	events := make(chan event.Event, 8)
 	executor := agent.New(nil, tool.NewRegistry(), runner.session, agent.Options{}, event.Discard)
-	dir := t.TempDir()
+	// These tests validate live checkpoint identity, not disk flush latency.
+	// An empty session path uses the real in-memory checkpoint store.
 	controller := newOwnedTestController(t, Options{
 		Runner: runner, Executor: executor,
-		SessionDir: dir, SessionPath: dir + "/session.jsonl",
 		Sink: event.FuncSink(func(e event.Event) {
 			if e.Kind == event.TurnDone {
 				events <- e
@@ -222,10 +222,8 @@ func TestParkedTurnsKeepIndependentCheckpointCandidates(t *testing.T) {
 	releaseFirst := make(chan struct{})
 	var deliveries atomic.Int32
 	executor := agent.New(nil, tool.NewRegistry(), session, agent.Options{}, event.Discard)
-	dir := t.TempDir()
 	controller := newOwnedTestController(t, Options{
 		Runner: runner, Executor: executor,
-		SessionDir: dir, SessionPath: dir + "/session.jsonl",
 		Sink: event.FuncSink(func(e event.Event) {
 			if e.Kind != event.TurnDone {
 				return
