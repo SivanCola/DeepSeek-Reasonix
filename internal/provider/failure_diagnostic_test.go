@@ -59,6 +59,7 @@ func TestFailureDiagnosticDetailUsesOnlySafeOperatorFields(t *testing.T) {
 		Protocol:            "openai",
 		RequestPath:         "/anthropic/v1/chat/completions",
 		TraceID:             "trace-secret",
+		TransportCode:       "PROTOCOL_ERROR",
 	}
 	if got, want := FailureDiagnosticDetail(diagnostic), "Connection ID: deepseek-anthropic\nRequest path: /anthropic/v1/chat/completions"; got != want {
 		t.Fatalf("FailureDiagnosticDetail() = %q, want %q", got, want)

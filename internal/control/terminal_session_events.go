@@ -2,6 +2,7 @@ package control
 
 import (
 	"encoding/json"
+	"log/slog"
 
 	"reasonix/internal/event"
 	"reasonix/internal/session"
@@ -10,7 +11,8 @@ import (
 func (c *Controller) terminalSessionEvents(e event.Event, projection session.Projection) ([]session.Event, error) {
 	var out []session.Event
 	if diagnostic, err := c.providerDiagnosticEvent(e); err != nil {
-		return nil, err
+		// Optional evidence must never prevent required lifecycle facts from committing.
+		slog.Warn("controller: discarded optional provider diagnostic", "turnId", e.TurnID, "err", err)
 	} else if diagnostic != nil {
 		out = append(out, *diagnostic)
 	}

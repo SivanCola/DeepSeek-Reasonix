@@ -16,6 +16,9 @@ func TestHTTP2FailureHistoryKeepsTransportIdentity(t *testing.T) {
 	if len(rows) != 1 || rows[0].Code != event.NoticeCodeProviderRequestFailed || rows[0].Level != "warn" || rows[0].Diagnostic == nil || rows[0].Diagnostic.Kind != provider.FailureKindTransportProtocol || rows[0].Diagnostic.TransportCode != "PROTOCOL_ERROR" || !strings.Contains(rows[0].Detail, "saved-provider") {
 		t.Fatalf("history lost failure classification: %+v", rows)
 	}
+	if strings.Contains(rows[0].Detail, "PROTOCOL_ERROR") {
+		t.Fatal("history duplicated the structured transport code in prose")
+	}
 }
 
 func TestHistoryIdentityAndLegacyPresentation(t *testing.T) {

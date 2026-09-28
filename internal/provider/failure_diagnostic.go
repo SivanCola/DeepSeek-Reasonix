@@ -95,12 +95,6 @@ func FailureDiagnosticDetail(d *FailureDiagnostic) string {
 		}
 		detail += "Request path: " + d.RequestPath
 	}
-	if d.TransportCode != "" {
-		if detail != "" {
-			detail += "\n"
-		}
-		detail += "HTTP/2 transport error: " + d.TransportCode
-	}
 	return detail
 }
 

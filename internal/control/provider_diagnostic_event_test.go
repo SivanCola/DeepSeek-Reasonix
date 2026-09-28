@@ -20,22 +20,32 @@ import (
 	"reasonix/internal/tool"
 )
 
-type diagnosticFailureTransport struct{ calls int }
+type diagnosticFailureTransport struct {
+	calls         int
+	beforeFailure func()
+}
 
 func (r *diagnosticFailureTransport) RoundTrip(*http.Request) (*http.Response, error) {
 	r.calls++
+	if r.beforeFailure != nil {
+		r.beforeFailure()
+	}
 	return nil, http2.ConnectionError(http2.ErrCodeProtocol)
 }
 
 func TestProviderFailureSurvivesCleanupAndColdExport(t *testing.T) {
 	for _, async := range []bool{false, true} {
 		t.Run(map[bool]string{false: "synchronous", true: "desktop-send"}[async], func(t *testing.T) {
-			testProviderFailureColdExport(t, async)
+			for _, broken := range []bool{false, true} {
+				t.Run(map[bool]string{false: "valid-evidence", true: "unencodable-evidence"}[broken], func(t *testing.T) {
+					testProviderFailureColdExport(t, async, broken)
+				})
+			}
 		})
 	}
 }
 
-func testProviderFailureColdExport(t *testing.T, async bool) {
+func testProviderFailureColdExport(t *testing.T, async, broken bool) {
 	service, err := session.NewService("local", session.NewFilesystemPersistence(t.TempDir()))
 	if err != nil {
 		t.Fatal(err)
@@ -57,6 +67,13 @@ func testProviderFailureColdExport(t *testing.T, async bool) {
 		}
 	})
 	c := newOwnedTestController(t, Options{Runner: exec, Executor: exec, Sink: sink, SessionService: service, SessionRuntime: runtime, ExclusiveSession: true})
+	if broken {
+		transport.beforeFailure = func() {
+			_, turnID, _ := c.currentTurnToken()
+			c.recordProviderRequest(turnID, provider.RequestObservation{ID: ^uint64(0), Phase: "request_started",
+				StartedAt: time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)})
+		}
+	}
 	if async {
 		c.Send("hello")
 		if terminal := waitTurnDoneEvent(t, done); terminal.Err == nil {
@@ -79,9 +96,12 @@ func testProviderFailureColdExport(t *testing.T, async bool) {
 		t.Fatalf("cleanup lost failure: %+v", recovery)
 	}
 	commits := terminationCommitHistory(t, c)
-	count := 0
+	count, terminals := 0, 0
 	for _, commit := range commits {
 		for _, e := range commit.Events {
+			if e.Kind == "turn/end" {
+				terminals++
+			}
 			if e.Kind != "diagnostic/provider" {
 				continue
 			}
@@ -90,17 +110,19 @@ func testProviderFailureColdExport(t *testing.T, async bool) {
 				t.Fatal("diagnostic is not optional and atomic with termination")
 			}
 			var payload struct {
-				Failure        *provider.FailureDiagnostic
-				Requests       []providerDiagnostic
-				TransportError string
-				Dropped        *uint64
-				Truncated      bool
+				Failure   *provider.FailureDiagnostic
+				Requests  []providerDiagnostic
+				Dropped   *uint64
+				Truncated bool
 			}
 			if err := json.Unmarshal(e.Payload, &payload); err != nil {
 				t.Fatal(err)
 			}
-			if payload.Failure == nil || payload.Failure.TransportCode != "PROTOCOL_ERROR" || len(payload.Requests) != 1 || !strings.Contains(payload.TransportError, "connection error: PROTOCOL_ERROR") {
+			if payload.Failure == nil || payload.Failure.TransportCode != "PROTOCOL_ERROR" || len(payload.Requests) != 1 {
 				t.Fatalf("incomplete durable evidence: %s", e.Payload)
+			}
+			if bytes.Contains(e.Payload, []byte(`"transportError"`)) {
+				t.Fatal("persisted duplicate transport error prose")
 			}
 			if payload.Dropped == nil || *payload.Dropped != 0 || payload.Truncated {
 				t.Fatalf("fresh turn lost completeness: %s", e.Payload)
@@ -111,8 +133,12 @@ func testProviderFailureColdExport(t *testing.T, async bool) {
 			}
 		}
 	}
-	if count != 1 {
-		t.Fatalf("diagnostic count=%d", count)
+	wantCount := 1
+	if broken {
+		wantCount = 0
+	}
+	if count != wantCount || terminals != 1 {
+		t.Fatalf("diagnostic count=%d, terminal count=%d", count, terminals)
 	}
 	ref := runtime.Ref()
 	c.Close()
@@ -128,7 +154,7 @@ func testProviderFailureColdExport(t *testing.T, async bool) {
 	if err := WriteColdSessionDiagnostics(t.Context(), &out, service.Query(), snapshot, GoalDiagnosticMetadata{}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if !json.Valid(out.Bytes()) || !strings.Contains(out.String(), "PROTOCOL_ERROR") || !strings.Contains(out.String(), "diagnostic/provider") || strings.Contains(out.String(), "private-key") {
+	if !json.Valid(out.Bytes()) || !strings.Contains(out.String(), "PROTOCOL_ERROR") || strings.Contains(out.String(), "diagnostic/provider") == broken || strings.Contains(out.String(), "private-key") {
 		t.Fatalf("invalid cold export: %s", out.String())
 	}
 }
@@ -196,25 +222,21 @@ func TestTerminationPreservesFailureWithoutChangingModelContext(t *testing.T) {
 	}
 }
 
-func TestDiagnosticTransportErrorRedactsBeforePersistence(t *testing.T) {
-	err := &provider.RequestFailure{Operation: "request failed", Err: &url.Error{Op: "Post", URL: "https://user:password@provider.test/v1/chat?arbitrary=private-query#private-fragment", Err: errors.New("connection error: PROTOCOL_ERROR")}}
-	got := diagnosticTransportError(err)
-	for _, private := range []string{"user:", "password", "private-query", "private-fragment", "arbitrary="} {
-		if strings.Contains(got, private) {
-			t.Fatalf("leaked %q: %s", private, got)
+func TestProviderDiagnosticEventOmitsErrorProse(t *testing.T) {
+	for _, err := range []error{
+		&provider.RequestFailure{Err: &url.Error{Op: "Post", URL: "https://user:password@provider.test/v1/chat?arbitrary=private-query#private-fragment", Err: http2.ConnectionError(http2.ErrCodeProtocol)}},
+		&provider.RequestFailure{Err: errors.New("private free-form error " + strings.Repeat("中文", 1200))},
+		&provider.RequestFailure{Err: &provider.APIError{Status: 400, Body: "private request body"}},
+	} {
+		c := &Controller{}
+		e, encodeErr := c.providerDiagnosticEvent(event.Event{TurnID: "turn", Status: event.TurnFailed, Err: err})
+		if encodeErr != nil || e == nil {
+			t.Fatalf("missing structured evidence: %v", encodeErr)
 		}
-	}
-	if !strings.Contains(got, "PROTOCOL_ERROR") || !strings.Contains(got, "provider.test/v1/chat") {
-		t.Fatal(got)
-	}
-	proxy := &provider.RequestFailure{Err: errors.New("proxy socks5://user:password@proxy.test:1080/?opaque=private-query failed")}
-	if got := diagnosticTransportError(proxy); strings.Contains(got, "password") || strings.Contains(got, "private-query") {
-		t.Fatal("proxy URL credentials or query persisted")
-	}
-	if got := diagnosticTransportError(&provider.APIError{Status: 400, Body: "private request body"}); got != "" {
-		t.Fatal("persisted provider response body")
-	}
-	if got := diagnosticTransportError(&provider.RequestFailure{Err: &provider.APIError{Status: 400, Body: "private request body"}}); got != "" {
-		t.Fatal("persisted a wrapped provider response body")
+		for _, unwanted := range []string{`"transportError"`, "private", "password", "user:", "中文"} {
+			if bytes.Contains(e.Payload, []byte(unwanted)) {
+				t.Fatalf("persisted error prose %q: %s", unwanted, e.Payload)
+			}
+		}
 	}
 }

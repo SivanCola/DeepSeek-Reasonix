@@ -89,16 +89,19 @@ unavailable，目标文件写入失败仍判定导出失败。
 Failed/interrupted turns with diagnostic evidence save an optional
 `diagnostic/provider` event in the same atomic commit as `turn/end`.
 Successful turns do not persist these request observations or peer addresses.
-The event contains the failure classification, a bounded
-and credential-redacted transport exception (never an API response body), and
-up to 128 recent request observations belonging to that turn. Both live and cold
+If generating the optional diagnostic fails, it is omitted with a warning in
+the log; required closure events and `turn/end` still commit.
+The event contains the structured failure classification and up to 128 recent
+request observations belonging to that turn, without free-form transport error
+text or API response bodies. Both live and cold
 diagnostic exports retain these events in `commits`; the top-level
 `providerDiagnostics` still describes only the current controller lifetime.
 An empty live buffer does not mean the historical request was never sent.
 
 有诊断证据的失败／中断轮次会在与 `turn/end` 相同的原子提交中保存可选事件
-`diagnostic/provider`，包含失败分类、限长且脱敏的传输异常（不保存 API 响应正文），
-以及该轮最近最多 128 次请求的观测。运行中或冷会话的诊断导出均在 `commits`
+`diagnostic/provider`，包含结构化的失败分类和该轮最近最多 128 次请求的观测，
+不额外保存自由文本形式的传输异常或 API 响应正文。可选诊断生成失败时会记录警告并
+省略该记录，必需的收尾事件和 `turn/end` 仍正常提交。运行中或冷会话的诊断导出均在 `commits`
 保留这些事件；顶层 `providerDiagnostics` 仍仅代表当前控制器生命周期。
 实时缓冲为空不代表历史请求没有发出。成功轮次不持久化这些请求观测或对端地址。
 
