@@ -7,6 +7,7 @@ import type { DictKey } from "./en";
 export const zhTW: Record<DictKey, string> = {
   "error.unknown": "操作發生問題，請展開詳情查看原始錯誤。",
   "error.connection": "無法連線至服務，請檢查網路、代理和服務位址。",
+  "error.transportProtocol": "HTTP/2 連線發生協定錯誤，請檢查服務端或代理的相容性，展開詳情可查看錯誤資訊。",
   "error.dns": "無法解析伺服器位址，請檢查位址和 DNS 設定。",
   "error.interrupted": "連線意外中斷，請檢查網路或服務狀態後再試。",
   "error.timeout": "請求逾時，請檢查服務和網路連線後再試。",

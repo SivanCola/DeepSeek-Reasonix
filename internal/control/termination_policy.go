@@ -59,10 +59,7 @@ func planCancelledMessages(msgs []provider.Message, idx int, fallback provider.M
 			recovery.DroppedPartialText = recovery.DroppedPartialText || strings.TrimSpace(m.Content) != ""
 			recovery.DroppedPartialReasoning = recovery.DroppedPartialReasoning || strings.TrimSpace(m.ReasoningContent) != ""
 			if previousRecovery != nil {
-				recovery.CompletedTools = append(recovery.CompletedTools, previousRecovery.CompletedTools...)
-				recovery.InterruptedTools = append(recovery.InterruptedTools, previousRecovery.InterruptedTools...)
-				recovery.NotStartedTools = append(recovery.NotStartedTools, previousRecovery.NotStartedTools...)
-				recovery.UnknownTools = append(recovery.UnknownTools, previousRecovery.UnknownTools...)
+				mergeInterruptedRecovery(recovery, previousRecovery)
 			} else {
 				for _, call := range m.ToolCalls {
 					provider.RecordToolRecovery(recovery, interruptedToolSummary(call), provider.ToolRunUnknown)
@@ -123,4 +120,19 @@ func planCancelledMessages(msgs []provider.Message, idx int, fallback provider.M
 	}
 	next[localIndexes[len(localIndexes)-1]].InterruptedTurn = recovery
 	return next
+}
+
+func mergeInterruptedRecovery(dst, src *provider.InterruptedTurnRecovery) {
+	if src.TerminalStatus != "" {
+		dst.TerminalStatus = src.TerminalStatus
+		dst.FailureDiagnostic = nil
+	}
+	if src.FailureDiagnostic != nil {
+		diagnostic := *src.FailureDiagnostic
+		dst.FailureDiagnostic = &diagnostic
+	}
+	dst.CompletedTools = append(dst.CompletedTools, src.CompletedTools...)
+	dst.InterruptedTools = append(dst.InterruptedTools, src.InterruptedTools...)
+	dst.NotStartedTools = append(dst.NotStartedTools, src.NotStartedTools...)
+	dst.UnknownTools = append(dst.UnknownTools, src.UnknownTools...)
 }

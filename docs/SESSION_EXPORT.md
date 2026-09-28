@@ -84,6 +84,54 @@ as unavailable; destination write failures still fail the export.
 保留 unknown。运行时观察与导出边界各自记录时间和水位；独立读取失败记为
 unavailable，目标文件写入失败仍判定导出失败。
 
+### Provider failures / 模型请求失败
+
+Completed turns now save an optional `diagnostic/provider` event in the same
+atomic commit as `turn/end`. It contains the failure classification, a bounded
+and credential-redacted transport exception (never an API response body), and
+up to 128 recent request observations belonging to that turn. Both live and cold
+diagnostic exports retain these events in `commits`; the top-level
+`providerDiagnostics` still describes only the current controller lifetime.
+An empty live buffer does not mean the historical request was never sent.
+
+结束的轮次会在与 `turn/end` 相同的原子提交中保存可选事件
+`diagnostic/provider`，包含失败分类、限长且脱敏的传输异常（不保存 API 响应正文），
+以及该轮最近最多 128 次请求的观测。运行中或冷会话的诊断导出均在 `commits`
+保留这些事件；顶层 `providerDiagnostics` 仍仅代表当前控制器生命周期。
+实时缓冲为空不代表历史请求没有发出。
+
+Observations include the request host/path, method and byte count, last observed
+phase, connection reuse, negotiated HTTP protocol, dial/connected addresses,
+timestamps, response status/body byte count and a recognized HTTP/2 error code.
+`dialAddress` is the last dial attempt, while `remoteAddress` is the acquired
+connection's peer; neither proves which upstream hop caused a failure.
+URL userinfo/query/fragment, headers and request/response bodies are excluded.
+Missing fields on older observations remain unknown. `requestBytes = -1` means
+the request body length was unknown. These records do not change model input,
+cache prefixes, transport selection or the single-attempt request policy.
+
+观测记录请求主机/路径、方法和字节数、最后观察阶段、连接是否复用、协商的 HTTP
+协议、拨号/已连接地址、时间戳、响应状态/正文字节数，以及已识别的 HTTP/2 错误码。
+`dialAddress` 是最后一次拨号尝试，`remoteAddress` 是已取得连接的对端；两者均不能
+单独证明故障来自哪一跳。不保存 URL 用户信息/查询参数/片段、请求头或请求/响应正文。
+旧记录缺少的字段保持未知，`requestBytes = -1` 表示未知正文长度。
+这些诊断不改变模型输入、缓存前缀、传输协议选择或单次请求策略。
+
+Failure cleanup preserves `terminalStatus` and `failureDiagnostic` on local-only
+recovery records. HTTP/2 transport errors use `kind: transport_protocol` and an
+optional `transportCode`; reopened history retains the failure notice rather
+than relabelling it as a cancelled turn.
+
+失败收尾会保留本地恢复记录的 `terminalStatus` 与 `failureDiagnostic`。
+HTTP/2 传输错误使用 `kind: transport_protocol` 和可选的 `transportCode`；
+重新打开历史时仍显示失败信息，不再因收尾丢失字段而退回取消轮次提示。
+
+| Contract / 契约 | Old data / 旧数据 | Current reader / 新读取器 | Previous reader / 旧读取器 |
+| --- | --- | --- | --- |
+| `diagnostic/provider` | No record; do not infer evidence / 无记录，不推断 | Export raw optional events / 导出可选事件 | Skip unknown optional event; retain terminal / 跳过未知可选事件，保留结束状态 |
+| `transportCode`, observation fields / 观测字段 | Missing is unknown / 缺省为未知 | Decode optional fields / 读取可选字段 | Ignore additive JSON fields / 忽略新增 JSON 字段 |
+| Recovery metadata / 恢复元数据 | Existing fields remain readable / 原字段可读 | Preserve through cleanup / 收尾保留 | Existing format; an older writer may still strip it / 格式不变，旧写入器仍可能丢弃 |
+
 ## Verification / 验证
 
 Relevant commands:

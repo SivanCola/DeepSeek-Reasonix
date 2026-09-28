@@ -6,6 +6,7 @@
 export const en = {
   "error.unknown": "An error occurred. Open details to view the reported cause.",
   "error.connection": "Could not connect. Check the network, proxy and service address.",
+  "error.transportProtocol": "The HTTP/2 connection failed with a protocol error. Check the service or proxy compatibility; expand the details for error information.",
   "error.dns": "The server address could not be resolved. Check the address and DNS settings.",
   "error.interrupted": "The connection was interrupted. Check the network or service before trying again.",
   "error.timeout": "The request timed out. Check the service and connection before trying again.",

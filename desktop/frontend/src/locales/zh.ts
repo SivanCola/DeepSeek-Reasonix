@@ -7,6 +7,7 @@ import type { DictKey } from "./en";
 export const zh: Record<DictKey, string> = {
   "error.unknown": "操作出现问题，请展开详情查看原始报错。",
   "error.connection": "无法连接服务，请检查网络、代理和服务地址。",
+  "error.transportProtocol": "HTTP/2 连接发生协议错误，请检查服务端或代理的兼容性，展开详情可查看错误信息。",
   "error.dns": "无法解析服务器地址，请检查地址和 DNS 设置。",
   "error.interrupted": "连接意外中断，请检查网络或服务状态后再试。",
   "error.timeout": "请求超时，请检查服务和网络连接后再试。",

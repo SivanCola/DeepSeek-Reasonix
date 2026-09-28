@@ -249,6 +249,7 @@ func SendWithRetry(ctx context.Context, httpClient *http.Client, opts SendOption
 		observation.finish(err, "build_error")
 		return nil, &RequestFailure{Identity: identity, Operation: "build request", Err: err}
 	}
+	observation.request(req)
 	recordRequestAttempt(ctx)
 	resp, err := httpClient.Do(req)
 	if err != nil {

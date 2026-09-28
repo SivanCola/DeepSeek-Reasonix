@@ -556,23 +556,7 @@ func (c *Controller) v3EventsFor(e event.Event, projection session.Projection) (
 		// Context-maintenance commits persist their exact model projection before
 		// this notification is emitted. CompactionDone is presentation-only.
 	case event.TurnDone:
-		interactionState := "unavailable"
-		if e.Cancelled || e.Status == event.TurnInterrupted {
-			interactionState = "cancelled"
-		}
-		out = append(out, session.ClosureEvents(projection, interactionState, "turn ended before recording a result")...)
-		if e.Recovery != nil && e.Recovery.State == "recovery_required" {
-			recoveryPayload, marshalErr := makePayload(e.Recovery)
-			if marshalErr != nil {
-				return nil, marshalErr
-			}
-			out = append(out, session.Event{Kind: "runtime/recovery", Payload: recoveryPayload})
-		}
-		payload, err := makePayload(map[string]any{"status": terminalTurnStatus(e)})
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, session.Event{Kind: "turn/end", Payload: payload})
+		return c.terminalSessionEvents(e, projection)
 	}
 	return out, nil
 }

@@ -449,7 +449,7 @@ export interface WireEvent extends RecoveryEventFields {
   outcome?: "completed" | "partial" | "blocked" | "final_readiness" | "recovery_paused" | "completion_uncertain" | "incomplete_read";
   readiness?: WireFinalReadiness;
   protocolRecovery?: { id: string };
-  diagnostic?: { kind: string; status?: number; traceId?: string; providerId?: string; providerDisplayName?: string; protocol?: string; requestPath?: string };
+  diagnostic?: { kind: string; status?: number; traceId?: string; providerId?: string; providerDisplayName?: string; protocol?: string; requestPath?: string; transportCode?: string };
   /** Optional: "headers" | "stream". Older clients ignore unknown fields. */
   retryScope?: "headers" | "stream" | "protocol";
   streamAttempt?: WireStreamAttempt;
@@ -856,7 +856,7 @@ export interface HistoryMessage extends TranscriptTurnMetadata {
   decisionReceipt?: WireDecisionReceipt;
   readiness?: WireFinalReadiness;
   protocolRecovery?: { id: string };
-  diagnostic?: { kind: string; status?: number; traceId?: string; providerId?: string; providerDisplayName?: string; protocol?: string; requestPath?: string };
+  diagnostic?: { kind: string; status?: number; traceId?: string; providerId?: string; providerDisplayName?: string; protocol?: string; requestPath?: string; transportCode?: string };
   serverSearch?: HistoryServerSearch[];
   attachments?: Array<{ kind?: string; digest?: string; name?: string; mime?: string; width?: number; height?: number; bytes?: number }>;
 }

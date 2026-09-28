@@ -8,6 +8,16 @@ import (
 	"reasonix/internal/provider"
 )
 
+func TestHTTP2FailureHistoryKeepsTransportIdentity(t *testing.T) {
+	rows := History([]provider.Message{{ID: "failure", Role: provider.RoleTool, LocalOnly: true,
+		ToolCallID: provider.LocalOnlyToolID, Name: provider.LocalOnlyToolName,
+		InterruptedTurn: &provider.InterruptedTurnRecovery{Pending: true, TerminalStatus: "failed",
+			FailureDiagnostic: &provider.FailureDiagnostic{Kind: provider.FailureKindTransportProtocol, TransportCode: "PROTOCOL_ERROR", ProviderID: "saved-provider", ProviderDisplayName: "DeepSeek", Protocol: "openai"}}}}, HistoryOptions{})
+	if len(rows) != 1 || rows[0].Code != event.NoticeCodeProviderRequestFailed || rows[0].Level != "warn" || !strings.Contains(rows[0].Content, "HTTP/2 transport error: PROTOCOL_ERROR") || !strings.Contains(rows[0].Detail, "saved-provider") {
+		t.Fatalf("history lost failure classification: %+v", rows)
+	}
+}
+
 func TestHistoryIdentityAndLegacyPresentation(t *testing.T) {
 	raw := "[Pasted text #1 · 2 lines]\n--- Begin [Pasted text #1 · 2 lines] ---\none\ntwo\n--- End [Pasted text #1 · 2 lines] ---"
 	messages := []provider.Message{{ID: "user", Role: provider.RoleUser, Origin: provider.MessageOriginUser, Content: raw, RawContent: raw},

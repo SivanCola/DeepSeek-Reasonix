@@ -64,6 +64,8 @@ func ProviderDisplayLabel(providerID, displayName, protocol string) string {
 // the request, so no provider failure exists to report.
 const FailureKindCancelled = "cancelled"
 
+const FailureKindTransportProtocol = "transport_protocol"
+
 // FailureDiagnostic contains safe classification only, never response bodies.
 type FailureDiagnostic struct {
 	Kind                string `json:"kind"`
@@ -73,6 +75,7 @@ type FailureDiagnostic struct {
 	ProviderDisplayName string `json:"providerDisplayName,omitempty"`
 	Protocol            string `json:"protocol,omitempty"`
 	RequestPath         string `json:"requestPath,omitempty"`
+	TransportCode       string `json:"transportCode,omitempty"`
 }
 
 // FailureDiagnosticDetail renders the safe operator fields shared by live and
@@ -91,6 +94,12 @@ func FailureDiagnosticDetail(d *FailureDiagnostic) string {
 			detail += "\n"
 		}
 		detail += "Request path: " + d.RequestPath
+	}
+	if d.TransportCode != "" {
+		if detail != "" {
+			detail += "\n"
+		}
+		detail += "HTTP/2 transport error: " + d.TransportCode
 	}
 	return detail
 }
@@ -151,6 +160,9 @@ func DiagnoseFailure(err error) *FailureDiagnostic {
 		d.Kind = "protocol"
 	case IsOpaqueBadRequest(err):
 		d.Kind = "upstream_reason_missing"
+	case HTTP2TransportCode(err) != "":
+		d.Kind = FailureKindTransportProtocol
+		d.TransportCode = HTTP2TransportCode(err)
 	case ClassifyRecovery(err).Retryable:
 		d.Kind = "temporary"
 	case api != nil && api.Status >= 400 && api.Status < 500:

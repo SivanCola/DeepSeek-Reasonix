@@ -71,7 +71,7 @@ func TestInterruptedTurnRecoveryOptionalFieldsRemainBackwardCompatible(t *testin
 		InterruptedTools []string `json:"interrupted_tools,omitempty"`
 	}
 	current := InterruptedTurnRecovery{
-		TerminalStatus: "failed", FailureDiagnostic: &FailureDiagnostic{Kind: "request", Status: 404},
+		TerminalStatus: "failed", FailureDiagnostic: &FailureDiagnostic{Kind: "transport_protocol", TransportCode: "PROTOCOL_ERROR"},
 		Pending: true, InterruptedTools: []string{"bash"},
 	}
 	raw, err := json.Marshal(current)

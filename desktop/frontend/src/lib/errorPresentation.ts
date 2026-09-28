@@ -24,11 +24,13 @@ const codeKeys: Record<string, DictKey> = {
   invalid_api_key: "error.auth", insufficient_quota: "error.quota", rate_limit_exceeded: "error.rateLimit",
   stream_interrupted: "error.interrupted", empty_response: "error.empty", stale_generation: "error.conflict",
   provider_connection: "error.connection", cancelled: "error.cancelled",
+  transport_protocol: "error.transportProtocol",
 };
 
 // Narrow legacy matches bridge errors from older services and OS libraries.
 // Unknown errors deliberately keep a neutral summary instead of guessing.
 const legacyKeys: [RegExp, DictKey][] = [
+  [/\b(?:connection error:\s*|stream error: stream ID \d+;\s*|HTTP\/2 transport error:\s*|http2:.*?ErrCode=)(?:PROTOCOL_ERROR|INTERNAL_ERROR|FLOW_CONTROL_ERROR|SETTINGS_TIMEOUT|STREAM_CLOSED|FRAME_SIZE_ERROR|REFUSED_STREAM|CANCEL|COMPRESSION_ERROR|CONNECT_ERROR|ENHANCE_YOUR_CALM|INADEQUATE_SECURITY|HTTP_1_1_REQUIRED)\b/i, "error.transportProtocol"],
   [/\b(?:insufficient_quota|insufficient balance|quota exhausted)\b|余额不足|額度不足|额度不足/i, "error.quota"],
   [/\b(?:context_length_exceeded|context (?:window|length).*(?:exceed|limit)|maximum context length)\b|超出.*上下文/i, "error.context"],
   [/\b(?:ENOSPC|no space left on device|disk full)\b/i, "error.diskFull"],
