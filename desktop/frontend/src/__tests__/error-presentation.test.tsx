@@ -16,9 +16,6 @@ for (const locale of ["en", "zh", "zh-TW"] as const) {
   const translate: Translator = key => dict[key];
   for (const [error, key] of [
     ["dial tcp: connection refused", "error.connection"],
-    ['deepseek · 1 · Chat Completions: request failed: Post "https://api.deepseek.com/v1/chat/completions": connection error: PROTOCOL_ERROR', "error.transportProtocol"],
-    ["stream error: stream ID 3; PROTOCOL_ERROR; received from peer", "error.transportProtocol"],
-    ["deepseek · HTTP/2 transport error: PROTOCOL_ERROR", "error.transportProtocol"],
     [{ code: "transport_protocol", message: "connection error: PROTOCOL_ERROR" }, "error.transportProtocol"],
     ["lookup host: no such host", "error.dns"],
     ["deepseek: status 503: invalid api key mentioned in upstream diagnostics", "error.service"],
@@ -40,6 +37,10 @@ for (const locale of ["en", "zh", "zh-TW"] as const) {
   ] as const) {
     assert.equal(presentError(error, translate, locale).summary, dict[key], `${locale}: ${JSON.stringify(error)}`);
   }
+  assert.deepEqual(presentError("opaque failure", translate, locale, { kind: "transport_protocol", transportCode: "PROTOCOL_ERROR" }), {
+    summary: dict["error.transportProtocol"], detail: "opaque failure\nHTTP/2: PROTOCOL_ERROR",
+  });
+  assert.notEqual(presentError("connection error: PROTOCOL_ERROR", translate, locale).summary, dict["error.transportProtocol"], "untyped wording is not transport evidence");
   if (locale !== "en") {
     for (const raw of ["unknown backend failure", "read /tmp/timeout/404.txt: unsupported format", "read /tmp/中文文件: unsupported format", "<img src=x onerror=alert(1)>"]) {
       assert.deepEqual(presentError(raw, translate, locale), { summary: dict["error.unknown"], detail: raw });
@@ -67,7 +68,7 @@ const protocolError = "connection error: PROTOCOL_ERROR <img src=x onerror=alert
 function Probe() {
   changeLocale = useI18n().setPref;
   toast = useToast().showToast;
-  return <><p id="inline-error"><ErrorMessage error={raw} /></p><p id="transport-error"><ErrorMessage error={protocolError} /></p><p id="summary-only"><ErrorMessage error={undefined} summary="仅有说明" /></p></>;
+  return <><p id="inline-error"><ErrorMessage error={raw} /></p><p id="transport-error"><ErrorMessage error={protocolError} diagnostic={{ kind: "transport_protocol", transportCode: "PROTOCOL_ERROR" }} /></p><p id="summary-only"><ErrorMessage error={undefined} summary="仅有说明" /></p></>;
 }
 const root = createRoot(document.getElementById("root")!);
 await act(async () => root.render(<LocaleProvider><ToastProvider><Probe /></ToastProvider></LocaleProvider>));
@@ -87,7 +88,7 @@ assert.equal(document.querySelector(".user-error__detail")?.textContent, raw, "l
 await act(async () => changeLocale("en"));
 assert.equal(document.querySelector("#transport-error .user-error__summary")?.textContent, en["error.transportProtocol"]);
 await act(async () => document.querySelector<HTMLButtonElement>("#transport-error .user-error__toggle")!.click());
-assert.equal(document.querySelector("#transport-error .user-error__detail")?.textContent, protocolError);
+assert.equal(document.querySelector("#transport-error .user-error__detail")?.textContent, `${protocolError}\nHTTP/2: PROTOCOL_ERROR`);
 assert.equal(document.querySelector("#transport-error img"), null);
 assert.equal(document.querySelector("#inline-error .user-error__summary")?.textContent, raw, "English errors follow the active English UI locale");
 await act(async () => changeLocale("zh-TW"));

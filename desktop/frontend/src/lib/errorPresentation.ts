@@ -1,4 +1,5 @@
 import { t, getLocale, type DictKey, type Translator, type Locale } from "./i18n";
+import type { WireEvent } from "./types";
 
 export interface ErrorPresentation { summary: string; detail: string }
 
@@ -30,7 +31,6 @@ const codeKeys: Record<string, DictKey> = {
 // Narrow legacy matches bridge errors from older services and OS libraries.
 // Unknown errors deliberately keep a neutral summary instead of guessing.
 const legacyKeys: [RegExp, DictKey][] = [
-  [/\b(?:connection error:\s*|stream error: stream ID \d+;\s*|HTTP\/2 transport error:\s*|http2:.*?ErrCode=)(?:PROTOCOL_ERROR|INTERNAL_ERROR|FLOW_CONTROL_ERROR|SETTINGS_TIMEOUT|STREAM_CLOSED|FRAME_SIZE_ERROR|REFUSED_STREAM|CANCEL|COMPRESSION_ERROR|CONNECT_ERROR|ENHANCE_YOUR_CALM|INADEQUATE_SECURITY|HTTP_1_1_REQUIRED)\b/i, "error.transportProtocol"],
   [/\b(?:insufficient_quota|insufficient balance|quota exhausted)\b|余额不足|額度不足|额度不足/i, "error.quota"],
   [/\b(?:context_length_exceeded|context (?:window|length).*(?:exceed|limit)|maximum context length)\b|超出.*上下文/i, "error.context"],
   [/\b(?:ENOSPC|no space left on device|disk full)\b/i, "error.diskFull"],
@@ -63,8 +63,11 @@ function statusKey(status: number): DictKey | undefined {
   if (status === 400 || status === 422) return "error.invalidInput";
 }
 
-export function presentError(error: unknown, translate: Translator = t, locale: Locale = getLocale()): ErrorPresentation {
+export function presentError(error: unknown, translate: Translator = t, locale: Locale = getLocale(), diagnostic?: WireEvent["diagnostic"]): ErrorPresentation {
   const detail = errorDetail(error).trim();
+  if (diagnostic?.kind === "transport_protocol") {
+    return { summary: translate("error.transportProtocol"), detail: [detail, diagnostic.transportCode ? `HTTP/2: ${diagnostic.transportCode}` : ""].filter(Boolean).join("\n") };
+  }
   const structured = error && typeof error === "object" ? error as { code?: unknown; status?: unknown } : undefined;
   const code = typeof structured?.code === "string" ? structured.code : detail;
   const explicitStatus = typeof structured?.status === "number" ? structured.status : 0;

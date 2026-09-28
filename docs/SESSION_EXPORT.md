@@ -86,19 +86,33 @@ unavailable，目标文件写入失败仍判定导出失败。
 
 ### Provider failures / 模型请求失败
 
-Completed turns now save an optional `diagnostic/provider` event in the same
-atomic commit as `turn/end`. It contains the failure classification, a bounded
+Failed/interrupted turns with diagnostic evidence save an optional
+`diagnostic/provider` event in the same atomic commit as `turn/end`.
+Successful turns do not persist these request observations or peer addresses.
+The event contains the failure classification, a bounded
 and credential-redacted transport exception (never an API response body), and
 up to 128 recent request observations belonging to that turn. Both live and cold
 diagnostic exports retain these events in `commits`; the top-level
 `providerDiagnostics` still describes only the current controller lifetime.
 An empty live buffer does not mean the historical request was never sent.
 
-结束的轮次会在与 `turn/end` 相同的原子提交中保存可选事件
+有诊断证据的失败／中断轮次会在与 `turn/end` 相同的原子提交中保存可选事件
 `diagnostic/provider`，包含失败分类、限长且脱敏的传输异常（不保存 API 响应正文），
 以及该轮最近最多 128 次请求的观测。运行中或冷会话的诊断导出均在 `commits`
 保留这些事件；顶层 `providerDiagnostics` 仍仅代表当前控制器生命周期。
-实时缓冲为空不代表历史请求没有发出。
+实时缓冲为空不代表历史请求没有发出。成功轮次不持久化这些请求观测或对端地址。
+
+`dropped` counts observations evicted for this turn, including when all its
+requests have been evicted. `truncated` marks incomplete evidence. Accounting
+retains at most 128 turn summaries separately from the shared 128-request ring.
+If accounting is no longer available, `dropped` is omitted and `truncated` is
+true; older events missing these fields have unknown completeness. A zero
+per-turn count does not include evictions belonging to other turns.
+
+`dropped` 是本轮被淘汰的请求观测数，即使本轮请求全部被淘汰也会保留计数。
+`truncated` 标记证据不完整。计数独立于共享的 128 条请求缓冲区，最多保留
+128 个轮次摘要；计数信息已淘汰时省略 `dropped` 并设置 `truncated: true`。
+旧事件缺少这些字段时完整性未知。本轮计数为零不代表其他轮次没有丢弃记录。
 
 Observations include the request host/path, method and byte count, last observed
 phase, connection reuse, negotiated HTTP protocol, dial/connected addresses,

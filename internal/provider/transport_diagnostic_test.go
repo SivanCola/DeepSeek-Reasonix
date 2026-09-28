@@ -20,7 +20,7 @@ func TestHTTP2FailureClassificationDoesNotEnableRetries(t *testing.T) {
 	for _, cause := range []error{
 		http2.ConnectionError(http2.ErrCodeProtocol),
 		http2.StreamError{StreamID: 3, Code: http2.ErrCodeProtocol},
-		errors.New("http2: server sent GOAWAY and closed the connection; LastStreamID=3, ErrCode=PROTOCOL_ERROR, debug=\"private\""),
+		http2.GoAwayError{LastStreamID: 3, ErrCode: http2.ErrCodeProtocol, DebugData: "private"},
 	} {
 		t.Run(cause.Error(), func(t *testing.T) {
 			calls := 0
@@ -36,6 +36,9 @@ func TestHTTP2FailureClassificationDoesNotEnableRetries(t *testing.T) {
 		})
 	}
 	for _, cause := range []error{
+		errors.New("connection error: PROTOCOL_ERROR"),
+		errors.New("stream error: stream ID 3; PROTOCOL_ERROR"),
+		errors.New("http2: server sent GOAWAY and closed the connection; LastStreamID=3, ErrCode=PROTOCOL_ERROR"),
 		errors.New("invalid header field value: PROTOCOL_ERROR"),
 		&APIError{Body: "connection error: PROTOCOL_ERROR", Status: 400},
 		fmt.Errorf("connection error: PROTOCOL_ERROR: %w", &APIError{Status: 400}),

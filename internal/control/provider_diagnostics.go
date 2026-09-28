@@ -15,6 +15,7 @@ type providerDiagnosticBuffer struct {
 	mu       sync.Mutex
 	requests []providerDiagnostic
 	dropped  uint64
+	turns    []providerDiagnosticTurn
 }
 
 func (c *Controller) recordProviderRequest(turnID string, observation provider.RequestObservation) {
@@ -33,6 +34,12 @@ func (c *Controller) recordProviderRequest(turnID string, observation provider.R
 		return
 	}
 	if len(b.requests) == 128 {
+		for i := range b.turns {
+			if b.turns[i].id == b.requests[0].TurnID {
+				b.turns[i].dropped++
+				break
+			}
+		}
 		copy(b.requests, b.requests[1:])
 		b.requests = b.requests[:127]
 		b.dropped++

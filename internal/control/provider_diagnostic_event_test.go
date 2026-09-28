@@ -93,12 +93,17 @@ func testProviderFailureColdExport(t *testing.T, async bool) {
 				Failure        *provider.FailureDiagnostic
 				Requests       []providerDiagnostic
 				TransportError string
+				Dropped        *uint64
+				Truncated      bool
 			}
 			if err := json.Unmarshal(e.Payload, &payload); err != nil {
 				t.Fatal(err)
 			}
 			if payload.Failure == nil || payload.Failure.TransportCode != "PROTOCOL_ERROR" || len(payload.Requests) != 1 || !strings.Contains(payload.TransportError, "connection error: PROTOCOL_ERROR") {
 				t.Fatalf("incomplete durable evidence: %s", e.Payload)
+			}
+			if payload.Dropped == nil || *payload.Dropped != 0 || payload.Truncated {
+				t.Fatalf("fresh turn lost completeness: %s", e.Payload)
 			}
 			r := payload.Requests[0]
 			if r.Host != "provider.test" || r.RequestPath != "/v1/chat/completions" || r.Phase != "request_error" || r.TransportCode != "PROTOCOL_ERROR" || r.RequestBytes <= 0 {
@@ -130,6 +135,7 @@ func testProviderFailureColdExport(t *testing.T, async bool) {
 
 func TestProviderDiagnosticEventIsBoundedAndTurnScoped(t *testing.T) {
 	c := &Controller{}
+	c.beginProviderDiagnosticTurn("current")
 	for id := uint64(1); id <= 130; id++ {
 		c.recordProviderRequest("current", provider.RequestObservation{ID: id, Phase: "request_started"})
 	}
@@ -139,13 +145,15 @@ func TestProviderDiagnosticEventIsBoundedAndTurnScoped(t *testing.T) {
 		t.Fatal(err)
 	}
 	var payload struct {
-		Failure  *provider.FailureDiagnostic
-		Requests []providerDiagnostic
+		Failure   *provider.FailureDiagnostic
+		Requests  []providerDiagnostic
+		Dropped   uint64
+		Truncated bool
 	}
 	if err := json.Unmarshal(e.Payload, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if len(payload.Requests) != 127 || payload.Failure.Kind != provider.FailureKindCancelled {
+	if len(payload.Requests) != 127 || payload.Failure.Kind != provider.FailureKindCancelled || payload.Dropped != 3 || !payload.Truncated {
 		t.Fatalf("bounded evidence: %+v", payload)
 	}
 	for _, request := range payload.Requests {

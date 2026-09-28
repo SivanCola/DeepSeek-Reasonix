@@ -340,7 +340,7 @@ export type Item = { turnId?: string } & (
   | { kind: "user"; id: string; messageId?: string; submissionId?: string; submissionState?: "sending" | "confirmed" | "failed" | "unknown"; text: string; submitText?: string; failed?: boolean; createdAt?: number; checkpointTurn?: number; historyTurn?: number }
   | { kind: "assistant"; id: string; text: string; reasoning: string; streaming: boolean; turnFinal?: boolean; samplingCount?: number; toolCount?: number; wasStreamed?: true; reasoningComplete?: boolean; reasoningDurationMs?: number; workDurationMs?: number; turnDurationMs?: number; turnUsage?: TurnUsage; tokensPerSecond?: number; createdAt?: number; memoryCitations?: MemoryCitation[]; searchSources?: SearchSource[] }
   | { kind: "phase"; id: string; text: string }
-  | { kind: "notice"; id: string; local?: boolean; level: "info" | "warn"; text: string; detail?: string; code?: string; title?: string; variant?: "delivery" | "completion"; action?: "continue_delivery" | "open_changes" | "recover_context"; recoveryId?: string; completionSummary?: WireCompletionSummary; decisionReceipt?: WireDecisionReceipt; missing?: string[]; inboxItemId?: string }
+  | { kind: "notice"; id: string; local?: boolean; level: "info" | "warn"; text: string; detail?: string; diagnostic?: WireEvent["diagnostic"]; code?: string; title?: string; variant?: "delivery" | "completion"; action?: "continue_delivery" | "open_changes" | "recover_context"; recoveryId?: string; completionSummary?: WireCompletionSummary; decisionReceipt?: WireDecisionReceipt; missing?: string[]; inboxItemId?: string }
   | {
       kind: "compaction";
       id: string;
@@ -1646,7 +1646,7 @@ function applyEvent(s: State, e: WireEvent, preserveToolPayloads = false): State
     case "notice": {
       const noticeId = e.code === "unapplied_steer" && e.messageId ? `he:m:${e.messageId}` : undefined;
       if (noticeId && s.items.some(item => item.id === noticeId)) return s;
-      const next = appendNoticeToState(s, e.level ?? "info", e.text ?? "", e.detail, e.code, e.decisionReceipt, noticeId);
+      const next = appendNoticeToState(s, e.level ?? "info", e.text ?? "", e.detail, e.code, e.decisionReceipt, noticeId, e.diagnostic);
       return e.code?.startsWith("stream_interrupted_") ? { ...next, streamInterruptNoticeShown: true } : next;
     }
     case "context_maintenance": {
@@ -1815,11 +1815,11 @@ function applyEvent(s: State, e: WireEvent, preserveToolPayloads = false): State
           });
         }
         if (e.err && e.diagnostic && e.diagnostic.kind !== "cancelled" && !s.streamInterruptNoticeShown) {
-          interruptItems.push({ kind: "notice", id: `e${s.seq + interruptItems.length}`, level: "warn", text: e.err, detail: e.detail });
+          interruptItems.push({ kind: "notice", id: `e${s.seq + interruptItems.length}`, level: "warn", text: e.err, detail: e.detail, ...(e.diagnostic ? { diagnostic: e.diagnostic } : {}) });
         }
         items = [...finalized, ...interruptItems];
       } else if (e.err && !s.streamInterruptNoticeShown) {
-        items = [...finalized, { kind: "notice", id: `e${s.seq}`, level: "warn", text: e.err, detail: e.detail }];
+        items = [...finalized, { kind: "notice", id: `e${s.seq}`, level: "warn", text: e.err, detail: e.detail, ...(e.diagnostic ? { diagnostic: e.diagnostic } : {}) }];
       }
       if (e.protocolRecovery?.id && e.status !== "interrupted" && !s.cancelRequested) {
         items = items.map(item => item.kind==="notice" && item.action==="recover_context" ? {...item,action:undefined} : item);
@@ -2318,8 +2318,8 @@ function getOrCreateState(states: TabStates, tabId: string): State {
   return states.get(tabId)!;
 }
 
-function appendNoticeToState(s: State, level: "info" | "warn", text: string, detail?: string, code?: string, decisionReceipt?: WireDecisionReceipt, id?: string): State {
-  const next = appendNoticeItem(s.items, s.seq, id ?? `n${s.seq}`, level, text, detail, code, decisionReceipt);
+function appendNoticeToState(s: State, level: "info" | "warn", text: string, detail?: string, code?: string, decisionReceipt?: WireDecisionReceipt, id?: string, diagnostic?: WireEvent["diagnostic"]): State {
+  const next = appendNoticeItem(s.items, s.seq, id ?? `n${s.seq}`, level, text, detail, code, decisionReceipt, diagnostic);
   return { ...s, running: s.turnActive ? s.running : false, seq: next.seq, items: next.items };
 }
 

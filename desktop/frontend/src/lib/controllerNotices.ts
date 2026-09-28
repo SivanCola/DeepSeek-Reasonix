@@ -4,12 +4,12 @@ import type { HistoryMessage, WireFinalReadiness, WireDecisionReceipt } from "./
 import type { Item } from "./useController";
 import { readPauseItem } from "./readPause";
 
-export function appendNoticeItem(items: Item[], seq: number, id: string, level: "info" | "warn", rawText: string, detail?: string, code?: string, decisionReceipt?: WireDecisionReceipt): { items: Item[]; seq: number } {
+export function appendNoticeItem(items: Item[], seq: number, id: string, level: "info" | "warn", rawText: string, detail?: string, code?: string, decisionReceipt?: WireDecisionReceipt, diagnostic?: HistoryMessage["diagnostic"]): { items: Item[]; seq: number } {
   if (quietTranscriptNoticeKey(rawText, code)) return { items, seq };
   const text = localizedNoticeText(rawText, code);
   if (quietTranscriptNoticeKey(text, code)) return { items, seq };
   const trimmedDetail = detail?.trim();
-  return { items: [...items, { kind: "notice", id, level, text, ...(trimmedDetail ? { detail: trimmedDetail } : {}), ...(code ? { code } : {}), ...(decisionReceipt ? { decisionReceipt } : {}) }], seq: seq + 1 };
+  return { items: [...items, { kind: "notice", id, level, text, ...(diagnostic ? { diagnostic } : {}), ...(trimmedDetail ? { detail: trimmedDetail } : {}), ...(code ? { code } : {}), ...(decisionReceipt ? { decisionReceipt } : {}) }], seq: seq + 1 };
 }
 
 export function errorMessage(err: unknown): string {
@@ -190,5 +190,5 @@ export function historyNoticeItems(m: HistoryMessage, id: string): Item[] {
   if (quietTranscriptNoticeKey(text, m.code)) return [];
   const detail = m.detail?.trim();
   return [{ kind: "notice", id, level: m.level === "warn" ? "warn" : "info", text,
-    ...(detail ? { detail } : {}), ...(m.decisionReceipt ? { decisionReceipt: m.decisionReceipt } : {}) }];
+    ...(m.diagnostic ? { diagnostic: m.diagnostic } : {}), ...(detail ? { detail } : {}), ...(m.decisionReceipt ? { decisionReceipt: m.decisionReceipt } : {}) }];
 }
