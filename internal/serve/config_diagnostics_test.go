@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,14 +9,27 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/servecontract"
+	"reasonix/internal/stats"
 )
 
 func TestConfigDiagnosticsUsesBoundWorkspace(t *testing.T) {
+	// The diagnostic export opens the process-wide usage catalog under this
+	// home; Windows cannot remove the temp home while that handle is open.
+	closeUsage := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := stats.CloseUsageCatalogs(ctx); err != nil {
+			t.Fatalf("close usage catalog: %v", err)
+		}
+	}
+	closeUsage()
 	t.Setenv("REASONIX_HOME", t.TempDir())
+	t.Cleanup(closeUsage)
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "reasonix.toml"), []byte("[permissions]\nallow=['Bash=echo exact']\n"), 0600); err != nil {
 		t.Fatal(err)
