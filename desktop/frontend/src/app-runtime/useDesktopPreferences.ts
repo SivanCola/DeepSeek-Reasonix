@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { desktopHost } from "../lib/desktopHost";
 import { useCommittedCommand } from "../lib/useCommittedCommand";
 import { useCommittedAsyncCommand } from "../lib/useCommittedAsyncCommand";
-import { useConfigLoadWarnings } from "../lib/useConfigLoadWarnings";
 import { useI18n, useT } from "../lib/i18n";
 import { DEFAULT_STATUS_BAR_ITEMS, normalizeStatusBarItems } from "../lib/statusBarItems";
 import { hydrateReasoningDisplayMode, setReasoningDisplayPending } from "../lib/reasoningDisplayPreference";
@@ -15,13 +14,11 @@ import { sidebarImConnectionsFromBot, sidebarImTopicSourcesFromBot } from "./sid
 export function useDesktopPreferences() {
   const { locale, setPref } = useI18n();
   const t = useT();
-  const warnings = useConfigLoadWarnings();
   const [snapshot, setSnapshot] = useState<DesktopPreferencesSnapshot | null>(null);
   const [botRuntime, setBotRuntime] = useState<BotRuntimeStatusView | null>(null);
   const [startupFailed, setStartupFailed] = useState(false);
   const publish = useCommittedCommand((settings: DesktopPreferencesSnapshot, runtime: BotRuntimeStatusView | null) => {
     setPref(applyPreferencesAppearance(settings));
-    if ("configWarnings" in settings) warnings.applySnapshot(settings.configWarnings, settings.configWarningsRevision);
     setSnapshot(settings);
     setBotRuntime(runtime);
     setStartupFailed(false);
@@ -54,7 +51,6 @@ export function useDesktopPreferences() {
     statusBarStyle: snapshot?.statusBarStyle === "text" ? "text" as const : "icon" as const,
     statusBarItems: snapshot ? normalizeStatusBarItems(snapshot.statusBarItems) : DEFAULT_STATUS_BAR_ITEMS,
     sidebarImConnections, imTopicSources,
-    configLoadWarnings: warnings.configLoadWarnings, reloadConfigWarnings: warnings.reload, dismissConfigWarnings: warnings.dismiss,
     reload,
   };
 }

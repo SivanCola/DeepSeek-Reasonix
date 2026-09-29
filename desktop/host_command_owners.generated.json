@@ -1629,6 +1629,35 @@
       ]
     }
   },
+  "ConfigDiagnosticDetails": {
+    "domain": "desktop/config_diagnostics.go",
+    "owner": "App.ConfigDiagnosticDetails",
+    "sources": [
+      "desktop/config_diagnostics.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.ConfigDiagnosticDetails",
+      "inputs": [
+        "tabID",
+        "diagnosticID"
+      ]
+    }
+  },
+  "ConfigDiagnostics": {
+    "domain": "desktop/config_diagnostics.go",
+    "owner": "App.ConfigDiagnostics",
+    "sources": [
+      "desktop/config_diagnostics.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.ConfigDiagnostics",
+      "inputs": [
+        "tabID"
+      ]
+    }
+  },
   "ConfirmAction": {
     "domain": "desktop/app.go",
     "owner": "App.ConfirmAction",
@@ -4739,6 +4768,21 @@
       "inputs": [
         "tabID",
         "path"
+      ]
+    }
+  },
+  "OpenConfigDiagnosticSource": {
+    "domain": "desktop/config_diagnostics.go",
+    "owner": "App.OpenConfigDiagnosticSource",
+    "sources": [
+      "desktop/config_diagnostics.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.OpenConfigDiagnosticSource",
+      "inputs": [
+        "tabID",
+        "diagnosticID"
       ]
     }
   },

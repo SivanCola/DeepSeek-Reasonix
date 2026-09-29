@@ -272,6 +272,22 @@ func TestBrowserDiagnosticRemoteMergePreservesOldProtocolAndFixedScope(t *testin
 	if bytes.Contains(seenBody, []byte("browserDiagnostics")) {
 		t.Fatal("new evidence sent through old remote observation protocol")
 	}
+	var sections struct {
+		ConfigDiagnostics struct {
+			Status string            `json:"status"`
+			HostID string            `json:"hostId"`
+			Items  []json.RawMessage `json:"items"`
+		} `json:"configDiagnostics"`
+	}
+	if err := json.Unmarshal(data, &sections); err != nil {
+		t.Fatal(err)
+	}
+	if sections.ConfigDiagnostics.Status != "unsupported" || sections.ConfigDiagnostics.HostID != tab.ref.HostID || sections.ConfigDiagnostics.Items == nil || len(sections.ConfigDiagnostics.Items) != 0 {
+		t.Fatalf("old remote config must remain explicitly unknown: %s", data)
+	}
+	if bytes.Contains(seenBody, []byte("configDiagnostics")) {
+		t.Fatal("local config evidence sent to remote")
+	}
 }
 
 func TestBrowserDiagnosticAppendHandlesEmptyAndLargeDocuments(t *testing.T) {

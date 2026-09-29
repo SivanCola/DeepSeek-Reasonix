@@ -5,10 +5,14 @@ import (
 )
 
 func handleConfigLoadWarnings(opts Options, cfg *config.Config) bool {
-	if cfg == nil || !cfg.HasLoadWarnings() || opts.OnConfigLoadWarnings == nil {
+	if cfg == nil || opts.OnConfigLoadWarnings == nil {
 		return false
 	}
-	return opts.OnConfigLoadWarnings(cfg.LoadWarnings())
+	warnings := cfg.LoadWarnings()
+	handled := opts.OnConfigLoadWarnings(warnings)
+	// Empty arrays clear resolved notices, but do not prove a later migration
+	// failure was presented to the user.
+	return handled && len(warnings) > 0
 }
 
 func deepSeekProtocolMigrationNoticeError(configLoadWarningsHandled bool, err error) error {

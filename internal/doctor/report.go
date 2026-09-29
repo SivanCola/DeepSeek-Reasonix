@@ -13,11 +13,8 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/BurntSushi/toml"
-
 	"reasonix/internal/agent"
 	"reasonix/internal/config"
-	fileencoding "reasonix/internal/fileutil/encoding"
 	"reasonix/internal/netclient"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/skill"
@@ -27,22 +24,24 @@ import (
 type Options struct {
 	Version string
 	Config  *config.Config
+	Root    string
 }
 
 type Report struct {
-	Version    string           `json:"version"`
-	OS         string           `json:"os"`
-	Arch       string           `json:"arch"`
-	CWD        string           `json:"cwd,omitempty"`
-	Config     ConfigReport     `json:"config"`
-	Providers  []ProviderReport `json:"providers"`
-	Plugins    []PluginReport   `json:"plugins,omitempty"`
-	LSP        LSPReport        `json:"lsp"`
-	Sessions   SessionsReport   `json:"sessions"`
-	Sandbox    SandboxReport    `json:"sandbox"`
-	Network    NetworkReport    `json:"network"`
-	Permission PermissionReport `json:"permission"`
-	Warnings   []string         `json:"warnings,omitempty"`
+	Version           string              `json:"version"`
+	OS                string              `json:"os"`
+	Arch              string              `json:"arch"`
+	CWD               string              `json:"cwd,omitempty"`
+	Config            ConfigReport        `json:"config"`
+	Providers         []ProviderReport    `json:"providers"`
+	Plugins           []PluginReport      `json:"plugins,omitempty"`
+	LSP               LSPReport           `json:"lsp"`
+	Sessions          SessionsReport      `json:"sessions"`
+	Sandbox           SandboxReport       `json:"sandbox"`
+	Network           NetworkReport       `json:"network"`
+	Permission        PermissionReport    `json:"permission"`
+	Warnings          []string            `json:"warnings,omitempty"`
+	ConfigDiagnostics []config.Diagnostic `json:"configDiagnostics"`
 }
 
 type ConfigReport struct {
@@ -137,23 +136,32 @@ type PermissionReport struct {
 func Collect(opts Options) Report {
 	cfg := opts.Config
 	var warnings []string
+	var loadErr error
 	if cfg == nil {
 		var err error
-		cfg, err = config.Load()
+		cfg, err = config.LoadForRootReadOnly(opts.Root)
 		if err != nil {
-			warnings = append(warnings, err.Error())
+			loadErr = err
 			cfg = config.Default()
 		}
 	}
 	cwd, _ := os.Getwd()
-	sourcePath := config.SourcePath()
-	// Settings UIs and `reasonix config` edit the user-level config, but a
-	// project reasonix.toml outranks it. Users who toggle the sandbox off in
-	// Settings while the project file pins [sandbox] read the no-op as "bash is
-	// broken" (#5961, #6046) — surface the layering explicitly.
-	if sourcePath != "" && filepath.Base(sourcePath) == "reasonix.toml" {
-		if raw, err := fileencoding.ReadFileUTF8(sourcePath); err == nil && tomlHasSandboxTable(raw) {
-			warnings = append(warnings, "project "+redactHome(sourcePath)+" sets [sandbox]; it overrides user-level Settings -> Sandbox for this workspace — edit the project file to change sandbox behavior here")
+	root := opts.Root
+	if root == "" {
+		root = cwd
+	}
+	if abs, err := filepath.Abs(root); err == nil {
+		root = abs
+	}
+	sourcePath := config.SourcePathForRoot(root)
+	diagnostics := cfg.DiagnosticGroups()
+	if loadErr != nil {
+		diagnostics = config.LoadFailureDiagnostics(root, loadErr)
+	}
+	for i := range diagnostics {
+		diagnostics[i].Source = redactHome(diagnostics[i].Source)
+		if diagnostics[i].Severity != "info" {
+			warnings = append(warnings, diagnostics[i].Summary)
 		}
 	}
 	userPath := config.UserConfigPath()
@@ -197,7 +205,7 @@ func Collect(opts Options) Report {
 		Sandbox: SandboxReport{
 			Bash:              cfg.BashMode(),
 			Network:           cfg.Sandbox.Network,
-			WriteRoots:        redactHomeAll(cfg.WriteRoots()),
+			WriteRoots:        redactHomeAll(cfg.WriteRootsForRoot(root)),
 			Available:         sandbox.Available(),
 			Shell:             resolvedShellSummary(cfg),
 			BashConfigIgnored: bashConfigIgnored,
@@ -213,10 +221,11 @@ func Collect(opts Options) Report {
 			AskRules:   len(cfg.Permissions.Ask),
 			DenyRules:  len(cfg.Permissions.Deny),
 		},
-		Warnings: warnings,
+		Warnings:          warnings,
+		ConfigDiagnostics: diagnostics,
 	}
 	// Skill / MCP capability health (optional diagnostics; never fail doctor).
-	if skStore := skill.DiagnosticStore(cwd, "", "", cfg); skStore != nil {
+	if skStore := skill.DiagnosticStore(root, "", "", cfg); skStore != nil {
 		report.Warnings = append(report.Warnings, CollectSkillHealthWarnings(SkillHealthOptions{
 			Skills:  skStore.List(),
 			Plugins: cfg.Plugins,
@@ -276,6 +285,11 @@ func RenderText(r Report) string {
 	// up top, not buried under the full report where they read as "all fine".
 	for _, w := range r.Warnings {
 		fmt.Fprintf(&b, "  warning: %s\n", w)
+	}
+	for _, d := range r.ConfigDiagnostics {
+		if d.Status == "on_demand" {
+			fmt.Fprintf(&b, "  on-demand approval: %s (%d entries, %s): %s\n", d.Field, d.Count, d.Source, d.Summary)
+		}
 	}
 
 	fmt.Fprintf(&b, "\nproviders\n")
@@ -561,15 +575,4 @@ func resolvedShellSummary(cfg *config.Config) string {
 		return sh.Kind.String() + " (not found)"
 	}
 	return sh.Kind.String() + " (" + redactHome(sh.Path) + ")"
-}
-
-// tomlHasSandboxTable reports whether raw TOML sets any [sandbox] key. A parse
-// failure returns false — the config loader reports broken TOML on its own.
-func tomlHasSandboxTable(raw []byte) bool {
-	var doc map[string]toml.Primitive
-	if _, err := toml.Decode(string(raw), &doc); err != nil {
-		return false
-	}
-	_, ok := doc["sandbox"]
-	return ok
 }

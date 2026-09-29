@@ -20,6 +20,7 @@ import { ArrowRight, Check, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSi
 import { asArray } from "../lib/array";
 import { ShellInterpreterFields } from "./SettingsShellSupport";
 import { RuleList } from "./SettingsRuleList";
+import { ConfigCompatibilitySettings } from "./ConfigDiagnostics";
 import { CopyButton } from "./CopyButton";
 import { CHANNEL_ICONS } from "./channelIcons";
 import { botAccessEntryCount, botAccessReady, botConnectionCredentialSummary, botConnectionLabel, botConnectionScopeLabel, botConnectionSecretEnv, botConnectionSecretPatch, botInstallTargetForConnection, botInstallTargetMatchesConnection, botTargetHint, botTargetLabel, diagnosticMessage, diagnosticReportDetail, firstConnectionRemote, formatInstallTimeLeft, formatInstallUserCode, qqBotAdded, type BotInstallTarget, type BotOfficialInstallTarget } from "./botConnectionSettings";
@@ -406,6 +407,7 @@ export function SettingsPanel({
     <ManagementPageShell title={t("settings.title")} className="settings-screen" onBack={requestClose} contentRef={settingsContentRef}
       navigation={<SettingsNavigation items={settingsNavigationItems} activeTab={tab} onSelect={selectTab} />}>
       <div className="settings-page-content">
+            {(tab === "permissions" || tab === "sandbox") && <ConfigCompatibilitySettings key={activeWorkspaceKey} workspaceKey={activeWorkspaceKey} />}
             {needsSettings && settingsLoadFailed && (
               <div className="banner banner--error settings-load-error" role="alert">
                 <span>{t("settings.loadFailed")}</span>

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/session"
 	"reasonix/internal/sessionexport"
@@ -229,6 +230,14 @@ func (s *Server) sessionExportDiagnostic(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	// Never accept a client's local configuration as remote diagnostic evidence.
+	extra["configDiagnostics"] = config.NewDiagnosticSnapshot(ref.HostID, "", "unavailable")
+	if controller != nil {
+		view := config.InspectDiagnostics(ref.HostID, controller.WorkspaceRoot())
+		if s.sessionDiagnosticControllerCurrent(controller, ref) {
+			extra["configDiagnostics"] = view
+		}
+	}
 	if snapshot.Ref.SessionID == "" {
 		var err error
 		snapshot, err = query.CaptureDiagnosticSnapshot(r.Context(), ref)
@@ -251,7 +260,7 @@ func (s *Server) sessionExportDiagnostic(w http.ResponseWriter, r *http.Request)
 	defer os.Remove(file.Name())
 	defer file.Close()
 	allowed := map[string]any{}
-	for _, name := range []string{"sessionIdentity", "exportSnapshot", "frontendObservation", "readDiagnostics"} {
+	for _, name := range []string{"sessionIdentity", "exportSnapshot", "frontendObservation", "readDiagnostics", "configDiagnostics"} {
 		if value, ok := extra[name]; ok {
 			allowed[name] = value
 		}

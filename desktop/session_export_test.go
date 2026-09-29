@@ -114,7 +114,7 @@ func TestColdSessionDiagnosticsRetainEvidence(t *testing.T) {
 	if err = json.Unmarshal(data, &value); err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{"metadata", "commits", "activationChanges", "unavailable", "frontendObservation", "sessionIdentity"} {
+	for _, field := range []string{"metadata", "commits", "activationChanges", "unavailable", "frontendObservation", "sessionIdentity", "configDiagnostics"} {
 		if _, ok := value[field]; !ok {
 			t.Fatalf("missing %s", field)
 		}

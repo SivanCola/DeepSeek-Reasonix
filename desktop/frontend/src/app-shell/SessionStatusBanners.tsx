@@ -3,6 +3,7 @@ import { lazy, Suspense } from "react";
 import type { Translator } from "../lib/i18n";
 import { RemoteReclaimBanner } from "../components/RemoteReclaimBanner";
 import { UpdateBanner } from "../components/UpdateBanner";
+import { ConfigDiagnosticBanner } from "../components/ConfigDiagnostics";
 import type { HistoricalSessionBannerProps } from "../components/SessionTakeoverDialog";
 
 const SessionRuntimeOverlays = lazy(() => import("../components/SessionTakeoverDialog").then((module) => ({ default: module.SessionRuntimeOverlays })));
@@ -18,10 +19,8 @@ export type SessionStatusBannersProps = {
   takeoverDialogTabId: string | null;
   onOpenTakeover: (tabId: string) => void;
   onCloseTakeover: () => void;
-  configWarnings: readonly string[];
-  onOpenConfigFile: () => void;
-  onReloadConfigFile: () => void;
-  onDismissConfigWarnings: () => void;
+  diagnosticTabId?: string;
+  diagnosticBindingKey?: string;
   providerSetupNeeded: boolean;
   needsOnboarding: boolean | null;
   onConfigureProvider: () => void;
@@ -55,24 +54,7 @@ export function SessionStatusBanners(props: SessionStatusBannersProps) {
           <span className="banner__msg"><ErrorMessage error={t("topbar.startupError", { msg: props.startupError })} /></span>
         </div>
       ) : null}
-      {props.configWarnings.length > 0 && (
-        <div className="banner banner--warning banner--actionable">
-          <span className="banner__msg" title={props.configWarnings.join("\n")}>
-            <ErrorMessage error={t("config.loadWarning", { msg: props.configWarnings.join("\n") })} />
-          </span>
-          <span className="banner__spacer" />
-          <button type="button" className="btn btn--small" onClick={props.onOpenConfigFile}>
-            {t("config.openConfig")}
-          </button>
-          <button type="button" className="btn btn--small" onClick={props.onReloadConfigFile}>
-            {t("config.reloadConfig")}
-          </button>
-          <span className="banner__hint">{t("config.doctorHint")}</span>
-          <button type="button" className="btn btn--small" onClick={props.onDismissConfigWarnings}>
-            {t("updater.dismiss")}
-          </button>
-        </div>
-      )}
+      <ConfigDiagnosticBanner key={props.diagnosticBindingKey} tabId={props.diagnosticTabId ?? ""} bindingKey={props.diagnosticBindingKey ?? ""} />
       {props.providerSetupNeeded && (
         <div className="banner banner--warning banner--actionable">
           <span className="banner__msg">{t("onboarding.inlinePrompt")}</span>

@@ -26,7 +26,6 @@ function ok(cond: boolean, label: string) {
 const here = dirname(fileURLToPath(import.meta.url));
 const paletteSource = readFileSync(resolve(here, "../app-runtime/usePaletteCommands.tsx"), "utf8");
 const bridgeSource = readFileSync(resolve(here, "../lib/bridge.ts"), "utf8");
-const configWarningsSource = readFileSync(resolve(here, "../lib/useConfigLoadWarnings.ts"), "utf8");
 const settingsSource = readFileSync(resolve(here, "../components/SettingsPanel.tsx"), "utf8");
 const settingsNavigationSource = readFileSync(resolve(here, "../components/SettingsNavigation.tsx"), "utf8");
 const stylesSource = readFileSync(resolve(here, "../styles.css"), "utf8") +
@@ -42,11 +41,8 @@ ok(
   bridgeSource.includes("DesktopStartupSettings()"),
   "bridge exposes a lightweight desktop startup settings call",
 );
-ok(
-  configWarningsSource.includes("revision < latestRevision.current") &&
-    configWarningsSource.includes("seenKeys.current.has(key)"),
-  "startup and reload barriers reject stale events while repeated session builds stay deduplicated",
-);
+// Project diagnostic ordering and dismissal are exercised with controlled
+// responses/events in config-diagnostics.test.tsx, outside startup preferences.
 ok(
   bridgeSource.includes('displayMode: "standard", sessionExperience: "standard", reasoningDisplayMode: "auto", reasoningDisplayModeExplicit: false'),
   "browser startup defaults include the canonical standard session experience",

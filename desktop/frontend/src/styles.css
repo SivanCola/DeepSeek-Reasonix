@@ -38200,3 +38200,9 @@ html[data-dock-launcher="full"] .app:not(.app--creation) .layout:not(.layout--wo
 .session-export-progress { position: fixed; right: 20px; bottom: 32px; z-index: var(--z-popover); max-width: min(480px, 90vw); padding: 12px 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); color: var(--fg); box-shadow: 0 4px 18px #0002; }
 .session-export-progress > div { display: flex; align-items: center; gap: 12px; }
 .session-export-progress button { flex-shrink: 0; padding: 5px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-soft); color: var(--fg); cursor: pointer; }
+/* Configuration details can contain long paths and multi-line legacy rules. */
+.config-compatibility { min-width: 0; overflow-wrap: anywhere; }
+.config-compatibility details { margin-block: 8px; }
+.config-compatibility__values { max-height: 320px; overflow: auto; }
+.config-compatibility summary { cursor: pointer; }
+.config-compatibility pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; }

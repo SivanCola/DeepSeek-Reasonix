@@ -3,6 +3,9 @@
 // drift through independently maintained string literals.
 package servecontract
 
+// ConfigDiagnosticsV1 exposes read-only, identity-bound configuration diagnostics.
+const ConfigDiagnosticsV1 = "config-diagnostics-v1"
+
 // HistoryOutlineV1 exposes paged durable turn summaries independently of the live tail.
 const HistoryOutlineV1 = "history-outline-v1"
 

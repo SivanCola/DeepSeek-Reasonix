@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 
+	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/servecontract"
 	"reasonix/internal/session"
@@ -48,22 +49,24 @@ type SessionExportResult struct {
 	Pages   int      `json:"pages"`
 }
 type sessionExportJob struct {
-	mu             sync.Mutex
-	handle         SessionExportHandle
-	ctx            context.Context
-	cancel         context.CancelFunc
-	dir, path      string
-	workspaceRoot  string
-	sourceHostID   string
-	query          *session.Query
-	controller     *control.Controller
-	client         *http.Client
-	base, route    string
-	observation    json.RawMessage
-	browserScope   string // Fixed with the export source, before the save dialog.
-	prepared       bool
-	records, pages int
-	pageOffset     int64
+	mu                      sync.Mutex
+	handle                  SessionExportHandle
+	ctx                     context.Context
+	cancel                  context.CancelFunc
+	dir, path               string
+	workspaceRoot           string
+	sourceHostID            string
+	query                   *session.Query
+	controller              *control.Controller
+	client                  *http.Client
+	base, route             string
+	observation             json.RawMessage
+	browserScope            string // Fixed with the export source, before the save dialog.
+	configDiagnostics       config.DiagnosticSnapshot
+	remoteConfigDiagnostics bool
+	prepared                bool
+	records, pages          int
+	pageOffset              int64
 }
 
 func (a *App) exportJob(id string) (*sessionExportJob, error) {
@@ -100,6 +103,12 @@ func (a *App) BeginSessionExportForTarget(selector SessionSelector, tabID, forma
 	}
 	if err := a.captureSessionExportSource(job, selector, tabID, format); err != nil {
 		return SessionExportHandle{}, err
+	}
+	if format == "diagnostic" {
+		job.configDiagnostics = config.NewDiagnosticSnapshot(job.sourceHostID, job.workspaceRoot, "unsupported")
+		if job.client == nil {
+			job.configDiagnostics = config.InspectDiagnostics(localDesktopHostID, job.workspaceRoot)
+		}
 	}
 	if title != "" {
 		job.handle.Snapshot.Title = title
@@ -449,6 +458,7 @@ func (a *App) captureSessionExportSource(job *sessionExportJob, selector Session
 			return errors.New("export target changed")
 		}
 		job.sourceHostID, job.workspaceRoot = tab.ref.HostID, tab.ref.Workspace
+		job.remoteConfigDiagnostics = tab.capabilities[servecontract.ConfigDiagnosticsV1]
 		job.client, job.base, job.route = tab.client, tab.base, tab.routing.currentPath
 		a.remoteTabMu.Unlock()
 		if job.client == nil || job.route == "" {

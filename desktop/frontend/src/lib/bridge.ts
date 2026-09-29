@@ -806,6 +806,9 @@ export interface AppBindings extends AttachmentBindings, SessionExportBindings, 
   AbandonPendingUpdate?(): Promise<void>;
   OpenDownloadPage(): Promise<void>;
   OpenUserConfigPath?(): Promise<void>;
+  ConfigDiagnostics?(tabId: string): Promise<import("./configDiagnostics").ConfigDiagnosticSnapshot>;
+  ConfigDiagnosticDetails?(tabId: string, id: string): Promise<import("./configDiagnostics").ConfigDiagnosticSnapshot>;
+  OpenConfigDiagnosticSource?(tabId: string, diagnosticId: string): Promise<void>;
   ReloadUserConfig?(): Promise<{ configWarnings?: string[]; configWarningsRevision?: number; configPath?: string } | null>;
   StorageSettings(): Promise<{ defaultWorkspace: string; statePath: string; cachePath: string; extensionsPath: string }>;
   NeedsOnboarding(): Promise<boolean>;

@@ -100,10 +100,10 @@ func RunWithBuildInfo(args []string, info BuildInfo) int {
 		cmd = ""
 	}
 	doctorRepair := isDoctorRepairCommand(args)
-	if shouldMigrateLegacyConfigForCLI(cmd) && !doctorRepair {
+	if shouldMigrateLegacyConfigForCLI(cmd) && !doctorRepair && cmd != "doctor" {
 		migrateLegacyConfigForCLI()
 	}
-	if !doctorRepair {
+	if !doctorRepair && cmd != "doctor" {
 		if cfg, err := config.Load(); err == nil {
 			if cfg.Language != "" {
 				i18n.DetectLanguage(cfg.Language)

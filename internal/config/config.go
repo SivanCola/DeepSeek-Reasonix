@@ -87,10 +87,11 @@ type Config struct {
 	stagedModelCredentials   []string
 	modelCredentialCommit    *modelCredentialCommitJournal
 	editLoadErr              error
-	// loadWarnings are non-fatal issues observed while loading config (corrupt
+	// diagnostics are non-fatal issues observed while loading config (corrupt
 	// user/project files recovered via last-known-good or defaults). They never
 	// rewrite the original file; the UI may surface them for doctor repair.
-	loadWarnings      []string
+	diagnostics       []Diagnostic
+	diagnosticRoot    string
 	openCodeGoJournal *openCodeGoJournal
 	projectScope      projectScopeReport
 }
@@ -194,17 +195,22 @@ func (c *Config) CLITelemetryMode() string {
 // LoadWarnings returns non-fatal config load issues (corrupt files recovered in
 // memory). The returned slice is a copy.
 func (c *Config) LoadWarnings() []string {
-	if c == nil || len(c.loadWarnings) == 0 {
-		return nil
+	out := []string{}
+	for _, d := range c.Diagnostics() {
+		if d.Severity == "warning" || d.Severity == "error" {
+			msg := d.legacyMessage
+			if msg == "" {
+				msg = d.Summary
+			}
+			out = append(out, msg)
+		}
 	}
-	out := make([]string, len(c.loadWarnings))
-	copy(out, c.loadWarnings)
 	return out
 }
 
 // HasLoadWarnings reports whether the load used a degraded in-memory fallback.
 func (c *Config) HasLoadWarnings() bool {
-	return c != nil && len(c.loadWarnings) > 0
+	return len(c.LoadWarnings()) > 0
 }
 
 func (c *Config) addLoadWarning(msg string) {
@@ -215,7 +221,7 @@ func (c *Config) addLoadWarning(msg string) {
 	if msg == "" {
 		return
 	}
-	c.loadWarnings = append(c.loadWarnings, msg)
+	c.warnConfig("configuration_warning", "user", userConfigLoadPath(), "", "Configuration requires attention.", msg)
 }
 
 // IgnoredLegacyAgentStepLimits reports whether this load found and ignored the

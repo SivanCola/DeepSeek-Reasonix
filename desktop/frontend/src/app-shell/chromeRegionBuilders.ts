@@ -88,8 +88,6 @@ export function buildSessionStatusBannerProps(input: {
   activeTab: TabMeta | undefined;
   leaseBlocked: SessionStatusBannersProps["leaseBlocked"];
   meta: Meta | null | undefined;
-  configWarnings: SessionStatusBannersProps["configWarnings"];
-  dismissConfigWarnings: () => void;
   updateChecksEnabled: boolean;
   shell: ShellStores;
   banners: BannerCommands;
@@ -107,10 +105,8 @@ export function buildSessionStatusBannerProps(input: {
     takeoverDialogTabId: shell.takeoverDialogTab,
     onOpenTakeover: banners.openTakeoverDialog,
     onCloseTakeover: banners.closeTakeoverDialog,
-    configWarnings: input.configWarnings,
-    onOpenConfigFile: banners.openConfigFile,
-    onReloadConfigFile: banners.reloadConfigFile,
-    onDismissConfigWarnings: input.dismissConfigWarnings,
+    diagnosticTabId: input.activeTab?.id,
+    diagnosticBindingKey: JSON.stringify([input.activeTab?.id, input.activeTab?.workspaceRoot, input.activeTab?.sessionId, input.activeTab?.sessionGeneration, input.activeTab?.ready, input.activeTab?.remote]),
     providerSetupNeeded: shell.providerSetupNeeded,
     needsOnboarding: shell.needsOnboarding,
     onConfigureProvider: () => {

@@ -28,6 +28,66 @@ func TestDoctorCommandPrintsJSON(t *testing.T) {
 	}
 }
 
+func TestDoctorExplicitRootIsReadOnly(t *testing.T) {
+	home, root, cwd := t.TempDir(), t.TempDir(), t.TempDir()
+	t.Setenv("REASONIX_HOME", home)
+	t.Chdir(cwd)
+	body := "# legacy, retained verbatim\n[permissions]\nallow=['Bash=echo private-example']\n[sandbox]\nnetwork=false\n"
+	path := filepath.Join(root, "reasonix.toml")
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// This unrelated legacy file must not be loaded or migrated by startup.
+	other := filepath.Join(cwd, "reasonix.toml")
+	if err := os.WriteFile(other, []byte("[broken"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.Stat(path)
+	out := captureStdout(t, func() {
+		if rc := Run([]string{"doctor", "--root", root, "--json"}, "test"); rc != 0 {
+			t.Fatalf("doctor exit %d", rc)
+		}
+	})
+	var report struct {
+		ConfigDiagnostics []config.Diagnostic `json:"configDiagnostics"`
+	}
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatal(err)
+	}
+	if len(report.ConfigDiagnostics) != 1 || report.ConfigDiagnostics[0].Status != "on_demand" || strings.Contains(out, "private-example") {
+		t.Fatalf("wrong report: %s", out)
+	}
+	repairJSON := captureStdout(t, func() {
+		if rc := Run([]string{"doctor", "repair", "--root", root, "--json"}, "test"); rc != 0 {
+			t.Fatalf("valid legacy declarations failed repair validation: %d", rc)
+		}
+	})
+	var repairReport struct {
+		Checks []struct {
+			Scope string `json:"scope"`
+			Valid bool   `json:"valid"`
+		} `json:"checks"`
+	}
+	if err := json.Unmarshal([]byte(repairJSON), &repairReport); err != nil {
+		t.Fatal(err)
+	}
+	validProject := false
+	for _, check := range repairReport.Checks {
+		if check.Scope == "project" && check.Valid {
+			validProject = true
+		}
+	}
+	if !validProject {
+		t.Fatalf("repair did not recognize valid project: %s", repairJSON)
+	}
+	after, _ := os.Stat(path)
+	content, _ := os.ReadFile(path)
+	otherContent, _ := os.ReadFile(other)
+	if string(content) != body || string(otherContent) != "[broken" || !before.ModTime().Equal(after.ModTime()) {
+		t.Fatal("doctor changed configuration")
+	}
+}
+
 func TestRunDispatchesDoctor(t *testing.T) {
 	out := captureStdout(t, func() {
 		if rc := Run([]string{"doctor"}, "dispatch-version"); rc != 0 {

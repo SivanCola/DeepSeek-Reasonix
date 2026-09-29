@@ -177,7 +177,7 @@ export function useAppSessionComposition(input: AppSessionCompositionInput) {
     workspacePanelOpen, workspacePanelMaximized, liveTerminalHeight, setLiveWorkspacePanelRenderWidth,
     setRightDockTreeWidth, terminalPanelOpen, setSettingsTarget, enterConversation,
   } = shell;
-  const { sidebarImConnections, reloadConfigWarnings } = shell.preferences;
+  const { sidebarImConnections } = shell.preferences;
   const {
     composerProfilesByTab, setComposerProfilesByTab, tabMetas, setTabMetas, tabOrderIds, setTabOrderIds,
     userPlanModeByTabRef,
@@ -606,7 +606,6 @@ export function useAppSessionComposition(input: AppSessionCompositionInput) {
   const leaseBlockedTab = activeLeaseBlockedTab(tabMetas, activeTab?.id ?? activeTabId);
   const bannerCommands = useSessionBannerCommands({
     remote: Boolean(activeTab?.remote),
-    reloadConfigWarnings,
   });
 
   const workspacePanelCommands = useWorkspacePanelCommands({

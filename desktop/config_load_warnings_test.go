@@ -10,8 +10,8 @@ func TestEmitConfigLoadWarningsRequiresContextAndOwnsPayload(t *testing.T) {
 	if (&App{}).emitConfigLoadWarnings(1, []string{"warning"}) {
 		t.Fatal("handler accepted warnings without a host context")
 	}
-	if (&App{ctx: context.Background()}).emitConfigLoadWarnings(1, nil) {
-		t.Fatal("handler accepted an empty warning list")
+	if !(&App{ctx: context.Background()}).emitConfigLoadWarnings(1, nil) {
+		t.Fatal("handler must publish empty warnings to clear resolved diagnostics")
 	}
 
 	type emittedEvent struct {

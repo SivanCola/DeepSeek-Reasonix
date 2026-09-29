@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 11;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:b4fd48e18f5b4e766fb0da34f9d382961a0f9e07ee8385ac7b387babf63fa6e0";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:e3883c3f57179821166c6732cb5e782b714cb6ca9b91b62844efac9905d64798";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -118,6 +118,8 @@ export const DESKTOP_COMMANDS = [
   "CompactForTab",
   "CompactRemoteTab",
   "CompleteSessionComposerSubmission",
+  "ConfigDiagnosticDetails",
+  "ConfigDiagnostics",
   "ConfirmAction",
   "ConfirmRemoteHostKey",
   "ConfirmRemoteSecret",
@@ -338,6 +340,7 @@ export const DESKTOP_COMMANDS = [
   "OpenChannelSessionForTab",
   "OpenChannelSessionPageForTab",
   "OpenChannelTranscriptSessionForTab",
+  "OpenConfigDiagnosticSource",
   "OpenDownloadPage",
   "OpenFileBrowserPreviewForTab",
   "OpenGlobalTab",
@@ -797,6 +800,7 @@ export const DESKTOP_EVENTS = [
   "InboxChanged",
   "agent:event",
   "agent:ready",
+  "config:diagnostics",
   "config:load-warnings",
   "desktop:shell-status",
   "history-index:changed-v1",
@@ -1076,6 +1080,30 @@ export interface CredentialDiagnosticReport {
   checks: CredentialDiagnosticCheck[];
   pendingTransactions: number;
   actions: string[];
+}
+
+export interface Diagnostic {
+  id: string;
+  code: string;
+  scope: string;
+  source: string;
+  field: string;
+  severity: string;
+  status: string;
+  summary: string;
+  action: string;
+  count: number;
+  values?: string[];
+}
+
+export interface DiagnosticSnapshot {
+  hostId: string;
+  workspaceId: string;
+  workspaceRoot: string;
+  instanceId: string;
+  revision: number;
+  status: string;
+  items: Diagnostic[];
 }
 
 export interface ProviderCatalog {
@@ -6048,6 +6076,8 @@ export interface GeneratedDesktopCommands {
   CompactForTab(arg0: string): Promise<void>;
   CompactRemoteTab(arg0: string, arg1: string): Promise<void>;
   CompleteSessionComposerSubmission(arg0: SessionRef, arg1: string, arg2: string): Promise<SessionComposerState>;
+  ConfigDiagnosticDetails(arg0: string, arg1: string): Promise<DiagnosticSnapshot>;
+  ConfigDiagnostics(arg0: string): Promise<DiagnosticSnapshot>;
   ConfirmAction(arg0: NativeConfirmRequest): Promise<boolean>;
   ConfirmRemoteHostKey(arg0: string, arg1: boolean): Promise<void>;
   ConfirmRemoteSecret(arg0: string, arg1: string, arg2: string, arg3: boolean): Promise<void>;
@@ -6268,6 +6298,7 @@ export interface GeneratedDesktopCommands {
   OpenChannelSessionForTab(arg0: string, arg1: string): Promise<Message[]>;
   OpenChannelSessionPageForTab(arg0: string, arg1: string, arg2: number): Promise<HistoryPage>;
   OpenChannelTranscriptSessionForTab(arg0: string, arg1: string): Promise<HistorySwitchPhases>;
+  OpenConfigDiagnosticSource(arg0: string, arg1: string): Promise<void>;
   OpenDownloadPage(): Promise<void>;
   OpenFileBrowserPreviewForTab(arg0: string, arg1: FileBrowserPreviewRequest): Promise<FileBrowserPreviewResult>;
   OpenGlobalTab(arg0: string): Promise<TabMeta>;

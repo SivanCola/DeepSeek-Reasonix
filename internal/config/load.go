@@ -97,11 +97,11 @@ func loadForRoot(root string, opts loadForRootOptions) (*Config, error) {
 	}
 	if primary := userConfigPath(); primary != "" {
 		if _, err := resolveConfigAccessPath(primary, true); err != nil {
-			return nil, err
+			return nil, &configReadError{scope: "user", source: primary, err: err}
 		}
 	}
 	if _, err := resolveConfigAccessPath(projectTOML, false); err != nil {
-		return nil, err
+		return nil, &configReadError{scope: "project", source: projectTOML, err: err}
 	}
 
 	mergeTOML := mergeFileSnapshot
@@ -123,12 +123,12 @@ func loadForRoot(root string, opts loadForRootOptions) (*Config, error) {
 			lkgCfg.CredentialsStore = credentialsStoreMode()
 			if lkgErr := loadLastKnownGoodUserConfig(lkgCfg); lkgErr == nil {
 				*cfg = *lkgCfg
-				cfg.addLoadWarning(fmt.Sprintf(
+				cfg.warnConfig("user_config_invalid", "user", uc, "", "User configuration could not be read; using a last-known-good snapshot.", fmt.Sprintf(
 					"user config %s is invalid (%v); using last-known-good snapshot in memory without modifying the original file",
 					uc, err,
 				))
 			} else {
-				cfg.addLoadWarning(fmt.Sprintf(
+				cfg.warnConfig("user_config_invalid", "user", uc, "", "User configuration could not be read; using built-in defaults.", fmt.Sprintf(
 					"user config %s is invalid (%v); using built-in defaults in memory without modifying the original file",
 					uc, err,
 				))
@@ -157,7 +157,7 @@ func loadForRoot(root string, opts loadForRootOptions) (*Config, error) {
 	if err != nil {
 		// Project config damage is isolated to this workspace: continue with
 		// user/global config so other tabs stay available.
-		cfg.addLoadWarning(fmt.Sprintf(
+		cfg.warnConfig("project_config_invalid", "project", projectTOML, "", "Project configuration could not be read; using user configuration.", fmt.Sprintf(
 			"project config %s is invalid (%v); ignored for this workspace",
 			projectTOML, err,
 		))
@@ -187,19 +187,19 @@ func loadForRoot(root string, opts loadForRootOptions) (*Config, error) {
 	// mergeTOMLPlugins only reads files; it does not run on-disk migrations.
 	plugins, err := mergeTOMLPlugins(tomlSources)
 	if err != nil {
-		cfg.addLoadWarning(fmt.Sprintf("plugin configuration could not be merged (%v); continuing without those entries", err))
+		cfg.warnConfig("plugin_merge_failed", "project", projectTOML, "plugins", "Plugin configuration could not be merged.", fmt.Sprintf("plugin configuration could not be merged (%v); continuing without those entries", err), err)
 	} else {
 		cfg.Plugins = plugins
 	}
 	if providers, providerSources, shadowedProjectProviders, ok, err := mergeTOMLProviders(tomlSources); err != nil {
-		cfg.addLoadWarning(fmt.Sprintf("provider configuration could not be merged (%v); keeping providers already loaded", err))
+		cfg.warnConfig("provider_merge_failed", "project", projectTOML, "providers", "Provider configuration could not be merged.", fmt.Sprintf("provider configuration could not be merged (%v); keeping providers already loaded", err), err)
 	} else if ok {
 		cfg.Providers = providers
 		cfg.providerSources = providerSources
 		cfg.shadowedProjectProviders = shadowedProjectProviders
 	}
 	if access, ok, err := mergeTOMLProviderAccess(tomlSources); err != nil {
-		cfg.addLoadWarning(fmt.Sprintf("provider access configuration could not be merged (%v)", err))
+		cfg.warnConfig("provider_access_merge_failed", "project", projectTOML, "desktop.provider_access", "Provider access configuration could not be merged.", fmt.Sprintf("provider access configuration could not be merged (%v)", err), err)
 	} else if ok {
 		cfg.Desktop.ProviderAccess = access
 	}
@@ -216,7 +216,7 @@ func loadForRoot(root string, opts loadForRootOptions) (*Config, error) {
 	}
 	entries, err := loadMCPJSON(mcpFile)
 	if err != nil {
-		cfg.addLoadWarning(fmt.Sprintf("project .mcp.json is invalid (%v); MCP servers from that file are ignored", err))
+		cfg.warnConfig("mcp_config_invalid", "project", mcpFile, "", "Project MCP configuration could not be read; its servers are unavailable.", fmt.Sprintf("project .mcp.json is invalid (%v); MCP servers from that file are ignored", err))
 	} else {
 		cfg.mergeMCPJSON(entries)
 	}
@@ -478,14 +478,14 @@ func mergeTOMLPlugins(paths []string) ([]PluginEntry, error) {
 	for _, path := range paths {
 		_, exists, err := statConfigPath(path)
 		if err != nil {
-			return nil, fmt.Errorf("config %s: %w", path, err)
+			return nil, configSourceError(path, err)
 		}
 		if !exists {
 			continue
 		}
 		var f Config
 		if _, err := decodeTOMLFile(path, &f); err != nil {
-			return nil, fmt.Errorf("config %s: %w", path, err)
+			return nil, configSourceError(path, err)
 		}
 		for _, p := range f.Plugins {
 			p, _ = NormalizePluginCommandLine(p)
@@ -519,14 +519,14 @@ func mergeTOMLProviders(paths []string) ([]ProviderEntry, map[string]providerSou
 	for _, path := range paths {
 		_, exists, err := statConfigPath(path)
 		if err != nil {
-			return nil, nil, nil, false, fmt.Errorf("config %s: %w", path, err)
+			return nil, nil, nil, false, configSourceError(path, err)
 		}
 		if !exists {
 			continue
 		}
 		var f Config
 		if _, err := decodeTOMLFile(path, &f); err != nil {
-			return nil, nil, nil, false, fmt.Errorf("config %s: %w", path, err)
+			return nil, nil, nil, false, configSourceError(path, err)
 		}
 		markPersistedDeepSeekOfficialPricing(&f)
 		if len(f.Providers) == 0 {
@@ -578,7 +578,7 @@ func mergeTOMLProviderAccess(paths []string) ([]string, bool, error) {
 	for _, path := range paths {
 		_, exists, err := statConfigPath(path)
 		if err != nil {
-			return nil, false, fmt.Errorf("config %s: %w", path, err)
+			return nil, false, configSourceError(path, err)
 		}
 		if !exists {
 			continue
@@ -586,7 +586,7 @@ func mergeTOMLProviderAccess(paths []string) ([]string, bool, error) {
 		var f Config
 		meta, err := decodeTOMLFile(path, &f)
 		if err != nil {
-			return nil, false, fmt.Errorf("config %s: %w", path, err)
+			return nil, false, configSourceError(path, err)
 		}
 		if !meta.IsDefined("desktop", "provider_access") {
 			continue

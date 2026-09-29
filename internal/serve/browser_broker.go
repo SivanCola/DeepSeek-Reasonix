@@ -251,7 +251,7 @@ func (s *Server) capabilities() []string {
 		if _, ok := s.ctl().(*control.Controller); ok {
 			caps = append(caps, servecontract.SubmissionIdentityV1, servecontract.InboxMutationsV1)
 		}
-		caps = append(caps, capabilitySessionIdentityV1, capabilitySessionOwnershipV1, capabilitySessionContentV1, capabilitySessionReadV2, capabilityHistoryWindowV1, capabilityGoalLifecycleV2, capabilityForkTargetsV1, servecontract.SessionExportV1, servecontract.HistoryOutlineV1)
+		caps = append(caps, capabilitySessionIdentityV1, capabilitySessionOwnershipV1, capabilitySessionContentV1, capabilitySessionReadV2, capabilityHistoryWindowV1, capabilityGoalLifecycleV2, capabilityForkTargetsV1, servecontract.SessionExportV1, servecontract.HistoryOutlineV1, servecontract.ConfigDiagnosticsV1)
 	}
 	if _, ok := s.ctl().(interface {
 		SubmitExtensionFormExact(context.Context, string, string, uint64, string, map[string]any) error

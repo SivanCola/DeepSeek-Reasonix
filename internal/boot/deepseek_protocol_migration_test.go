@@ -142,3 +142,16 @@ command = "C:\Users\reasonix\mcp.exe"
 		t.Fatalf("build rewrote malformed project config:\n%s", next)
 	}
 }
+func TestEmptyConfigWarningsClearWithoutSuppressingLaterMigrationFailure(t *testing.T) {
+	called := false
+	handled := handleConfigLoadWarnings(Options{OnConfigLoadWarnings: func(warnings []string) bool {
+		called = true
+		if warnings == nil || len(warnings) != 0 {
+			t.Fatalf("warnings = %#v", warnings)
+		}
+		return true
+	}}, config.Default())
+	if !called || handled {
+		t.Fatalf("called=%v handled=%v", called, handled)
+	}
+}

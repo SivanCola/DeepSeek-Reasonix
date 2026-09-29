@@ -25,7 +25,7 @@ const appStubTable = {
 };
 const desktopStub = installDesktopHostStub(appStubTable);
 let current!: ReturnType<typeof useDesktopPreferences>;
-function Probe() { current = useDesktopPreferences(); return <div>{current.configLoadWarnings.join("|")}</div>; }
+function Probe() { current = useDesktopPreferences(); return <div />; }
 const root = createRoot(document.getElementById("root")!);
 const snapshot = { sessionExperience: "deep", desktopTheme: "light", desktopThemeStyle: "graphite",
   desktopLanguage: "en", checkUpdates: true, updaterEnabled: true, configWarnings: ["warning"], configWarningsRevision: 3 } as DesktopStartupSettingsView;
@@ -36,11 +36,10 @@ try {
   await act(async () => { resolveStartup(snapshot); await import("../lib/themeExperience"); });
   assert.equal(getSessionExperience(), "deep", "backend wins over an old localStorage mirror");
   assert.equal(current.startupUpdateChecksEnabled, true, "stable build and enabled preference allow automatic checks");
-  assert.deepEqual(current.configLoadWarnings, ["warning"]);
+  assert.equal("configLoadWarnings" in current, false, "unscoped legacy warnings are not application preferences");
   await act(async () => { desktopStub.emit("config:load-warnings", ["stale"], 2); });
-  assert.deepEqual(current.configLoadWarnings, ["warning"], "stale runtime warning cannot replace startup snapshot");
   await act(async () => { desktopStub.emit("config:load-warnings", ["current"], 4); });
-  assert.deepEqual(current.configLoadWarnings, ["current"]);
+  assert.equal(desktopStub.events.get("config:load-warnings")?.size ?? 0, 0, "preferences do not subscribe to project diagnostics");
   await act(async () => { await current.reload({ ...snapshot, sessionExperience: undefined }); });
   assert.equal(getSessionExperience(), "standard", "old backend missing field resolves standard");
   await act(async () => { await current.reload({ ...snapshot, sessionExperience: undefined, updaterEnabled: undefined }); });
@@ -64,5 +63,5 @@ try {
     assert.equal(getSessionExperience(), "standard", "failed first snapshot uses canonical standard, not a legacy local preference");
     assert.equal(current.startupUpdateChecksEnabled, false, "startup RPC failure disables automatic checks");
   } finally { await act(async () => failedRoot.unmount()); console.warn = originalWarn; }
-  console.log("desktop preferences: lightweight snapshot, legacy mirror, warning revision and disposal passed");
+  console.log("desktop preferences: lightweight snapshot, legacy mirror, diagnostic separation and disposal passed");
 } finally { dom.window.close(); }

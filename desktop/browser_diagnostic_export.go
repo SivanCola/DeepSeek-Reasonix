@@ -96,6 +96,10 @@ func captureBrowserHostDiagnostics(ctx context.Context, host hostRequester, scop
 // fields. Append desktop evidence locally, preserving its streaming document
 // and compatibility with older remote services (and their 64 KiB POST limit).
 func appendBrowserDiagnosticSection(dst io.Writer, section []byte) error {
+	return appendDiagnosticSection(dst, "browserDiagnostics", section)
+}
+
+func appendDiagnosticSection(dst io.Writer, name string, section []byte) error {
 	f, ok := dst.(*os.File)
 	if !ok {
 		return errors.New("diagnostic destination is not seekable")
@@ -125,9 +129,13 @@ func appendBrowserDiagnosticSection(dst io.Writer, section []byte) error {
 	if len(first) == 0 || first[0] != '{' {
 		return errors.New("remote diagnostics is not a JSON object")
 	}
-	prefix := ",\n\"browserDiagnostics\":"
+	key, err := json.Marshal(name)
+	if err != nil {
+		return err
+	}
+	prefix := ",\n" + string(key) + ":"
 	if start == 0 && bytes.Equal(bytes.TrimSpace(tail[:i]), []byte("{")) {
-		prefix = "\n\"browserDiagnostics\":"
+		prefix = "\n" + string(key) + ":"
 	}
 	if _, err = f.Seek(start+int64(i), io.SeekStart); err != nil {
 		return err

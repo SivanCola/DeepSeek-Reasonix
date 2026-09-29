@@ -16,6 +16,7 @@ import (
 )
 
 func (s *Server) registerTranscriptRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /config-diagnostics", s.configDiagnostics)
 	mux.HandleFunc("GET /session-export/snapshot", s.sessionExportSnapshot)
 	mux.HandleFunc("POST /session-export/document", s.sessionExportDocument)
 	mux.HandleFunc("POST /session-export/validate", s.sessionExportValidate)

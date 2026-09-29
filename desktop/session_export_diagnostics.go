@@ -17,6 +17,7 @@ import (
 func (a *App) writeSessionDiagnosticExport(job *sessionExportJob) error {
 	browserDiagnostics := a.browserDiagnosticExport(job)
 	extra := map[string]any{"sessionIdentity": map[string]any{"session": job.handle.Snapshot.Ref, "source": "local", "workspaceRoot": job.workspaceRoot, "storageGeneration": job.handle.Snapshot.StorageGeneration}, "exportSnapshot": job.handle.Snapshot, "frontendObservation": job.observation}
+	extra["configDiagnostics"] = job.configDiagnostics
 	var frontend map[string]json.RawMessage
 	_ = json.Unmarshal(job.observation, &frontend)
 	if value := frontend["readDiagnostics"]; len(value) > 0 {
@@ -27,6 +28,7 @@ func (a *App) writeSessionDiagnosticExport(job *sessionExportJob) error {
 	}
 	return writeGoalDiagnosticsFile(job.path, func(dst io.Writer) error {
 		if job.client != nil {
+			delete(extra, "configDiagnostics") // The service owns remote evidence.
 			extra["sessionIdentity"] = map[string]any{"session": job.handle.Snapshot.Ref, "source": "remote", "connectionHostId": job.sourceHostID, "workspaceRoot": job.workspaceRoot, "storageGeneration": job.handle.Snapshot.StorageGeneration}
 			body, _ := json.Marshal(extra)
 			resp, err := serveDoForSession(job.ctx, job.client, http.MethodPost, sessionExportURL(job.base, "/session-export/diagnostic", job.handle.Snapshot.Ref.SessionID, false), body, job.route)
@@ -40,6 +42,15 @@ func (a *App) writeSessionDiagnosticExport(job *sessionExportJob) error {
 			if _, err = copyExportContext(job.ctx, dst, resp.Body); err != nil {
 				return err
 			}
+			if !job.remoteConfigDiagnostics {
+				encoded, err := json.Marshal(job.configDiagnostics)
+				if err != nil {
+					return err
+				}
+				if err = appendDiagnosticSection(dst, "configDiagnostics", encoded); err != nil {
+					return err
+				}
+			}
 			encoded, err := json.Marshal(browserDiagnostics)
 			if err != nil {
 				return err
@@ -51,7 +62,7 @@ func (a *App) writeSessionDiagnosticExport(job *sessionExportJob) error {
 			return appendBrowserDiagnosticSection(dst, encoded)
 		}
 		extra["browserDiagnostics"] = browserDiagnostics
-		metadata := control.GoalDiagnosticMetadata{ApplicationVersion: version, BuildCommit: buildCommit(), ProtocolVersion: hostrpc.ProtocolVersion, Capabilities: []string{servecontract.SessionExportV1, servecontract.GoalLifecycleV2}}
+		metadata := control.GoalDiagnosticMetadata{ApplicationVersion: version, BuildCommit: buildCommit(), ProtocolVersion: hostrpc.ProtocolVersion, Capabilities: []string{servecontract.SessionExportV1, servecontract.GoalLifecycleV2, servecontract.ConfigDiagnosticsV1}}
 		if a.sessionDiagnosticControllerCurrent(job.controller, job.handle.Snapshot.Ref) {
 			runtimeErr := job.controller.WriteSessionDiagnostics(job.ctx, dst, metadata, extra)
 			if a.sessionDiagnosticControllerCurrent(job.controller, job.handle.Snapshot.Ref) {

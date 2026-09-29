@@ -301,8 +301,6 @@ export function AppRuntimeView(props: AppRuntimeViewProps) {
             activeTab,
             leaseBlocked: session.leaseBlockedTab ? { tabId: session.leaseBlockedTab.id, message: session.leaseBlockedTab.runtime!.issue!.message } : null,
             meta: state.meta,
-            configWarnings: shell.preferences.configLoadWarnings,
-            dismissConfigWarnings: shell.preferences.dismissConfigWarnings,
             updateChecksEnabled: shell.preferences.startupUpdateChecksEnabled === true,
             shell,
             banners: session.bannerCommands,

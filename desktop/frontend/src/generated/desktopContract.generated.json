@@ -3047,6 +3047,60 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/config_diagnostics.go",
+      "name": "ConfigDiagnosticDetails",
+      "owner": "App.ConfigDiagnosticDetails",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "config.DiagnosticSnapshot"
+      },
+      "scope": {
+        "inputs": [
+          "tabID",
+          "diagnosticID"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.ConfigDiagnosticDetails"
+      },
+      "sources": [
+        "desktop/config_diagnostics.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/config_diagnostics.go",
+      "name": "ConfigDiagnostics",
+      "owner": "App.ConfigDiagnostics",
+      "params": [
+        {
+          "kind": "string"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "config.DiagnosticSnapshot"
+      },
+      "scope": {
+        "inputs": [
+          "tabID"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.ConfigDiagnostics"
+      },
+      "sources": [
+        "desktop/config_diagnostics.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/app.go",
       "name": "ConfirmAction",
       "owner": "App.ConfirmAction",
@@ -8985,6 +9039,32 @@
       },
       "sources": [
         "desktop/transcript_api.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/config_diagnostics.go",
+      "name": "OpenConfigDiagnosticSource",
+      "owner": "App.OpenConfigDiagnosticSource",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        }
+      ],
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID",
+          "diagnosticID"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.OpenConfigDiagnosticSource"
+      },
+      "sources": [
+        "desktop/config_diagnostics.go"
       ]
     },
     {
@@ -21533,6 +21613,7 @@
     "InboxChanged",
     "agent:event",
     "agent:ready",
+    "config:diagnostics",
     "config:load-warnings",
     "desktop:shell-status",
     "history-index:changed-v1",
@@ -22870,6 +22951,130 @@
           "type": {
             "elem": {
               "kind": "string"
+            },
+            "kind": "array"
+          }
+        }
+      ]
+    },
+    "config.Diagnostic": {
+      "fields": [
+        {
+          "name": "id",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "code",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "scope",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "source",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "field",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "severity",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "status",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "summary",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "action",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "count",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "values",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "string"
+            },
+            "kind": "array"
+          }
+        }
+      ]
+    },
+    "config.DiagnosticSnapshot": {
+      "fields": [
+        {
+          "name": "hostId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "workspaceId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "workspaceRoot",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "instanceId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "revision",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "status",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "items",
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "config.Diagnostic"
             },
             "kind": "array"
           }

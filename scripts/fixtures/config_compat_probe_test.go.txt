@@ -1,0 +1,38 @@
+package config
+
+import (
+  "bytes"
+  "os"
+  "path/filepath"
+  "strings"
+  "testing"
+)
+
+func TestUpgradeCompatibilityProbe(t *testing.T) {
+  root := os.Getenv("REASONIX_COMPAT_ROOT")
+  t.Setenv("REASONIX_HOME", os.Getenv("REASONIX_COMPAT_HOME"))
+  if root == "" { t.Fatal("missing disposable compatibility root") }
+  files := []string{filepath.Join(root, "reasonix.toml"), filepath.Join(os.Getenv("REASONIX_HOME"), "config.toml"), filepath.Join(os.Getenv("REASONIX_HOME"), "project-grants.json")}
+  before := map[string][]byte{}
+  info := map[string]os.FileInfo{}
+  for _, file := range files { var err error; before[file], err = os.ReadFile(file); if err != nil { t.Fatal(err) }; info[file], err = os.Stat(file); if err != nil { t.Fatal(err) } }
+  cfg, err := LoadForRootWithoutCredentialsReadOnly(root)
+  if err != nil { t.Fatal(err) }
+  if os.Getenv("REASONIX_COMPAT_CURRENT") == "1" {
+    if len(cfg.Permissions.Allow) != 1 || cfg.Permissions.Allow[0] != "Bash=echo trusted" { t.Fatalf("untrusted rules became grants: %v", cfg.Permissions.Allow) }
+    for _, warning := range cfg.LoadWarnings() {
+      if strings.Contains(warning, "permissions.allow") { t.Fatalf("legacy rules caused banner: %s", warning) }
+    }
+    t.Logf("other retained feature approvals: %v", cfg.LoadWarnings())
+  }
+  for _, file := range files {
+    data, err := os.ReadFile(file); if err != nil { t.Fatal(err) }
+    after, err := os.Stat(file); if err != nil { t.Fatal(err) }
+    if !bytes.Equal(before[file], data) || !info[file].ModTime().Equal(after.ModTime()) { t.Fatalf("read changed %s", file) }
+  }
+  if os.Getenv("REASONIX_COMPAT_WRITE") == "1" {
+    edit := LoadForEditWithoutCredentials(files[0])
+    edit.Permissions.Allow = append(edit.Permissions.Allow, "Bash=echo added-by-legacy-writer")
+    if err := edit.SaveTo(files[0]); err != nil { t.Fatal(err) }
+  }
+}

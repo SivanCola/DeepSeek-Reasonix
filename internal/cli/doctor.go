@@ -74,11 +74,16 @@ func doctorCommand(args []string, version string) int {
 	}
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	jsonOut := fs.Bool("json", false, "print diagnostics as JSON")
+	root := fs.String("root", ".", "project root to inspect")
 	if code, ok := parseCommandFlags(fs, args); !ok {
 		return code
 	}
 
-	report := doctor.Collect(doctor.Options{Version: version})
+	if fs.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "usage: reasonix doctor [--root PATH] [--json]")
+		return 2
+	}
+	report := doctor.Collect(doctor.Options{Version: version, Root: *root})
 	if *jsonOut {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
