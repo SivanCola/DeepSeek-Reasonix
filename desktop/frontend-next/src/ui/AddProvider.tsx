@@ -1,3 +1,4 @@
+import { HTTPCompatibility } from "./HTTPCompatibility";
 import { useEffect, useState } from "react";
 import { t } from "../i18n";
 import type { Protocol, ProviderEntry, ProviderProbe } from "../port/port";
@@ -16,6 +17,7 @@ export function AddProvider({
   port: Port; taken: string[]; known: ProviderEntry[]; onDone: () => void; onCancel: () => void;
 }) {
   const [baseUrl, setBaseUrl] = useState("");
+  const [http1Only, setHTTP1Only] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [probe, setProbe] = useState<ProviderProbe | null>(null);
   const [catalog, setCatalog] = useState<Protocol[]>([]);
@@ -67,7 +69,7 @@ export function AddProvider({
     setBusy(true);
     setErr("");
     try {
-      const got = await port.probeProvider(baseUrl.trim(), apiKey.trim());
+      const got = await port.probeProvider(baseUrl.trim(), apiKey.trim(), http1Only);
       setProbe(got);
       setKind((current) => current || got.kind);
       setModels((current) => [...new Set([...got.models, ...current])]);
@@ -89,6 +91,7 @@ export function AddProvider({
     setErr("");
     try {
       await port.saveProvider({
+        http1Only,
         name: name.trim(),
         kind,
         baseUrl: baseUrl.trim(),
@@ -131,6 +134,7 @@ export function AddProvider({
     }));
     try {
       const got = await port.checkProviderModel({
+        http1Only,
         model,
         baseUrl: baseUrl.trim(),
         apiKey: apiKey.trim(),
@@ -212,6 +216,7 @@ export function AddProvider({
               setFacts(clearModelCheckFacts);
             }} disabled={busy || checkingModel !== ""} spellCheck={false} />
         </label>
+        <HTTPCompatibility kind={kind} value={http1Only} onChange={value => { setHTTP1Only(value); setFacts(clearModelCheckFacts); }} disabled={busy || checkingModel !== ""} />
         <p className="addp-privacy">{t("API Key 仅保存在运行内核的这台机器上。")}</p>
         {sibling && (
           <p className="acct-note">

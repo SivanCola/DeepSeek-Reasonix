@@ -55,7 +55,8 @@ func (s *Server) checkProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Name string `json:"name"`
+		Name      string `json:"name"`
+		HTTP1Only *bool  `json:"http1Only"`
 	}
 	if !decodeProviderBody(w, r, &body) {
 		return
@@ -72,7 +73,17 @@ func (s *Server) checkProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), providerProbeTimeout)
 	defer cancel()
-	proxied, direct := probeClients()
+	only := entry.HTTP1Only
+	if body.HTTP1Only != nil {
+		only = *body.HTTP1Only
+	}
+	proxied, direct, err := probeClients(only)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer proxied.CloseIdleConnections()
+	defer direct.CloseIdleConnections()
 	got, probeErr := catalog.ProbeEndpoint(ctx, catalog.ProbeOptions{
 		BaseURL: entry.BaseURL,
 		APIKey:  entry.APIKey(),
@@ -102,6 +113,7 @@ type providerModelCheckRequest struct {
 	BaseURL    string `json:"baseUrl"`
 	APIKey     string `json:"apiKey"`
 	Kind       string `json:"kind"`
+	HTTP1Only  *bool  `json:"http1Only"`
 	AuthHeader *bool  `json:"authHeader"`
 	NoProxy    *bool  `json:"noProxy"`
 }
@@ -159,6 +171,9 @@ func (s *Server) checkProviderModel(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.NoProxy != nil {
 		candidate.NoProxy = *body.NoProxy
+	}
+	if body.HTTP1Only != nil {
+		candidate.HTTP1Only = *body.HTTP1Only
 	}
 	candidate.Model = model
 	if key := strings.TrimSpace(body.APIKey); key != "" {

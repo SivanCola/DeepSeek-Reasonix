@@ -56,7 +56,8 @@ var providerNameRE = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$`)
 
 // providerView is one configured provider as the panel lists it.
 type providerView struct {
-	Name string `json:"name"`
+	HTTP1Only bool   `json:"http1Only,omitempty"`
+	Name      string `json:"name"`
 	// DisplayName is the label a person gave this entry; empty is none set.
 	DisplayName string   `json:"displayName,omitempty"`
 	Kind        string   `json:"kind"`
@@ -158,6 +159,7 @@ func (s *Server) providers(w http.ResponseWriter, _ *http.Request) {
 			ModelProtocols:     modelProtocolsOf(p),
 			ContextWindow:      p.ContextWindow,
 			MaxOutputTokens:    p.MaxOutputTokens,
+			HTTP1Only:          p.HTTP1Only,
 			Headers:            p.Headers,
 			ExtraBody:          p.ExtraBody,
 		})
@@ -200,15 +202,22 @@ func (s *Server) probeProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		BaseURL string `json:"baseUrl"`
-		APIKey  string `json:"apiKey"`
+		HTTP1Only bool   `json:"http1Only"`
+		BaseURL   string `json:"baseUrl"`
+		APIKey    string `json:"apiKey"`
 	}
 	if !decodeProviderBody(w, r, &body) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), providerProbeTimeout)
 	defer cancel()
-	proxied, direct := probeClients()
+	proxied, direct, err := probeClients(body.HTTP1Only)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer proxied.CloseIdleConnections()
+	defer direct.CloseIdleConnections()
 	got, err := catalog.ProbeEndpoint(ctx, catalog.ProbeOptions{
 		BaseURL: body.BaseURL,
 		APIKey:  body.APIKey,
@@ -261,6 +270,7 @@ func (s *Server) saveProvider(w http.ResponseWriter, r *http.Request) {
 		Default           string            `json:"default"`
 		AuthHeader        bool              `json:"authHeader"`
 		NoProxy           bool              `json:"noProxy"`
+		HTTP1Only         bool              `json:"http1Only"`
 		Effort            string            `json:"effort"`
 		Vision            []string          `json:"vision"`
 		ContextWindow     int               `json:"contextWindow"`
@@ -282,6 +292,7 @@ func (s *Server) saveProvider(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusBadRequest, "provider.bad_token_limit", "token limits cannot be negative", nil)
 		return
 	}
+	entry.HTTP1Only = body.HTTP1Only
 	entry.ContextWindow = body.ContextWindow
 	entry.MaxOutputTokens = body.MaxOutputTokens
 	if body.ReasoningProtocol != nil {
@@ -448,14 +459,21 @@ func providerKeyEnv(name string) string { return config.APIKeyEnvFor(name) }
 
 // probeClients builds the two routes a probe tries: the user's configured proxy
 // first, then a direct one for endpoints that only answer without it.
-func probeClients() (proxied, direct *http.Client) {
+func probeClients(http1Only bool) (proxied, direct *http.Client, err error) {
 	spec := netclient.ProxySpec{Mode: netclient.ModeAuto}
 	if cfg, err := config.Load(); err == nil && cfg != nil {
 		spec = cfg.NetworkProxySpec()
 	}
-	proxied, _ = netclient.NewHTTPClient(spec, netclient.TransportOptions{})
-	direct, _ = netclient.NewHTTPClient(netclient.ProxySpec{Mode: netclient.ModeOff}, netclient.TransportOptions{})
-	return proxied, direct
+	proxied, err = netclient.NewHTTPClient(spec, netclient.TransportOptions{HTTP1Only: http1Only})
+	if err != nil {
+		return nil, nil, err
+	}
+	direct, err = netclient.NewHTTPClient(netclient.ProxySpec{Mode: netclient.ModeOff}, netclient.TransportOptions{HTTP1Only: http1Only})
+	if err != nil {
+		proxied.CloseIdleConnections()
+		return nil, nil, err
+	}
+	return proxied, direct, nil
 }
 
 func decodeProviderBody(w http.ResponseWriter, r *http.Request, into any) bool {

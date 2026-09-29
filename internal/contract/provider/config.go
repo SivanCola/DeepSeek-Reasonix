@@ -4,10 +4,11 @@ import "strings"
 
 // Config is a resolved provider instance configuration.
 type Config struct {
-	Name    string // instance name, e.g. "deepseek"
-	BaseURL string // OpenAI-compatible endpoint
-	Model   string // model id
-	APIKey  string // resolved from api_key_env
+	HTTP1Only bool
+	Name      string // instance name, e.g. "deepseek"
+	BaseURL   string // OpenAI-compatible endpoint
+	Model     string // model id
+	APIKey    string // resolved from api_key_env
 	// APIKeyFunc, when set, answers per request instead of APIKey: a key is
 	// external mutable state, and replacing an exhausted one must not require
 	// rebuilding the session. An empty answer falls back to APIKey.
