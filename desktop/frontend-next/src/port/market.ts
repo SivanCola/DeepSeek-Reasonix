@@ -54,7 +54,7 @@ export interface MarketVersion {
 export interface MarketDetail {
   package: MarketPackage;
   approved?: MarketVersion;
-  // False means the market will refuse to install it (market.unpinned).
+  // False means an install needs the person's trust (market.unpinned without it).
   pinned: boolean;
   installed?: MarketInstalled;
 }
@@ -75,23 +75,24 @@ export interface MarketQuery {
 }
 
 // version is the approved version the person was shown; the kernel refuses an
-// install once a different one is approved (market.version_changed).
+// install once a different one is approved (market.version_changed). trust
+// accepts an unpinned version; digest is then the preview's contentDigest.
 export interface MarketRequest {
   slug: string;
   version?: string;
   planId?: string;
   replace?: boolean;
+  trust?: boolean;
+  digest?: string;
 }
 
-// unreviewed marks the publisher's own install of a version no reviewer
-// pinned: contentDigest is then this preview's, and apply must echo it.
+// unreviewed marks an install of a version no reviewer pinned: contentDigest
+// is then this preview's, and apply must echo it.
 export type MarketPlan = PluginPlan & { slug: string; version: string; contentDigest?: string; unreviewed?: boolean };
 
 // The account's own package, any review state. digest is the previewed
 // contentDigest; the kernel refuses an apply without it (market.unpreviewed).
-export interface MarketOwnRequest extends MarketRequest {
-  digest?: string;
-}
+export type MarketOwnRequest = MarketRequest;
 
 // One package offered for review under the signed-in account's handle.
 export interface MarketSubmission {

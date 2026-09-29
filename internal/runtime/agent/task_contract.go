@@ -97,7 +97,14 @@ func (a *Agent) frozenResults(criteria []contract.Criterion) []verdict.Frozen {
 		return nil
 	}
 	ledger := a.task.ledger
-	at, changed := ledger.LatestProvenMutationIndex()
+	checks := planCheckIdentities(a.PlanContract())
+	for _, c := range criteria {
+		if c.Verifier.Kind == contract.VerifierCommand {
+			checks = append(checks, c.Verifier.Identity)
+		}
+	}
+	runs := a.checkRunsOf(checks)
+	_, changed := runs.baseline(checks)
 	owedTests := map[string]bool{}
 	for _, o := range evidence.BaselineTestObligations(a.baselineFacts(), a.mutationEpoch()) {
 		owedTests[o.ID] = true
@@ -111,7 +118,8 @@ func (a *Agent) frozenResults(criteria []contract.Criterion) []verdict.Frozen {
 		f := verdict.Frozen{ID: c.ID, Source: c.Source, Identity: c.Verifier.Identity}
 		switch c.Verifier.Kind {
 		case contract.VerifierCommand:
-			f.Satisfied = !changed || ledger.HasSuccessfulCommandAfter(c.Verifier.Identity, at)
+			at, changedSince := runs.baseline([]string{c.Verifier.Identity})
+			f.Satisfied = !changedSince || ledger.HasSuccessfulCommandAfter(c.Verifier.Identity, at)
 		case contract.VerifierChange:
 			f.Satisfied = changed
 		case contract.VerifierTest:

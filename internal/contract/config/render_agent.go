@@ -12,9 +12,7 @@ import (
 func renderAgentDelta(buf *strings.Builder, c, d *Config) bool {
 	wrote := false
 	if sp := strings.TrimSpace(c.Agent.SystemPrompt); sp != "" && sp != d.Agent.SystemPrompt {
-		buf.WriteString("system_prompt = \"\"\"\n")
-		buf.WriteString(sp)
-		buf.WriteString("\"\"\"\n")
+		buf.WriteString("system_prompt = " + tomlMultilineBasicString(sp) + "\n")
 		wrote = true
 	}
 	if c.Agent.SystemPromptFile != "" && c.Agent.SystemPromptFile != d.Agent.SystemPromptFile {
@@ -87,4 +85,28 @@ func renderAgentTail(buf *strings.Builder, c, d *Config) bool {
 		wrote = true
 	}
 	return wrote
+}
+
+// tomlMultilineBasicString writes s as a """ string that decodes back to s:
+// backslashes, control characters and any quote that could close the string
+// early are escaped, and line breaks stay literal.
+func tomlMultilineBasicString(s string) string {
+	var b strings.Builder
+	b.WriteString("\"\"\"\n")
+	for i := range len(s) {
+		switch ch := s[i]; {
+		case ch == '\\':
+			b.WriteString(`\\`)
+		case ch == '"' && (i == len(s)-1 || s[i+1] == '"'):
+			b.WriteString(`\"`)
+		case ch == '\n' || ch == '\t':
+			b.WriteByte(ch)
+		case ch < 0x20 || ch == 0x7f:
+			fmt.Fprintf(&b, `\u%04X`, ch)
+		default:
+			b.WriteByte(ch)
+		}
+	}
+	b.WriteString(`"""`)
+	return b.String()
 }

@@ -23,8 +23,9 @@ type Broadcaster struct {
 	// The transport's, not the session's: numbering outlives /new and /resume, so
 	// resuming across one is told to rebuild rather than handed another
 	// conversation's frames under numbers it already has.
-	seq    int64
-	replay replayLog
+	seq                    int64
+	replay                 replayLog
+	initialNoticesReplayed bool
 }
 
 // NewBroadcaster returns an empty Broadcaster ready to accept subscribers.
@@ -80,6 +81,7 @@ func (b *Broadcaster) ResetSession() {
 	b.mu.Lock()
 	b.ledger = pricing.NewLedger()
 	b.replay.reset()
+	b.initialNoticesReplayed = false
 	b.mu.Unlock()
 }
 
@@ -115,7 +117,7 @@ func (b *Broadcaster) Emit(e event.Event) {
 		return
 	}
 	if !drop {
-		b.replay.add(b.seq, data)
+		b.replay.add(b.seq, e.Kind, data)
 	}
 	if e.Kind == event.Usage && e.Usage != nil && e.CostQuote != nil {
 		if b.ledger == nil {
@@ -165,9 +167,37 @@ func (b *Broadcaster) Subscribe() (<-chan Frame, func()) {
 // before Emit can see the subscriber, so the resume has no seam. A gap the log
 // cannot close is announced instead: the first sequence the client can trust.
 func (b *Broadcaster) SubscribeFrom(after int64) (<-chan Frame, func()) {
+	return b.subscribeFrom(after, false)
+}
+
+// SubscribeInitialNotices attaches a window without a resume cursor. Only the
+// first such window for a session receives notices emitted before it connected.
+// They are unnumbered copies: skipped non-notice history must not look like a
+// gap that prompts the client to replay it.
+func (b *Broadcaster) SubscribeInitialNotices() (<-chan Frame, func()) {
+	return b.subscribeFrom(0, true)
+}
+
+func (b *Broadcaster) subscribeFrom(after int64, initialNotices bool) (<-chan Frame, func()) {
 	s := newSubscriber()
 	b.mu.Lock()
-	if after > 0 && after < b.seq {
+	if initialNotices && !b.initialNoticesReplayed {
+		b.initialNoticesReplayed = true
+		for _, f := range b.replay.frames {
+			if f.kind != event.Notice {
+				continue
+			}
+			var notice eventwire.Event
+			if json.Unmarshal(f.data, &notice) != nil {
+				continue
+			}
+			notice.Seq = 0
+			data, err := json.Marshal(notice)
+			if err == nil {
+				s.push(Frame{Data: data}, false)
+			}
+		}
+	} else if after > 0 && after < b.seq {
 		missed, complete := b.replay.since(after)
 		if gap, from := b.gapFrame(missed); !complete && gap != nil {
 			s.push(Frame{Seq: from, Data: gap}, false)

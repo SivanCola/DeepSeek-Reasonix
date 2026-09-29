@@ -13,7 +13,6 @@ import (
 	"github.com/alecthomas/chroma/v2/formatters"
 	"github.com/alecthomas/chroma/v2/lexers"
 	"github.com/alecthomas/chroma/v2/styles"
-	"github.com/charmbracelet/x/ansi"
 
 	"reasonix/internal/base/i18n"
 	"reasonix/internal/contract/event"
@@ -206,7 +205,7 @@ func clampPlain(s string, w int) string {
 	if w < 1 {
 		w = 1
 	}
-	return ansi.Truncate(ExpandTabs(s), w, "")
+	return Truncate(ExpandTabs(s), w, "")
 }
 
 // ExpandTabs replaces tabs with spaces to the next tabWidth stop. A literal tab

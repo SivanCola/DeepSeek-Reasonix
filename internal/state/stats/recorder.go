@@ -137,13 +137,21 @@ func (r *Recorder) Emit(e event.Event) {
 	} else if r != nil && r.writer != nil && e.Kind == event.GuardianAssessment && e.Guardian.Usage != nil {
 		r.recordProviderUsage(e.ModelRef, e.Guardian.Usage, nil, "")
 	} else if r != nil && r.writer != nil && e.Kind == event.TurnDone {
-		r.RecordTurnCompletion()
+		r.recordTurn()
 	}
 }
 
 // RecordTurnCompletion records synchronous controller runs that deliberately do
-// not emit TurnDone into the UI event stream.
+// not emit TurnDone into the UI event stream, and passes the signal inward.
 func (r *Recorder) RecordTurnCompletion() {
+	if r == nil {
+		return
+	}
+	r.recordTurn()
+	event.RecordTurnCompletion(r.inner)
+}
+
+func (r *Recorder) recordTurn() {
 	if r == nil || r.dispatcher == nil {
 		return
 	}

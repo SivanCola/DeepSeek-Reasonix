@@ -1,11 +1,12 @@
 import type { MarketDetail, MarketList, MarketOwnRequest, MarketPackage, MarketPlan, MarketPublished, MarketQuery, MarketRequest, MarketSubmission, MarketVote } from "./market";
+import { HttpError } from "./http_error";
 import { MockLook } from "./mock_look";
 
 const DIGEST = "sha256:5f0c1e9a7b3d2c4e6f8a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e";
 
 // Four rows that each read differently: pinned and installable, one source
 // that expands into several skills, one already installed, and one whose
-// approved version carries no digest and so cannot be installed from here.
+// approved version carries no digest and so installs only on the person's trust.
 const PACKAGES: (MarketPackage & { source: string; pinned: boolean })[] = [
   {
     kind: "skill", handle: "nanfei892", name: "make-ui-not-ai", slug: "nanfei892/make-ui-not-ai",
@@ -83,7 +84,8 @@ export class MockMarket extends MockLook {
   // the confirmation this tab exists to force.
   async planMarket(req: MarketRequest): Promise<MarketPlan> {
     const p = PACKAGES.find((x) => x.slug === req.slug)!;
-    const base = { ok: true, status: "planned", applied: false, source: p.source, slug: p.slug, version: p.latestVersion, contentDigest: DIGEST };
+    if (!p.pinned && !req.trust) throw new HttpError(409, "the approved version is not pinned to reviewed content", { code: "market.unpinned" });
+    const base = { ok: true, status: "planned", applied: false, source: p.source, slug: p.slug, version: p.latestVersion, contentDigest: DIGEST, unreviewed: !p.pinned };
     if (p.slug === "acme/review-kit") {
       return {
         ...base, planId: "high:sha256:mock",
@@ -101,6 +103,7 @@ export class MockMarket extends MockLook {
 
   async installMarket(req: MarketRequest): Promise<MarketPlan> {
     const plan = await this.planMarket(req);
+    if (plan.unreviewed && req.digest !== plan.contentDigest) throw new HttpError(400, "an unreviewed install needs the digest of the preview it confirms", { code: "market.unpreviewed" });
     this.marketInstalled.add(req.slug);
     return { ...plan, status: "done", applied: true, actions: plan.actions?.map((a) => ({ ...a, status: "done" })) };
   }

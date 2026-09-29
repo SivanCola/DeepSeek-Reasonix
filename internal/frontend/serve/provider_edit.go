@@ -24,13 +24,14 @@ func (s *Server) editProvider(w http.ResponseWriter, r *http.Request) {
 	// empty" stay different answers: a client that does not show them must not
 	// silently clear the headers a gateway needs.
 	var body struct {
-		Name            string             `json:"name"`
-		BaseURL         string             `json:"baseUrl"`
-		APIKey          string             `json:"apiKey"`
-		Models          []string           `json:"models"`
-		Default         string             `json:"default"`
-		Vision          []string           `json:"vision"`
-		ContextWindow   *int               `json:"contextWindow"`
+		Name          string   `json:"name"`
+		BaseURL       string   `json:"baseUrl"`
+		APIKey        string   `json:"apiKey"`
+		Models        []string `json:"models"`
+		Default       string   `json:"default"`
+		Vision        []string `json:"vision"`
+		ContextWindow *int     `json:"contextWindow"`
+		// HTTP1Only changes transport policy when present; nil preserves the saved choice.
 		HTTP1Only       *bool              `json:"http1Only"`
 		MaxOutputTokens *int               `json:"maxOutputTokens"`
 		Headers         *map[string]string `json:"headers"`

@@ -145,6 +145,7 @@ type RuntimeMigration struct {
 	carried          []provider.Message
 	authorizations   control.SessionAuthorizations
 	toolApprovalMode string
+	postureDefaulted bool
 	planMode         bool
 	goal             string
 	goalRunning      bool
@@ -159,6 +160,7 @@ func CaptureRuntimeMigration(old control.SessionAPI) RuntimeMigration {
 		prevPath:         old.SessionPath(),
 		carried:          old.History(),
 		toolApprovalMode: old.ToolApprovalMode(),
+		postureDefaulted: old.Posture().Defaulted,
 		planMode:         old.PlanMode(),
 		goal:             old.Goal(),
 		goalRunning:      old.GoalStatus() == control.GoalStatusRunning,
@@ -181,7 +183,11 @@ func ApplyRuntimeMigration(ctrl, old *control.Controller, m RuntimeMigration) er
 	ctrl.AdoptHistory(carried, path)
 
 	// Re-apply session axes a rebuild must not reset.
-	ctrl.SetToolApprovalMode(m.toolApprovalMode)
+	if m.postureDefaulted {
+		ctrl.ApplyDefaultPosture()
+	} else {
+		ctrl.SetToolApprovalMode(m.toolApprovalMode)
+	}
 	ctrl.SetPlanMode(m.planMode)
 	if m.goalRunning && strings.TrimSpace(m.goal) != "" && strings.TrimSpace(ctrl.Goal()) == "" {
 		ctrl.SetGoal(m.goal)

@@ -15,6 +15,7 @@ function effectiveBash(s: SandboxSettings): string {
 }
 
 export class MockBoundary extends MockShell {
+  async decideWorkspaceTrust(_trust: "trusted" | "declined") {}
   // One interrupted barrier and one that a later turn took over, so the card
   // and the reason it disappears are both reachable without a crash.
   private adjudicated: Adjudications = {

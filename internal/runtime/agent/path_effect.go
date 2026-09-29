@@ -357,7 +357,13 @@ func (before workspaceScan) changed(after workspaceScan) (paths []string, ok boo
 // through its own script language, a wrapper, a path built from a variable —
 // stays a mutation unless the workspace it ran against is exactly as it was.
 func (a *Agent) settleUnchangedWorkspace(ctx context.Context, rec *evidence.Receipt, plan *toolCallPlan) {
-	if rec == nil || plan == nil || !rec.Success || rec.MutationEvidence != evidence.MutationUnknown {
+	if rec == nil || plan == nil || !rec.Success {
+		return
+	}
+	// The watched paths may already have proven a change, but only the walk can
+	// say those were all of it.
+	watchedProof := rec.MutationEvidence == evidence.MutationProven
+	if rec.MutationEvidence != evidence.MutationUnknown && !watchedProof {
 		return
 	}
 	// Nothing to compare against is not a reason to walk: a call that took no
@@ -371,18 +377,22 @@ func (a *Agent) settleUnchangedWorkspace(ctx context.Context, rec *evidence.Rece
 	if !ok {
 		return
 	}
+	whole := true
 	if scope := scopedGrant(ctx); scope != nil && len(changed) > 0 {
 		// Inside a run's own declared paths a change is taken as that run's:
 		// the claims are proven disjoint up front and writer tools are fenced
 		// to them. Outside them it is someone else's, so it says nothing here.
 		changed = slices.DeleteFunc(changed, func(p string) bool { return !scope.Allows(p) })
+		whole = false
 		if len(changed) == 0 {
 			return
 		}
 	}
 	if len(changed) == 0 {
-		rec.Mutation = false
-		rec.MutationEvidence = ""
+		if !watchedProof {
+			rec.Mutation = false
+			rec.MutationEvidence = ""
+		}
 		return
 	}
 	// The walk answered what the command would not: these files and no others.
@@ -393,7 +403,11 @@ func (a *Agent) settleUnchangedWorkspace(ctx context.Context, rec *evidence.Rece
 		if !holdsPath(rec.Paths, path) {
 			rec.Paths = append(rec.Paths, path)
 		}
+		if _, existed := plan.scanBefore.state[path]; !existed && !holdsPath(rec.Created, path) {
+			rec.Created = append(rec.Created, path)
+		}
 	}
+	rec.PathsComplete = whole && len(changed) < observedPathLimit
 }
 
 // scanBeforeUnprovenCall takes the whole-workspace scan only for a call the

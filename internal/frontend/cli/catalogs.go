@@ -84,8 +84,11 @@ func defaultSessionCatalogTargets() []sessionDirTarget {
 
 func runSessionOrCatalogCommand(command string, args []string) int {
 	termrender.ConfigureThemeFromConfig()
-	if command != "catalogs" {
+	switch command {
+	case "session":
 		return sessionCommand(args)
+	case "sessions":
+		return runSessionsCommand(args)
 	}
 	return catalogsCommand(args)
 }

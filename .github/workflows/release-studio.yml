@@ -979,6 +979,7 @@ jobs:
 
       # Deltas are served from the mirror only, so a release that cannot reach
       # it does not offer one: a client would fetch an index nobody uploaded.
+      # The same gate puts the mirror ahead of GitHub for every full artifact.
       - name: Generate manifest
         working-directory: desktop
         env:

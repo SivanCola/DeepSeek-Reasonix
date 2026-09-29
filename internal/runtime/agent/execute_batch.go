@@ -321,7 +321,7 @@ func (a *Agent) executeBatch(ctx context.Context, turn *turnRuntime, calls []pro
 			Bound:       o.bound,
 			DurationMs:  durations[i],
 			Execution:   toEventShellExecution(o.execution, durations[i]),
-			Issuer:      event.IssuedByModel,
+			Issuer:      event.IssuedByModel, Executed: o.executed,
 		}
 		if startedAt[i] > 0 {
 			tr.StartedAt = startedAt[i]

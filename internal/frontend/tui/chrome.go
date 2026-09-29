@@ -6,7 +6,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 
 	"reasonix/internal/base/i18n"
 	"reasonix/internal/frontend/termrender"
@@ -197,5 +196,5 @@ func (m *model) composerLines() []string {
 }
 
 func clipVisible(s string, width int) string {
-	return ansi.Truncate(s, width, "…")
+	return termrender.Truncate(s, width, "…")
 }

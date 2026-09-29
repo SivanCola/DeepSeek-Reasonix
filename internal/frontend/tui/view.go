@@ -48,9 +48,14 @@ func (m *model) bottomLines() bottom {
 
 // View draws the frame. Full screen, the transcript is a viewport above the
 // bottom region; otherwise everything settled is already in the terminal's
-// scrollback and only what is still changing is drawn above it.
+// scrollback and only what is still changing is drawn above it. A terminal
+// counting per rune is drawn stand-ins for what it folds, or a row it draws
+// wider than counted wraps and every row below it shifts.
 func (m *model) View() tea.View {
 	v := m.frame()
+	if termrender.Cells() == ansi.WcWidth {
+		v.Content = splitClusters(v.Content)
+	}
 	v.Content = m.glyphs.apply(v.Content)
 	return v
 }
@@ -72,7 +77,7 @@ func (m *model) frame() tea.View {
 	// A row as wide as the terminal wraps on its own, which adds a row the
 	// renderer does not know it drew.
 	for i, l := range lines {
-		lines[i] = ansi.Truncate(l, max(m.width-1, 1), "")
+		lines[i] = termrender.Truncate(l, max(m.width-1, 1), "")
 	}
 	m.frameRows = len(lines)
 	v := tea.NewView(strings.Join(lines, "\n"))
@@ -86,7 +91,14 @@ func (m *model) frame() tea.View {
 
 func (m *model) liveLines() []string { return m.liveLinesRail(m.scrollbarHidden()) }
 
+// liveLinesRail draws what is still changing at the width it will occupy:
+// full screen that is the transcript's, beside the scrollbar column, so a row
+// is not wrapped once more when it joins the transcript.
 func (m *model) liveLinesRail(hideRail bool) []string {
+	width := m.width
+	if m.scr != nil {
+		width = m.contentWidth()
+	}
 	var out []string
 	for i := range m.tr.Items {
 		it := &m.tr.Items[i]
@@ -95,16 +107,16 @@ func (m *model) liveLinesRail(hideRail bool) []string {
 		}
 		switch {
 		case it.Kind == ItemUser && it.Pending:
-			out = append(out, termrender.Dim("  ⧗ "+oneLine(it.Text, m.width-6)))
+			out = append(out, termrender.Dim("  ⧗ "+oneLine(it.Text, width-6)))
 		case it.Kind == ItemSay:
 			shown := m.sayShown[it.ID]
 			if rest := it.Text[min(shown, len(it.Text)):]; rest != "" {
-				out = append(out, strings.Split(renderSayPart(rest, shown == 0, m.width, hideRail), "\n")...)
+				out = append(out, strings.Split(renderSayPart(rest, shown == 0, width, hideRail), "\n")...)
 			}
 		case (it.Kind == ItemApproval || it.Kind == ItemAsk) && it.Verdict == "":
 		case m.hidden(it) || it.bookkeeping():
 		default:
-			if r := renderItem(it, m.width, 0, hideRail); r != "" {
+			if r := renderItem(it, width, 0, hideRail); r != "" {
 				out = append(out, strings.Split(r, "\n")...)
 			}
 		}

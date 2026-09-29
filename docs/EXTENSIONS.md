@@ -1,9 +1,19 @@
+---
+owner: @SivanCola
+backup: @esengine
+status: active
+reviewed: 2026-09-29
+---
+
 # Reasonix Extensions
 
 Extensions let a plugin package change what Reasonix does at runtime —
 rewrite input, intercept tool calls, replace the system prompt, contribute
 streaming model providers, publish structured UI, and ship prompts and
 themes — using a stable, versioned contract.
+
+For local validation and the Studio publication workflow, see the
+[community author guide](MARKET_AUTHOR_GUIDE.md).
 
 Two kinds of plugin capabilities exist:
 

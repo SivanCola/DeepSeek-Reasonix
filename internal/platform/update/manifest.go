@@ -52,6 +52,23 @@ type Asset struct {
 	// New clients require "versioned-v1" for self-update and reject unknown
 	// values without changing the active install.
 	InstallLayout string `json:"install_layout,omitempty"`
+	// Fallback and FallbackSig publish the same bytes at a second address,
+	// tried once the first gives up. Clients that predate them read only URL.
+	Fallback    string `json:"fallback,omitempty"`
+	FallbackSig string `json:"fallback_sig,omitempty"`
+}
+
+// Sources is every address the artifact is published at, in the order to try.
+func (a Asset) Sources() []string { return sources(a.URL, a.Fallback) }
+
+// SigSources is Sources for the detached signature.
+func (a Asset) SigSources() []string { return sources(a.Sig, a.FallbackSig) }
+
+func sources(primary, fallback string) []string {
+	if fallback == "" || fallback == primary {
+		return []string{primary}
+	}
+	return []string{primary, fallback}
 }
 
 // PlatformKey is the map key used in Manifest.Platforms for the given OS/arch.

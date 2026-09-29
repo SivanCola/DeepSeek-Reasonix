@@ -336,7 +336,7 @@ func SendWithRetry(ctx context.Context, httpClient *http.Client, opts SendOption
 		resp, err := httpClient.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("%s: request failed: %w", opts.Provider, err)
-			if !transientErr(ctx, err) {
+			if !transientErr(ctx, err) || permanentTransportErr(err) {
 				return nil, lastErr
 			}
 			if transportTimeout(err) {

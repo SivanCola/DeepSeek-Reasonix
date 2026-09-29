@@ -1,7 +1,17 @@
+---
+owner: @SivanCola
+backup: @esengine
+status: active
+reviewed: 2026-09-29
+---
+
 # Reasonix Plugin Packages
 
 Reasonix plugin packages bundle skills, hooks, MCP servers, prompts, themes,
 and code extensions behind one installable unit.
+
+For a copyable local package and the community review path, see the
+[community author guide](MARKET_AUTHOR_GUIDE.md).
 
 ## CLI Mode
 
@@ -214,27 +224,30 @@ Reasonix plugins can declare `reasonix-plugin.json` at the plugin root:
 
 ```json
 {
+  "apiVersion": "reasonix.io/plugin/v2",
   "name": "example",
   "version": "1.0.0",
   "description": "Example plugin",
-  "skills": "skills",
-  "hooks": {
-    "SessionStart": [
-      {
-        "command": "hooks/session-start",
-        "args": [],
-        "description": "Load startup context"
-      },
-      {
-        "command": "printf 'ready' && ./hooks/audit",
-        "shell": "bash",
-        "description": "Run a compound shell script"
+  "contributes": {
+    "skills": ["skills"],
+    "hooks": {
+      "SessionStart": [
+        {
+          "command": "hooks/session-start",
+          "args": [],
+          "description": "Load startup context"
+        },
+        {
+          "command": "printf 'ready' && ./hooks/audit",
+          "shell": "bash",
+          "description": "Run a compound shell script"
+        }
+      ]
+    },
+    "mcpServers": {
+      "helper": {
+        "command": "bin/helper"
       }
-    ]
-  },
-  "mcpServers": {
-    "helper": {
-      "command": "bin/helper"
     }
   }
 }

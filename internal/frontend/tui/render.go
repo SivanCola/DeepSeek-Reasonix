@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/x/ansi"
-
 	"reasonix/internal/base/i18n"
 	"reasonix/internal/contract/event"
 	"reasonix/internal/contract/eventwire"
@@ -27,7 +25,7 @@ func renderItem(it *Item, width, shown int, hideRail bool) string {
 		if it.Steer {
 			mark = "↳ "
 		}
-		rows := strings.Split(ansi.Hardwrap(strings.TrimRight(it.Text, "\n"), max(width-5, 10), true), "\n")
+		rows := strings.Split(termrender.Hardwrap(strings.TrimRight(it.Text, "\n"), max(width-5, 10)), "\n")
 		for i, r := range rows {
 			rows[i] = "  " + termrender.Accent(mark+r)
 			mark = "  "
@@ -109,7 +107,7 @@ func thought(it *Item, width int) string {
 	if it.Fold == foldOpen {
 		// Styled per row: the transcript is split into rows after rendering, and
 		// one style spanning several would reach only the first of them.
-		for l := range strings.SplitSeq(ansi.Wrap(strings.TrimSpace(it.Reasoning), max(width-6, 10), ""), "\n") {
+		for l := range strings.SplitSeq(termrender.Cells().Wrap(strings.TrimSpace(it.Reasoning), max(width-6, 10), ""), "\n") {
 			lines = append(lines, termrender.Dim("    "+l))
 		}
 	}
@@ -238,7 +236,7 @@ func renderCompaction(it *Item, width int) string {
 	}
 	lines := []string{termrender.Accent(fmt.Sprintf("◆ %s · %d %s · %s", i18n.M.CompactionTitle, c.Messages, i18n.M.CompactionUnit, trigger))}
 	for ln := range strings.SplitSeq(strings.TrimRight(c.Summary, "\n"), "\n") {
-		for row := range strings.SplitSeq(ansi.Wrap(ln, max(width-6, 10), ""), "\n") {
+		for row := range strings.SplitSeq(termrender.Cells().Wrap(ln, max(width-6, 10), ""), "\n") {
 			lines = append(lines, termrender.Dim("  │ "+row))
 		}
 	}
@@ -272,7 +270,7 @@ func renderNotice(it *Item) string {
 func oneLine(s string, width int) string {
 	s = strings.TrimSpace(strings.ReplaceAll(s, "\n", " "))
 	if width > 1 && termrender.VisibleWidth(s) > width {
-		return ansi.Truncate(s, width, "…")
+		return termrender.Truncate(s, width, "…")
 	}
 	return s
 }

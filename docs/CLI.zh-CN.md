@@ -168,6 +168,9 @@ JSONL 记录，便于离线回放并归因时间去向（工具执行 vs. 两次
 reasonix run --metrics run.json --trajectory run.trajectory.jsonl "修复失败的测试"
 ```
 
+正常的 `run` 或 `-p` 只在标准错误里写需要用户处理的警告。加 `--debug` 会额外输出诊断日志，
+例如组装耗时和续接会话的缓存状态。
+
 ### 输出格式
 
 | 格式 | 行为 |
@@ -181,6 +184,14 @@ reasonix -p "列出有风险的改动" --output-format text
 reasonix -p "总结 diff" --output-format json
 reasonix run "运行测试" --output-format stream-json
 ```
+
+`stream-json` 在结果对象之前的各行遵循 1.x 的约定：
+
+- 每行都带 `sessionId`、`turnId`、`seq`（从 1 开始）和 `status`。
+- 回合以 `turn_status`（`status: "queued"`）和 `user_message` 开始。
+- 通过全部关卡并真正执行的工具调用，在 `tool_result` 之前先报 `tool_started`。
+- 回合以 `turn_done` 结束：`completed`、`failed` 或 `interrupted`。
+- 只输出 1.x 输出过的事件种类，工作区租约之类的宿主内部状态不进入这条流。
 
 最终结构化对象的格式如下：
 
@@ -240,6 +251,23 @@ reasonix run "运行测试" --output-format stream-json
 执行失败时使用 `subtype: "error_during_execution"` 和 `is_error: true`。
 结构化模式会把运行时错误保留在 JSON 中，不再额外重复输出一份人类可读错误。
 
+宿主对回答的判定放在回答旁边，不改变退出码：
+
+- `-p` 模式会在标准错误里点名 `permission_denials` 中被拒的调用。
+- 模型已结束、但宿主的最终就绪检查没有满足时（例如最后一次写入后没有运行检查），
+  结果带 `readiness`（`attempts`、`missing`），运行仍算成功。
+- 回合有 `completion_summary` 时，`completion` 字段会复述它。
+- `--events-jsonl` 的 `run_done` 带被拒次数和 `readiness`。
+
+`reasonix run` 的退出码：
+
+| 退出码 | 含义 |
+| --- | --- |
+| `0` | 模型已结束，包括有调用被拒或就绪检查未满足的情况。 |
+| `1` | 运行失败：模型服务、配置、上限或取消。 |
+| `2` | 命令行参数无效。 |
+| `3` | 指定了 `--fail-on-unverified` 且最终就绪检查未满足。 |
+
 ### 脱敏机器接口
 
 自动化只需要生命周期遥测、不能接收 prompt、reasoning、工具参数/输出或审批文本时，
@@ -250,7 +278,8 @@ reasonix run --events-jsonl "运行 focused tests"
 ```
 
 每行都包含 `schema_version`、`sequence` 和 `kind`，最后一行为
-`kind: "run_done"`。`--events-jsonl` 与包含更多内容的
+`kind: "run_done"`。生命周期记录与 `stream-json` 相同（`turn_status`、`user_message`、
+`tool_started`、`turn_done`），但不带内容。`--events-jsonl` 与包含更多内容的
 `--output-format stream-json` 是两个独立契约，不能和 `--output-format`
 组合使用。
 

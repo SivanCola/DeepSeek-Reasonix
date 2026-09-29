@@ -173,7 +173,7 @@ function Package({
   );
 
   return (
-    <details className="srv" data-st={p.enabled ? "ready" : "disabled"} open={confirming || undefined}>
+    <details className="srv" data-extension-name={p.name} data-st={p.enabled ? "ready" : "disabled"} open={confirming || undefined}>
       <summary>{head}</summary>
       {confirm}
       {notes}

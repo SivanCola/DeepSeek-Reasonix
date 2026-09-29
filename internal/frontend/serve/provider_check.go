@@ -55,8 +55,9 @@ func (s *Server) checkProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Name      string `json:"name"`
-		HTTP1Only *bool  `json:"http1Only"`
+		Name string `json:"name"`
+		// HTTP1Only overrides the saved transport policy only for this probe.
+		HTTP1Only *bool `json:"http1Only"`
 	}
 	if !decodeProviderBody(w, r, &body) {
 		return
@@ -108,14 +109,15 @@ func (s *Server) checkProvider(w http.ResponseWriter, r *http.Request) {
 }
 
 type providerModelCheckRequest struct {
-	Name       string `json:"name"`
-	Model      string `json:"model"`
-	BaseURL    string `json:"baseUrl"`
-	APIKey     string `json:"apiKey"`
-	Kind       string `json:"kind"`
-	HTTP1Only  *bool  `json:"http1Only"`
-	AuthHeader *bool  `json:"authHeader"`
-	NoProxy    *bool  `json:"noProxy"`
+	Name    string `json:"name"`
+	Model   string `json:"model"`
+	BaseURL string `json:"baseUrl"`
+	APIKey  string `json:"apiKey"`
+	Kind    string `json:"kind"`
+	// HTTP1Only overrides the saved transport policy only for this model check.
+	HTTP1Only  *bool `json:"http1Only"`
+	AuthHeader *bool `json:"authHeader"`
+	NoProxy    *bool `json:"noProxy"`
 }
 
 type providerModelCheck struct {

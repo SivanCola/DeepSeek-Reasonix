@@ -68,6 +68,7 @@ type Frame struct {
 // replayFrame is one numbered frame kept for clients that have to resume.
 type replayFrame struct {
 	seq  int64
+	kind event.Kind
 	data []byte
 }
 
@@ -80,8 +81,8 @@ type replayLog struct {
 	bytes  int
 }
 
-func (l *replayLog) add(seq int64, data []byte) {
-	l.frames = append(l.frames, replayFrame{seq: seq, data: data})
+func (l *replayLog) add(seq int64, kind event.Kind, data []byte) {
+	l.frames = append(l.frames, replayFrame{seq: seq, kind: kind, data: data})
 	l.bytes += len(data)
 	for l.bytes > replayBudget && len(l.frames) > 1 {
 		l.bytes -= len(l.frames[0].data)
@@ -253,10 +254,15 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	// EventSource carries its last id on a reconnect unasked, so a dropped
 	// connection costs only what the replay log can no longer reach.
 	after := lastEventID(r)
+	first := r.Header.Get("Last-Event-ID") == "" && r.URL.Query().Get("lastEventId") == ""
 	// Subscribe and replay as one handoff. Prompt producers are serialized with
 	// this operation, so no original event can land between the two steps.
 	s.ctl().ReplayPendingPromptsWith(func() event.Sink {
-		ch, unsubscribe = s.bc.SubscribeFrom(after)
+		if first {
+			ch, unsubscribe = s.bc.SubscribeInitialNotices()
+		} else {
+			ch, unsubscribe = s.bc.SubscribeFrom(after)
+		}
 		return event.FuncSink(func(e event.Event) {
 			s.bc.EmitTo(ch, e)
 		})

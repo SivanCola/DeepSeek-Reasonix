@@ -20,7 +20,7 @@ type Record struct {
 	Kind        string `json:"kind"`
 	Version     string `json:"version"`
 	ContentHash string `json:"contentHash"`
-	// Unreviewed: the publisher's own install, pinned to their preview's digest.
+	// Unreviewed: pinned to the confirmed preview's digest, not a reviewer's.
 	Unreviewed bool        `json:"unreviewed,omitempty"`
 	Items      []Installed `json:"items"`
 	At         string      `json:"at"`

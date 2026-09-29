@@ -15,7 +15,11 @@ import (
 // [--resume|--continue]` and `reasonix run --resume/--continue`: it names the
 // holder and offers the two ways out (close the holder, or continue in a
 // duplicated session via --copy).
-func sessionLeaseResumeRefusal(err error) string {
+func sessionLeaseResumeRefusal(err error, takeover bool) string {
+	if takeover {
+		return control.SessionInUseMessage(err) +
+			"; --takeover cannot take a session from another Reasonix process: close it, or rerun with --copy to continue in a duplicated session"
+	}
 	return control.SessionInUseMessage(err) +
 		"; close the other Reasonix window or process, or rerun with --copy to continue in a duplicated session"
 }

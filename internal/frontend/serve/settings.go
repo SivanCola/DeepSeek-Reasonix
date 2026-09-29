@@ -175,6 +175,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		"autoApproveTools": s.ctl().AutoApproveTools(),
 		"bypass":           s.ctl().AutoApproveTools(),
 		"toolApprovalMode": s.ctl().ToolApprovalMode(),
+		"approvalDefault":  s.ctl().Posture(),
 		"preset":           s.ctl().AgentPreset(),
 		"goal":             s.ctl().Goal(),
 		"goalStatus":       s.ctl().GoalStatus(),

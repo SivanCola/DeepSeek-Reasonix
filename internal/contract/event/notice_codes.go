@@ -47,6 +47,8 @@ const (
 	NoticeCodeProjectProgramChanged = "project_program_changed"
 	// A conversation opened from a 1.x log went on in a new session of its own.
 	NoticeCodeSessionContinuedFrom1x = "session_continued_from_1x"
+	// The user config names a default approval mode this build does not know; it loads as ask.
+	NoticeCodeApprovalModeUnrecognized = "approval_mode_unrecognized"
 	// A turn handed its open list back to the user; Detail is the model's `need`, as it wrote it.
 	NoticeCodeAwaitUser = "await_user"
 	// A slash command nothing resolves, refused rather than sent as prose.

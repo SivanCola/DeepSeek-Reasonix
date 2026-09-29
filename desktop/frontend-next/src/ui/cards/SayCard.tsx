@@ -53,12 +53,13 @@ export interface Quote {
   n: number;
 }
 
-/** What a finished reply can be acted on with. Absent members are capabilities
- *  this transcript does not have — a rebuilt one cannot re-run a turn — and the
- *  bar draws only what it can actually do. */
+/** What a finished reply can be acted on with. Regeneration belongs to the
+ *  individual reply and requires a paired checkpoint. */
 export interface ReplyActions {
   onQuote: (text: string, id: string) => void;
-  onRegenerate?: () => void;
+  canRegenerate: (id: string) => boolean;
+  hasLaterTurns: (id: string) => boolean;
+  onRegenerate: (id: string) => void;
   model?: string;
   onConfigureModel?: () => void;
   onRunDetail?: () => void;
@@ -140,14 +141,18 @@ export function SayCard({ item, afterAnswer, reply }: { item: Extract<Item, { t:
                   <StudioIcon name="quote" />
                 </button>
               )}
-              {reply?.onRegenerate && (
+              {reply?.canRegenerate(item.id) && (
                 <span className="acts-menu">
                   <button ref={retry} type="button" data-action="reply.retry" title={t("重新生成")} aria-label={t("重新生成")} aria-expanded={menu === "retry"} onClick={() => setMenu((m) => (m === "retry" ? "" : "retry"))}>
                     <StudioIcon name="refresh" />
                   </button>
                   <ReplyMenu anchor={retry} open={menu === "retry"} onClose={shut}>
-                    <div className="acts-pop-head">{t("重新生成")}<small>{t("当前回复会留在运行历史里")}</small></div>
-                    <button type="button" role="menuitem" data-action="reply.retry-now" onClick={() => { setMenu(""); reply.onRegenerate?.(); }}>
+                    <div className="acts-pop-head">
+                      {t("重新生成")}
+                      <small>{t("当前回复会留在运行历史里")}</small>
+                      {reply.hasLaterTurns(item.id) && <small>{t("这一轮之后的记录会被丢弃")}</small>}
+                    </div>
+                    <button type="button" role="menuitem" data-action="reply.retry-now" onClick={() => { setMenu(""); reply.onRegenerate(item.id); }}>
                       <StudioIcon name="refresh" /><span>{t("按当前配置重试")}</span>{reply.model && <small>{reply.model}</small>}
                     </button>
                     {reply.onConfigureModel && (

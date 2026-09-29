@@ -443,8 +443,8 @@ func TestSetAutoPlanRejectsRetiredModes(t *testing.T) {
 
 func TestSetDesktopDefaultToolApprovalMode(t *testing.T) {
 	c := Default()
-	if got := c.DesktopDefaultToolApprovalMode(); got != "auto" {
-		t.Fatalf("desktop default tool approval mode = %q, want built-in auto", got)
+	if got := c.DesktopDefaultToolApprovalMode(); got != "" {
+		t.Fatalf("desktop default tool approval mode = %q, want unset so the sandbox and trust decide", got)
 	}
 	for _, mode := range []string{"ask", "auto", "yolo"} {
 		if err := c.SetDesktopDefaultToolApprovalMode(mode); err != nil {
@@ -465,13 +465,13 @@ func TestSetDesktopDefaultToolApprovalMode(t *testing.T) {
 	}
 }
 
-func TestLoadForEditMissingDesktopApprovalDefaultsAuto(t *testing.T) {
+func TestLoadForEditMissingDesktopApprovalStaysUnset(t *testing.T) {
 	path := filepath.Join(testenv.TempDir(t), "config.toml")
 	if err := os.WriteFile(path, []byte("config_version = 4\n"), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	if got := LoadForEdit(path).DesktopDefaultToolApprovalMode(); got != "auto" {
-		t.Fatalf("missing desktop default tool approval mode = %q, want auto", got)
+	if got := LoadForEdit(path).DesktopDefaultToolApprovalMode(); got != "" {
+		t.Fatalf("missing desktop default tool approval mode = %q, want unset", got)
 	}
 }
 

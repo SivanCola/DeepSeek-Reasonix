@@ -52,6 +52,6 @@ func (t *phaseTimer) done(name string) []Phase {
 		b.WriteByte('=')
 		b.WriteString(p.D.Round(time.Millisecond).String())
 	}
-	slog.Info("boot: assembly timing", "total", time.Since(t.start).Round(time.Millisecond).String(), "phases", b.String())
+	slog.Debug("boot: assembly timing", "total", time.Since(t.start).Round(time.Millisecond).String(), "phases", b.String())
 	return t.phases
 }

@@ -37,8 +37,8 @@ var measureBuffer = sync.OnceValue(func() windows.Handle {
 })
 
 // newConsoleGlyphFit returns nil unless out is a console the process can
-// measure. A pseudoconsole measures ambiguous-width runes as one cell, so under
-// Windows Terminal or an SSH session nothing is replaced.
+// measure. A pseudoconsole measures ambiguous-width runes as one cell and its
+// terminal picks its own fonts, so there only what no font draws is replaced.
 func newConsoleGlyphFit(out *os.File) *glyphFit {
 	var mode uint32
 	if windows.GetConsoleMode(windows.Handle(out.Fd()), &mode) != nil {
@@ -48,7 +48,7 @@ func newConsoleGlyphFit(out *os.File) *glyphFit {
 	if h == windows.InvalidHandle {
 		return nil
 	}
-	return newGlyphFit(func(r rune) int { return consoleCells(h, r) }, asciiBestFit)
+	return newGlyphFit(func(r rune) int { return consoleCells(h, r) }, asciiBestFit, consoleFontGlyphs())
 }
 
 func consoleCells(h windows.Handle, r rune) int {
@@ -67,15 +67,16 @@ func consoleCells(h windows.Handle, r rune) int {
 	return int(info.CursorPosition.X)
 }
 
-// asciiBestFit asks the OS for its US-ASCII best-fit of r, whose unmapped
-// answer is the code page's default character.
+// asciiBestFit asks the OS for its US-ASCII best-fit of r; a rune it has no
+// mapping for comes back as the code page's default character, which is none.
 func asciiBestFit(r rune) rune {
 	u := utf16.Encode([]rune{r})
 	var out [2]byte
+	var defaulted int32
 	n, _, _ := procWideCharToMultiByte.Call(codePageUSASCII, 0,
 		uintptr(unsafe.Pointer(&u[0])), uintptr(len(u)),
-		uintptr(unsafe.Pointer(&out[0])), uintptr(len(out)), 0, 0)
-	if n != 1 || out[0] < 0x20 || out[0] > 0x7e {
+		uintptr(unsafe.Pointer(&out[0])), uintptr(len(out)), 0, uintptr(unsafe.Pointer(&defaulted)))
+	if n != 1 || defaulted != 0 || out[0] < 0x20 || out[0] > 0x7e {
 		return 0
 	}
 	return rune(out[0])

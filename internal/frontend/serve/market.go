@@ -150,6 +150,7 @@ func (s *Server) marketRun(w http.ResponseWriter, r *http.Request, apply bool) {
 
 func (s *Server) writeMarketOutcome(w http.ResponseWriter, r *http.Request, out market.Outcome, slug string, apply bool) {
 	out.Fields["slug"], _ = json.Marshal(slug)
+	out.Fields["unreviewed"], _ = json.Marshal(out.Unreviewed)
 	out.Fields["version"], _ = json.Marshal(out.Version.Version)
 	if apply && jsonTrue(out.Fields["applied"]) {
 		if err := s.reloadExtensions(r.Context()); err != nil {
@@ -178,6 +179,8 @@ func refuseMarket(w http.ResponseWriter, err error) {
 		refuse(w, http.StatusBadGateway, "market.bad_response", "the community registry answered unexpectedly", detail)
 	case errors.Is(err, market.ErrUnpinned):
 		refuse(w, http.StatusConflict, "market.unpinned", "the approved version is not pinned to reviewed content", detail)
+	case errors.Is(err, market.ErrUnpreviewed):
+		refuse(w, http.StatusBadRequest, "market.unpreviewed", "an unreviewed install needs the digest of the preview it confirms", detail)
 	case errors.Is(err, market.ErrBadSource):
 		refuse(w, http.StatusConflict, "market.bad_source", "the approved version names a source that is not installed from here", detail)
 	case errors.Is(err, market.ErrNotTheme):

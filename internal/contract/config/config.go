@@ -66,7 +66,11 @@ type Config struct {
 	// settings UI intentionally owns even when their value equals the built-in
 	// default. It is transient edit metadata and is never serialized directly.
 	explicitProjectSkillKeys map[string]bool
-	editLoadErr              error
+	// Project provider declarations and the normalized edit baseline distinguish
+	// file-authored overrides from providers synthesized by provider_access.
+	explicitProjectProviderNames map[string]bool
+	projectProviderEditBaseline  []ProviderEntry
+	editLoadErr                  error
 	// loadWarnings are non-fatal issues observed while loading config (corrupt
 	// user/project files recovered via last-known-good or defaults). They never
 	// rewrite the original file; the UI may surface them for doctor repair.
@@ -472,16 +476,6 @@ func NormalizeToolApprovalMode(mode string) string {
 	default:
 		return "ask"
 	}
-}
-
-// DesktopDefaultToolApprovalMode is the Ask/Auto/YOLO default used only when
-// creating a new desktop session. Existing tabs and restored sessions keep their
-// own persisted runtime state.
-func (c *Config) DesktopDefaultToolApprovalMode() string {
-	if c == nil {
-		return "ask"
-	}
-	return NormalizeToolApprovalMode(c.Desktop.DefaultToolApprovalMode)
 }
 
 // DesktopStatusBarStyle normalizes the desktop status bar metric label style.
@@ -1153,150 +1147,6 @@ type AgentConfig struct {
 	PlanModeReadOnlyCommands []string `toml:"plan_mode_read_only_commands"`
 }
 
-// ProviderEntry declares a model provider instance. ContextWindow is the model's
-// token budget; the harness compacts older history as a turn's prompt approaches
-// it (see agent compaction). 0 disables compaction for the instance.
-type ProviderEntry struct {
-	Name          string            `toml:"name"`
-	DisplayName   string            `toml:"display_name"` // what the UI calls this entry; Name stays the identity refs point at
-	Kind          string            `toml:"kind"`
-	BaseURL       string            `toml:"base_url"`
-	ChatURL       string            `toml:"chat_url"`    // legacy OpenAI chat endpoint override; retained with its historical semantics
-	RequestURL    string            `toml:"request_url"` // exact provider request URL written by current settings UI
-	Model         string            `toml:"model"`       // a single model (back-compat)
-	Models        []string          `toml:"models"`      // a vendor's model list (one base_url/key, many models)
-	ModelsURL     string            `toml:"models_url"`  // auto-fetch models from this URL on startup
-	Default       string            `toml:"default"`     // default model when Models is set (else Models[0])
-	APIKeyEnv     string            `toml:"api_key_env"`
-	PresetID      string            `toml:"preset_id"`      // curated preset provenance: UI dedupe, and the vetting a wire contract reads.
-	PresetVersion int               `toml:"preset_version"` // curated preset schema version for future migrations.
-	Headers       map[string]string `toml:"headers"`        // optional extra HTTP headers for compatible gateways; secrets should stay in api_key_env.
-	ExtraBody     map[string]any    `toml:"extra_body"`     // optional extra top-level JSON request body fields for OpenAI-compatible gateways.
-	AuthHeader    bool              `toml:"auth_header"`    // for Anthropic-compatible gateways that expect Authorization: Bearer instead of x-api-key.
-	// ResponsesMode selects the Responses API context strategy. Empty preserves
-	// vendor detection; DeepSeek is stateless while compatible endpoints may use
-	// stateful previous_response_id continuation.
-	ResponsesMode string `toml:"responses_mode"`
-	// ResponsesStateful is the legacy boolean form retained for config
-	// compatibility. ResponsesMode wins when both are present.
-	ResponsesStateful *bool `toml:"responses_stateful"`
-	resolvedAPIKey    string
-	resolvedSource    CredentialSource
-	roots             Roots
-	BalanceURL        string `toml:"balance_url"` // optional; a provider-specific wallet-balance endpoint (DeepSeek: https://api.deepseek.com/user/balance). Empty = no balance readout.
-	ContextWindow     int    `toml:"context_window"`
-	// MaxOutputTokens is a protocol-neutral total output budget for one turn.
-	// Zero means automatic (ordinary 16K, reasoning 32K, high/max 64K); 32768
-	// suits cost control and 65536 heavy reasoning. Negative omits wire limits.
-	MaxOutputTokens int `toml:"max_output_tokens"`
-	// PerseverationRetries overrides [progress_watch].perseveration_retries; nil inherits the global default.
-	PerseverationRetries *int                         `toml:"perseveration_retries"`
-	Price                *provider.Pricing            `toml:"price"`  // legacy/provider-wide fallback
-	Prices               map[string]*provider.Pricing `toml:"prices"` // optional per-model prices; keys are model ids
-	// BillingCurrency is the frozen list-price currency (ISO-4217). Independent
-	// of [billing].display_currency; switching display never rewrites this.
-	BillingCurrency string `toml:"billing_currency"`
-	// BillingMode is payg (default) or subscription_equivalent (e.g. MiMo Token Plan).
-	BillingMode string `toml:"billing_mode"`
-
-	persistedOfficialCurrency string
-
-	// Thinking / Effort are provider-kind-specific knobs forwarded to the provider
-	// via Config.Extra. The anthropic provider reads Thinking="adaptive" to enable
-	// extended thinking and Effort ("low".."max") to tune depth. The
-	// openai-compatible provider forwards Effort as reasoning_effort for
-	// thinking-capable models; DeepSeek V4 Flash accepts low|high|max while
-	// other DeepSeek models retain their model-specific capability mapping.
-	// Empty = provider default.
-	Thinking string `toml:"thinking"`
-	Effort   string `toml:"effort"`
-	// Vision marks the model as accepting image input. When set, images the user
-	// attaches are embedded in the request (image_url for openai-kind, base64
-	// blocks for anthropic). Off by default: text-only models 400 on image input,
-	// and image tokens are heavy — gating keeps text-only flows cheap (the prompt
-	// prefix is byte-identical with no image, so the cache is unaffected either way).
-	Vision bool `toml:"vision"`
-	// VisionModels narrows image input support to specific models in a multi-model
-	// provider. This lets one provider expose both text-only and multimodal chat
-	// models without enabling image payloads for every model.
-	VisionModels []string `toml:"vision_models"`
-	// VisionDetail sets the openai image_url detail hint: low|high, plus DeepSeek's
-	// "original"; empty = auto. "low" caps an image at ~85 tokens for a cheap coarse
-	// read; a level the endpoint has no variant for is dropped rather than sent.
-	VisionDetail string `toml:"vision_detail"`
-	// WebSearch controls the provider-executed web_search tool for compatible
-	// Anthropic and Responses endpoints. Nil lets official DeepSeek endpoints use
-	// their product default; non-nil preserves an explicit user choice across
-	// config rewrites. DeepSeek returns web_search_tool_result blocks on the
-	// Anthropic wire and response.web_search_call events on the Responses wire.
-	WebSearch *bool `toml:"web_search"`
-	// ReasoningProtocol selects the request shape for OpenAI-compatible reasoning
-	// models. Empty/auto uses the model capability registry plus endpoint
-	// heuristics. Explicit values select DeepSeek, GLM, Kimi K3, or standard
-	// OpenAI reasoning contracts; none disables automatic reasoning controls.
-	ReasoningProtocol string `toml:"reasoning_protocol"`
-	// SupportedEfforts lists the /effort levels this provider/model exposes.
-	// Non-empty values override built-in Kind/BaseURL defaults except for fixed
-	// Kimi K3 reasoning. "auto" is the implicit prefix — always accepted.
-	// DefaultEffort resolves it; omit DefaultEffort (or set one outside this
-	// list) to fall back to SupportedEfforts[0].
-	SupportedEfforts []string `toml:"supported_efforts"`
-	// DefaultEffort is the /effort level used when the user picks "auto" or
-	// has not set Effort. Ignored for empty SupportedEfforts or fixed Kimi K3.
-	DefaultEffort string `toml:"default_effort"`
-	// ModelOverrides customizes capability metadata after ResolveModel selects a
-	// concrete model from a multi-model provider. Use it when a gateway exposes
-	// mixed DeepSeek/OpenAI/no-reasoning or mixed vision/text models under one
-	// base_url/key.
-	ModelOverrides map[string]ProviderModelOverride `toml:"model_overrides"`
-	visionOverride *bool
-	// NoProxy reaches this provider's base_url directly, never through the proxy.
-	// For China-only endpoints a foreign-exit proxy resets the TLS handshake (#2803).
-	NoProxy   bool `toml:"no_proxy"`
-	HTTP1Only bool `toml:"http1_only,omitempty"`
-	// CacheTTLMinutes overrides the vendor-default prefix-cache retention used by
-	// cold-resume prune. Zero uses the vendor default (DeepSeek/unknown 24h, DashScope/Anthropic 5m).
-	CacheTTLMinutes int `toml:"cache_ttl_minutes"`
-}
-
-type ProviderModelOverride struct {
-	ReasoningProtocol string   `toml:"reasoning_protocol"`
-	SupportedEfforts  []string `toml:"supported_efforts"`
-	DefaultEffort     string   `toml:"default_effort"`
-	Vision            *bool    `toml:"vision"`
-	// ContextWindow overrides the provider-wide context budget for this model.
-	// Zero inherits ProviderEntry.ContextWindow so existing configurations keep
-	// their current compaction behavior.
-	ContextWindow int `toml:"context_window"`
-	// MaxOutputTokens overrides the provider-wide output budget. Zero inherits;
-	// positive values set a cap and negative values omit optional wire limits.
-	MaxOutputTokens int `toml:"max_output_tokens"`
-}
-
-// ModelList returns the models this provider exposes: the explicit `models` list,
-// or the single `model` as a one-element list (back-compat). Empty if neither set.
-func (e *ProviderEntry) ModelList() []string {
-	if len(e.Models) > 0 {
-		return e.Models
-	}
-	if e.Model != "" {
-		return []string{e.Model}
-	}
-	return nil
-}
-
-// DefaultModel returns the provider's default model: the explicit `default`, else
-// the first of ModelList.
-func (e *ProviderEntry) DefaultModel() string {
-	if e.Default != "" {
-		return e.Default
-	}
-	if l := e.ModelList(); len(l) > 0 {
-		return l[0]
-	}
-	return ""
-}
-
 // HasModel reports whether m is one of the provider's models.
 func (e *ProviderEntry) HasModel(m string) bool {
 	return slices.Contains(e.ModelList(), m)
@@ -1538,11 +1388,11 @@ Keep changes focused and responses concise.`
 // Default returns the built-in default configuration.
 func Default() *Config {
 	return &Config{
-		ConfigVersion:    6,
+		ConfigVersion:    freshConfigVersion,
 		DefaultModel:     "deepseek-flash",
 		CredentialsStore: CredentialsStoreAuto,
 		UI:               UIConfig{Theme: "auto", ShowTurnUsage: true},
-		Desktop:          DesktopConfig{DefaultToolApprovalMode: "auto", ConversationWidth: "standard"},
+		Desktop:          DesktopConfig{ConversationWidth: "standard"},
 		Billing:          BillingConfig{},
 		// Set here, not left to the zero value: an absent [secrets] still protects.
 		Secrets: SecretsConfig{ProtectCredentialFiles: true},
@@ -1591,6 +1441,13 @@ func Default() *Config {
 // main config into an unparseable state that leaves the app with no usable
 // models (#4615, #4708).
 func (c *Config) WriteFile(path string) error {
+	if renderScopeForPath(path) == RenderScopeUser {
+		resolved, err := resolveConfigReadPath(path)
+		if err != nil {
+			return err
+		}
+		return c.writeUserConfig(path, resolved, func(body string) error { return atomicWriteToConfigFile(path, body, configFilePerm(path)) })
+	}
 	return atomicWriteToConfigFile(path, RenderTOMLForScope(c, renderScopeForPath(path)), configFilePerm(path))
 }
 

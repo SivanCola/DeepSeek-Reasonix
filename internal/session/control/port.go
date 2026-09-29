@@ -98,6 +98,13 @@ type Approvals interface {
 	SetMode(plan, autoApproveTools bool)
 }
 
+// FolderTrust is the person's decision about the workspace folder and the
+// default posture it feeds. Only a frontend that shows the folder asks it.
+type FolderTrust interface {
+	Posture() PostureReport
+	DecideWorkspaceTrust(trust config.WorkspaceTrust) error
+}
+
 // PlanDecisions answers the plan card. It is apart from Approvals because a
 // plan decision is a workflow transition rather than a permission answer, and
 // only a frontend that draws the three outcomes drives it — the chat gateway
@@ -374,6 +381,7 @@ type SessionAPI interface {
 	Lifecycle
 	TurnControl
 	Approvals
+	FolderTrust
 	PlanDecisions
 	Goals
 	SessionHistory
@@ -413,6 +421,7 @@ var (
 	_ Lifecycle          = (*Controller)(nil)
 	_ TurnControl        = (*Controller)(nil)
 	_ Approvals          = (*Controller)(nil)
+	_ FolderTrust        = (*Controller)(nil)
 	_ Goals              = (*Controller)(nil)
 	_ BackgroundJobs     = (*Controller)(nil)
 	_ SessionHistory     = (*Controller)(nil)

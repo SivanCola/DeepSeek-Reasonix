@@ -12,6 +12,7 @@ interface Inputs {
   running: boolean;
   model?: string;
   submit: (text: string) => Promise<boolean>;
+  reloadSession: () => Promise<void>;
   onSettings: (section?: string) => void;
   onRunDetail: () => void;
   onError: (e: unknown) => void;
@@ -20,7 +21,7 @@ interface Inputs {
 /** What a finished reply can be acted on with, and the draft signal a quote
  *  travels to the composer on. The transcript owns neither: the pane holds the
  *  session these read from, and the composer is where a quote has to land. */
-export function useReplyActions({ port, items, checkpoints, running, model, submit, onSettings, onRunDetail, onError }: Inputs) {
+export function useReplyActions({ port, items, checkpoints, running, model, submit, reloadSession, onSettings, onRunDetail, onError }: Inputs) {
   const [quote, setQuote] = useState<Quote>({ text: "", n: 0 });
 
   // Re-running a turn is a conversation rewind and then the same words again:
@@ -34,29 +35,32 @@ export function useReplyActions({ port, items, checkpoints, running, model, subm
         const plan = await port.prepareRewind(turn, "conversation");
         if (!plan.canConversation) throw new Error(plan.disabledReason || t("这一轮无法重新生成"));
         await port.commitRewind(plan.planId);
+        await reloadSession();
         await submit(text);
       } catch (e) {
         onError(e);
       }
     },
-    [port, submit, onError],
+    [port, submit, reloadSession, onError],
   );
 
-  // The last thing the person said, and the turn the kernel gave it. A reply is
-  // re-run by sending that again, so a transcript with no checkpoint behind it
-  // offers no regenerate rather than a button that answers with an error. The
-  // pairing is the transcript's own: a rebuilt row carries msgIndex and no
-  // authored turn, so matching on the latter found nothing in a reopened
-  // session — which is most of them.
-  const lastAsk = useMemo(() => {
+  // A reply belongs to the most recent user turn, including when that turn
+  // produced several replies. A turn without a paired checkpoint must not
+  // inherit the preceding turn's rewind target.
+  const replyTurns = useMemo(() => {
     const paired = pairCheckpoints(items, checkpoints);
-    for (let i = items.length - 1; i >= 0; i--) {
-      const item = items[i];
-      if (item.t !== "user" || item.pending) continue;
-      const cp = paired.get(item.id);
-      return cp ? { turn: cp.turn, text: item.text } : undefined;
+    const turns = new Map<string, { turn: number; text: string; hasLaterTurns: boolean }>();
+    let ask: { turn: number; text: string; hasLaterTurns: boolean } | undefined;
+    for (const item of items) {
+      if (item.t === "user" && !item.pending && !item.steer) {
+        if (ask) ask.hasLaterTurns = true;
+        const cp = paired.get(item.id);
+        ask = cp ? { turn: cp.turn, text: item.text, hasLaterTurns: false } : undefined;
+      } else if (item.t === "say" && ask) {
+        turns.set(item.id, ask);
+      }
     }
-    return undefined;
+    return turns;
   }, [items, checkpoints]);
 
   // Which reply is being quoted is the kernel's to say, so the turn its
@@ -79,12 +83,18 @@ export function useReplyActions({ port, items, checkpoints, running, model, subm
   const reply = useMemo<ReplyActions>(
     () => ({
       onQuote: (text: string, id: string) => setQuote((q) => ({ text, turn: turnOf(id), n: q.n + 1 })),
-      onRegenerate: lastAsk && !running ? () => void regenerate(lastAsk.turn, lastAsk.text) : undefined,
+      canRegenerate: (id: string) => !running && replyTurns.has(id),
+      hasLaterTurns: (id: string) => replyTurns.get(id)?.hasLaterTurns ?? false,
+      onRegenerate: (id: string) => {
+        if (running) return;
+        const ask = replyTurns.get(id);
+        if (ask) void regenerate(ask.turn, ask.text);
+      },
       model,
       onConfigureModel: () => onSettings("model"),
       onRunDetail,
     }),
-    [lastAsk, running, regenerate, model, onSettings, onRunDetail, turnOf],
+    [replyTurns, running, regenerate, model, onSettings, onRunDetail, turnOf],
   );
 
   // Rewriting a message is the same act with different words: the turn goes

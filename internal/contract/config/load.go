@@ -677,8 +677,8 @@ func loadForEditStrict(path string, loadCredentials, persistMigrations bool) (*C
 	if err != nil {
 		return nil, err
 	}
-	markExplicitDefaultProjectSkillKeys(cfg, path, meta)
-	changed := normalizeConfigForEdit(cfg)
+	markProjectEditProvenance(cfg, path, meta)
+	changed := normalizeConfigForEditWithProjectBaseline(cfg, path)
 	if persistMigrations && changed && strings.TrimSpace(path) != "" {
 		if _, err := os.Stat(path); err == nil {
 			if err := cfg.SaveTo(path); err != nil {

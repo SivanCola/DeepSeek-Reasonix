@@ -323,7 +323,7 @@ func (b *builder) controller() (*control.Controller, error) {
 		return nil, err
 	}
 	ctrlOpts := b.controllerOptions(runner, executor, label)
-	ctrl := withWindowPosture(control.New(ctrlOpts), b.cfg, b.opts.StatsSource)
+	ctrl := withWindowPosture(control.New(ctrlOpts), b.cfg, b.opts.StatsSource, b.sink)
 	b.ext.publish(ctrl)
 	// Task and fleet sub-agents share the root agent's recovery checkpoint.
 	if t.taskTool != nil {

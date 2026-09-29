@@ -143,3 +143,59 @@ func TestStreamResumesAfterAReconnect(t *testing.T) {
 		t.Fatalf("Last-Event-ID per connection = %q, want [\"\" \"2\"]", s.lastIDs)
 	}
 }
+
+// lateAttach registers an /events subscriber only after a delay, and emit
+// reaches only subscribers already registered — the server's own contract.
+type lateAttach struct {
+	mu   sync.Mutex
+	subs []chan eventwire.Event
+}
+
+func (l *lateAttach) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	time.Sleep(200 * time.Millisecond)
+	ch := make(chan eventwire.Event, 4)
+	l.mu.Lock()
+	l.subs = append(l.subs, ch)
+	l.mu.Unlock()
+	w.Header().Set("Content-Type", "text/event-stream")
+	_, _ = fmt.Fprint(w, ": connected\n\n")
+	w.(http.Flusher).Flush()
+	for {
+		select {
+		case ev := <-ch:
+			raw, _ := json.Marshal(ev)
+			_, _ = fmt.Fprintf(w, "id: %d\ndata: %s\n\n", ev.Seq, raw)
+			w.(http.Flusher).Flush()
+		case <-r.Context().Done():
+			return
+		}
+	}
+}
+
+func (l *lateAttach) emit(ev eventwire.Event) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, ch := range l.subs {
+		ch <- ev
+	}
+}
+
+// A frame emitted by an action taken right after Subscribe returns reaches
+// the stream, however long the first connection took to attach.
+func TestSubscribeReturnsOnceAttached(t *testing.T) {
+	l := &lateAttach{}
+	srv := httptest.NewServer(l)
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	updates := (&Client{HTTP: srv.Client(), Base: srv.URL}).Subscribe(ctx)
+	l.emit(eventwire.Event{Kind: "notice", Seq: 1})
+	select {
+	case u := <-updates:
+		if u.Event.Kind != "notice" {
+			t.Fatalf("got %+v, want the notice", u)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a frame emitted after Subscribe returned never arrived")
+	}
+}

@@ -297,6 +297,8 @@ type Tool struct {
 	WorkspaceMutation bool
 	WorkspacePaths    []string
 	WorkspaceAllPaths bool
+	// Executed marks a ToolResult whose call cleared every gate and ran. Host-only.
+	Executed bool
 }
 
 // ShellExecution mirrors tool.ShellExecution for event sinks without importing

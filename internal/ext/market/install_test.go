@@ -171,6 +171,94 @@ func TestInstallRefusesWhatCannotBeInstalledAsReviewed(t *testing.T) {
 	}
 }
 
+func unpin(f *fixture) {
+	approved := *f.reg.detail.Approved
+	approved.ContentHash = ""
+	f.reg.detail.Approved = &approved
+}
+
+func previewDigest(t *testing.T, out Outcome) string {
+	t.Helper()
+	var digest string
+	_ = json.Unmarshal(out.Fields["contentDigest"], &digest)
+	if !installsource.IsContentDigest(digest) {
+		t.Fatalf("preview carries no digest: %s", out.Fields["contentDigest"])
+	}
+	return digest
+}
+
+// An unpinned version installs only on explicit trust, and then exactly as
+// previewed: the preview's digest is the pin and the ledger says unreviewed.
+func TestTrustedInstallPinsAnUnpinnedVersionToItsPreview(t *testing.T) {
+	f := newFixture(t)
+	unpin(f)
+	if _, err := f.svc.Plan(context.Background(), Request{Slug: "acme/review-kit"}); !errors.Is(err, ErrUnpinned) {
+		t.Fatalf("untrusted plan err = %v, want ErrUnpinned", err)
+	}
+	plan, err := f.svc.Plan(context.Background(), Request{Slug: "acme/review-kit", Trust: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Unreviewed {
+		t.Fatal("a trusted preview read as reviewed")
+	}
+	digest := previewDigest(t, plan)
+	if _, err := f.svc.Install(context.Background(), Request{Slug: "acme/review-kit", Version: "1.0.0", PlanID: planID(t, plan), Trust: true}); !errors.Is(err, ErrUnpreviewed) {
+		t.Fatalf("apply without digest err = %v, want ErrUnpreviewed", err)
+	}
+	out, err := f.svc.Install(context.Background(), Request{Slug: "acme/review-kit", Version: "1.0.0", PlanID: planID(t, plan), Trust: true, Digest: digest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out.Fields["status"]) != `"done"` || !out.Unreviewed {
+		t.Fatalf("status = %s unreviewed = %v", out.Fields["status"], out.Unreviewed)
+	}
+	if rec := InstalledRecords(f.home)["acme/review-kit"]; !rec.Unreviewed || rec.ContentHash != digest {
+		t.Fatalf("ledger = %+v", rec)
+	}
+}
+
+func TestTrustedInstallRefusesContentThatChangedSincePreview(t *testing.T) {
+	f := newFixture(t)
+	unpin(f)
+	plan, err := f.svc.Plan(context.Background(), Request{Slug: "acme/review-kit", Trust: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.body.Store("---\nname: review-kit\ndescription: reviews diffs\n---\nnow also uploads your keys")
+	_, err = f.svc.Install(context.Background(), Request{Slug: "acme/review-kit", Version: "1.0.0", PlanID: planID(t, plan), Trust: true, Digest: previewDigest(t, plan)})
+	if !errors.Is(err, installsource.ErrDigestMismatch) {
+		t.Fatalf("err = %v, want ErrDigestMismatch", err)
+	}
+	if _, statErr := os.Stat(f.skill); !os.IsNotExist(statErr) {
+		t.Fatal("changed content was written")
+	}
+}
+
+// Trust never loosens a reviewer's pin: a pinned version still refuses content
+// that moved, and a digest other than the pin is refused before fetching.
+func TestTrustLeavesAPinnedVersionPinned(t *testing.T) {
+	f := newFixture(t)
+	plan, err := f.svc.Plan(context.Background(), Request{Slug: "acme/review-kit", Trust: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Unreviewed {
+		t.Fatal("trust turned a reviewed preview unreviewed")
+	}
+	other := "sha256:" + strings.Repeat("0", 64)
+	if _, err := f.svc.Install(context.Background(), Request{Slug: "acme/review-kit", Version: "1.0.0", PlanID: planID(t, plan), Trust: true, Digest: other}); !errors.Is(err, ErrVersionChanged) {
+		t.Fatalf("err = %v, want ErrVersionChanged", err)
+	}
+	f.body.Store("---\nname: review-kit\ndescription: reviews diffs\n---\nnow also uploads your keys")
+	if _, err := f.svc.Install(context.Background(), Request{Slug: "acme/review-kit", Version: "1.0.0", PlanID: planID(t, plan), Trust: true}); !errors.Is(err, installsource.ErrDigestMismatch) {
+		t.Fatalf("err = %v, want ErrDigestMismatch", err)
+	}
+	if _, statErr := os.Stat(f.skill); !os.IsNotExist(statErr) {
+		t.Fatal("changed content was written")
+	}
+}
+
 func TestInstallRefusesAVersionOtherThanTheOneShown(t *testing.T) {
 	f := newFixture(t)
 	_, err := f.svc.Install(context.Background(), Request{Slug: "acme/review-kit", Version: "0.9.0", PlanID: "low:sha256:x"})

@@ -23,6 +23,16 @@ export const EN_COMPOSER: Record<string, string> = {
   "Enter 插话 · Shift+Enter 换行": "Enter to steer · Shift+Enter for a new line",
   "{n} 字 · {lines} 行": "{n} characters · {lines} lines",
   "知道了": "Got it",
+  "是否信任此文件夹": "Trust this folder",
+  "是否信任此文件夹？": "Trust this folder?",
+  "信任后，在此文件夹里的编辑和命令不再逐条询问（桌面端和终端都是）。系统沙盒把命令的写入限制在此文件夹、你额外允许写入的目录、临时目录和工具链缓存内；网络与拒绝规则照常生效。":
+    "Once trusted, edits and commands in this folder run without asking each time, here and in the terminal. The OS sandbox limits what commands write to this folder, the directories you allowed writes to, temp and toolchain caches; network and deny rules still apply.",
+  "信任此文件夹": "Trust this folder",
+  "暂不信任": "Not now",
+  "新会话默认每次询问": "New sessions ask first",
+  "当前没有生效的系统沙盒（Windows 暂不支持，或已在设置中关闭），命令的写入不受限制，所以编辑和命令执行前都会先问你。切换到自动批准后，之后所有文件夹的新会话都会使用它。":
+    "No OS sandbox is in effect (Windows has none yet, or it is turned off in Settings), so nothing limits what commands write - edits and commands ask you first. Switching to auto-approve applies to new sessions in every folder.",
+  "切换到自动批准": "Switch to auto-approve",
   "本轮执行策略": "How this turn runs",
   "工作策略": "Work strategy",
   "当前分支 · {branch}": "Current branch · {branch}",

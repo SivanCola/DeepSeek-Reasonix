@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reasonix/internal/runtime/writeclaim"
@@ -273,6 +274,53 @@ func TestUnprovenCallSettlesAgainstTheWorkspace(t *testing.T) {
 	a.settleUnchangedWorkspace(t.Context(), &created, before)
 	if !created.Mutation {
 		t.Error("a file that appeared must leave the mutation standing")
+	}
+}
+
+// What the watched paths prove is not all a call did: a new top-level entry
+// proves a change while a rewrite deeper in the tree goes unseen. Only the walk
+// names every file, and only a list it did not cut short is complete.
+func TestTheWalkCompletesWhatTheWatchedPathsProved(t *testing.T) {
+	root := testenv.TempDir(t)
+	lib := filepath.Join(root, "lib", "a.txt")
+	if err := os.MkdirAll(filepath.Dir(lib), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lib, []byte("good\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := &Agent{}
+	a.observeRoot = root
+	plan := &toolCallPlan{scanBefore: scanWorkspace(t.Context(), root), pathsBefore: snapshotPaths(evidence.NewLedger(), root, nil)}
+	stamp := filepath.Join(root, ".cache", "stamp")
+	if err := os.MkdirAll(filepath.Dir(stamp), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for path, body := range map[string]string{stamp: "1\n", lib: "clobbered\n"} {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec := evidence.Receipt{ToolName: "bash", Success: true, Mutation: true, MutationEvidence: evidence.MutationUnknown, Command: "sh check.sh"}
+	decorateObservedPaths(&rec, plan)
+	a.settleUnchangedWorkspace(t.Context(), &rec, plan)
+	if !holdsPath(rec.Paths, lib) || holdsPath(rec.Created, lib) {
+		t.Fatalf("paths = %q, created = %q, want the rewritten lib/a.txt named and not created", rec.Paths, rec.Created)
+	}
+	if !holdsPath(rec.Created, stamp) || !rec.PathsComplete {
+		t.Fatalf("created = %q, complete = %v, want the new stamp created by a complete walk", rec.Created, rec.PathsComplete)
+	}
+
+	crowd := &toolCallPlan{scanBefore: scanWorkspace(t.Context(), root)}
+	for i := range observedPathLimit {
+		if err := os.WriteFile(filepath.Join(root, ".cache", fmt.Sprintf("f%d", i)), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cut := evidence.Receipt{ToolName: "bash", Success: true, Mutation: true, MutationEvidence: evidence.MutationUnknown, Command: "sh check.sh"}
+	a.settleUnchangedWorkspace(t.Context(), &cut, crowd)
+	if cut.PathsComplete {
+		t.Fatalf("a list cut at %d paths claimed to be complete", observedPathLimit)
 	}
 }
 

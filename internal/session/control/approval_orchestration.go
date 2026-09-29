@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -450,8 +451,19 @@ func (c *Controller) SetToolApprovalMode(mode string) {
 // posture switch resolved everything (#6432).
 func (c *Controller) ApplyToolApprovalMode(mode string) []string {
 	mode = normalizeToolApprovalMode(mode)
-	// Capture mode-change recovery dismissals before approval drain so a
-	// same-value hydrate/reconcile never rotates Episode state, while a real
+	drained, _ := c.switchApprovalMode(mode, func() ([]drainedApproval, bool) { return c.approval.setMode(mode), true })
+	return drained
+}
+
+// switchApprovalMode moves the posture through set, then carries the change to
+// the recovery cards, the sub-agent gate and the interactive gate. A set that
+// declines leaves all of them alone.
+func (c *Controller) switchApprovalMode(mode string, set func() ([]drainedApproval, bool)) ([]string, bool) {
+	pending, ok := set()
+	if !ok {
+		return nil, false
+	}
+	// A same-value hydrate/reconcile never rotates Episode state, while a real
 	// Auto↔Yolo/Ask switch clears temporary failure/reviewer locks and waiters
 	// without auto-approving the original mutation.
 	var recoveryDismissed []string
@@ -464,7 +476,6 @@ func (c *Controller) ApplyToolApprovalMode(mode string) []string {
 			recoveryDismissed = ctrl.OnModeChange(mode)
 		}
 	}
-	pending := c.approval.setMode(mode)
 	if c.subagentGate != nil {
 		c.subagentGate.UpdateAttended(mode)
 	}
@@ -486,7 +497,7 @@ func (c *Controller) ApplyToolApprovalMode(mode string) []string {
 		p.reply <- approvalReply{allow: true}
 		drained = append(drained, p.id)
 	}
-	return drained
+	return drained, true
 }
 
 func (c *Controller) ToolApprovalMode() string {
@@ -649,32 +660,59 @@ func (c *Controller) DefaultApprovalMode() string {
 	return DefaultApprovalMode(c.posture.WritesConfined, c.WorkspaceTrust())
 }
 
-// TrustableFolder leaves out the folders nobody should grant wholesale: a home
-// directory or a filesystem root holds far more than one project, so a trust
-// record for one, however it got there, opens nothing.
+// TrustableFolder leaves out the folders nobody should grant wholesale: a
+// filesystem root, a home directory or anything holding one, and Reasonix's own
+// home and state, whose files decide what the agent may do. It judges the
+// folder symlinks resolve to, so a link cannot stand in for any of them.
 func TrustableFolder(root string) bool {
-	root = filepath.Clean(strings.TrimSpace(root))
-	if root == "." || root == "" || filepath.Dir(root) == root {
+	root = strings.TrimSpace(root)
+	if root == "" {
 		return false
 	}
-	if home, err := os.UserHomeDir(); err == nil && sameDir(home, root) {
+	root = resolvedDir(root)
+	if root == "." || filepath.Dir(root) == root {
 		return false
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" && dirWithin(root, resolvedDir(home)) {
+		return false
+	}
+	for _, id := range []config.RootID{config.RootHome, config.RootState} {
+		if dir := config.RootDir(id); dir != "" {
+			if d := resolvedDir(dir); dirWithin(d, root) || dirWithin(root, d) {
+				return false
+			}
+		}
 	}
 	return true
 }
 
-func sameDir(a, b string) bool {
-	if r, err := filepath.EvalSymlinks(a); err == nil {
-		a = r
+// resolvedDir resolves symlinks through the deepest part of p that exists, so
+// a folder not yet created compares against the same spelling as its parent.
+func resolvedDir(p string) string {
+	if abs, err := filepath.Abs(p); err == nil {
+		p = abs
 	}
-	if r, err := filepath.EvalSymlinks(b); err == nil {
-		b = r
+	p = filepath.Clean(p)
+	rest := ""
+	for dir := p; ; dir = filepath.Dir(dir) {
+		if r, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(r, rest)
+		}
+		if filepath.Dir(dir) == dir {
+			return p
+		}
+		rest = filepath.Join(filepath.Base(dir), rest)
 	}
-	a, b = filepath.Clean(a), filepath.Clean(b)
+}
+
+// dirWithin reports whether p is root or lies under it, comparing case-blind
+// where the filesystem usually is.
+func dirWithin(root, p string) bool {
 	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
-		return strings.EqualFold(a, b)
+		root, p = strings.ToLower(root), strings.ToLower(p)
 	}
-	return a == b
+	rel, err := filepath.Rel(root, p)
+	return err == nil && (rel == "." || filepath.IsLocal(rel))
 }
 
 // WorkspaceTrust is the person's recorded decision about this workspace; an
@@ -682,6 +720,53 @@ func sameDir(a, b string) bool {
 func (c *Controller) WorkspaceTrust() config.WorkspaceTrust {
 	trust, _ := config.NewProjectGrantStore(c.posture.Home).Trust(c.WorkspaceRoot())
 	return trust
+}
+
+// ApplyDefaultPosture opens the session in DefaultApprovalMode and remembers
+// that nobody named it, so a later decision about the folder may move it.
+func (c *Controller) ApplyDefaultPosture() {
+	c.applyDefaultPosture(false)
+}
+
+func (c *Controller) applyDefaultPosture(onlyIfDefaulted bool) {
+	mode := c.DefaultApprovalMode()
+	c.switchApprovalMode(mode, func() ([]drainedApproval, bool) { return c.approval.setDefaultMode(mode, onlyIfDefaulted) })
+}
+
+// ErrUntrustableFolder refuses trust for a folder TrustableFolder leaves out.
+var ErrUntrustableFolder = errors.New("a filesystem root, a folder holding a home directory, or Reasonix's own directories are not trusted as a whole")
+
+// DecideWorkspaceTrust records the person's answer about this workspace. A
+// session still on its default posture follows the answer at once; a posture
+// somebody named is theirs and stays.
+func (c *Controller) DecideWorkspaceTrust(trust config.WorkspaceTrust) error {
+	if trust == config.WorkspaceTrusted && !TrustableFolder(c.WorkspaceRoot()) {
+		return ErrUntrustableFolder
+	}
+	if err := c.SetWorkspaceTrust(trust); err != nil {
+		return err
+	}
+	c.applyDefaultPosture(true)
+	return nil
+}
+
+// PostureReport is what a frontend needs to explain the posture a session is
+// in: whether it is the default, and the two facts the default is read from.
+type PostureReport struct {
+	Defaulted      bool                  `json:"defaulted"`
+	WritesConfined bool                  `json:"writesConfined"`
+	Trust          config.WorkspaceTrust `json:"trust"`
+	Trustable      bool                  `json:"trustable"`
+}
+
+// Posture reports the session's posture origin and its evidence.
+func (c *Controller) Posture() PostureReport {
+	return PostureReport{
+		Defaulted:      c.approval.defaulted(),
+		WritesConfined: c.posture.WritesConfined,
+		Trust:          c.WorkspaceTrust(),
+		Trustable:      TrustableFolder(c.WorkspaceRoot()),
+	}
 }
 
 // WritesConfined reports this build's bash Integrity claim.

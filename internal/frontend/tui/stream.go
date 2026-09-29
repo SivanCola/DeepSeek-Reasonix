@@ -23,59 +23,41 @@ type Update struct {
 
 const reconnectDelay = 500 * time.Millisecond
 
-// Subscribe follows /events until ctx ends. Numbered frames arrive exactly
-// once and in order: a jump is filled from /events/replay before the frame
-// that revealed it, and what the replay no longer holds is reported as a Gap.
-// Unnumbered frames (streaming deltas) are delivered as they come.
+// Subscribe follows /events until ctx ends. Numbered frames arrive once and in
+// order: a jump is filled from /events/replay, and what it no longer holds is a
+// Gap. Unnumbered frames (deltas) arrive as they come. It returns once the first
+// connection is attached or has failed, since the server carries a subscriber
+// only frames emitted after it attached.
 func (c *Client) Subscribe(ctx context.Context) <-chan Update {
 	out := make(chan Update, 256)
-	start := &streamStart{ctx: ctx, ready: make(chan struct{})}
-	c.streamStart.Store(start)
-	s := &subscription{c: c, out: out, start: start}
+	attached := make(chan struct{})
+	s := &subscription{c: c, out: out, attached: sync.OnceFunc(func() { close(attached) })}
 	go func() {
 		defer close(out)
 		for ctx.Err() == nil {
 			s.follow(ctx)
+			s.attached()
 			select {
 			case <-ctx.Done():
 			case <-time.After(reconnectDelay):
 			}
 		}
 	}()
+	select {
+	case <-attached:
+	case <-ctx.Done():
+	}
 	return out
 }
 
-// Mutations can emit transient notices immediately. Wait for the server to
-// register the first subscription, not merely for its goroutine to start.
-type streamStart struct {
-	ctx   context.Context
-	ready chan struct{}
-	once  sync.Once
-}
-
-func (c *Client) awaitStream(ctx context.Context) error {
-	start := c.streamStart.Load()
-	if start == nil {
-		return nil
-	}
-	select {
-	case <-start.ready:
-		return nil
-	case <-start.ctx.Done():
-		return start.ctx.Err()
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
 type subscription struct {
-	c     *Client
-	out   chan<- Update
-	start *streamStart
-	seen  int64
+	c    *Client
+	out  chan<- Update
+	seen int64
 	// known is false until the stream states a position: 0 cannot tell a
 	// subscriber that just attached from one that has seen the stream start.
-	known bool
+	known    bool
+	attached func() // releases Subscribe; idempotent
 }
 
 func (s *subscription) follow(ctx context.Context) {
@@ -94,9 +76,9 @@ func (s *subscription) follow(ctx context.Context) {
 	if resp.StatusCode != http.StatusOK {
 		return
 	}
-	if s.start != nil {
-		s.start.once.Do(func() { close(s.start.ready) })
-	}
+	// /events registers the subscriber before it writes a byte, so a response
+	// in hand means every frame emitted from here on reaches this stream.
+	s.attached()
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 64<<10), 16<<20)
 	for sc.Scan() {

@@ -30,7 +30,7 @@ func TestManifestRecordsEveryArtifactWithItsSignature(t *testing.T) {
 		}
 	}
 
-	if err := run(dir, "v0.1.0", "studio-v0.1.0", ""); err != nil {
+	if err := run(dir, "v0.1.0", "studio-v0.1.0", "", false); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -85,7 +85,7 @@ func TestManifestResolvesOnlyWhatCanInstallItself(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := run(dir, "v0.1.0", "studio-v0.1.0", ""); err != nil {
+	if err := run(dir, "v0.1.0", "studio-v0.1.0", "", false); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	var m update.Manifest
@@ -128,7 +128,64 @@ func TestManifestResolvesOnlyWhatCanInstallItself(t *testing.T) {
 
 func TestEmptyDirIsAFailedRelease(t *testing.T) {
 	t.Setenv("GITHUB_REPOSITORY", "esengine/DeepSeek-Reasonix")
-	if err := run(t.TempDir(), "v0.1.0", "studio-v0.1.0", ""); err == nil {
+	if err := run(t.TempDir(), "v0.1.0", "studio-v0.1.0", "", false); err == nil {
 		t.Fatal("a release with no artifacts must fail, not publish an empty manifest")
+	}
+}
+
+// A mirrored release is fetched from the mirror first, with GitHub kept as the
+// address a client falls back to; every full artifact and its signature alike.
+func TestMirroredManifestPutsTheMirrorFirst(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GITHUB_REPOSITORY", "esengine/DeepSeek-Reasonix")
+	for _, name := range []string{
+		"ReasonixStudio-windows-amd64-installer.exe",
+		"ReasonixStudio-darwin-universal.zip",
+		"ReasonixStudio-linux-amd64.deb",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := run(dir, "v0.1.0", "studio-v0.1.0", "", true); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	var m update.Manifest
+	raw, err := os.ReadFile(filepath.Join(dir, "latest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	var all []update.Asset
+	for _, group := range []map[string]update.Asset{m.Platforms, m.Downloads, m.NativePackages} {
+		for _, a := range group {
+			all = append(all, a)
+		}
+	}
+	if len(all) != 6 {
+		t.Fatalf("assets = %d, want 3 platforms, 2 downloads and 1 package", len(all))
+	}
+	for _, a := range all {
+		name := a.URL[strings.LastIndex(a.URL, "/")+1:]
+		mirror := update.StudioMirror + "/studio-v0.1.0/" + name
+		github := "https://github.com/esengine/DeepSeek-Reasonix/releases/download/studio-v0.1.0/" + name
+		if a.URL != mirror || a.Sig != mirror+".minisig" {
+			t.Errorf("%s: primary = %q / %q, want the mirror", name, a.URL, a.Sig)
+		}
+		if a.Fallback != github || a.FallbackSig != github+".minisig" {
+			t.Errorf("%s: fallback = %q / %q, want the GitHub release", name, a.Fallback, a.FallbackSig)
+		}
+	}
+	if !strings.HasPrefix(m.DownloadPage, "https://github.com/") {
+		t.Errorf("download page = %q, want the GitHub release page", m.DownloadPage)
+	}
+}
+
+func TestUnmirroredManifestNamesOnlyGitHub(t *testing.T) {
+	a := releaseAsset("o/r", "studio-v1", "ReasonixStudio-linux-amd64.deb", false)
+	if !strings.HasPrefix(a.URL, "https://github.com/o/r/") || a.Fallback != "" || a.FallbackSig != "" {
+		t.Fatalf("asset = %+v, want GitHub alone when nothing is mirrored", a)
 	}
 }

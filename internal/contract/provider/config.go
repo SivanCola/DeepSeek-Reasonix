@@ -4,6 +4,7 @@ import "strings"
 
 // Config is a resolved provider instance configuration.
 type Config struct {
+	// HTTP1Only disables HTTP/2 negotiation for this resolved provider.
 	HTTP1Only bool
 	Name      string // instance name, e.g. "deepseek"
 	BaseURL   string // OpenAI-compatible endpoint

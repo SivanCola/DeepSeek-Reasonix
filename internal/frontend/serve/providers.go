@@ -56,6 +56,7 @@ var providerNameRE = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$`)
 
 // providerView is one configured provider as the panel lists it.
 type providerView struct {
+	// HTTP1Only reports whether this connection disables HTTP/2 negotiation.
 	HTTP1Only bool   `json:"http1Only,omitempty"`
 	Name      string `json:"name"`
 	// DisplayName is the label a person gave this entry; empty is none set.
@@ -202,6 +203,7 @@ func (s *Server) probeProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
+		// HTTP1Only selects HTTP/1.1 for this unsaved catalog probe.
 		HTTP1Only bool   `json:"http1Only"`
 		BaseURL   string `json:"baseUrl"`
 		APIKey    string `json:"apiKey"`
@@ -262,14 +264,15 @@ func (s *Server) saveProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Name              string            `json:"name"`
-		Kind              string            `json:"kind"`
-		BaseURL           string            `json:"baseUrl"`
-		APIKey            string            `json:"apiKey"`
-		Models            []string          `json:"models"`
-		Default           string            `json:"default"`
-		AuthHeader        bool              `json:"authHeader"`
-		NoProxy           bool              `json:"noProxy"`
+		Name       string   `json:"name"`
+		Kind       string   `json:"kind"`
+		BaseURL    string   `json:"baseUrl"`
+		APIKey     string   `json:"apiKey"`
+		Models     []string `json:"models"`
+		Default    string   `json:"default"`
+		AuthHeader bool     `json:"authHeader"`
+		NoProxy    bool     `json:"noProxy"`
+		// HTTP1Only disables HTTP/2 negotiation for the new connection.
 		HTTP1Only         bool              `json:"http1Only"`
 		Effort            string            `json:"effort"`
 		Vision            []string          `json:"vision"`

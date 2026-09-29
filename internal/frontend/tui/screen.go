@@ -46,6 +46,7 @@ type block struct {
 	render   func(width int, hideRail bool) string
 	width    int
 	hideRail bool
+	cells    ansi.Method
 	lines    []string
 	// row is the settled row the block draws, when it draws one: a shell
 	// call's output opens and shuts through it.
@@ -53,8 +54,10 @@ type block struct {
 }
 
 func (b *block) at(width int, hideRail bool) []string {
-	if b.lines == nil || b.width != width || b.hideRail != hideRail {
-		b.width, b.hideRail, b.lines = width, hideRail, wrapLines(b.render(width, hideRail), width)
+	cells := termrender.Cells()
+	if b.lines == nil || b.width != width || b.hideRail != hideRail || b.cells != cells {
+		b.width, b.hideRail, b.cells = width, hideRail, cells
+		b.lines = wrapLines(b.render(width, hideRail), width)
 	}
 	return b.lines
 }
@@ -89,15 +92,17 @@ const (
 )
 
 // wrapLines splits out into rows no wider than width, each padded to it so
-// the scrollbar column stays put.
+// the scrollbar column stays put. Both are counted the renderer's way: a row
+// it counts wider is clipped, one it counts narrower shifts the scrollbar.
 func wrapLines(out string, width int) []string {
 	if out == "" {
 		return nil
 	}
+	cells := termrender.Cells()
 	var rows []string
 	for l := range strings.SplitSeq(out, "\n") {
-		for r := range strings.SplitSeq(ansi.Hardwrap(termrender.ExpandTabs(l), width, true), "\n") {
-			rows = append(rows, termrender.PadRight(r, width))
+		for r := range strings.SplitSeq(termrender.Hardwrap(termrender.ExpandTabs(l), width), "\n") {
+			rows = append(rows, r+strings.Repeat(" ", max(width-cells.StringWidth(r), 0)))
 		}
 	}
 	return rows
@@ -257,7 +262,7 @@ func pieces(out string, room, width int) []string {
 	for len(lines) > 0 {
 		n := 0
 		for rows := 0; n < len(lines); n++ {
-			rows += 1 + ansi.StringWidth(lines[n])/max(width, 1)
+			rows += 1 + termrender.Cells().StringWidth(lines[n])/max(width, 1)
 			if rows > room && n > 0 {
 				break
 			}
@@ -344,7 +349,7 @@ func (m *model) fullView(bottom []string, composerAt int) tea.View {
 		out = append(out, line)
 	}
 	for _, l := range bottom {
-		out = append(out, ansi.Truncate(l, max(m.width-1, 1), ""))
+		out = append(out, termrender.Truncate(l, max(m.width-1, 1), ""))
 	}
 	v := tea.NewView(strings.Join(out, "\n"))
 	v.AltScreen = true
@@ -535,7 +540,7 @@ func (m *model) selectedText() string {
 		if !ok {
 			continue
 		}
-		picked = append(picked, strings.TrimRight(ansi.Strip(ansi.Cut(rows[i], a, b)), " "))
+		picked = append(picked, strings.TrimRight(ansi.Strip(termrender.Cut(rows[i], a, b)), " "))
 	}
 	return strings.Join(picked, "\n")
 }

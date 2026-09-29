@@ -144,7 +144,7 @@ func markPersistedDeepSeekOfficialPricing(c *Config) {
 			continue
 		}
 		p.persistedOfficialCurrency = completeDeepSeekOfficialPricingCurrency(p)
-		if c.ConfigVersion >= Default().ConfigVersion && isStandardDeepSeekProviderTemplate(p) {
+		if c.ConfigVersion >= lastUpgradeConfigVersion && isStandardDeepSeekProviderTemplate(p) {
 			p.persistedOfficialCurrency = ""
 		}
 	}
@@ -220,6 +220,12 @@ const (
 	windowsBashSandboxDefaultConfigVersion = 4
 	retiredAutoPlanConfigVersion           = 5
 	billingSplitConfigVersion              = 6
+	// lastUpgradeConfigVersion is the newest upgrade this build applies.
+	lastUpgradeConfigVersion = billingSplitConfigVersion
+	// freshConfigVersion marks a file this build writes from nothing. The 1.x
+	// line shares the file and rewrites it whole, dropping every table it does
+	// not know, when the marker is below its own latest upgrade, 12.
+	freshConfigVersion = 12
 )
 
 // ApplyUserConfigUpgradesOnStartup applies one-time startup migrations. It
@@ -230,13 +236,17 @@ func ApplyUserConfigUpgradesOnStartup(path string) (bool, error) {
 	if path == "" {
 		return false, nil
 	}
+	_, exists, err := statConfigPath(path)
+	if err != nil || !exists {
+		return false, err
+	}
 	unlock, err := LockConfigFileEdits(path)
 	if err != nil {
 		return false, err
 	}
 	defer unlock()
 
-	_, exists, err := statConfigPath(path)
+	_, exists, err = statConfigPath(path)
 	if err != nil {
 		return false, err
 	}
@@ -247,37 +257,37 @@ func ApplyUserConfigUpgradesOnStartup(path string) (bool, error) {
 	if _, err := decodeTOMLFile(path, &header); err != nil {
 		return false, fmt.Errorf("config %s: %w", path, err)
 	}
-	if header.ConfigVersion >= Default().ConfigVersion {
+	upgraded, err := applyVersionedUpgrades(path, header.ConfigVersion)
+	if err != nil {
+		return upgraded, err
+	}
+	released, err := releaseShippedDesktopPosture(path)
+	return upgraded || released, err
+}
+
+func applyVersionedUpgrades(path string, from int) (bool, error) {
+	if from >= lastUpgradeConfigVersion {
 		return false, nil
 	}
 	cfg := LoadForEdit(path)
-	changed := false
-	if header.ConfigVersion < deepSeekPricingResetConfigVersion {
+	if from < deepSeekPricingResetConfigVersion {
 		resetOfficialProviderPricingDefaults(cfg)
-		changed = true
 	}
-	if shouldMarkWindowsBashSandboxDefaultUpgrade(header.ConfigVersion) {
+	// Marked even when the user was already on off, so a later manual enforce
+	// choice is not treated as the old template default.
+	if shouldMarkWindowsBashSandboxDefaultUpgrade(from) {
 		resetWindowsBashSandboxDefaultOnUpgrade(cfg)
-		// Mark the Windows v4 migration even when the user was already on off,
-		// so a later manual enforce choice is not treated as the old template default.
-		changed = true
 	}
-	if header.ConfigVersion < retiredAutoPlanConfigVersion {
+	// The v5 renderer removes both retired keys, so older binaries also observe
+	// the manual-only default after a downgrade.
+	if from < retiredAutoPlanConfigVersion {
 		normalizeRetiredAutoPlan(cfg)
-		// Mark every older config as migrated even when Auto Plan was already off;
-		// the v5 renderer removes both retired keys so older binaries also observe
-		// the manual-only default after a downgrade.
-		changed = true
 	}
-	if header.ConfigVersion < billingSplitConfigVersion {
+	if from < billingSplitConfigVersion {
 		migrateBillingDisplayCurrency(cfg)
 		freezeProviderBillingCurrencies(cfg)
-		changed = true
 	}
-	if !changed {
-		return false, nil
-	}
-	cfg.ConfigVersion = Default().ConfigVersion
+	cfg.ConfigVersion = lastUpgradeConfigVersion
 	if err := cfg.SaveTo(path); err != nil {
 		return false, err
 	}

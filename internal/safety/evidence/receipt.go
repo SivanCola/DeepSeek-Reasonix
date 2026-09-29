@@ -54,6 +54,10 @@ type Receipt struct {
 	// ran, present after. A path the host watched appear is the only one it can
 	// later watch disappear and conclude the turn kept nothing there.
 	Created []string `json:"created,omitempty"`
+	// PathsComplete says Paths names every file this call changed: a complete
+	// before/after walk of the workspace saw no others. Without it Paths is what
+	// the host happened to watch, and says nothing about what it left out.
+	PathsComplete bool `json:"paths_complete,omitempty"`
 	// Showed lists the changed paths whose content this call's model-visible
 	// output demonstrably carried. It is decided while the output is in hand,
 	// so the ledger keeps the verdict and never the content.

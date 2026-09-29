@@ -196,6 +196,10 @@ same care as a session transcript.
 reasonix run --metrics run.json --trajectory run.trajectory.jsonl "fix the failing test"
 ```
 
+A clean `run` or `-p` writes nothing to stderr except warnings the user has to
+act on. `--debug` adds diagnostic logs such as assembly timing and the resumed
+session's cache state.
+
 ### Output formats
 
 | Format | Behavior |
@@ -209,6 +213,16 @@ reasonix -p "list the risky changes" --output-format text
 reasonix -p "summarize the diff" --output-format json
 reasonix run "run the tests" --output-format stream-json
 ```
+
+`stream-json` lines before the result follow the 1.x contract:
+
+- Each carries `sessionId`, `turnId`, `seq` (from 1) and `status`.
+- The turn opens with `turn_status` (`status: "queued"`) and `user_message`.
+- A call that cleared every gate and ran reports `tool_started` before its
+  `tool_result`.
+- The turn closes with `turn_done`: `completed`, `failed` or `interrupted`.
+- Only kinds 1.x emitted appear; host-internal state such as workspace leases
+  stays off the stream.
 
 The final structured object has this shape:
 
@@ -273,6 +287,25 @@ Execution failures use `subtype: "error_during_execution"` and
 `is_error: true`. Structured modes keep runtime errors in JSON instead of also
 printing a duplicate human-readable error.
 
+What the host decided about the answer rides beside it and does not change the
+exit status:
+
+- `-p` names the calls listed in `permission_denials` on stderr.
+- `readiness` (`attempts`, `missing`) appears when the model finished but the
+  host's final-readiness check stayed unmet, for example no check ran after
+  the last write. The run still counts as a success.
+- `completion` repeats the turn's `completion_summary` when there was one.
+- `--events-jsonl`'s `run_done` carries the denial count and `readiness`.
+
+Exit statuses of `reasonix run`:
+
+| Status | Meaning |
+| --- | --- |
+| `0` | The model finished, including with refused calls or unmet readiness. |
+| `1` | The run failed: provider, configuration, limit, or cancellation. |
+| `2` | The command line was invalid. |
+| `3` | `--fail-on-unverified` was given and final readiness stayed unmet. |
+
 ### Redacted machine interfaces
 
 Use the dedicated event flag when an automation needs lifecycle telemetry but
@@ -287,6 +320,9 @@ Every line has `schema_version`, `sequence`, and `kind`; the final line is
 `kind: "run_done"`. `--events-jsonl` is intentionally separate from the richer
 `--output-format stream-json` contract and cannot be combined with
 `--output-format`.
+
+Its lifecycle records match `stream-json`'s (`turn_status`, `user_message`,
+`tool_started`, `turn_done`) without their content.
 
 The following read-only commands expose persisted state without transcript,
 label, command, output, path, PID, or host-name content. Here, read-only means

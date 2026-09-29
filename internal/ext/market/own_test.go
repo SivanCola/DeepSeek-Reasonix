@@ -46,8 +46,8 @@ func digestOf(t *testing.T, out Outcome) string {
 	return d
 }
 
-func ownReq(slug, version, planID, digest string) OwnRequest {
-	return OwnRequest{Request: Request{Slug: slug, Version: version, PlanID: planID}, Digest: digest}
+func ownReq(slug, version, planID, digest string) Request {
+	return Request{Slug: slug, Version: version, PlanID: planID, Digest: digest}
 }
 
 func TestOwnInstallPinsTheUnreviewedVersionToItsPreview(t *testing.T) {

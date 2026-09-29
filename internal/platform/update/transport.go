@@ -85,6 +85,26 @@ func Retry(ctx context.Context, fetch func(attempt int) error) error {
 	return err
 }
 
+// FetchFrom is Fetch over each address an object is published at, in order:
+// the next address gets its own retry budget once one is spent or refused.
+func (t Transport) FetchFrom(ctx context.Context, urls []string, maxBytes int64) ([]byte, error) {
+	if len(urls) == 0 {
+		return nil, fmt.Errorf("update: no address to fetch from")
+	}
+	var errs []error
+	for _, url := range urls {
+		data, err := t.Fetch(ctx, url, maxBytes)
+		if err == nil {
+			return data, nil
+		}
+		errs = append(errs, err)
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	return nil, errors.Join(errs...)
+}
+
 // Fetch GETs a URL fully into memory, bounded by maxBytes.
 func (t Transport) Fetch(ctx context.Context, url string, maxBytes int64) ([]byte, error) {
 	if maxBytes <= 0 {
@@ -108,15 +128,36 @@ func (t Transport) Fetch(ctx context.Context, url string, maxBytes int64) ([]byt
 // retry is needed. expectedSize is the manifest's size: 0 leaves it unbounded
 // up to MaxAssetSize.
 func (t Transport) Download(ctx context.Context, url string, expectedSize int64, onProgress ProgressFunc) ([]byte, error) {
+	return t.DownloadFrom(ctx, []string{url}, expectedSize, onProgress)
+}
+
+// DownloadFrom is Download over each address the artifact is published at, in
+// order. What one address delivered is resumed from the next: every address
+// serves the same bytes, and the caller verifies them whole afterwards.
+func (t Transport) DownloadFrom(ctx context.Context, urls []string, expectedSize int64, onProgress ProgressFunc) ([]byte, error) {
 	if expectedSize < 0 || expectedSize > MaxAssetSize {
 		return nil, fmt.Errorf("update: invalid expected asset size %d", expectedSize)
 	}
+	if len(urls) == 0 {
+		return nil, fmt.Errorf("update: no address to download from")
+	}
 	total := expectedSize
 	var buf bytes.Buffer
-	err := Retry(ctx, func(attempt int) error {
-		return t.downloadInto(ctx, t.clientFor(attempt), url, expectedSize, &buf, &total, onProgress)
-	})
-	if err != nil {
+	var errs []error
+	for _, url := range urls {
+		err := Retry(ctx, func(attempt int) error {
+			return t.downloadInto(ctx, t.clientFor(attempt), url, expectedSize, &buf, &total, onProgress)
+		})
+		if err == nil {
+			errs = nil
+			break
+		}
+		errs = append(errs, err)
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
 	if expectedSize > 0 && int64(buf.Len()) != expectedSize {

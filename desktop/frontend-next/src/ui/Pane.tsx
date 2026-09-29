@@ -4,8 +4,7 @@ import { reason } from "../i18n/kernel";
 import { t } from "../i18n";
 import { hasPendingDecision, posture, runState } from "./decisions";
 import { createPortal } from "react-dom";
-import { HttpError } from "../port/port";
-import type { AgentPort, Checkpoint, ChipCall, ContextBreakdown, JobEntry, McpEntry, SessionStatus, WorkspaceChanges } from "../port/port";
+import { HttpError, type AgentPort, type Checkpoint, type ChipCall, type ContextBreakdown, type JobEntry, type McpEntry, type SessionStatus, type WorkspaceChanges } from "../port/port";
 import type { RuntimeView } from "../port/hub";
 import type { TrajectoryRead } from "../port/wire";
 import { currentStep, fromHistory, initialState, localId, quoteAmount, reduce, stepDone, stepLabel } from "../state/session";
@@ -46,8 +45,8 @@ import { refreshTodos } from "../state/restore";
 import { RMark } from "./RMark";
 import { speedOf } from "./speed";
 import { RuntimeBar } from "./RuntimeBar";
+import { PostureNote } from "./PostureNote";
 import { LiveWork, useLiveWork } from "../state/foldpref";
-
 
 // PaneReport is what the window's own chrome needs from whichever pane has
 // focus: everything else about a session stays inside the pane that owns it.
@@ -291,7 +290,7 @@ function PaneView({ port, rt, title, active, visible, sideHost, side, onFocus, o
     port.checkpoints().then(setCheckpoints).catch(() => setCheckpoints([]));
     // Two reads, the same way the first mount takes them: the record does not
     // wait behind the numbers over it.
-    port.history().then((msgs) => {
+    const history = port.history().then((msgs) => {
       const r = fromHistory(msgs);
       dispatch({ kind: "__restore", ...r });
     });
@@ -301,6 +300,7 @@ function PaneView({ port, rt, title, active, visible, sideHost, side, onFocus, o
     });
     refreshWallet();
     onSessionChanged();
+    return history;
   }, [port, applyStatus, refreshWallet, onSessionChanged, replayTrajectory]);
 
   const { onPrepareRewind, onCommitRewind, onUndoRewind, onPrepareFileRevert, onCommitFileRevert } = useRewindActions(port, reloadSession);
@@ -491,7 +491,7 @@ function PaneView({ port, rt, title, active, visible, sideHost, side, onFocus, o
   );
   const find = useFind(s.items, findPulse, active, useCallback(() => showView("flow"), [showView]));
 
-  const { quote, reply, onResend } = useReplyActions({ port, items: s.items, checkpoints, running, model: status?.label, submit, onSettings, onRunDetail: () => showView("analysis"), onError: fail });
+  const { quote, reply, onResend } = useReplyActions({ port, items: s.items, checkpoints, running, model: status?.label, submit, reloadSession, onSettings, onRunDetail: () => showView("analysis"), onError: fail });
 
   // Where the bottom is moves as blocks mount under it, so this only asks the
   // transcript to follow again and lets it scroll itself into place.
@@ -682,6 +682,7 @@ function PaneView({ port, rt, title, active, visible, sideHost, side, onFocus, o
             onRefresh={onQueueRefresh}
             onPause={onQueuePause}
           />
+          <PostureNote port={port} status={status} onChanged={refreshStatus} />
         {/* Views the user (or the extension) put next to the composer. They sit
             above it rather than inside it: the input box is the one thing an
             extension must never be able to crowd out. */}

@@ -2,7 +2,6 @@ package market
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -34,13 +33,6 @@ type OwnDetail struct {
 type Owner interface {
 	Owned(ctx context.Context, token, slug string) (OwnDetail, error)
 	Submit(ctx context.Context, token, slug string) (Package, error)
-}
-
-// OwnRequest is a plan or install of the account's own package. Digest is the
-// contentDigest of the preview the person confirmed; apply refuses without it.
-type OwnRequest struct {
-	Request
-	Digest string `json:"digest,omitempty"`
 }
 
 func ownPath(slug, suffix string) (string, error) {
@@ -109,29 +101,20 @@ func (c *Client) Submit(ctx context.Context, token, slug string) (Package, error
 // version keeps its reviewer's pin; any other has none, so the preview's own
 // digest becomes the pin the install must match, and a source that cannot be
 // pinned is refused here.
-func (s *Service) PlanOwn(ctx context.Context, token string, req OwnRequest) (Outcome, error) {
+func (s *Service) PlanOwn(ctx context.Context, token string, req Request) (Outcome, error) {
 	pkg, v, err := s.owned(ctx, token, req)
 	if err != nil {
 		return Outcome{Version: v}, err
 	}
 	if reviewed(pkg, v) {
-		return s.execute(ctx, pkg, v, v.ContentHash, false, req.Request, false)
+		return s.execute(ctx, pkg, v, v.ContentHash, false, false, req, false)
 	}
-	out, err := s.execute(ctx, pkg, v, "", true, req.Request, false)
-	if err != nil {
-		return out, err
-	}
-	var digest string
-	_ = json.Unmarshal(out.Fields["contentDigest"], &digest)
-	if !installsource.IsContentDigest(digest) {
-		return Outcome{Version: v}, fmt.Errorf("%w: %s@%s has no content digest to pin the install to", installsource.ErrNotPinnable, pkg.Slug, v.Version)
-	}
-	return out, nil
+	return s.previewPinned(ctx, pkg, v, true, req, false)
 }
 
 // InstallOwn applies the plan req.PlanID names, refusing material that differs
 // from the reviewer's pin or, without one, from the digest the person previewed.
-func (s *Service) InstallOwn(ctx context.Context, token string, req OwnRequest) (Outcome, error) {
+func (s *Service) InstallOwn(ctx context.Context, token string, req Request) (Outcome, error) {
 	pkg, v, err := s.owned(ctx, token, req)
 	if err != nil {
 		return Outcome{Version: v}, err
@@ -142,12 +125,9 @@ func (s *Service) InstallOwn(ctx context.Context, token string, req OwnRequest) 
 		if digest != "" && digest != v.ContentHash {
 			return Outcome{Version: v}, fmt.Errorf("%w: %s was approved since it was previewed", ErrVersionChanged, pkg.Slug)
 		}
-		return s.execute(ctx, pkg, v, v.ContentHash, false, req.Request, true)
+		return s.execute(ctx, pkg, v, v.ContentHash, false, false, req, true)
 	}
-	if !installsource.IsContentDigest(digest) {
-		return Outcome{Version: v}, ErrUnpreviewed
-	}
-	return s.execute(ctx, pkg, v, digest, true, req.Request, true)
+	return s.previewPinned(ctx, pkg, v, true, req, true)
 }
 
 // reviewed: approval overwrites a live version's hash with the reviewer's own,
@@ -158,7 +138,7 @@ func reviewed(pkg Package, v Version) bool {
 
 // owned resolves the request against the registry's answer for this account,
 // never against anything the caller sent about the package.
-func (s *Service) owned(ctx context.Context, token string, req OwnRequest) (Package, Version, error) {
+func (s *Service) owned(ctx context.Context, token string, req Request) (Package, Version, error) {
 	if s.Owner == nil {
 		return Package{}, Version{}, ErrSignedOut
 	}

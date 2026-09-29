@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 
 	"reasonix/internal/frontend/termrender"
 )
@@ -78,7 +77,7 @@ func writeHelpGroup(b *strings.Builder, width int, title string, items []Complet
 	for _, it := range items[:n] {
 		used := 2 + max(termrender.VisibleWidth(it.Label), 18) + 1
 		hint := strings.Join(strings.Fields(it.Hint), " ")
-		hint = ansi.Truncate(hint, max(width-used, 1), "…")
+		hint = termrender.Truncate(hint, max(width-used, 1), "…")
 		fmt.Fprintf(b, "  %-18s %s\n", it.Label, termrender.Dim(hint))
 	}
 	if extra := len(items) - n; extra > 0 {

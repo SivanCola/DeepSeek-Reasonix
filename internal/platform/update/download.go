@@ -97,12 +97,12 @@ func (u *Updater) DownloadManifest(ctx context.Context, m *Manifest, r Report) (
 	}
 	t := u.transport()
 	r.phase(PhaseDownloading)
-	data, err := t.Download(ctx, asset.URL, asset.Size, r.Bytes)
+	data, err := t.DownloadFrom(ctx, asset.Sources(), asset.Size, r.Bytes)
 	if err != nil {
 		return Cached{}, fmt.Errorf("%w: %w", ErrFetch, err)
 	}
 	r.phase(PhaseVerifying)
-	sig, err := t.Fetch(ctx, asset.Sig, MaxSignatureSize)
+	sig, err := t.FetchFrom(ctx, asset.SigSources(), MaxSignatureSize)
 	if err != nil {
 		return Cached{}, fmt.Errorf("%w: %w", ErrFetch, err)
 	}

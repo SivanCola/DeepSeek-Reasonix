@@ -16,6 +16,7 @@ import type { RemoteHost } from "../port/remote";
 import { AddPlugin } from "./AddPlugin";
 import { Packages } from "./Packages";
 import { ExtTabs, MarketGroup } from "./Market";
+import { InstalledLocation } from "./InstalledLocation";
 import { Switch } from "./Switch";
 import { ServerRow } from "./ServerRow";
 import { SkillRow } from "./SkillRow";
@@ -118,6 +119,9 @@ export function Settings({ hub, onError, port, networkPort, networkHost, status,
   const [packages, setPackages] = useState<PluginPackage[]>([]);
   const [addingPkg, setAddingPkg] = useState(false);
   const [extTab, setExtTab] = useState<"installed" | "market">(openedAnchor === "market" ? "market" : "installed");
+  const [installedTarget, setInstalledTarget] = useState<{ kind: string; name: string } | null>(null);
+  const [extRefreshing, setExtRefreshing] = useState(false);
+  const extRefresh = useRef(0);
   const [updatingPkg, setUpdatingPkg] = useState("");
   const [hookCount, setHookCount] = useState(0);
   const [netMode, setNetMode] = useState("");
@@ -127,31 +131,29 @@ export function Settings({ hub, onError, port, networkPort, networkHost, status,
   const veiled = useRef(false);
 
   const reloadExt = useCallback(() => {
+    const refresh = ++extRefresh.current;
+    const current = () => extRefresh.current === refresh;
+    setExtRefreshing(true);
     const where = scopeAt || undefined;
-    port.capabilityScopes().then(setScopes).catch(() => setScopes([]));
-    port
-      .mcp(where)
-      .then((c) => {
-        setMcp(c.servers);
-        setScope(c.scope);
-        setLive(c.live !== false);
-      })
-      .catch(() => setMcp([]));
-    port.plugins().then(setPackages).catch(() => setPackages([]));
-    port.hooks().then((c) => setHookCount(c.hooks.length)).catch(() => setHookCount(0));
-    port.network().then((n) => setNetMode(t(NET_MODE[n.mode] ?? n.mode))).catch(() => setNetMode(""));
-    port.memories().then((c) => setMemCount(c.memories.length)).catch(() => setMemCount(0));
-    port
-      .permissions()
-      .then((p) => setRuleCount(p.deny.length + p.ask.length + p.allow.length))
-      .catch(() => setRuleCount(0));
-    port
-      .skills(where)
-      .then((c) => {
-        setSkills(c.skills);
-        setImplicit(c.implicit);
-      })
-      .catch(() => setSkills([]));
+    port.capabilityScopes().then((c) => { if (current()) setScopes(c); }).catch(() => { if (current()) setScopes([]); });
+    const mcpRead = port.mcp(where).then((c) => {
+      if (!current()) return;
+      setMcp(c.servers);
+      setScope(c.scope);
+      setLive(c.live !== false);
+    }).catch(() => { if (current()) setMcp([]); });
+    const packageRead = port.plugins().then((c) => { if (current()) setPackages(c); }).catch(() => { if (current()) setPackages([]); });
+    port.hooks().then((c) => { if (current()) setHookCount(c.hooks.length); }).catch(() => { if (current()) setHookCount(0); });
+    port.network().then((n) => { if (current()) setNetMode(t(NET_MODE[n.mode] ?? n.mode)); }).catch(() => { if (current()) setNetMode(""); });
+    port.memories().then((c) => { if (current()) setMemCount(c.memories.length); }).catch(() => { if (current()) setMemCount(0); });
+    port.permissions().then((p) => { if (current()) setRuleCount(p.deny.length + p.ask.length + p.allow.length); }).catch(() => { if (current()) setRuleCount(0); });
+    const skillRead = port.skills(where).then((c) => {
+      if (!current()) return;
+      setSkills(c.skills);
+      setImplicit(c.implicit);
+    })
+      .catch(() => { if (current()) setSkills([]); });
+    void Promise.allSettled([mcpRead, packageRead, skillRead]).then(() => { if (current()) setExtRefreshing(false); });
   }, [port, scopeAt]);
 
   // An extension switch moves the metrics rail too, so the change has to leave
@@ -160,7 +162,6 @@ export function Settings({ hub, onError, port, networkPort, networkHost, status,
     reloadExt();
     onChanged();
   }, [reloadExt, onChanged]);
-
   const reload = useRuntimeReload(port, afterExtChange);
 
   // Adding or removing a source changes what the picker above can offer, so
@@ -616,11 +617,11 @@ export function Settings({ hub, onError, port, networkPort, networkHost, status,
               <Hooks port={port} onChanged={afterExtChange} />
             </Group>
           )}
-
           {at === "ext" && (
             <>
-              <ExtTabs at={extTab} onPick={setExtTab} />
-              {extTab === "market" && <MarketGroup port={port} onInstalled={afterExtChange} account={acct} onSignIn={() => go("account", "account")} />}
+              <ExtTabs at={extTab} onPick={(tab) => { setInstalledTarget(null); setExtTab(tab); }} />
+              {extTab === "installed" && <InstalledLocation root={root} target={installedTarget} packages={packages} skills={skills} mcp={mcp} refreshing={extRefreshing} onFound={setInstalledTarget} />}
+              {extTab === "market" && <MarketGroup port={port} onInstalled={afterExtChange} onViewInstalled={(kind, name) => { setInstalledTarget({ kind, name }); setExtTab("installed"); }} account={acct} onSignIn={() => go("account", "account")} />}
               {extTab === "installed" && (
               <>
                 {scope && <ScopeBar scope={scope} scopes={scopes} onPick={setScopeAt} />}
@@ -711,7 +712,6 @@ export function Settings({ hub, onError, port, networkPort, networkHost, status,
               )}
             </>
           )}
-
           {at === "network" && (
             <Group id="network"
               title={t("网络")}

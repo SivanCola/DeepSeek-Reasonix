@@ -135,6 +135,17 @@ export interface RewindConflict {
 
 export type ApprovalMode = "ask" | "auto" | "dontAsk" | "yolo";
 
+export type WorkspaceTrust = "" | "trusted" | "declined";
+
+/** Where the session's posture came from. A defaulted session opens in auto
+ *  only when the OS sandbox confines writes and the folder is trusted. */
+export interface ApprovalDefault {
+  defaulted: boolean;
+  writesConfined: boolean;
+  trust: WorkspaceTrust;
+  trustable: boolean;
+}
+
 // "light" was retired into balanced: its only enforced differences were two
 // sub-agent switches, and a setting that costs a choice without changing what
 // it names is a question not worth asking. Old sessions still send it.
@@ -217,6 +228,8 @@ export interface SessionStatus {
   // The label the user gave modelRef's provider; absent when none is set.
   providerDisplayName?: string;
   toolApprovalMode: ApprovalMode;
+  // Absent from a kernel that predates it; drawn only where it is present.
+  approvalDefault?: ApprovalDefault;
   autoApproveTools: boolean;
   bypass: boolean;
   goal: string;

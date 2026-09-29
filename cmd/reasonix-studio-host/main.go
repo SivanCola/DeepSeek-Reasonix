@@ -282,6 +282,11 @@ func resolveKernelLanguage(cfg *config.Config) string {
 // assemble builds the hub this host serves: one pane on the workspace it was
 // launched in, carrying the capabilities a local window may exercise.
 func assemble(ctx context.Context, logs, handshakeTo io.Writer, shell shellIdentity, page fs.FS) (*serve.Hub, error) {
+	// The one-time upgrades belong to whichever entry point starts first; a
+	// person who only ever opens the window would otherwise never get them.
+	if _, err := config.ApplyUserConfigUpgradesOnStartup(config.UserConfigPath()); err != nil {
+		fmt.Fprintln(logs, "reasonix-studio-host: config upgrade:", err)
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, err

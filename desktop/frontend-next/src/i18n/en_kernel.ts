@@ -50,8 +50,8 @@ export const EN_KERNEL: Record<string, string> = {
   "社区市场中没有这个已审核的包": "The community market has no approved package by that name",
   "无法连接社区市场：{detail}": "The community market could not be reached: {detail}",
   "社区市场返回了无法识别的内容": "The community market answered with something unrecognisable",
-  "社区市场暂不支持只列出可安装的包": "The community market cannot list only installable packages yet",
-  "该包的审核版本没有固定内容，暂不能从市场安装": "The reviewed version is not pinned to its content, so it cannot be installed from the market yet",
+  "社区市场暂不支持只列出已固定内容的包": "The community market cannot list only pinned packages yet",
+  "该包的审核版本没有固定内容，需要信任发布者后才能安装": "The reviewed version is not pinned to its content; trust the publisher to install it",
   "该包的审核版本指向本机或不安全的来源，不从市场安装": "The reviewed version points at a local or unsafe source, which the market does not install",
   "审核版本已更新，请重新查看后再安装": "A newer version has been approved - look at it again before installing",
   "来源内容已与审核版本不同，已拒绝安装": "The source no longer holds the reviewed content, so nothing was installed",
@@ -286,5 +286,7 @@ export const EN_KERNEL: Record<string, string> = {
   "无法读取工作区文件列表": "The workspace file list could not be read",
   "该文件不是可编辑文本或超过大小限制": "The file is not editable text or exceeds the size limit",
   "无进展设置未能保存：{detail}": "The progress settings were not saved: {detail}",
+  "主目录或磁盘根目录不能整体信任，请打开具体的项目文件夹": "A home directory or drive root cannot be trusted as a whole - open a specific project folder",
+  "未能记下对此文件夹的信任决定：{detail}": "The trust decision for this folder was not saved: {detail}",
   "该数值超出允许范围，未做任何修改：{detail}": "That value is out of range; nothing was changed: {detail}",
 };

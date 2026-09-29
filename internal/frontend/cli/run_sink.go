@@ -12,6 +12,7 @@ import (
 	"reasonix/internal/platform/telemetry"
 	"reasonix/internal/runtime/agent"
 	"reasonix/internal/session/control"
+	"reasonix/internal/state/sessionstore"
 	"reasonix/internal/state/trajectory"
 )
 
@@ -66,6 +67,14 @@ func buildRunSink(format runOutputFormat, printOnly, showThinking bool, metricsP
 	chain.sink = withNotifications(chain.sink, cfg)
 	chain.sink = reporter.Wrap(chain.sink)
 	return chain, nil
+}
+
+// begin marks the controller bound and the prompt about to be submitted.
+func (c runSinkChain) begin(ctrl *control.Controller, version, prompt string) {
+	recordTrajectoryHeader(c.trajectory, ctrl, version)
+	if c.resultOutput != nil {
+		c.resultOutput.BeginTurn(sessionstore.BranchID(ctrl.SessionPath()), prompt)
+	}
 }
 
 // recordTrajectoryHeader persists the request-side prefix the event stream

@@ -2,7 +2,7 @@
 owner: @SivanCola
 backup: @esengine
 status: active
-reviewed: 2026-09-28
+reviewed: 2026-09-29
 ---
 
 # Skills
@@ -10,6 +10,10 @@ reviewed: 2026-09-28
 Reasonix loads [Agent Skills](https://agentskills.io): a folder with a
 `SKILL.md` file whose frontmatter names and describes the skill and whose body
 is the playbook. Skills written for other agents work unchanged.
+
+To write and verify a skill from an empty directory, follow the
+[community author guide](MARKET_AUTHOR_GUIDE.md). It also shows how to package
+a skill and submit a fixed version for review.
 
 ## Where skills are found
 

@@ -59,6 +59,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /rewind/file/commit", s.fileRevertCommit)
 	mux.HandleFunc("POST /summarize", s.summarize)
 	mux.HandleFunc("POST /tool-approval-mode", s.toolApprovalMode)
+	mux.HandleFunc("POST /workspace-trust", s.workspaceTrust)
 	mux.HandleFunc("POST /auto-approve-tools", s.autoApproveTools)
 	mux.HandleFunc("POST /bypass", s.bypass)
 	mux.HandleFunc("POST /goal", s.goal)

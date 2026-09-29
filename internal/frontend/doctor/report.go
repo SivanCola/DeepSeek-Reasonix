@@ -215,6 +215,7 @@ func Collect(opts Options) Report {
 	if skStore := skill.New(skill.Options{ProjectRoot: cwd}); skStore != nil {
 		report.Warnings = append(report.Warnings, CollectSkillHealthWarnings(SkillHealthOptions{
 			Skills:  skStore.List(),
+			Tools:   hostToolContracts(),
 			Plugins: cfg.Plugins,
 		})...)
 	}

@@ -85,7 +85,7 @@ func RunWithBuildInfo(args []string, info BuildInfo) int {
 		if term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd())) {
 			return runTUI(args, version)
 		}
-		return bareUsage()
+		return bareUsage(len(args) == 0)
 	}
 
 	rest := args[1:]
@@ -94,7 +94,7 @@ func RunWithBuildInfo(args []string, info BuildInfo) int {
 		return runAgent(rest, version)
 	case "serve":
 		return runServe(rest, version)
-	case "tui":
+	case "tui", "chat", "code":
 		return runTUI(rest, version)
 	case "web":
 		return runWebCommand(rest, version)
@@ -174,7 +174,7 @@ func isDoctorRepairCommand(args []string) bool {
 
 func isDefaultInteractiveFlag(arg string) bool {
 	switch arg {
-	case "--model", "--max-steps", "--continue", "-c", "--resume", "-r", "--copy", "--dangerously-skip-permissions", "--yolo", "--permission-mode", "--effort", "--dir", "--add-dir", "--allowed-tools", "--allowedTools", "--profile":
+	case "--model", "--max-steps", "--continue", "-c", "--resume", "-r", "--copy", "--dangerously-skip-permissions", "--yolo", "--permission-mode", "--effort", "--dir", "--add-dir", "--allowed-tools", "--allowedTools", "--profile", "--preset":
 		return true
 	}
 	if name, _, ok := strings.Cut(arg, "="); ok && isDefaultInteractiveFlag(name) {
@@ -477,7 +477,7 @@ func runAgent(args []string, version string) int {
 	if resumePath != "" {
 		if err := leases.Rebind(resumePath); err != nil {
 			if errors.Is(err, sessionstore.ErrSessionLeaseHeld) {
-				fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, sessionLeaseResumeRefusal(err))
+				fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, sessionLeaseResumeRefusal(err, *f.takeover))
 			} else {
 				fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			}
@@ -545,10 +545,10 @@ func runAgent(args []string, version string) int {
 		return 1
 	}
 
-	recordTrajectoryHeader(chain.trajectory, ctrl, version)
+	chain.begin(ctrl, version, prompt)
 	runErr := ctrl.Run(ctx, prompt)
 	reporter.RecordRecovery(ctrl.DrainRecoveryMetrics())
-	completion := classifyRunCompletion(runErr)
+	completion := classifyRunCompletion(runErr).withFailOnUnverified(*f.failOnUnverified)
 	if cfg != nil {
 		notify.SendEvent(newNotificationSender(), i18n.M, cfg.Notifications, event.Event{
 			Kind:    event.TurnDone,
@@ -651,6 +651,9 @@ func displayPath(p string) string {
 // Project memory is a separate concern — the in-session `/init` skill generates
 // AGENTS.md (see initHint).
 func setupConfig(args []string) int {
+	if code, ok := setupArgsVerdict(args, os.Stdout, os.Stderr); !ok {
+		return code
+	}
 	t := resolveSetupTargets(args)
 	path := t.config
 	if _, err := os.Stat(path); err == nil {
@@ -1335,19 +1338,6 @@ func normalizeCommand(args []string) (string, []string) {
 
 func usage() {
 	fmt.Print(i18n.M.UsageBody)
-}
-
-// bareUsage answers bare argv: there is no interactive session to fall into.
-// A console this process owns alone was opened by a double-click and closes
-// on exit, so it points at Studio and waits instead of vanishing.
-func bareUsage() int {
-	configureThemeForTTYOutput()
-	usage()
-	if ownsConsoleAlone() {
-		fmt.Print("\n" + i18n.M.StandaloneConsoleHint)
-		_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
-	}
-	return 2
 }
 
 type ctrlKillerAdapter struct{ ctrl *control.Controller }

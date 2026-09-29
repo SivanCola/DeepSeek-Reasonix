@@ -9,6 +9,7 @@ import (
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"reasonix/internal/base/i18n"
 	"reasonix/internal/frontend/termrender"
@@ -50,7 +51,11 @@ func Run(ctx context.Context, opts Options) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	m := newModel(ctx, opts)
-	_, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()
+	p := tea.NewProgram(m, tea.WithContext(ctx))
+	if clusters, ok := clustersEmoji(); ok && clusters {
+		go p.Send(clusterReport)
+	}
+	_, err := p.Run()
 	return err
 }
 
@@ -153,6 +158,7 @@ func newModel(ctx context.Context, opts Options) *model {
 		composer: ta, width: 80, height: 24,
 		glyphs: newConsoleGlyphFit(os.Stdout),
 	}
+	termrender.SetCells(ansi.WcWidth)
 	if !opts.Inline {
 		m.scr = &screen{follow: true, mouseOff: mouseCaptureOffByDefault()}
 	}
@@ -234,6 +240,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.composer.SetWidth(max(msg.Width-4, 10))
+		return m, nil
+	case tea.ModeReportMsg:
+		noteCells(msg)
 		return m, nil
 	case updateMsg:
 		if !msg.ok {

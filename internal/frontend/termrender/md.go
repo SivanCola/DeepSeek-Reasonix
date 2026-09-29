@@ -5,7 +5,6 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/charmbracelet/x/ansi"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
@@ -564,5 +563,5 @@ func wrapAnsi(text string, width int) string {
 	if width < 4 {
 		width = 4
 	}
-	return ansi.Wrap(text, width, "")
+	return Cells().Wrap(text, width, "")
 }

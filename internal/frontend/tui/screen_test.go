@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -398,6 +399,169 @@ func TestMouseCaptureStartsFromTheEnvironment(t *testing.T) {
 		m := newModel(context.Background(), Options{})
 		if m.scr.mouseOff != tc.off {
 			t.Errorf("REASONIX_DISABLE_MOUSE=%q SSH_CONNECTION=%q: mouseOff = %v, want %v", tc.env, tc.ssh, m.scr.mouseOff, tc.off)
+		}
+	}
+}
+
+// clusterSamples holds a grapheme of every kind a per-rune terminal may fold
+// to a width of its own: variation selectors, ZWJ sequences, skin tones,
+// flags, keycaps and tag sequences.
+var clusterSamples = []string{
+	"变体选择符 ⚠\ufe0f 警告 ❤\ufe0f 心 ✔\ufe0f 勾 ☀\ufe0f 晴",
+	"组合 👨\u200d👩\u200d👧 家庭 🏳\ufe0f\u200d🌈 彩虹 👩🏽\u200d💻 程序员 ❤\ufe0f\u200d🔥 🐻\u200d❄\ufe0f " + strings.Repeat("中", 20),
+	"肤色 👍🏻 👋🏿 旗帜 🇨🇳 🇺🇸 🇯🇵 键帽 1\ufe0f\u20e3 #\ufe0f\u20e3 标签 🏴\U000e0067\U000e0062\U000e0073\U000e0063\U000e0074\U000e007f",
+	strings.Repeat("⚠\ufe0f", 50),
+	strings.Repeat("👨\u200d👩\u200d👧🇨🇳", 30),
+}
+
+// Every transcript row ends in the scrollbar at the last column as the
+// renderer counts it: per rune until the terminal reports or is measured to
+// draw grapheme clusters, per cluster after. Per rune, no row carries a rune
+// the terminal could fold into a cluster of its own width.
+func TestScrollbarHoldsItsColumnUnderEitherWidthCount(t *testing.T) {
+	for _, report := range []tea.ModeReportMsg{
+		{Mode: ansi.ModeUnicodeCore, Value: ansi.ModeReset},
+		clusterReport,
+	} {
+		m, _ := testModel(t)
+		for _, s := range clusterSamples {
+			m.tr.AddNotice("info", s)
+		}
+		args, _ := json.Marshal(map[string]string{"command": "printf '" + strings.Join(clusterSamples, " ") + "' > out.txt"})
+		apply(m, eventwire.Event{Kind: "tool_result", Tool: &eventwire.Tool{ID: "c9", Name: "bash", Args: string(args), Output: clusterSamples[1]}})
+		fillTranscript(m, 40)
+		check := func(cells ansi.Method) {
+			t.Helper()
+			for range 30 {
+				m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+			}
+			for scrolled := 0; scrolled < 40; scrolled += wheelRows {
+				rows := strings.Split(m.View().Content, "\n")[:m.viewportHeight()]
+				for i, r := range rows {
+					plain := ansi.Strip(r)
+					if w := cells.StringWidth(plain); w != m.width || !strings.HasSuffix(plain, "│") && !strings.HasSuffix(plain, "█") {
+						t.Fatalf("method %v row %d is %d cells wide, want %d ending in the scrollbar: %q", cells, i, w, m.width, plain)
+					}
+					if cells == ansi.WcWidth && strings.ContainsFunc(plain, foldsIntoCluster) {
+						t.Fatalf("per-rune row %d still carries a foldable rune: %q", i, plain)
+					}
+				}
+				m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+			}
+		}
+		check(ansi.WcWidth)
+		m.Update(report)
+		check(ansi.GraphemeWidth)
+		press(m, "ctrl+home")
+		if c := m.View().Content; !strings.Contains(c, "👨\u200d👩\u200d👧") && !strings.Contains(c, "🇨🇳") {
+			t.Fatalf("a terminal drawing clusters should get them unchanged:\n%s", c)
+		}
+	}
+}
+
+// Stand-ins change what is drawn, never what a selection copies.
+func TestSelectionCopiesTheGraphemesNotTheirStandIns(t *testing.T) {
+	m, _ := testModel(t)
+	const text = "flag 🇨🇳 family 👨\u200d👩\u200d👧 key 1\ufe0f\u20e3 tone 👍🏻"
+	apply(m, eventwire.Event{Kind: "notice", Level: "info", Text: text})
+	if c := m.View().Content; strings.Contains(c, "🇨🇳") || !strings.Contains(c, "CN") {
+		t.Fatalf("a per-rune terminal should be drawn the stand-ins:\n%s", c)
+	}
+	joined := strings.Join(m.content(nil), "\n")
+	row := strings.Count(joined[:strings.Index(joined, "flag")], "\n") - m.scr.yoff
+	m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 0, Y: row})
+	m.Update(tea.MouseMotionMsg{Button: tea.MouseLeft, X: 70, Y: row})
+	if got := m.selectedText(); !strings.Contains(got, text) {
+		t.Fatalf("selected %q, want the original %q", got, text)
+	}
+}
+
+// With native mouse selection there is no scrollbar, but the bottom region
+// still has to fit: a per-rune terminal is drawn the stand-ins either way.
+func TestNativeSelectionModeStillDrawsTheStandIns(t *testing.T) {
+	m, _ := testModel(t)
+	m.scr.mouseOff = true
+	apply(m, eventwire.Event{Kind: "notice", Level: "info", Text: "flag 🇨🇳 family 👨\u200d👩\u200d👧"})
+	if c := m.View().Content; strings.ContainsFunc(c, foldsIntoCluster) || !strings.Contains(c, "CN") {
+		t.Fatalf("a per-rune terminal should get the stand-ins in every mode:\n%s", c)
+	}
+}
+
+func TestSplitClustersKeepsThePerRuneCount(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"👨\u200d👩\u200d👧", "👨👩👧"},
+		{"🏳\ufe0f\u200d🌈", " 🌈"},
+		{"🏳\ufe0f 白旗 🖥", "🏳 白旗 🖥"},
+		{"👩🏽\u200d💻", "👩  💻"},
+		{"🇨🇳 🇺🇸", "CN US"},
+		{"1\ufe0f\u20e3 #\ufe0f\u20e3", "1 #"},
+		{"🏴\U000e0067\U000e0062\U000e007f", "🏴"},
+		{"⚠\ufe0f \x1b[1m🇯🇵\x1b[m", "⚠ \x1b[1mJP\x1b[m"},
+		{"plain 中文", "plain 中文"},
+	} {
+		got := splitClusters(c.in)
+		if got != c.want {
+			t.Fatalf("splitClusters(%q) = %q, want %q", c.in, got, c.want)
+		}
+		if a, b := ansi.WcWidth.StringWidth(c.in), ansi.WcWidth.StringWidth(got); a != b {
+			t.Fatalf("splitClusters(%q) changed the per-rune count %d -> %d", c.in, a, b)
+		}
+	}
+}
+
+func TestCursorColumnReadsThePositionReport(t *testing.T) {
+	for in, want := range map[string]int{
+		"\x1b[12;3R":              3,
+		"junk\x1b[?1;2c\x1b[1;2R": 2,
+		"\x1b[4;R":                0,
+		"\x1b[5":                  0,
+	} {
+		got, ok := cursorColumn(in)
+		if got != want || ok != (want > 0) {
+			t.Fatalf("cursorColumn(%q) = %d, %v; want %d", in, got, ok, want)
+		}
+	}
+}
+
+// A table measured the renderer's way keeps its column lines in one column
+// on a per-rune terminal, whatever its cells hold.
+func TestTableColumnsLineUpUnderThePerRuneCount(t *testing.T) {
+	m, _ := testModel(t)
+	m.tr.AddUser("go")
+	apply(m, eventwire.Event{Kind: "turn_started"})
+	apply(m, eventwire.Event{Kind: "text", Text: "| 名称 | 状态 | 说明 |\n|---|---|---|\n| 解析器 | ✅ 通过 | 全角「测试」 |\n| 渲染器 | ⚠\ufe0f 警告 | 👨\u200d👩\u200d👧 🇨🇳 |\n| 键帽 | 1\ufe0f\u20e3 | 👍🏽 肤色 |\n"})
+	apply(m, eventwire.Event{Kind: "message", Text: ""}, eventwire.Event{Kind: "turn_done"})
+	var cols []string
+	for _, r := range strings.Split(m.View().Content, "\n")[:m.viewportHeight()] {
+		plain := strings.TrimSuffix(strings.TrimRight(ansi.Strip(r), " │█"), " ")
+		if !strings.Contains(plain, "│") {
+			continue
+		}
+		var at []string
+		for _, part := range strings.Split(plain, "│")[:strings.Count(plain, "│")] {
+			at = append(at, fmt.Sprint(ansi.WcWidth.StringWidth(part)))
+		}
+		cols = append(cols, strings.Join(at, ","))
+	}
+	if len(cols) < 4 {
+		t.Fatalf("table rows not found: %q", cols)
+	}
+	for _, c := range cols[1:] {
+		if c != cols[0] {
+			t.Fatalf("column lines moved between rows: %q", cols)
+		}
+	}
+}
+
+// A tool call waiting on approval draws its one row at the transcript's width,
+// so its closing parenthesis is not wrapped onto a row of its own.
+func TestPendingToolRowFitsTheTranscript(t *testing.T) {
+	m, _ := testModel(t)
+	args, _ := json.Marshal(map[string]string{"command": "printf '" + strings.Repeat("写入文件 ", 30) + "' > out.txt"})
+	apply(m, eventwire.Event{Kind: "turn_started"}, eventwire.Event{Kind: "tool_dispatch", Tool: &eventwire.Tool{ID: "c1", Name: "bash", Args: string(args)}})
+	for _, r := range m.content(m.liveLines()) {
+		if plain := strings.TrimSpace(ansi.Strip(r)); plain == ")" {
+			t.Fatalf("the pending tool row wrapped its closing parenthesis:\n%s", strings.Join(m.content(m.liveLines()), "\n"))
 		}
 	}
 }

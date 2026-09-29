@@ -18,9 +18,10 @@ HTTP/1.1，以绕过服务端或网络链路的 HTTP/2 兼容问题。默认仍�
 
 ## Change one connection / 修改单个连接
 
-In model sources, add a connection or edit the affected connection. Select
-**HTTP/1.1** under **HTTP connection protocol** (inside the advanced section when
-editing), then save.
+In model sources, add a connection or edit the affected connection. Expand
+**Advanced connection options** when adding, or **Connection compatibility and
+reasoning** when editing. Select **HTTP/1.1** under **HTTP connection protocol**,
+then save.
 
 Model discovery and explicit model checks use the current
 draft choice without changing the saved configuration.
@@ -29,8 +30,9 @@ Saving rebuilds an idle
 connection through the existing settings flow; if work is still running, follow
 the saved-settings notice and reload the connection after that work ends.
 
-在模型来源中新增连接或编辑有问题的连接，在 **HTTP 连接协议** 中选择
-**HTTP/1.1** 后保存（编辑时展开高级设置）。刷新模型目录和主动验证模型使用
+在模型来源中新增连接或编辑有问题的连接。新增时展开 **高级连接选项**，
+编辑时展开 **连接兼容与推理设置**，在 **HTTP 连接协议** 中选择
+**HTTP/1.1** 后保存。刷新模型目录和主动验证模型使用
 当前草稿的协议选项，但不会保存草稿。保存通过现有设置流程重建空闲连接；
 如果仍有工作在运行，按保存提示在工作结束后重新加载连接。
 

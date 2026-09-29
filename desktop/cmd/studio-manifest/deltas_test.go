@@ -29,13 +29,13 @@ func TestManifestListsEachSignedDeltaFromTheMirror(t *testing.T) {
 	if err := os.WriteFile(index, []byte("index bytes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := run(dir, "v0.1.0", "studio-v0.1.0", deltaDir); err == nil {
+	if err := run(dir, "v0.1.0", "studio-v0.1.0", deltaDir, true); err == nil {
 		t.Fatal("an unsigned delta index was published")
 	}
 	if err := os.WriteFile(index+".minisig", []byte("sig"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := run(dir, "v0.1.0", "studio-v0.1.0", deltaDir); err != nil {
+	if err := run(dir, "v0.1.0", "studio-v0.1.0", deltaDir, true); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, "latest.json"))

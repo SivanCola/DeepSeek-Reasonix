@@ -224,9 +224,12 @@ func (h *Hub) Adopt(srv *Server, bc *Broadcaster) (*Runtime, error) {
 	srv.stance = h.stance
 	srv.page = h.opts.Page
 	srv.resolver = h.opts.ProviderResolver
-	// The posture the host launched in, which is the one every later pane
-	// inherits until someone changes it on the composer.
-	h.stance.set(srv.Controller().ToolApprovalMode())
+	// A posture the person named is the one every later pane inherits until
+	// someone changes it on the composer. A default is read per folder, so each
+	// pane derives its own.
+	if !srv.Controller().Posture().Defaulted {
+		h.stance.set(srv.Controller().ToolApprovalMode())
+	}
 	if h.opts.Grant != nil {
 		h.opts.Grant(srv)
 	}

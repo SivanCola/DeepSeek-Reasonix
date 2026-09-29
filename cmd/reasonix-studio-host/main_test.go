@@ -471,3 +471,28 @@ type stubTray struct{}
 func (stubTray) IconLive() bool                 { return false }
 func (stubTray) TrayFold() traystate.State      { return traystate.State{} }
 func (stubTray) ApplyTrayPrefs(serve.TrayPrefs) {}
+
+// A person who only ever opens the window still gets the one-time upgrades:
+// the shipped "auto" a v6 file carries is released before the first pane is
+// built, so that pane opens in the default the sandbox and trust decide.
+func TestAssembleAppliesTheStartupUpgrades(t *testing.T) {
+	// Its own home: another test's launch already recorded the release in the
+	// package's shared one, and a recorded release is not run again.
+	t.Setenv("REASONIX_HOME", testenv.TempDir(t))
+	path := config.UserConfigPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("config_version = 6\n[desktop]\ndefault_tool_approval_mode = \"auto\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(testenv.TempDir(t))
+	hub, err := assemble(t.Context(), io.Discard, io.Discard, shellIdentity{}, nil)
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	defer hub.Shutdown()
+	if got := config.LoadForEdit(path).DesktopDefaultToolApprovalMode(); got != "" {
+		t.Fatalf("after the window started, the desktop posture is %q, want the shipped auto released", got)
+	}
+}

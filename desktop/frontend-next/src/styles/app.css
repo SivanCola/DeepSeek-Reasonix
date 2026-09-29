@@ -3187,6 +3187,7 @@
   .mkt-q::placeholder { color: var(--ghost) }
   .mkt-q:focus { outline: 2px solid var(--focus); outline-offset: 1px }
   .mkt-list { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none }
+  .mkt-installed { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 4px 0 0; padding: 0; list-style: none; font: var(--w-reg) var(--fs-meta) var(--ui); color: var(--muted) }
   .mkt-row {
     display: flex; flex-direction: column; gap: 2px; width: 100%; min-width: 0; padding: 7px 8px; text-align: left;
     border: 0; border-bottom: 1px solid var(--hair); background: transparent; color: inherit; cursor: pointer;
@@ -3746,6 +3747,9 @@
     font: var(--w-med) var(--fs-meta) var(--ui); text-decoration: underline; text-underline-offset: 3px;
   }
   .stallbar .why { white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+  .posturenote { flex-wrap: wrap; row-gap: 2px; margin: 0 0 9px }
+  .posturenote .why { order: 1; flex-basis: 100% }
+  .posturenote button:first-of-type { margin-left: auto }
 
   .rc { margin: 4px 0 2px }
   .rc-ok {

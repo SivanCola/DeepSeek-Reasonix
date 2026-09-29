@@ -34,7 +34,7 @@ it("loads the saved policy, probes a draft, and explicitly resets without replay
   expect(checkProvider).toHaveBeenCalledTimes(1);
 });
 
-it("defaults to auto and can save a new HTTP/1.1 connection without a probe", async () => {
+it("keeps HTTP compatibility in collapsed advanced options and saves an explicit selection", async () => {
   const saveProvider = vi.fn(async () => {});
   const probeProvider = vi.fn();
   const port = {
@@ -42,7 +42,13 @@ it("defaults to auto and can save a new HTTP/1.1 connection without a probe", as
     saveProvider, probeProvider,
   } as unknown as Port;
   render(<AddProvider port={port} taken={[]} known={[]} onDone={() => {}} onCancel={() => {}} />);
+  await waitFor(() => expect((screen.getByLabelText("接口协议") as HTMLSelectElement).value).toBe("openai"));
+  const advanced = screen.getByText("高级连接选项").closest("details")!;
+  expect(advanced.open).toBe(false);
+  expect(screen.getByRole("combobox", { name: /^HTTP 连接协议/ }).closest("details")).toBe(advanced);
+  await userEvent.click(screen.getByText("高级连接选项"));
   const selector = await screen.findByRole("combobox", { name: /^HTTP 连接协议/ });
+  expect(advanced.contains(selector)).toBe(true);
   expect((selector as HTMLSelectElement).value).toBe("auto");
   await userEvent.selectOptions(selector, "http1");
   await userEvent.type(screen.getByLabelText("来源名称"), "fixture");

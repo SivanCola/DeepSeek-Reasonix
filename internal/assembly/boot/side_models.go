@@ -50,7 +50,7 @@ func promptRefiner(e *config.ProviderEntry, proxy netclient.ProxySpec, sink even
 	pc.Extra["effort"] = "disabled"
 	prov, err := provider.New(e.Kind, pc)
 	if err != nil {
-		slog.Warn("prompt refiner provider construction failed", "model", modelRefFromEntry(e), "err", err)
+		slog.Debug("prompt refiner provider construction failed", "model", modelRefFromEntry(e), "err", err)
 		return nil
 	}
 	return promptrefine.New(prov, e.Price, modelRefFromEntry(e), sink)

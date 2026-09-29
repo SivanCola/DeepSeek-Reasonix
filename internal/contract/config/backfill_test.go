@@ -1472,8 +1472,8 @@ func TestResetOfficialProviderPricingOnUpgradeRunsOnce(t *testing.T) {
 	if _, err := toml.DecodeFile(path, &got); err != nil {
 		t.Fatalf("decode migrated config: %v", err)
 	}
-	if got.ConfigVersion != Default().ConfigVersion {
-		t.Fatalf("config_version = %d, want %d", got.ConfigVersion, Default().ConfigVersion)
+	if got.ConfigVersion != lastUpgradeConfigVersion {
+		t.Fatalf("config_version = %d, want %d", got.ConfigVersion, lastUpgradeConfigVersion)
 	}
 	deepseek, ok := got.Provider("deepseek")
 	if !ok {
@@ -1548,8 +1548,8 @@ func TestApplyUserConfigUpgradesOnStartupVersion3NonWindowsAdvancesToV5(t *testi
 	if _, err := toml.DecodeFile(path, &got); err != nil {
 		t.Fatalf("decode migrated config: %v", err)
 	}
-	if got.ConfigVersion != Default().ConfigVersion {
-		t.Fatalf("config_version = %d, want %d", got.ConfigVersion, Default().ConfigVersion)
+	if got.ConfigVersion != lastUpgradeConfigVersion {
+		t.Fatalf("config_version = %d, want %d", got.ConfigVersion, lastUpgradeConfigVersion)
 	}
 	deepseek, _ := got.Provider("deepseek")
 	if p := deepseek.Prices[DeepSeekFlashModel]; p == nil || p.Output != 4 || p.Currency != "$" {
@@ -1576,8 +1576,8 @@ func TestApplyUserConfigUpgradesOnStartupWindowsBashEnforceDefaultsOffOnce(t *te
 		t.Fatal("upgrade should migrate Windows bash sandbox default")
 	}
 	got := LoadForEdit(path)
-	if got.ConfigVersion != Default().ConfigVersion {
-		t.Fatalf("config_version = %d, want %d", got.ConfigVersion, Default().ConfigVersion)
+	if got.ConfigVersion != lastUpgradeConfigVersion {
+		t.Fatalf("config_version = %d, want %d", got.ConfigVersion, lastUpgradeConfigVersion)
 	}
 	if got.Sandbox.Bash != "off" || got.BashMode() != "off" {
 		t.Fatalf("Windows bash mode after migration = raw %q effective %q, want off/off", got.Sandbox.Bash, got.BashMode())
@@ -1622,8 +1622,8 @@ func TestApplyUserConfigUpgradesOnStartupWindowsBashOffOnlyMarksVersion(t *testi
 		t.Fatal("Windows v3 config should be marked as migrated")
 	}
 	got := LoadForEdit(path)
-	if got.ConfigVersion != Default().ConfigVersion {
-		t.Fatalf("config_version = %d, want %d", got.ConfigVersion, Default().ConfigVersion)
+	if got.ConfigVersion != lastUpgradeConfigVersion {
+		t.Fatalf("config_version = %d, want %d", got.ConfigVersion, lastUpgradeConfigVersion)
 	}
 	if got.Sandbox.Bash != "off" || got.BashMode() != "off" {
 		t.Fatalf("Windows bash mode after marker migration = raw %q effective %q, want off/off", got.Sandbox.Bash, got.BashMode())
@@ -1660,7 +1660,7 @@ temperature = 0.4
 		t.Fatalf("retired auto-plan keys remain after migration:\n%s", raw)
 	}
 	got := LoadForEdit(path)
-	if got.ConfigVersion != Default().ConfigVersion || got.Agent.AutoPlan != "off" || got.Agent.AutoPlanClassifier != "" {
+	if got.ConfigVersion != lastUpgradeConfigVersion || got.Agent.AutoPlan != "off" || got.Agent.AutoPlanClassifier != "" {
 		t.Fatalf("migrated config = version:%d auto:%q classifier:%q", got.ConfigVersion, got.Agent.AutoPlan, got.Agent.AutoPlanClassifier)
 	}
 	if got.Agent.Temperature != 0.4 {

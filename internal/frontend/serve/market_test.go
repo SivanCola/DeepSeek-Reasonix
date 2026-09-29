@@ -128,6 +128,7 @@ func TestMarketRefusalsCarryTheirCause(t *testing.T) {
 		{"local source", &fakeRegistry{detail: local}, "/market/plan", map[string]any{"slug": "a/b"}, http.StatusConflict, "market.bad_source"},
 		{"down", &fakeRegistry{err: market.ErrUnreachable}, "/market/plan", map[string]any{"slug": "a/b"}, http.StatusBadGateway, "market.unreachable"},
 		{"gone", &fakeRegistry{err: market.ErrNotFound}, "/market/plan", map[string]any{"slug": "a/b"}, http.StatusNotFound, "market.not_found"},
+		{"trusted install names no preview", &fakeRegistry{detail: unpinned}, "/market/install", map[string]any{"slug": "a/b", "version": "1", "trust": true}, http.StatusBadRequest, "market.unpreviewed"},
 		{"install names no version", &fakeRegistry{detail: unpinned}, "/market/install", map[string]any{"slug": "a/b"}, http.StatusBadRequest, codeMissingField},
 	}
 	for _, tc := range cases {

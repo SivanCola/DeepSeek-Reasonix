@@ -746,6 +746,9 @@ export class SsePort extends SseBackup implements AgentPort {
   setApprovalMode(mode: ApprovalMode) {
     return this.post("/tool-approval-mode", { mode });
   }
+  decideWorkspaceTrust(trust: "trusted" | "declined") {
+    return this.post("/workspace-trust", { trust });
+  }
   setPreset(preset: Preset) {
     return this.post("/preset", { preset });
   }

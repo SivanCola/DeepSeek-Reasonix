@@ -38,11 +38,7 @@ type approvalManager struct {
 	asks      map[string]pendingAsk
 	granted   map[string]bool
 	ids       promptIDs
-	// toolApprovalMode is the runtime approval posture: "ask" prompts, "auto"
-	// lets the policy auto-approve the writer fallback while preserving ask/deny
-	// rules, and "yolo" skips ordinary tool prompts while deny rules and fresh
-	// decisions remain enforced.
-	toolApprovalMode string
+	posture   approvalPosture
 	// approvalTimeout bounds how long requestApproval/Ask block on a user
 	// decision. Zero means wait indefinitely (correct for an interactive
 	// terminal); bot/headless frontends set it so a walked-away user can't wedge
@@ -71,14 +67,14 @@ type approvalManager struct {
 
 func newApprovalManager(policy permission.Policy, mode string, timeout time.Duration, persists bool) approvalManager {
 	return approvalManager{
-		policy:           policy,
-		persists:         persists,
-		approvals:        map[string]pendingApproval{},
-		asks:             map[string]pendingAsk{},
-		granted:          map[string]bool{},
-		ids:              newPromptIDs(),
-		toolApprovalMode: mode,
-		approvalTimeout:  timeout,
+		policy:          policy,
+		persists:        persists,
+		approvals:       map[string]pendingApproval{},
+		asks:            map[string]pendingAsk{},
+		granted:         map[string]bool{},
+		ids:             newPromptIDs(),
+		posture:         approvalPosture{mode: mode},
+		approvalTimeout: timeout,
 	}
 }
 
@@ -151,7 +147,7 @@ func (a *approvalManager) preApprovedForDecisionOptions(tool, subject string, ar
 		return a.sessionGrantAllowsLocked(tool, subject)
 	}
 	if requireHuman {
-		return a.toolApprovalMode == ToolApprovalYolo || a.sessionGrantAllowsLocked(tool, subject)
+		return a.posture.mode == ToolApprovalYolo || a.sessionGrantAllowsLocked(tool, subject)
 	}
 	return a.bypassAllowsLocked(tool, subject, args) || a.sessionGrantAllowsLocked(tool, subject)
 }
@@ -159,7 +155,7 @@ func (a *approvalManager) preApprovedForDecisionOptions(tool, subject string, ar
 func (a *approvalManager) preApprovedForRequiredHuman(tool, subject string) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.toolApprovalMode == ToolApprovalYolo || a.sessionGrantAllowsLocked(tool, subject)
+	return a.posture.mode == ToolApprovalYolo || a.sessionGrantAllowsLocked(tool, subject)
 }
 
 // register allocates an approval ID, records the pending prompt, and returns the
@@ -404,11 +400,39 @@ func (a *approvalManager) hasPending() bool {
 	return len(a.approvals) > 0 || len(a.asks) > 0
 }
 
+// approvalPosture is the runtime approval posture — "ask" prompts, "auto" lets
+// the policy auto-approve the writer fallback while preserving ask/deny rules,
+// "yolo" skips ordinary prompts while deny rules and fresh decisions hold — and
+// whether it is the session's default rather than a posture somebody named.
+type approvalPosture struct {
+	mode      string
+	defaulted bool
+}
+
+// setDefaultMode applies mode as the default nobody named, draining what it
+// auto-allows. With onlyIfDefaulted it is a check-and-set: a posture somebody
+// named since the caller looked is theirs, and nothing changes.
+func (a *approvalManager) setDefaultMode(mode string, onlyIfDefaulted bool) ([]drainedApproval, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if onlyIfDefaulted && !a.posture.defaulted {
+		return nil, false
+	}
+	a.posture = approvalPosture{mode: mode, defaulted: true}
+	return a.drainForLocked(mode), true
+}
+
+func (a *approvalManager) defaulted() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.posture.defaulted
+}
+
 // mode returns the normalized runtime approval posture.
 func (a *approvalManager) mode() string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return normalizeToolApprovalMode(a.toolApprovalMode)
+	return normalizeToolApprovalMode(a.posture.mode)
 }
 
 // setMode applies a (pre-normalized) posture and drains any pending approvals
@@ -417,7 +441,11 @@ func (a *approvalManager) mode() string {
 func (a *approvalManager) setMode(mode string) []drainedApproval {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.toolApprovalMode = mode
+	a.posture = approvalPosture{mode: mode}
+	return a.drainForLocked(mode)
+}
+
+func (a *approvalManager) drainForLocked(mode string) []drainedApproval {
 	switch mode {
 	case ToolApprovalAuto:
 		return a.drainLocked(false)
@@ -475,7 +503,7 @@ func (a *approvalManager) bypassAllowsLocked(tool, subject string, args json.Raw
 	if requiresFreshApprovalTool(tool) {
 		return false
 	}
-	if a.toolApprovalMode == ToolApprovalYolo {
+	if a.posture.mode == ToolApprovalYolo {
 		return true
 	}
 	if !a.planAutoApprove {

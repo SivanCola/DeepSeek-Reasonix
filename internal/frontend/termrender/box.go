@@ -2,8 +2,6 @@ package termrender
 
 import (
 	"strings"
-
-	"github.com/charmbracelet/x/ansi"
 )
 
 // VisibleWidth returns the printable column width of s: ANSI SGR codes are
@@ -12,7 +10,7 @@ import (
 // x/ansi (already in the dep tree via bubbletea/lipgloss) so call sites read
 // intent rather than re-deriving the strip-and-measure dance.
 func VisibleWidth(s string) int {
-	return ansi.StringWidth(s)
+	return Cells().StringWidth(s)
 }
 
 // PadRight returns s padded with spaces on the right until it occupies w

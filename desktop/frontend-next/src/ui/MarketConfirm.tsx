@@ -19,13 +19,15 @@ interface Props {
   error: string;
   onCancel: () => void;
   onInstall: () => void;
+  // The person's own package rather than a listed one they chose to trust.
+  own?: boolean;
 }
 
 // The one confirmation every market install passes: the plan as the kernel
 // graded it, with a source that expands into several skills held until read.
-// What the pin is — a reviewer's digest or the publisher's own preview — is the
-// plan's to say, so an unreviewed install cannot read as a reviewed one.
-export function PlanConfirm({ slug, plan, busy, error, onCancel, onInstall }: Props) {
+// What the pin is — a reviewer's digest or this preview's own — is the plan's
+// to say, so an unreviewed install cannot read as a reviewed one.
+export function PlanConfirm({ slug, plan, busy, error, onCancel, onInstall, own }: Props) {
   const [seen, setSeen] = useState(false);
   const actions = plan.actions ?? [];
   const skills = actions.filter((a) => a.kind === "skill");
@@ -35,12 +37,17 @@ export function PlanConfirm({ slug, plan, busy, error, onCancel, onInstall }: Pr
   );
   return (
     <div className="mkt addpkg" data-stage="confirm">
-      {plan.unreviewed && (
+      {plan.unreviewed && (own ? (
         <div className="find" data-lvl="warn" data-unreviewed="">
           <span className="t">{t("未审核 · 仅你可见")}</span>
           <span className="why">{t("这是你自己发布、还没有通过审核的版本。安装会核对与这次预览相同的内容摘要，内容在确认后有变化就拒绝安装。")}</span>
         </div>
-      )}
+      ) : (
+        <div className="find" data-lvl="warn" data-unreviewed="">
+          <span className="t">{t("你选择了信任这个发布者")}</span>
+          <span className="why">{t("以下是来源现在提供的内容，可能与审核时不同。确认后内容若有变化，安装会被拒绝。")}</span>
+        </div>
+      ))}
       <div className="find">
         <span className="t">{t("{name} {version} 将安装以下内容", { name: slug, version: plan.version })}</span>
         <span className="why">

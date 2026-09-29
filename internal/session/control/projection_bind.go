@@ -31,7 +31,7 @@ func (c *Controller) maybeColdResumePrune(path string, announce bool) {
 	m, ok, err := sessionstore.LoadBranchMeta(path)
 	if err != nil || !ok || m.UpdatedAt.IsZero() {
 		c.executor.SetCacheState(agent.CacheStateUnknown)
-		slog.Info("controller: resume cache state", "path", path, "cache_state", agent.CacheStateUnknown)
+		slog.Debug("controller: resume cache state", "path", path, "cache_state", agent.CacheStateUnknown)
 		return
 	}
 	last := m.UpdatedAt
@@ -40,7 +40,7 @@ func (c *Controller) maybeColdResumePrune(path string, announce bool) {
 		state = agent.CacheStateCold
 	}
 	c.executor.SetCacheState(state)
-	slog.Info("controller: resume cache state", "path", path, "cache_state", state, "idle", time.Since(last).Round(time.Minute).String())
+	slog.Debug("controller: resume cache state", "path", path, "cache_state", state, "idle", time.Since(last).Round(time.Minute).String())
 	if !announce || c.disableColdResumePrune || state != agent.CacheStateCold {
 		return
 	}

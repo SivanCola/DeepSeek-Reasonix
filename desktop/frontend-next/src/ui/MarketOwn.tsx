@@ -66,7 +66,7 @@ export function OwnInstall({ port, pkg, onBack, onInstalled }: Props) {
     );
   }
   if (plan) {
-    return <PlanConfirm key={plan.planId} slug={pkg.slug} plan={plan} busy={busy} error={error} onCancel={onBack} onInstall={() => void install()} />;
+    return <PlanConfirm key={plan.planId} slug={pkg.slug} plan={plan} busy={busy} error={error} onCancel={onBack} onInstall={() => void install()} own />;
   }
   return (
     <div className="mkt">

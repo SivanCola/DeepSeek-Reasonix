@@ -27,7 +27,7 @@ func (s *Server) marketOwnRun(w http.ResponseWriter, r *http.Request, apply bool
 	if !ok {
 		return
 	}
-	var req market.OwnRequest
+	var req market.Request
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
 		badBody(w)
 		return
@@ -56,7 +56,6 @@ func (s *Server) marketOwnRun(w http.ResponseWriter, r *http.Request, apply bool
 		refuseOwn(w, err)
 		return
 	}
-	out.Fields["unreviewed"], _ = json.Marshal(out.Unreviewed)
 	s.writeMarketOutcome(w, r, out, req.Slug, apply)
 }
 
@@ -82,8 +81,6 @@ func refuseOwn(w http.ResponseWriter, err error) {
 		refuse(w, http.StatusNotFound, "market.not_yours", "none of the account's packages has that name", detail)
 	case errors.Is(err, market.ErrNotPrivate):
 		refuse(w, http.StatusConflict, "market.not_private", "only a private package can be submitted for review", detail)
-	case errors.Is(err, market.ErrUnpreviewed):
-		refuse(w, http.StatusBadRequest, "market.unpreviewed", "an unreviewed install needs the digest of the preview it confirms", detail)
 	default:
 		refusePublish(w, err)
 	}

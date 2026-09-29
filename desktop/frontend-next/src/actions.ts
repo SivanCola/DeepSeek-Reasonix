@@ -195,13 +195,16 @@ export const ACTIONS: UIAction[] = [
   { id: "market.kind", kind: "view", target: "none", proof: "interaction" },
   { id: "market.sort", kind: "view", target: "none", proof: "interaction" },
   { id: "market.pinned", kind: "view", target: "none", proof: "interaction" },
+  { id: "market.show-all", kind: "view", target: "none", proof: "interaction" },
   { id: "market.more", kind: "view", target: "none", proof: "interaction" },
   { id: "market.open", kind: "navigation", target: "none", proof: "interaction" },
   { id: "market.back", kind: "navigation", target: "none", proof: "interaction" },
   { id: "market.cancel", kind: "navigation", target: "none", proof: "interaction" },
   { id: "market.inspect", kind: "kernel-mutation", target: "none", proof: "interaction" },
+  { id: "market.trust", kind: "kernel-mutation", target: "none", proof: "interaction" },
   { id: "market.confirm-many", kind: "view", target: "none", proof: "interaction" },
   { id: "market.install", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
+  { id: "market.view-installed", kind: "navigation", target: "none", proof: "interaction" },
   // Publishing: the draft is on screen only, and the submission is the one
   // write, spending the account session on the registry.
   { id: "market.view", kind: "view", target: "none", proof: "interaction" },
@@ -397,6 +400,9 @@ export const ACTIONS: UIAction[] = [
   { id: "plan.fold", kind: "view", target: "none", proof: "interaction" },
   { id: "workbench.file", kind: "view", target: "entity", proof: "interaction" },
   { id: "tool-approval.mode", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
+  // The folder-trust question and the no-sandbox note beside the composer.
+  { id: "workspace.trust", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
+  { id: "posture-note.dismiss", kind: "view", target: "none", proof: "interaction" },
   { id: "storage.move", kind: "kernel-mutation", target: "none", proof: "interaction" },
   { id: "session.import-legacy", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
   { id: "network.diagnose", kind: "repeatable", target: "none", proof: "interaction" },

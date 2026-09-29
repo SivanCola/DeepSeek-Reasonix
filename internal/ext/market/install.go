@@ -18,6 +18,7 @@ import (
 var (
 	// ErrUnpinned: the approved version carries no content digest, so nothing
 	// could tell the reviewed material from whatever the source holds today.
+	// Installing it anyway takes the person's explicit trust (Request.Trust).
 	ErrUnpinned = errors.New("market: approved version is not pinned to reviewed content")
 	// ErrBadSource: the approved row names something this side will not fetch —
 	// a local path, a plain-http address, an unknown kind.
@@ -31,12 +32,15 @@ var (
 
 // Request is one plan or install of a listed package. Version is the approved
 // version the person was shown; empty accepts whichever is approved now, which
-// only a preview does.
+// only a preview does. Trust accepts an approved version no reviewer pinned;
+// Digest is then the contentDigest of the preview the person confirmed.
 type Request struct {
 	Slug    string `json:"slug"`
 	Version string `json:"version,omitempty"`
 	PlanID  string `json:"planId,omitempty"`
 	Replace bool   `json:"replace,omitempty"`
+	Trust   bool   `json:"trust,omitempty"`
+	Digest  string `json:"digest,omitempty"`
 }
 
 // Service joins the registry to install_source.
@@ -63,7 +67,7 @@ const reportTimeout = 10 * time.Second
 type Outcome struct {
 	Fields  map[string]json.RawMessage
 	Version Version
-	// Unreviewed: pinned to the publisher's own preview, not a reviewer's digest.
+	// Unreviewed: pinned to the confirmed preview's digest, not a reviewer's.
 	Unreviewed bool
 }
 
@@ -82,20 +86,53 @@ func (s *Service) run(ctx context.Context, req Request, apply bool) (Outcome, er
 	if err != nil {
 		return Outcome{}, err
 	}
-	v, err := installable(detail)
+	v, pinned, err := installable(detail)
 	if err != nil {
-		return Outcome{}, err
+		return Outcome{Version: v}, err
 	}
 	if req.Version != "" && req.Version != v.Version {
 		return Outcome{Version: v}, fmt.Errorf("%w: shown %s, approved now %s", ErrVersionChanged, req.Version, v.Version)
 	}
-	return s.execute(ctx, detail.Package, v, v.ContentHash, false, req, apply)
+	if pinned {
+		// Pinned since a trusted preview: what the person confirmed is not the pin.
+		if digest := strings.TrimSpace(req.Digest); digest != "" && digest != v.ContentHash {
+			return Outcome{Version: v}, fmt.Errorf("%w: %s was pinned since it was previewed", ErrVersionChanged, req.Slug)
+		}
+		return s.execute(ctx, detail.Package, v, v.ContentHash, false, false, req, apply)
+	}
+	if !req.Trust {
+		return Outcome{Version: v}, fmt.Errorf("%w: %s@%s", ErrUnpinned, detail.Package.Slug, v.Version)
+	}
+	return s.previewPinned(ctx, detail.Package, v, false, req, apply)
+}
+
+// previewPinned plans or applies a version no reviewer bound a digest to. The
+// preview's own digest becomes the pin, so apply lands exactly what the person
+// confirmed or nothing, and a source that cannot be pinned is refused here.
+func (s *Service) previewPinned(ctx context.Context, pkg Package, v Version, own bool, req Request, apply bool) (Outcome, error) {
+	if apply {
+		digest := strings.TrimSpace(req.Digest)
+		if !installsource.IsContentDigest(digest) {
+			return Outcome{Version: v}, ErrUnpreviewed
+		}
+		return s.execute(ctx, pkg, v, digest, true, own, req, true)
+	}
+	out, err := s.execute(ctx, pkg, v, "", true, own, req, false)
+	if err != nil {
+		return out, err
+	}
+	var digest string
+	_ = json.Unmarshal(out.Fields["contentDigest"], &digest)
+	if !installsource.IsContentDigest(digest) {
+		return Outcome{Version: v}, fmt.Errorf("%w: %s@%s has no content digest to pin the install to", installsource.ErrNotPinnable, pkg.Slug, v.Version)
+	}
+	return out, nil
 }
 
 // execute plans or applies v of pkg through install_source, refusing material
 // whose digest is not expect. Every caller has settled which version and which
-// digest the person may install before reaching here.
-func (s *Service) execute(ctx context.Context, pkg Package, v Version, expect string, own bool, req Request, apply bool) (Outcome, error) {
+// digest the person may install before reaching here; own is the publisher's.
+func (s *Service) execute(ctx context.Context, pkg Package, v Version, expect string, unreviewed, own bool, req Request, apply bool) (Outcome, error) {
 	body := map[string]any{
 		"source":  v.Source,
 		"kind":    Installer(pkg.Kind),
@@ -132,7 +169,7 @@ func (s *Service) execute(ctx context.Context, pkg Package, v Version, expect st
 	if apply {
 		if items := doneItems(fields["actions"]); len(items) > 0 {
 			rec := Record{Slug: pkg.Slug, Kind: pkg.Kind, Version: v.Version, ContentHash: expect,
-				Unreviewed: own, Items: items, At: s.now().UTC().Format(time.RFC3339)}
+				Unreviewed: unreviewed, Items: items, At: s.now().UTC().Format(time.RFC3339)}
 			if err := saveRecord(s.Home, rec); err != nil {
 				fields["ledgerError"], _ = json.Marshal(err.Error())
 			}
@@ -143,7 +180,7 @@ func (s *Service) execute(ctx context.Context, pkg Package, v Version, expect st
 			}
 		}
 	}
-	return Outcome{Fields: fields, Version: v, Unreviewed: own}, nil
+	return Outcome{Fields: fields, Version: v, Unreviewed: unreviewed}, nil
 }
 
 func (s *Service) themeCheck(ctx context.Context, body map[string]any, slug string) error {
@@ -182,20 +219,17 @@ func (s *Service) now() time.Time {
 	return time.Now()
 }
 
-// installable answers the approved version when it can be installed as
-// reviewed, and why not otherwise.
-func installable(d Detail) (Version, error) {
+// installable answers the approved version, whether a reviewer pinned its
+// content, and why it cannot be installed at all otherwise.
+func installable(d Detail) (Version, bool, error) {
 	v := d.Approved
 	if v == nil {
-		return Version{}, fmt.Errorf("%w: no row for approved version %q", ErrUnpinned, d.Package.LatestVersion)
-	}
-	if !installsource.IsContentDigest(v.ContentHash) {
-		return *v, fmt.Errorf("%w: %s@%s", ErrUnpinned, d.Package.Slug, v.Version)
+		return Version{}, false, fmt.Errorf("%w: no row for approved version %q", ErrUnpinned, d.Package.LatestVersion)
 	}
 	if err := sourceInstallable(d.Package.Kind, v.Source); err != nil {
-		return *v, err
+		return *v, false, err
 	}
-	return *v, nil
+	return *v, installsource.IsContentDigest(v.ContentHash), nil
 }
 
 // sourceInstallable answers why the market would refuse to install source as

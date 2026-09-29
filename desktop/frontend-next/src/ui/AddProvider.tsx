@@ -216,7 +216,6 @@ export function AddProvider({
               setFacts(clearModelCheckFacts);
             }} disabled={busy || checkingModel !== ""} spellCheck={false} />
         </label>
-        <HTTPCompatibility kind={kind} value={http1Only} onChange={value => { setHTTP1Only(value); setFacts(clearModelCheckFacts); }} disabled={busy || checkingModel !== ""} />
         <p className="addp-privacy">{t("API Key 仅保存在运行内核的这台机器上。")}</p>
         {sibling && (
           <p className="acct-note">
@@ -253,6 +252,7 @@ export function AddProvider({
           <span className="summary-value">{t("可选")}</span>
         </summary>
         <div className="addp-options-body">
+          <HTTPCompatibility kind={kind} value={http1Only} onChange={value => { setHTTP1Only(value); setFacts(clearModelCheckFacts); }} disabled={busy || checkingModel !== ""} />
           <div className="setting-line">
             <span className="setting-copy">
               <strong>{t("发送思考控制")}</strong>

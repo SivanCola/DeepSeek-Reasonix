@@ -51,6 +51,39 @@ func (c *Config) SetDesktopTray(mode string) error {
 	return nil
 }
 
+// DesktopDefaultToolApprovalMode is the Ask/Auto/YOLO posture the person named
+// for new desktop sessions, or "" when they never named one and the session
+// follows the sandbox claim and folder trust instead.
+func (c *Config) DesktopDefaultToolApprovalMode() string {
+	if c == nil || strings.TrimSpace(c.Desktop.DefaultToolApprovalMode) == "" {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Desktop.DefaultToolApprovalMode)) {
+	case "workspace-write":
+		return ""
+	case "danger-full-access":
+		return "yolo"
+	}
+	return NormalizeToolApprovalMode(c.Desktop.DefaultToolApprovalMode)
+}
+
+// UnrecognizedDesktopToolApprovalMode is the file's default_tool_approval_mode
+// when it names no posture this build knows, so it loads as ask; else "".
+func (c *Config) UnrecognizedDesktopToolApprovalMode() string {
+	raw := ""
+	if c != nil {
+		raw = strings.TrimSpace(c.Desktop.DefaultToolApprovalMode)
+	}
+	switch strings.ToLower(raw) {
+	case "", "ask", "workspace-write", "danger-full-access", "read-only":
+		return ""
+	}
+	if NormalizeToolApprovalMode(raw) != "ask" {
+		return ""
+	}
+	return raw
+}
+
 // DesktopConfig controls desktop-only UI preferences. It is intentionally
 // separate from top-level language and [ui] so desktop choices do not affect CLI
 // language, terminal colours, or provider-visible prompt/request data.
@@ -78,7 +111,7 @@ type DesktopConfig struct {
 	DisplayMode             string           `toml:"display_mode"`               // standard|compact (legacy "minimal" maps to compact); transcript display mode
 	StatusBarStyle          string           `toml:"status_bar_style"`           // icon|text; desktop status bar metric labels
 	StatusBarItems          []string         `toml:"status_bar_items"`           // ordered visible desktop status bar items
-	DefaultToolApprovalMode string           `toml:"default_tool_approval_mode"` // ask|auto|yolo; defaults to auto for newly-created desktop sessions
+	DefaultToolApprovalMode string           `toml:"default_tool_approval_mode"` // ask|auto|yolo; empty follows the sandbox claim and folder trust
 	CheckUpdates            *bool            `toml:"check_updates"`              // startup update checks; nil keeps the default enabled
 	UpdateChannel           string           `toml:"update_channel"`             // legacy: read for compatibility, never written back
 	Telemetry               *bool            `toml:"telemetry"`                  // anonymous launch ping, scrubbed native crash diagnostics, per-package market install counts (anonymous, no content); nil = enabled

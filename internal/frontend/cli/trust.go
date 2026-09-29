@@ -56,7 +56,7 @@ func runTrust(args []string, in *bufio.Scanner, out io.Writer, interactive bool)
 	trust, _ := grants.Trust(root)
 	canTrust := control.TrustableFolder(root)
 	if !canTrust {
-		fmt.Fprintf(out, "%s is a home directory or filesystem root; it is not trusted as a whole.\n", root)
+		fmt.Fprintf(out, "%s is a filesystem root, holds a home directory, or holds Reasonix's own files; it is not trusted as a whole.\n", root)
 	}
 	if len(pending) == 0 && (trust == config.WorkspaceTrusted || !canTrust) {
 		fmt.Fprintf(out, "Nothing in %s is waiting for approval.\n", root)

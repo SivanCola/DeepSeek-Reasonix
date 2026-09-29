@@ -16,5 +16,6 @@ export const NOTICE_TEXT: Record<string, string> = {
   project_program_changed: "这个项目的程序在批准后被改动过，本次没有运行，需要重新批准",
   suspected_injection: "一条外部内容看起来在向智能体下指令，已提醒它只当资料看待",
   await_user: "等待你的输入",
+  approval_mode_unrecognized: "配置里的默认审批档位本版本不认识，已按每次询问处理；在界面里选一个档位即可替换",
   perseveration_loop: "模型卡在重复输出同一段文字，这一轮已停止；可以重试、补充引导，或换一个供应商/模型",
 };

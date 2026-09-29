@@ -67,6 +67,7 @@ func newFromConfig(cfg provider.Config) (provider.Provider, error) {
 
 // Config holds Responses API provider settings.
 type Config struct {
+	// HTTP1Only disables HTTP/2 negotiation for this Responses connection.
 	HTTP1Only         bool
 	Name              string
 	APIKey            string

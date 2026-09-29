@@ -41,11 +41,17 @@ type runCompletion struct {
 	class    string
 	isError  bool
 	exitCode int
+	// unverified: the model finished and the host's final-readiness judgement
+	// stayed unmet. That is a verdict on the answer, not a failed run.
+	unverified bool
 }
 
 func classifyRunCompletion(err error) runCompletion {
 	if err == nil {
 		return runCompletion{subtype: "success", class: "success"}
+	}
+	if runReadiness(err) != nil {
+		return runCompletion{subtype: "success", class: runFailureClass(err), unverified: true}
 	}
 	return runCompletion{
 		subtype:  "error_during_execution",

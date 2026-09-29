@@ -540,34 +540,6 @@ func (c *Config) providerRemovalFallback(name string) string {
 }
 
 // validateProvider checks the fields a provider can't function without.
-func validateProvider(e ProviderEntry) error {
-	switch {
-	case strings.TrimSpace(e.Name) == "":
-		return fmt.Errorf("provider: name is required")
-	case strings.TrimSpace(e.Kind) == "":
-		return fmt.Errorf("provider %q: kind is required", e.Name)
-	case strings.TrimSpace(e.BaseURL) == "":
-		return fmt.Errorf("provider %q: base_url is required", e.Name)
-	case !providerHasAnyModel(e):
-		return fmt.Errorf("provider %q: model is required", e.Name)
-	case strings.TrimSpace(e.APIKeyEnv) != "" && !IsValidCredentialKey(e.APIKeyEnv):
-		return fmt.Errorf("provider %q: api_key_env %q is not a valid environment variable name", e.Name, e.APIKeyEnv)
-	}
-	return nil
-}
-
-func providerHasAnyModel(e ProviderEntry) bool {
-	if strings.TrimSpace(e.Model) != "" {
-		return true
-	}
-	for _, m := range e.Models {
-		if strings.TrimSpace(m) != "" {
-			return true
-		}
-	}
-	return false
-}
-
 // SetPermissionMode sets the writer-fallback mode. Accepts "ask", "allow", or
 // "deny" (case-insensitive); anything else errors rather than silently
 // defaulting, so a UI surfaces a typo instead of installing a surprising mode.
@@ -1268,8 +1240,8 @@ func validatePlugin(e PluginEntry) error {
 //
 // For project configs (./reasonix.toml) the write is incremental: only sections
 // and fields that differ from built-in defaults are written, so the file never
-// accumulates fields that override the user's global config. User configs still
-// write the full annotated template since they are the user's own settings store.
+// accumulates fields that override the user's global config. An existing user
+// config is rewritten only at the keys the save changed; see userConfigBody.
 func (c *Config) SaveTo(path string) error {
 	if c == nil {
 		return fmt.Errorf("save config: nil config")
@@ -1289,6 +1261,9 @@ func (c *Config) SaveTo(path string) error {
 	}
 	if scope == RenderScopeProject {
 		return c.saveProjectIncrementalResolved(path, resolved)
+	}
+	if scope == RenderScopeUser {
+		return c.writeUserConfig(path, resolved, func(body string) error { return writeConfigFileResolved(resolved, body, configFilePerm(path)) })
 	}
 	return writeConfigFileResolved(resolved, RenderTOMLForScope(c, scope), configFilePerm(path))
 }
@@ -1312,6 +1287,9 @@ func (c *Config) SaveToScope(path string, scope RenderScope) error {
 	resolved, err := resolveConfigAccessPath(path, userConfig)
 	if err != nil {
 		return err
+	}
+	if scope == RenderScopeUser {
+		return c.writeUserConfig(path, resolved, func(body string) error { return writeConfigFileResolved(resolved, body, configFilePerm(path)) })
 	}
 	return writeConfigFileResolved(resolved, RenderTOMLForScope(c, scope), configFilePerm(path))
 }

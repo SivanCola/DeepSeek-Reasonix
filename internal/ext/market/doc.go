@@ -8,9 +8,11 @@
 //     slug and a random id kept only for the market (InstallID) — no token,
 //     no content — and is sent only when the host passes that id, which it
 //     does only with anonymous usage statistics switched on.
-//   - Only an approved version is installable, and only when its row carries a
-//     content digest a reviewer bound to it. The digest reaches install_source
-//     as expectDigest, which refuses material that differs before writing.
+//   - Only an approved version is installable. When its row carries a content
+//     digest a reviewer bound to it, that digest reaches install_source as
+//     expectDigest, which refuses material that differs before writing. One
+//     without a digest installs only on the person's explicit trust, pinned to
+//     the digest of the preview they confirmed, and says it was unreviewed.
 //   - Every install is the ordinary two-phase plan and apply. Apply must echo
 //     the planId of a plan it was shown, so a source that expands into several
 //     skills is listed to the person before any of them lands.

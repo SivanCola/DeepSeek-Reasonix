@@ -56,7 +56,11 @@ func renderDesktopSection(b *strings.Builder, c *Config) {
 	fmt.Fprintf(b, "tray = %q   # desktop: auto|off status icon; with no icon the close button quits whatever the line above says\n", c.DesktopTray())
 	fmt.Fprintf(b, "status_bar_style = %q   # desktop: icon|text metric labels in the bottom status bar\n", c.DesktopStatusBarStyle())
 	fmt.Fprintf(b, "status_bar_items = %s   # desktop: ordered visible bottom status bar items\n", renderStringArray(c.DesktopStatusBarItems()))
-	fmt.Fprintf(b, "default_tool_approval_mode = %q   # desktop: Ask/Auto/YOLO default for newly-created sessions\n", c.DesktopDefaultToolApprovalMode())
+	if mode := c.DesktopDefaultToolApprovalMode(); mode != "" {
+		fmt.Fprintf(b, "default_tool_approval_mode = %q   # desktop: Ask/Auto/YOLO default for newly-created sessions\n", mode)
+	} else {
+		b.WriteString("# default_tool_approval_mode = \"ask\"   # desktop: unset opens in Auto only where the OS sandbox confines writes and the folder is trusted\n")
+	}
 	fmt.Fprintf(b, "check_updates = %v   # desktop: check for new versions on startup\n", c.DesktopCheckUpdates())
 	// Only written while held; an absent key follows the catalog. It has to
 	// outlive the install that set it, or the next launch updates the user

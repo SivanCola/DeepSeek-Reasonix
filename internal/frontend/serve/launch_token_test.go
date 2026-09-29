@@ -49,7 +49,7 @@ func TestAuthDisabledRefusesMutationsWithoutLaunchToken(t *testing.T) {
 	srv := httptest.NewServer(New(ctrl, bc, config.ServeConfig{AuthMode: "none"}).Handler())
 	defer srv.Close()
 
-	for _, route := range []string{"/approve", "/plan-decision", "/answer", "/bypass", "/tool-approval-mode", "/auto-approve-tools", "/permissions", "/permissions/remembered/revoke", "/sandbox", "/hooks", "/submit"} {
+	for _, route := range []string{"/approve", "/plan-decision", "/answer", "/bypass", "/tool-approval-mode", "/auto-approve-tools", "/workspace-trust", "/permissions", "/permissions/remembered/revoke", "/sandbox", "/hooks", "/submit"} {
 		status, code := postLaunchJSON(t, srv.URL+route, `{"id":"1","allow":true,"session":true}`, nil)
 		if status != http.StatusForbidden || code != codeLaunchTokenRequired {
 			t.Errorf("POST %s without launch token = %d %q, want 403 %q", route, status, code, codeLaunchTokenRequired)
