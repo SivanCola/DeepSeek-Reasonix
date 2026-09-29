@@ -46,6 +46,7 @@ type ProxySpec struct {
 // sharing proxy behavior. ForceIPv4 pins the dialer to tcp4 — the desktop updater
 // uses it to retry over IPv4 when an IPv6 route (CN → Cloudflare) resets mid-transfer.
 type TransportOptions struct {
+	// HTTP1Only disables HTTP/2 negotiation without changing proxy or TLS trust settings.
 	HTTP1Only             bool
 	DialTimeout           time.Duration
 	KeepAlive             time.Duration
