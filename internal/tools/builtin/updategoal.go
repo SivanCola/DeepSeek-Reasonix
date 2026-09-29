@@ -26,6 +26,9 @@ func (updateGoal) Description() string {
 	return "Report this turn's disposition for the active goal. Call it at the end of every goal turn instead of using prose markers: `continue` (work is ongoing — give a concrete next_action), `complete` (the request is fully done, output format and constraints satisfied, and verification was attempted or reported unavailable), or `blocked` (only the user can unblock: missing user-only information, an irreversible/externally visible operation, or changed scope). The host validates your claim against Delivery acceptance criteria and decides whether to continue automatically."
 }
 
+// Match strings.TrimSpace's Unicode whitespace set across schema regexp engines.
+const goalNonBlankStringSchema = `{"type":"string","pattern":"[^ \t\n\r\f\u000b\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]"}`
+
 func (updateGoal) Schema() json.RawMessage {
 	return json.RawMessage(`{
 "type":"object",
@@ -37,13 +40,17 @@ func (updateGoal) Schema() json.RawMessage {
     "type":"object",
     "description":"Your own account of the finished work.",
     "properties":{
-      "verified":{"type":"array","items":{"type":"string"},"description":"Commands you ran as proof, as they actually ran. One that never ran, failed, or predates your latest change is recorded as an unbacked claim."},
+      "verified":{"type":"array","items":` + goalNonBlankStringSchema + `,"description":"Commands you ran as proof, as they actually ran. One that never ran, failed, or predates your latest change is recorded as an unbacked claim."},
       "unverified":{"type":"array","items":{"type":"string"},"description":"What you did NOT verify. The host cannot infer what you skipped, so stating it is the only way it is known — and it never blocks completion."},
       "risks":{"type":"array","items":{"type":"string"},"description":"Known risks to carry forward."}
     }
   }
 },
-"required":["status"]
+"required":["status"],
+"anyOf":[
+  {"properties":{"status":{"enum":["complete"]}}},
+  {"properties":{"status":{"enum":["continue","blocked"]},"reason":` + goalNonBlankStringSchema + `},"required":["reason"]}
+]
 }`)
 }
 

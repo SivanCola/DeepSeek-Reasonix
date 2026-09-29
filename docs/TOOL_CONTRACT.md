@@ -35,6 +35,26 @@ This document records the provider-visible contract for Reasonix compile-time bu
 
 ## Schema Snapshot
 
+`update_goal` declares the same argument requirements in its schema and at execution:
+
+- `continue` and `blocked` require a reason containing a non-whitespace character.
+- `complete` permits an omitted or blank reason.
+- Every `completion.verified` entry must contain a non-whitespace character. Omit the list or send an empty array when making no verification claim.
+
+These constraints do not grant access outside an active Goal turn or bypass the host's delivery checks.
+
+This schema update changes the tool cache prefix once on upgrade; serialization remains deterministic within a version.
+
+`update_goal` 的 schema 与执行校验使用相同的参数要求：
+
+- `continue` 和 `blocked` 必须提供含非空白字符的原因。
+- `complete` 允许省略原因或使用空白原因。
+- `completion.verified` 的每一项都必须包含非空白字符；没有验证声明时应省略该列表或传空数组。
+
+这些约束不会开放非 Goal 回合的调用权限，也不会绕过宿主的交付检查。
+
+本次 schema 更新会在升级时改变一次工具缓存前缀，同版本内的序列化保持稳定。
+
 The exact canonical schemas are intentionally tested in code rather than copied by hand here. Run:
 
 ```bash
