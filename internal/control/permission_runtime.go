@@ -1,14 +1,18 @@
 package control
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
 
+	"reasonix/internal/agent"
 	"reasonix/internal/permissionpreset"
 	"reasonix/internal/sandbox"
+	"reasonix/internal/session"
 )
 
 // SessionGrantSummary is a transport-safe description of an in-memory grant.
@@ -162,6 +166,80 @@ func (c *Controller) SetPermissionPreset(preset string, expectedRevision uint64)
 	}
 	drained := c.applyToolApprovalModeLocked(raw)
 	return c.PermissionSnapshot(), drained, nil
+}
+
+func (c *Controller) applyDurablePermissionPresetLocked(preset string) []string {
+	previous := c.ToolApprovalMode()
+	drained := c.applyToolApprovalModeLocked(preset)
+	if previous == preset {
+		// A same-value explicit choice still wrote a new durable event. Advance
+		// the CAS revision so a delayed choice cannot overwrite that intent.
+		c.permissionStateMu.Lock()
+		c.permissionRevision.Add(1)
+		c.permissionStateMu.Unlock()
+	}
+	return drained
+}
+
+// SetSessionPermissionPreset records an explicit choice in the canonical
+// session before exposing it to execution or returning success to a caller.
+func (c *Controller) SetSessionPermissionPreset(ctx context.Context, preset string, expectedRevision uint64) (PermissionSnapshot, []string, error) {
+	if c == nil {
+		return PermissionSnapshot{}, nil, fmt.Errorf("controller is nil")
+	}
+	c.permissionMu.Lock()
+	defer c.permissionMu.Unlock()
+	if current := c.permissionRevision.Load(); expectedRevision != current {
+		return c.PermissionSnapshot(), nil, fmt.Errorf("permission revision changed: have %d, expected %d", current, expectedRevision)
+	}
+	raw := strings.ToLower(strings.TrimSpace(preset))
+	if !permissionpreset.Valid(raw) {
+		return c.PermissionSnapshot(), nil, fmt.Errorf("permission preset must be read-only, workspace-write, or danger-full-access")
+	}
+	capabilities := platformPermissionCapabilities()
+	if !slices.Contains(capabilities.SupportedPresets, raw) {
+		return c.PermissionSnapshot(), nil, fmt.Errorf("permission preset %q is unavailable: %s", raw, capabilities.UnavailableReason)
+	}
+	_, runtime, exclusive := c.v3Binding()
+	if !exclusive || runtime == nil {
+		return c.PermissionSnapshot(), nil, session.ErrSessionNotRunning
+	}
+	if err := c.persistSessionPermissionPreset(ctx, runtime, raw); err != nil {
+		drained, failed := c.applyFailedPermissionDowngradeLocked(raw, err)
+		return c.PermissionSnapshot(), drained, failed
+	}
+	drained := c.applyDurablePermissionPresetLocked(raw)
+	return c.PermissionSnapshot(), drained, nil
+}
+
+func (c *Controller) applyFailedPermissionDowngradeLocked(preset string, cause error) ([]string, error) {
+	if permissionPresetRank(preset) < permissionPresetRank(c.ToolApprovalMode()) {
+		return c.applyToolApprovalModeLocked(preset), cause
+	}
+	return nil, cause
+}
+
+func (c *Controller) persistSessionPermissionPreset(ctx context.Context, runtime *session.Runtime, preset string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	payload, err := json.Marshal(struct {
+		Preset string `json:"preset"`
+	}{Preset: preset})
+	if err != nil {
+		return err
+	}
+	commit, err := c.appendSessionBatch(ctx, runtime.Session(), session.Batch{
+		OperationID: "session-permission-preset:" + agent.NewMessageID(),
+		Events:      []session.Event{{Kind: "session/permission-preset", Payload: payload}},
+	})
+	if err != nil {
+		return err
+	}
+	// An accepted append cannot be withdrawn. Finish its durability wait even if
+	// the requesting client disconnects, so storage and enforcement do not split.
+	_, err = runtime.Session().FlushThrough(context.WithoutCancel(ctx), commit.LastSequence())
+	return err
 }
 
 // InvalidatePermissionSnapshots advances the revision with no permission

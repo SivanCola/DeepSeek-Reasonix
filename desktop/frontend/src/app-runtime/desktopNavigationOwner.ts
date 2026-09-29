@@ -39,6 +39,7 @@ export type HistoricalPreparationSurface = {
   operationId: string;
   status: SessionPreparationView["status"];
   errorCode?: string;
+  errorDetail?: string;
   retryable: boolean;
   revision?: number;
   isCurrent?: () => boolean;
@@ -59,7 +60,7 @@ export function reconcileHistoricalPreparation(expected: HistoricalPreparationSu
   if (!current || current.operationId !== expected.operationId || current.session !== expected.session
     || expected.isCurrent?.() === false || view.operationId !== expected.operationId
     || view.revision < (current.revision ?? 0) || view.status === "ready") return;
-  setHistoricalPreparation({ ...current, status: view.status, errorCode: view.errorCode,
+  setHistoricalPreparation({ ...current, status: view.status, errorCode: view.errorCode, errorDetail: view.errorDetail,
     retryable: view.retryable, revision: view.revision });
 }
 export type NavigationNotice = {
@@ -148,6 +149,8 @@ export async function executeDesktopNavigation(input: DesktopNavigationCapture, 
         checkpoint();
         if (connection.sessionSource === "auto") await ports.openChannelSession(target.value, tab.id, seq);
         else await ports.resumeSession(target.value, tab.id, seq);
+      } else if (target.kind === "bot-session") {
+        tab = await openTopic(connection.scope, connection.workspaceRoot, "", `bot-session:local:${target.value}`);
       } else tab = await openTopic(connection.scope, connection.workspaceRoot, target.value);
       checkpoint(); ports.seedTab(tab);
       await refresh(); checkpoint(); ports.reveal(); ports.projectChanged(); return;

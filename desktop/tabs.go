@@ -2487,6 +2487,22 @@ func (a *App) openTopicSessionWithNavigation(scope, workspaceRoot, topicID, sess
 	if a.desktopSessions.navigationSeq.Load() != navigation {
 		return TabMeta{}, errSessionNavigationSuperseded
 	}
+	if strings.HasPrefix(sessionPath, "bot-session:") {
+		if !strings.HasPrefix(sessionPath, embeddedBotSessionPrefix) {
+			return TabMeta{}, fmt.Errorf("invalid bot session identity")
+		}
+		path, err := a.embeddedBotSessionPath(scope, workspaceRoot, sessionPath)
+		if err != nil {
+			return TabMeta{}, err
+		}
+		meta, err := a.openTopicTabWithActivation(scope, workspaceRoot, topicID, path, true, navigation)
+		if err != nil {
+			return TabMeta{}, err
+		}
+		a.setTabReadOnly(meta.ID, true)
+		meta.ReadOnly = true
+		return meta, nil
+	}
 	validatedSource := false
 	headID := ""
 	if source, err := parseSessionSourceRoute(sessionPath); err != nil {
@@ -3757,6 +3773,10 @@ func (a *App) buildTabControllerWithContextCore(tab *WorkspaceTab, loadedSession
 		}
 		bound.applyLocked(tab)
 		a.mu.Unlock()
+		// Local Desktop restores its canonical session choice from the Desktop
+		// preset store. OpenSession publishes the session default, so restore the
+		// selected preset after binding the target identity.
+		applyTabToolApprovalModeToController(ctrl, buildRuntime.toolApprovalMode)
 		tab.replaceTelemetry(tabTelemetrySnapshot{}, sessionRuntimeKey(remoteSessionIDRoutePrefix+bound.ref.SessionID))
 	} else if dir := ctrl.SessionDir(); dir != "" {
 		// Refresh the topic/session locals under the lock: a rebind or the

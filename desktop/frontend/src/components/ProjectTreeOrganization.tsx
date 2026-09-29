@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, lazy, Suspense, type DragEvent, type HTMLAttributes, type ReactNode } from "react";
-import { Archive, FolderMinus, Pencil } from "lucide-react";
+import { Archive, Clock, FolderMinus, Pencil } from "lucide-react";
 import { app } from "../lib/bridge";
 import { asArray } from "../lib/array";
 import type { Translator } from "../lib/i18n";
@@ -144,6 +144,7 @@ type TopicRowDragProps = Pick<HTMLAttributes<HTMLDivElement>, "draggable" | "onD
 
 export interface ProjectTreeOrganizationController {
   orderFor?(folder: ProjectNode): readonly string[];
+  resetOrderMenuItems(folder: ProjectNode, t: Translator, closeMenu: () => void): ContextMenuItem[];
   topicRow(node: ProjectNode, disabled: boolean): { className: string; props: TopicRowDragProps };
   topicMenuItems(node: ProjectNode, t: Translator): ContextMenuItem[];
   createGroup(folder: ProjectNode, title: string): void;
@@ -161,15 +162,20 @@ export function useProjectTreeOrganization({
   refresh,
   onTopicsChanged,
   organizationRevision = 0,
+  sortMode,
   bindings = app,
 }: {
   tree: ProjectNode[];
   refresh: ProjectTreeRefresh;
   onTopicsChanged?: () => Promise<void> | void;
   organizationRevision?: number;
+  // The activity order on screen; a first manual move starts from it.
+  sortMode?: string;
   bindings?: ProjectTreeOrganizationBindings;
 }): ProjectTreeOrganizationController {
   const { showToast } = useToast();
+  const sortModeRef = useRef(sortMode);
+  sortModeRef.current = sortMode;
   const [ordersByKey, setOrdersByKey] = useState<Record<string, string[]>>({});
   const [dragTopicID, setDragTopicID] = useState<string | null>(null);
   const [dropTopic, setDropTopic] = useState<{ topicID: string; position: ProjectDropPosition } | null>(null);
@@ -318,7 +324,7 @@ export function useProjectTreeOrganization({
           mutateGroups(key, (groups) => moveNodeToGroup(groups, dragged, targetGroup.id), { kind: "set-group", target: projectNodeSelector(dragged), groupId: targetGroup.id });
         } else if (bindings.UpdateSessionOrganization && dragged) {
           void mutateSessionOrganization(bindings, { scope: context.scope, workspaceRoot: context.root, hostId: splitOrganizationKey(key).hostId },
-            { kind: "move", target: projectNodeSelector(dragged), anchor: projectNodeSelector(node), position })
+            { kind: "move", target: projectNodeSelector(dragged), anchor: projectNodeSelector(node), position, sortMode: sortModeRef.current })
             .then(saved => { setOrdersByKey(current => ({ ...current, [key]: saved.order })); return refresh({ reloadAllTopics: true }); })
             .then(() => onTopicsChanged?.()).catch(error => { showToast(String(error), "error"); loadGroups(key, true); return refresh({ reloadAllTopics: true }); });
         } else {
@@ -343,6 +349,13 @@ export function useProjectTreeOrganization({
 
   return {
     orderFor(folder) { return ordersByKey[projectTreeOrganizationKey(folder)] ?? []; },
+    resetOrderMenuItems(folder, t, closeMenu) {
+      const key = projectTreeOrganizationKey(folder);
+      return (ordersByKey[key]?.length ?? 0) > 0 ? [{
+        key: "reset-manual-order", icon: <Clock size={13} />, label: t("projectTree.resetManualOrder"),
+        onSelect: () => { closeMenu(); mutateGroups(key, (groups) => groups, { kind: "reset-order" }); },
+      }] : [];
+    },
     topicRow,
     topicMenuItems(node, t) {
       if (!(groupsRef.current[projectTreeOrganizationKey(node)] ?? []).some((group) => projectTreeGroupContainsNode(group, node))) return [];

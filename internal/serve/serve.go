@@ -130,6 +130,7 @@ func New(ctrl control.SessionAPI, bc *Broadcaster, serveCfg config.ServeConfig) 
 	s.auth.capabilities = s.capabilities
 	s.initTitleProvider()
 	if concrete, ok := ctrl.(*control.Controller); ok {
+		concrete.EnableServeSessionPermissionPresets(true)
 		concrete.SetBeforeInboxDispatch(s.beforeInboxDispatch)
 	}
 	return s
@@ -359,7 +360,14 @@ func carryProfileSystemMessage(newCtrl *control.Controller, carried []provider.M
 // and the remote composer reads these modes immediately afterwards: defaults
 // there make the mode controls appear to work while the next submit differs.
 func inheritSessionAxes(prev, newCtrl *control.Controller) error {
-	newCtrl.SetToolApprovalMode(prev.ToolApprovalMode())
+	copyPreset := true
+	if nextRef, bound := newCtrl.SessionRef(); bound {
+		prevRef, same := prev.SessionRef()
+		copyPreset = same && prevRef == nextRef
+	}
+	if copyPreset {
+		newCtrl.SetToolApprovalMode(prev.ToolApprovalMode())
+	}
 	newCtrl.SetPlanMode(prev.PlanMode())
 	if goal := prev.Goal(); goal != "" && newCtrl.Goal() == "" {
 		newCtrl.SetGoal(goal)
@@ -450,26 +458,25 @@ func (s *Server) rebuild(ctx context.Context, old *control.Controller, ref strin
 }
 
 func (s *Server) rebuildWithOptions(ctx context.Context, old *control.Controller, ref string, opts boot.Options, tag *sessionTagSink) (*control.Controller, error) {
+	var ctrl *control.Controller
+	var err error
 	if s.rebuildControllerWithOptions != nil {
-		ctrl, err := s.rebuildControllerWithOptions(ctx, old, ref, opts)
+		ctrl, err = s.rebuildControllerWithOptions(ctx, old, ref, opts)
+	} else if s.rebuildController != nil {
+		ctrl, err = s.rebuildController(ctx, old, ref)
+	} else {
+		var res *boot.BuildResult
+		res, err = boot.Rebuild(ctx, old, opts)
 		if err == nil {
-			s.RegisterSessionTag(ctrl, tag)
+			ctrl = res.Controller
 		}
-		return ctrl, err
 	}
-	if s.rebuildController != nil {
-		ctrl, err := s.rebuildController(ctx, old, ref)
-		if err == nil {
-			s.RegisterSessionTag(ctrl, tag)
-		}
-		return ctrl, err
-	}
-	res, err := boot.Rebuild(ctx, old, opts)
 	if err != nil {
 		return nil, err
 	}
-	s.RegisterSessionTag(res.Controller, tag)
-	return res.Controller, nil
+	ctrl.EnableServeSessionPermissionPresets(false)
+	s.RegisterSessionTag(ctrl, tag)
+	return ctrl, nil
 }
 
 // switchEffort persists a new reasoning-effort level for the active provider and
@@ -1008,8 +1015,29 @@ func (s *Server) autoApproveTools(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad body", http.StatusBadRequest)
 		return
 	}
+	if ctrl, ok := s.ctl().(*control.Controller); ok && ctrl.UsesExclusiveSession() {
+		if _, bound := ctrl.SessionRef(); bound {
+			if _, _, err := ctrl.SetSessionPermissionPreset(r.Context(), control.ToolApprovalWorkspaceWrite, ctrl.PermissionSnapshot().Revision); err != nil {
+				http.Error(w, err.Error(), http.StatusConflict)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+	}
 	s.ctl().SetAutoApproveTools(body.On)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) setLegacyPermissionPreset(ctx context.Context, preset string) error {
+	if ctrl, ok := s.ctl().(*control.Controller); ok && ctrl.UsesExclusiveSession() {
+		if _, bound := ctrl.SessionRef(); bound {
+			_, _, err := ctrl.SetSessionPermissionPreset(ctx, preset, ctrl.PermissionSnapshot().Revision)
+			return err
+		}
+	}
+	s.ctl().SetToolApprovalMode(preset)
+	return nil
 }
 
 // toolApprovalMode selects the canonical permission preset for interactive
@@ -1025,7 +1053,10 @@ func (s *Server) toolApprovalMode(w http.ResponseWriter, r *http.Request) {
 	raw := strings.ToLower(strings.TrimSpace(body.Mode))
 	switch raw {
 	case "read-only", "workspace-write", "danger-full-access", "ask", "auto", "yolo", "full", "full-access", "bypass":
-		s.ctl().SetToolApprovalMode(config.NormalizeToolApprovalMode(raw))
+		if err := s.setLegacyPermissionPreset(r.Context(), config.NormalizeToolApprovalMode(raw)); err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
 	default:
 		http.Error(w, "mode must be read-only, workspace-write, or danger-full-access", http.StatusBadRequest)
 		return
@@ -1057,7 +1088,14 @@ func (s *Server) permissionPreset(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad body", http.StatusBadRequest)
 		return
 	}
-	snapshot, drained, err := ctrl.SetPermissionPreset(body.Preset, body.ExpectedRevision)
+	var snapshot control.PermissionSnapshot
+	var drained []string
+	var err error
+	if _, bound := ctrl.SessionRef(); ctrl.UsesExclusiveSession() && bound {
+		snapshot, drained, err = ctrl.SetSessionPermissionPreset(r.Context(), body.Preset, body.ExpectedRevision)
+	} else {
+		snapshot, drained, err = ctrl.SetPermissionPreset(body.Preset, body.ExpectedRevision)
+	}
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)

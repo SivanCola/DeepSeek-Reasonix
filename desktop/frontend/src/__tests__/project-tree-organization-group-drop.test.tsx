@@ -46,7 +46,7 @@ const folder: ProjectNode = { key: "project-/repo", kind: "project", label: "Rep
 const groups: SessionGroup[] = [{ id: "g1", title: "Group", sessionKeys: ["ref\0local\0inside", "ref\0local\0sibling"] }];
 
 function Harness({ bindings }: { bindings: ProjectTreeOrganizationBindings }) {
-  const organization = useProjectTreeOrganization({ tree: [folder], refresh: async () => {}, bindings });
+  const organization = useProjectTreeOrganization({ tree: [folder], refresh: async () => {}, sortMode: "created", bindings });
   const loaded = organization.groupsFor(folder).length > 0;
   return <>
     <output id="loaded">{loaded ? "yes" : "no"}</output>
@@ -119,6 +119,12 @@ console.log("\nproject tree drop onto a group member row");
   const mutations = await dropOnto("outside", "loose");
   ok(mutations.length === 1 && mutations[0].kind === "move",
     `dropping on an ungrouped row reorders (got ${JSON.stringify(mutations.map((m) => m.kind))})`);
+}
+
+{
+  const mutations = await dropOnto("outside", "loose");
+  ok(mutations.length === 1 && mutations[0].sortMode === "created",
+    `a move carries the sort order on screen, so a first manual move starts from it (got ${JSON.stringify(mutations.map((m) => m.sortMode ?? ""))})`);
 }
 
 process.stdout.write(`\nproject-tree-organization-group-drop: ${passed} passed, ${failed} failed\n`);

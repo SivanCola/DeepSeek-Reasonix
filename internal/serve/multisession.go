@@ -268,6 +268,7 @@ func (s *Server) buildTaggedMode(ctx context.Context, ref string, inheritTemp, n
 	if err != nil {
 		return nil, nil, err
 	}
+	ctrl.EnableServeSessionPermissionPresets(true)
 	s.RegisterSessionTag(ctrl, tag)
 	slog.Info("serve: controller built", "model", ref, "sessionDir", opts.SessionDir)
 	return ctrl, tag, nil

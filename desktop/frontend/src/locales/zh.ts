@@ -1700,6 +1700,7 @@ export const zh: Record<DictKey, string> = {
   "projectTree.sortCriteria": "排序条件",
   "projectTree.sortByCreatedAt": "创建时间",
   "projectTree.sortByUpdatedAt": "更新时间",
+  "projectTree.resetManualOrder": "重置手动排序",
   "projectTree.createBlankProject": "新建空白项目",
   "projectTree.useExistingFolder": "使用现有文件夹",
   "projectTree.collapseAllTooltip": "收起所有项目",

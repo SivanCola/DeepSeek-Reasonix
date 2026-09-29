@@ -23,13 +23,14 @@ import (
 var errHistoricalSourceBusy = errors.New("historical session is in use; close the other instance and retry")
 
 type HistoricalSessionView struct {
-	ID        string              `json:"id"`
-	Title     string              `json:"title"`
-	Format    string              `json:"format"`
-	Status    string              `json:"status"`
-	ErrorCode string              `json:"errorCode,omitempty"`
-	Session   *session.SessionRef `json:"session,omitempty"`
-	Source    *SessionSourceRef   `json:"source,omitempty"`
+	ID          string              `json:"id"`
+	Title       string              `json:"title"`
+	Format      string              `json:"format"`
+	Status      string              `json:"status"`
+	ErrorCode   string              `json:"errorCode,omitempty"`
+	ErrorDetail string              `json:"errorDetail,omitempty"`
+	Session     *session.SessionRef `json:"session,omitempty"`
+	Source      *SessionSourceRef   `json:"source,omitempty"`
 }
 
 type HistoricalImportStatus struct {
@@ -55,6 +56,7 @@ type historicalImportCall struct {
 	err                error
 	status             string
 	errorCode          string
+	errorDetail        string
 	revision           uint64
 	interactive, batch bool
 }
@@ -232,7 +234,7 @@ func historicalImportView(state workspacestate.State, id string, source historic
 	view.Source = &SessionSourceRef{HostID: localDesktopHostID, SourceKey: desktopSourceKey(source.path, source.head), Path: source.path, HeadID: source.head}
 	mapping, ok, err := historicalMappingForSource(state, id)
 	if err != nil {
-		view.Status, view.ErrorCode, view.Session = "failed", "target_changed", nil
+		view.Status, view.ErrorCode, view.ErrorDetail, view.Session = "failed", "target_changed", "", nil
 		return view
 	}
 	if !ok {
@@ -344,7 +346,7 @@ func (a *App) prepareHistoricalSession(id string, interactive, batch bool) (*his
 	c.calls[id] = call
 	c.operations[call.operationID] = call
 	view := c.views[id]
-	view.Status, view.ErrorCode = "queued", ""
+	view.Status, view.ErrorCode, view.ErrorDetail = "queued", "", ""
 	c.views[id] = view
 	c.workers.Add(1)
 	c.mu.Unlock()
@@ -369,7 +371,7 @@ func (a *App) runHistoricalPreparation(call *historicalImportCall, id string, so
 	c.revision++
 	call.status, call.revision = "preparing", c.revision
 	view := c.views[id]
-	view.Status, view.ErrorCode = "importing", ""
+	view.Status, view.ErrorCode, view.ErrorDetail = "importing", "", ""
 	c.views[id] = view
 	c.mu.Unlock()
 	result, err := a.importHistoricalSource(call.ctx, id, source)
@@ -400,14 +402,17 @@ func (a *App) runHistoricalPreparation(call *historicalImportCall, id string, so
 			view.ErrorCode = "presentation_pending"
 		}
 	} else {
-		view.Status, view.ErrorCode, call.status, call.errorCode = "failed", "import_failed", "failed", "import_failed"
-		if historicalSourceBusyError(err) {
-			view.Status, view.ErrorCode, call.status, call.errorCode = "blocked", "source_busy", "blocked", "source_busy"
+		code := historicalImportFailureCode(err)
+		view.Status, call.status = "failed", "failed"
+		switch code {
+		case "source_busy":
+			view.Status, call.status = "blocked", "blocked"
 			err = errHistoricalSourceBusy
+		case "cancelled":
+			view.Status, call.status = "available", "cancelled"
 		}
-		if errors.Is(err, context.Canceled) {
-			view.Status, view.ErrorCode, call.status, call.errorCode = "available", "cancelled", "cancelled", "cancelled"
-		}
+		view.ErrorCode, call.errorCode = code, code
+		view.ErrorDetail, call.errorDetail = historicalImportFailureDetail(err), historicalImportFailureDetail(err)
 		call.err = err
 	}
 	c.revision++

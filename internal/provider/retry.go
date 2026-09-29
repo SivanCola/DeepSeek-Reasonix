@@ -238,25 +238,24 @@ func readErrorBody(resp *http.Response) []byte {
 	return msg
 }
 
-// SendWithRetry retains its historical name but sends exactly one HTTP request.
-// Transport, authentication, and upstream failures return to the caller without
-// backoff or automatic resubmission; the user decides whether to try again.
+// SendWithRetry retains its historical name but sends one HTTP request, plus a
+// single resend on a fresh connection when a pooled idle connection closed
+// before answering (see staleIdleConnection). Every other failure returns to
+// the caller without backoff; the user decides whether to try again.
 func SendWithRetry(ctx context.Context, httpClient *http.Client, opts SendOptions, newReq func(context.Context) (*http.Request, error)) (*http.Response, error) {
 	identity := RequestIdentity{Provider: opts.Provider, DisplayName: opts.ProviderDisplayName, Protocol: opts.Protocol}
-	requestCtx, observation := observeRequest(ctx)
-	req, err := newReq(requestCtx)
-	if err != nil {
-		observation.finish(err, "build_error")
-		return nil, &RequestFailure{Identity: identity, Operation: "build request", Err: err}
+	resp, stale, err := sendAttempt(ctx, httpClient, newReq)
+	if stale {
+		httpClient.CloseIdleConnections()
+		resp, _, err = sendAttempt(ctx, httpClient, newReq)
 	}
-	observation.request(req)
-	recordRequestAttempt(ctx)
-	resp, err := httpClient.Do(req)
+	var build *buildRequestError
+	if errors.As(err, &build) {
+		return nil, &RequestFailure{Identity: identity, Operation: "build request", Err: build.err}
+	}
 	if err != nil {
-		observation.finish(err, "request_error")
 		return nil, &RequestFailure{Identity: identity, Operation: "request failed", Err: err}
 	}
-	observation.response(resp)
 	if resp.StatusCode == http.StatusOK {
 		return resp, nil
 	}
@@ -285,6 +284,32 @@ func SendWithRetry(ctx context.Context, httpClient *http.Client, opts SendOption
 		}
 	}
 	return nil, apiErr
+}
+
+type buildRequestError struct{ err error }
+
+func (e *buildRequestError) Error() string { return e.err.Error() }
+func (e *buildRequestError) Unwrap() error { return e.err }
+
+// sendAttempt issues one counted, observed request. stale reports that it
+// failed on a dead pooled idle connection.
+func sendAttempt(ctx context.Context, httpClient *http.Client, newReq func(context.Context) (*http.Request, error)) (resp *http.Response, stale bool, err error) {
+	requestCtx, observation := observeRequest(ctx)
+	probe := &connectionProbe{}
+	req, err := newReq(probe.attach(requestCtx))
+	if err != nil {
+		observation.finish(err, "build_error")
+		return nil, false, &buildRequestError{err: err}
+	}
+	observation.request(req)
+	recordRequestAttempt(ctx)
+	resp, err = httpClient.Do(req)
+	if err != nil {
+		observation.finish(err, "request_error")
+		return nil, probe.staleIdleConnection(ctx, err), err
+	}
+	observation.response(resp)
+	return resp, false, nil
 }
 
 func responseRequestPath(resp *http.Response) string {

@@ -18,12 +18,17 @@ func newFromConfig(cfg provider.Config) (provider.Provider, error) {
 		stateful = value
 	}
 	proxy, _ := cfg.Extra["proxy_spec"].(netclient.ProxySpec)
+	httpClient, err := newHTTPClient(Config{HTTPClient: cfg.HTTPClient, Proxy: proxy, HTTP1Only: cfg.HTTP1Only})
+	if err != nil {
+		return nil, err
+	}
 	keyEnv, _ := cfg.Extra["api_key_env"].(string)
 	keySource, _ := cfg.Extra["api_key_source"].(string)
 	maxOutputTokens, _ := cfg.Extra["max_output_tokens"].(int)
 	requestURL, _ := cfg.Extra["request_url"].(string)
 	return New(Config{
-		HTTPClient: cfg.HTTPClient,
+		HTTP1Only:  cfg.HTTP1Only,
+		HTTPClient: httpClient,
 		Name:       cfg.Name, DisplayName: cfg.DisplayName, Protocol: cfg.Protocol, APIKey: cfg.APIKey, BaseURL: cfg.BaseURL, Model: cfg.Model,
 		ModelInfo: cfg.ModelInfo,
 		Effort:    effort, Mode: mode, Stateful: stateful, WebSearch: webSearch, Proxy: proxy,

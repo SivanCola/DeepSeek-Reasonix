@@ -40,6 +40,16 @@ schema 不再暴露这些旧名。
 | `web_fetch` | true | 通过 HTTP/HTTPS 获取 URL 文本内容。 |
 | `write_file` | false | 创建或替换文本文件。缺失目标以不可覆盖方式创建；替换现有目标要求 read_file 或上一次成功结构化修改留下当前版本观察。 |
 
+`update_goal` 按 `action` 选择修改字段：只有 `edit` 使用 `objective` 和
+`max_goal_rounds`，只有 `blocked` 使用 `blocked_reason`。应省略无关字段；无关字段中
+符合 schema 的回填值和占位会被忽略，包括文本字段中的空字符串或 null。`pause`、`resume`
+和 `complete` 不会修改目标描述或轮数上限。`edit` 中省略 `max_goal_rounds` 保留原上限，
+null 则取消上限；省略 `objective` 或传 null 保留原目标，替换目标的描述必须非空。
+`blocked` 仍要求非空原因。精确版本、宿主权限和生命周期校验继续生效。
+
+成功结果会在指引中列出被忽略的非 null 文本字段，以及显式传入但未使用的轮数上限。
+返回的目标是实际生效状态；生命周期操作成功不表示其他字段携带的修改也已应用。
+
 ## Schema 快照
 
 完整 canonical schema 不在文档中手写，避免文档和代码手工漂移。运行：

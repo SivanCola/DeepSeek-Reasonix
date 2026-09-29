@@ -1040,6 +1040,7 @@ func MissingToolCallReasoningWarningFingerprint(p Provider) string {
 
 // Config is a resolved provider instance configuration.
 type Config struct {
+	HTTP1Only bool // explicit connection compatibility; does not change provider-visible request bytes
 	// HTTPClient supplies immutable credential-proxy transport without changing serialization or vendor identity.
 	HTTPClient  *http.Client
 	Name        string         // stable instance id, e.g. "deepseek-anthropic"

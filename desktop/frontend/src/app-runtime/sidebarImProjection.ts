@@ -216,13 +216,17 @@ export function sidebarImConnectionsFromBot(
   return qqConnection ? [qqConnection, ...connectionItems] : connectionItems;
 }
 
-function mappedSessionTarget(sessionId: string): { kind: "path" | "topic"; value: string } | null {
+function mappedSessionTarget(sessionId: string): { kind: "path" | "topic" | "bot-session"; value: string } | null {
   const trimmed = sessionId.trim();
   if (!trimmed) return null;
   const lower = trimmed.toLowerCase();
   if (lower.startsWith("path:")) {
     const value = trimmed.slice(5).trim();
     return value ? { kind: "path", value } : null;
+  }
+  if (lower.startsWith("session:local:")) {
+    const value = trimmed.slice("session:local:".length).trim();
+    return value ? { kind: "bot-session", value } : null;
   }
   if (lower.startsWith("topic:")) {
     const value = trimmed.slice(6).trim();
@@ -240,7 +244,7 @@ export function taskSessionIDFromPath(path: string): string {
   return extension > 0 ? base.slice(0, extension) : base;
 }
 
-export function sidebarImSessionTarget(connection: SidebarImConnection): { kind: "path" | "topic"; value: string } | null {
+export function sidebarImSessionTarget(connection: SidebarImConnection): { kind: "path" | "topic" | "bot-session"; value: string } | null {
   return mappedSessionTarget(connection.sessionId);
 }
 

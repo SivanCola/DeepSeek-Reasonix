@@ -32,7 +32,11 @@ func botRuntimeSwitchFailedText(action string) string {
 
 func (gw *BotGateway) buildBotController(ctx context.Context, opts boot.Options) (*control.Controller, error) {
 	if opts.SessionService == nil {
-		opts.SessionService = gw.botSessionService(opts.SessionDir)
+		var err error
+		opts.SessionService, err = gw.botSessionService(opts.SessionDir)
+		if err != nil {
+			return nil, err
+		}
 		opts.SessionHostID = "local"
 	}
 	if gw.buildController != nil {
@@ -41,10 +45,13 @@ func (gw *BotGateway) buildBotController(ctx context.Context, opts boot.Options)
 	return boot.Build(ctx, opts)
 }
 
-func (gw *BotGateway) botSessionService(sessionDir string) *session.Service {
+func (gw *BotGateway) botSessionService(sessionDir string) (*session.Service, error) {
 	root := session.RootForLegacyDir(sessionDir)
 	if root == "" {
-		return nil
+		return nil, nil
+	}
+	if gw.cfg.SessionServiceForRoot != nil {
+		return gw.cfg.SessionServiceForRoot(root)
 	}
 	gw.sessionServicesMu.Lock()
 	defer gw.sessionServicesMu.Unlock()
@@ -52,14 +59,14 @@ func (gw *BotGateway) botSessionService(sessionDir string) *session.Service {
 		gw.sessionServices = make(map[string]*session.Service)
 	}
 	if service := gw.sessionServices[root]; service != nil {
-		return service
+		return service, nil
 	}
 	service, err := session.NewService("local", session.NewFilesystemPersistence(root))
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	gw.sessionServices[root] = service
-	return service
+	return service, nil
 }
 
 // buildSessionState prepares a complete replacement without publishing it.

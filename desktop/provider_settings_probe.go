@@ -64,6 +64,13 @@ func (a *App) FetchProviderModelCatalogDraft(p ProviderView, key string) ([]Prov
 		ChatURL:    p.ChatURL,
 		RequestURL: p.RequestURL,
 	}
+	cfg, err := config.LoadForRootWithoutCredentialsReadOnly(root)
+	if err != nil {
+		return nil, err
+	}
+	if saved, ok := cfg.Provider(p.Name); ok {
+		e.HTTP1Only = saved.HTTP1Only
+	}
 	started := time.Now()
 	credentialsRevision := config.CredentialStoreRevision()
 	e.ResolveAPIKeyForRoot(root)

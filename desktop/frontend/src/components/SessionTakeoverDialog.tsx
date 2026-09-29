@@ -6,7 +6,7 @@ import { app } from "../lib/bridge";
 import type { SessionTakeoverView, TabMeta } from "../lib/types";
 import type { HistoricalSourceUpdateView, SessionPreparationView } from "../generated/desktopContract.generated";
 import { historicalPreparationSnapshot, reconcileHistoricalPreparation, subscribeHistoricalPreparation, type DesktopNavigationIntent } from "../app-runtime/desktopNavigationOwner";
-import { useManagementT } from "../lib/managementLocale";
+import { historicalFailureKey, useManagementT } from "../lib/managementLocale";
 
 /**
  * SessionTakeoverDialog confirms taking a lease-blocked session over from the
@@ -132,15 +132,17 @@ export type HistoricalSessionBannerProps = {
   tab?: TabMeta;
   navigate(intent: DesktopNavigationIntent): Promise<void>;
   captureNavigation?(): () => boolean;
+  openRecoveryDetails?(): void;
 };
-export function HistoricalSessionBanners({ tab, navigate, captureNavigation }: HistoricalSessionBannerProps) {
+type HistoricalFailure = { summary: string; detail?: unknown };
+export function HistoricalSessionBanners({ tab, navigate, captureNavigation, openRecoveryDetails }: HistoricalSessionBannerProps) {
   const t = useT();
   const m = useManagementT();
   const activeRef = tab?.session ?? (tab?.sessionId ? { hostId: "local", sessionId: tab.sessionId } : undefined);
   const preparation = useSyncExternalStore(subscribeHistoricalPreparation, historicalPreparationSnapshot);
   const [update, setUpdate] = useState<HistoricalSourceUpdateView | null>(null);
   const [busy, setBusy] = useState(false);
-  const [updateError, setUpdateError] = useState("");
+  const [updateError, setUpdateError] = useState<HistoricalFailure | null>(null);
   const updateOperation = useRef(0);
   const [cancellingOperationId, setCancellingOperationId] = useState("");
   const cancellingOperationRef = useRef("");
@@ -158,7 +160,7 @@ export function HistoricalSessionBanners({ tab, navigate, captureNavigation }: H
     let current = true;
     updateOperation.current++;
     setUpdate(null);
-    setUpdateError("");
+    setUpdateError(null);
     setBusy(false);
     if (!activeSessionId || activeHostId !== "local" || !app.CheckHistoricalSourceUpdate) return () => { current = false; };
     const ref = { hostId: activeHostId, sessionId: activeSessionId };
@@ -200,7 +202,7 @@ export function HistoricalSessionBanners({ tab, navigate, captureNavigation }: H
     const navigationCurrent = captureNavigation?.() ?? (() => activeKeyRef.current === expectedActive);
     const current = () => mounted.current && operation === updateOperation.current && activeKeyRef.current === expectedActive && navigationCurrent();
     setBusy(true);
-    setUpdateError("");
+    setUpdateError(null);
     try {
       let view = await start();
       while (current() && !terminalPreparation.has(view.status)) {
@@ -209,13 +211,17 @@ export function HistoricalSessionBanners({ tab, navigate, captureNavigation }: H
         view = await app.GetSessionPreparation(view.operationId);
       }
       if (!current()) return;
-      if (view.status === "ready" && view.target) {
-        await navigate({ kind: "canonical-session", ref: view.target });
-      } else {
-        setUpdateError(m(view.errorCode === "source_busy" ? "historicalSourceBusy" : "historicalImportFailed"));
+      if (view.status !== "ready" || !view.target) {
+        setUpdateError({ summary: m(historicalFailureKey(view.errorCode)), detail: view.errorDetail });
+        return;
       }
-    } catch {
-      if (current()) setUpdateError(m("historicalImportFailed"));
+      try {
+        await navigate({ kind: "canonical-session", ref: view.target });
+      } catch (error) {
+        if (current()) setUpdateError({ summary: m("historicalOpenFailed"), detail: error });
+      }
+    } catch (error) {
+      if (current()) setUpdateError({ summary: m("historicalImportFailed"), detail: error });
     }
     finally { if (mounted.current && operation === updateOperation.current) setBusy(false); }
   };
@@ -234,27 +240,34 @@ export function HistoricalSessionBanners({ tab, navigate, captureNavigation }: H
     }
   };
 
+  const failureNotice = (failure: HistoricalFailure) => <ErrorMessage error={failure.detail ?? ""} summary={failure.summary} />;
+  const recoveryDetails = openRecoveryDetails
+    ? <button type="button" className="btn btn--small btn--ghost" onClick={openRecoveryDetails}>{m("historicalRecoveryDetails")}</button> : null;
   if (preparation) {
     const waiting = preparation.status === "queued" || preparation.status === "preparing";
     return <div className={`banner ${waiting ? "banner--warning" : "banner--error"} banner--actionable`} role="status">
       <span className="banner__msg">{m("historicalImporting")}: {preparation.session.title || preparation.session.topicId || m("historicalTitle")}</span>
-      <span className="banner__hint">{m(preparation.status === "queued" ? "historicalQueued" : preparation.status === "preparing" ? "historicalImporting" : "historicalImportFailed")}</span>
+      <span className="banner__hint">{waiting ? m(preparation.status === "queued" ? "historicalQueued" : "historicalImporting")
+        : failureNotice({ summary: m(historicalFailureKey(preparation.errorCode)), detail: preparation.errorDetail })}</span>
       <span className="banner__spacer" />
       {waiting && <button type="button" className="btn btn--small" disabled={cancellingOperationId === preparation.operationId} onClick={() => void cancelPreparation()}>{t("common.cancel")}</button>}
+      {!waiting && recoveryDetails}
       {!waiting && preparation.retryable && <button type="button" className="btn btn--small" onClick={() => void navigate({ kind: "resume-session", session: preparation.session })}>{t("common.retry")}</button>}
     </div>;
   }
   if (historicalSource) return <div className={`banner ${updateError ? "banner--error" : "banner--warning"} banner--actionable`} role={updateError ? "alert" : "status"}>
     <span className="banner__msg">{tab?.topicTitle || m("historicalTitle")} · {m("historicalAvailable")}</span>
-    <span className="banner__hint">{updateError ? <ErrorMessage error={updateError} /> : m(busy ? "historicalImporting" : "historicalImportToSend")}</span>
+    <span className="banner__hint">{updateError ? failureNotice(updateError) : m(busy ? "historicalImporting" : "historicalImportToSend")}</span>
     <span className="banner__spacer" />
+    {updateError && recoveryDetails}
     <button id="reasonix-prepare-restored-session" type="button" className="btn btn--small" disabled={busy} onClick={() => void importSource()}>{m("historicalImportOpen")}</button>
   </div>;
   if (!update) return null;
   return <div className={`banner ${updateError ? "banner--error" : "banner--warning"} banner--actionable`} role={updateError ? "alert" : "status"}>
     <span className="banner__msg">{m("historicalSourceUpdated")}</span>
-    {(updateError || busy) && <span className="banner__hint">{updateError ? <ErrorMessage error={updateError} /> : m("historicalImporting")}</span>}
+    {(updateError || busy) && <span className="banner__hint">{updateError ? failureNotice(updateError) : m("historicalImporting")}</span>}
     <span className="banner__spacer" />
+    {updateError && recoveryDetails}
     <button type="button" className="btn btn--small" disabled={busy} onClick={() => void importUpdate()}>{m("historicalImportOpen")} · {m("branch")}</button>
     <button type="button" className="btn btn--small" disabled={busy} onClick={dismissUpdate}>{t("updater.dismiss")}</button>
   </div>;

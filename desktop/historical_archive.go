@@ -46,10 +46,17 @@ func (a *App) archiveHistoricalSource(selector SessionSelector) (SessionMutation
 	for _, path := range recoveredLegacySiblings(source) {
 		siblings = append(siblings, SessionSourceRef{HostID: localDesktopHostID, Path: path})
 	}
+	state, err := a.workspaceRegistry().Load(ctx)
+	if err != nil {
+		slog.Warn("desktop: sibling lifecycle unavailable", "source_key", id, "err", err)
+	}
 	for _, sibling := range siblings {
 		siblingID, siblingSource, err := a.historicalSourceForSelector(SessionSelector{Source: &sibling})
 		if err != nil {
 			slog.Warn("desktop: sibling archive skipped", "source_key", id, "err", err)
+			continue
+		}
+		if historicalSourceMapped(state, siblingID) {
 			continue
 		}
 		siblingResult, err := a.archiveHistoricalSourceWithOperation(ctx, siblingID, siblingSource,
@@ -110,10 +117,24 @@ func recoveredLegacySiblings(source historicalSource) []string {
 	return siblings
 }
 
+// A sibling with a durable mapping already has its own lifecycle. Archiving a
+// different version must not retire an active session or copy an old version
+// again after another head changes the shared legacy transcript.
+func historicalSourceMapped(state workspacestate.State, id string) bool {
+	_, mapped, err := state.ResolveSource(id)
+	return err == nil && mapped
+}
+
+// headStartsConversation reports a head the user split off under a name. A
+// rewind, an unnamed fork ("fork from this turn") and a second writer's
+// concurrent head all continue their parent head's conversation.
+func headStartsConversation(head agent.SessionHead) bool {
+	return head.ParentHead == "" || head.Kind == agent.HeadKindFork && strings.TrimSpace(head.Name) != ""
+}
+
 // legacyHeadVersions lists the other live heads of a legacy transcript that are
-// versions of the selected head's conversation: each rewind keeps the head it
-// left as a version, and the sidebar lists every version as its own row with
-// the same title. Named forks start a conversation of their own and stay.
+// versions of the selected head's conversation. The sidebar lists every version
+// as its own row with the same title; named forks stay.
 func legacyHeadVersions(source historicalSource) []SessionSourceRef {
 	if source.format != "legacy" || source.head == "" {
 		return nil
@@ -129,7 +150,7 @@ func legacyHeadVersions(source historicalSource) []SessionSourceRef {
 	origin := func(id string) string {
 		for range heads {
 			head, ok := byID[id]
-			if !ok || head.Kind != agent.HeadKindRewind || head.ParentHead == "" {
+			if !ok || headStartsConversation(head) {
 				break
 			}
 			id = head.ParentHead

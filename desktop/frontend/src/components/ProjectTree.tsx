@@ -1024,7 +1024,7 @@ export function ProjectTree({
     }
   }, [onTopicsChanged, refresh, tree]);
 
-  const organization = useProjectTreeOrganization({ tree, refresh, onTopicsChanged, organizationRevision });
+  const organization = useProjectTreeOrganization({ tree, refresh, onTopicsChanged, organizationRevision, sortMode: creationTopics ? "updated" : workbenchSortMode });
 
   const clearProjectDrag = useCallback(() => {
     setDragProjectRoot(null);
@@ -1594,7 +1594,7 @@ export function ProjectTree({
         label: t("projectTree.newGroup"),
         onSelect: () => organization.createGroup(node, t("projectTree.newGroup")),
       },
-      newSessionMenuItem,
+      newSessionMenuItem, ...organization.resetOrderMenuItems(node, t, closeMenu),
       ...isolatedWorkspaceItems,
       {
         key: "rename",
@@ -1648,7 +1648,7 @@ export function ProjectTree({
         : []),
     ];
     const workbenchProjectMenuItems: ContextMenuItem[] = [
-      newSessionMenuItem,
+      newSessionMenuItem, ...organization.resetOrderMenuItems(node, t, closeMenu),
       ...(scope === "project"
         ? [
             {

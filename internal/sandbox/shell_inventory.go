@@ -118,6 +118,7 @@ var defaultShellInventory = newShellInventory()
 // ResolveShell re-probes instead of trusting the pre-install result.
 func InvalidateShellInventory() {
 	defaultShellInventory.invalidate()
+	aliasLaunches.reset()
 }
 
 func (inv *shellInventory) invalidate() {
@@ -198,7 +199,8 @@ func buildShellSnapshot(goos, prefer, configPath string) *shellSnapshot {
 	}
 	if goos == "windows" {
 		snap.bashCands, snap.sources = windowsBashCandidateSources(prefer, configPath, exec.LookPath, fileExists)
-		snap.psCands = windowsPowerShellCandidates()
+		snap.lookPath = launchablePowerShellLookPath(exec.LookPath, powerShellLaunches)
+		snap.psCands = launchablePowerShells(windowsPowerShellCandidates(), powerShellLaunches)
 		snap.caps = windowsShellCapabilities(snap)
 	} else {
 		snap.caps = unixShellCapabilities(snap)

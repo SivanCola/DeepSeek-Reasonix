@@ -6,7 +6,7 @@ import { useT } from "../lib/i18n";
 import type { HistoricalImportStatus, HistoricalSessionView, HistoricalSourceUpdateView } from "../generated/desktopContract.generated";
 import type { SessionRef } from "../lib/sessionRef";
 import { desktopHost } from "../lib/desktopHost";
-import { useManagementT, type ManagementKey } from "../lib/managementLocale";
+import { historicalFailureKey, useManagementT, type ManagementKey } from "../lib/managementLocale";
 
 const emptyHistoricalStatus: HistoricalImportStatus = { items: [], running: false, paused: false, remaining: 0, completed: 0, blocked: 0, failed: 0 };
 const historicalStatusKeys: Record<string, ManagementKey> = {
@@ -97,7 +97,7 @@ export function HistoricalImportList({ active, onOpenSession }: { active: boolea
       <div className="archived-sessions__row" key={item.id}>
         <span>{item.title}</span><small>{item.format}</small>
         <span>{m(historicalStatusKeys[item.status] ?? "historicalNeedsAttention")}</span>
-        {item.errorCode && <small>{m(item.errorCode === "source_busy" ? "historicalSourceBusy" : "historicalImportFailed")}</small>}
+        {item.errorCode && item.errorCode !== "cancelled" && <small><ErrorMessage error={item.errorDetail ?? ""} summary={m(historicalFailureKey(item.errorCode))} /></small>}
         <button className="btn btn--small" disabled={!!busy || item.status === "importing" || item.status === "queued" || item.status === "archived" || item.status === "deleted"}
           onClick={() => void open(item)}>{item.session && onOpenSession ? t("history.openRestored") : m("historicalImportOpen")}</button>
         {item.session && item.source && <button className="btn btn--small" disabled={!!busy} onClick={() => void checkUpdate(item)}>{t("common.retry")} · {m("historicalTitle")}</button>}

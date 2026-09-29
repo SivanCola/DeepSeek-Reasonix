@@ -19,6 +19,7 @@ let navigationEpoch = 0;
 let cancelled = 0;
 const opened: string[] = [];
 const preparedSelectors: unknown[] = [];
+let preparedSource: SessionPreparationView | undefined;
 const source = { hostId: "local", sourceKey: "legacy", path: "/fixture/legacy.jsonl" };
 const host = installDesktopHostStub({
   CheckHistoricalSourceUpdate: async () => ({ sourceKey: "legacy", status: "available", version: "v2", source, retryable: false }),
@@ -33,6 +34,7 @@ const host = installDesktopHostStub({
   },
   PrepareSession: async (selector: unknown) => {
     preparedSelectors.push(selector);
+    if (preparedSource) return preparedSource;
     return { operationId: "prepare-source", sourceKey: "legacy", status: "ready", revision: 8,
       target: { hostId: "local", sessionId: "imported-source" }, retryable: false };
   },
@@ -133,6 +135,29 @@ const [canonicalTab] = seedActiveTabMetaList([{ ...baseProps.tab, historicalSour
 assert.equal(canonicalTab.historicalSource, undefined, "canonical metadata omission clears the old preparation state");
 await act(async () => root.render(<LocaleProvider><HistoricalSessionBanners {...baseProps} tab={canonicalTab} /></LocaleProvider>));
 assert.equal(document.getElementById("reasonix-prepare-restored-session"), null, "successful activation removes the preparation action");
+const failingSourceTab = { ...baseProps.tab, sessionId: undefined, ready: false, historicalSource: source };
+let recoveryOpened = 0;
+const openFailures: unknown[] = [];
+preparedSource = { operationId: "prepare-conflict", sourceKey: "legacy", status: "failed", revision: 9, errorCode: "workspace_conflict",
+  errorDetail: "session workspace identity is inconsistent; the session files were left unchanged", retryable: true };
+await act(async () => root.render(<LocaleProvider><HistoricalSessionBanners tab={failingSourceTab}
+  navigate={async intent => { openFailures.push(intent); throw new Error("open refused: workspace registry busy"); }}
+  openRecoveryDetails={() => { recoveryOpened++; }} /></LocaleProvider>));
+assert.equal(document.body.textContent?.includes("Review recovery details"), false, "recovery details appear only with a failure");
+await act(async () => document.getElementById("reasonix-prepare-restored-session")!.click());
+const failureAlert = () => document.querySelector('[role="alert"]');
+assert.ok(failureAlert()?.textContent?.includes("records a different project folder"), "the banner names the failure class the host reported");
+await act(async () => failureAlert()!.querySelector<HTMLButtonElement>(".user-error__toggle")!.click());
+assert.ok(failureAlert()?.textContent?.includes("session workspace identity is inconsistent"), "the host's failure detail is reachable from the banner");
+await act(async () => [...document.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Review recovery details")!.click());
+assert.equal(recoveryOpened, 1, "the promised recovery details open");
+assert.deepEqual(openFailures, [], "a failed preparation never navigates");
+preparedSource = { operationId: "prepare-ready", sourceKey: "legacy", status: "ready", revision: 10,
+  target: { hostId: "local", sessionId: "imported-source" }, retryable: false };
+await act(async () => document.getElementById("reasonix-prepare-restored-session")!.click());
+assert.ok(failureAlert()?.textContent?.includes("Imported, but the conversation could not be opened"), "an open failure is not reported as an import failure");
+await act(async () => failureAlert()!.querySelector<HTMLButtonElement>(".user-error__toggle")!.click());
+assert.ok(failureAlert()?.textContent?.includes("open refused: workspace registry busy"), "the open failure keeps its cause");
 await act(async () => root.unmount());
 host.uninstall();
 dom.window.close();

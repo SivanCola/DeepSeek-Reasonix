@@ -300,6 +300,34 @@ func TestRebuildMigratesSessionState(t *testing.T) {
 	oldCtrl.Close()
 }
 
+func TestRebuildKeepsLiveReadOnlyAfterStoredRemotePreset(t *testing.T) {
+	restoreSandbox := control.SetPresetSandboxForTest(true)
+	t.Cleanup(restoreSandbox)
+	isolateConfigHome(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	writeRuntimeFixture(t, dir)
+	old, err := BuildRuntime(t.Context(), withTestSession(t, Options{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(old.Controller.Close)
+	ctrl := old.Controller
+	ctrl.EnsureSessionPath()
+	if _, _, err := ctrl.SetSessionPermissionPreset(t.Context(), control.ToolApprovalDangerFullAccess, ctrl.PermissionSnapshot().Revision); err != nil {
+		t.Fatal(err)
+	}
+	ctrl.SetToolApprovalMode(control.ToolApprovalReadOnly)
+	next, err := Rebuild(t.Context(), ctrl, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(next.Controller.Close)
+	if got := next.Controller.ToolApprovalMode(); got != control.ToolApprovalReadOnly {
+		t.Fatalf("rebuild widened live read-only mode to %q", got)
+	}
+}
+
 func TestRebuildKeepsLegacySessionNativeWithHostService(t *testing.T) {
 	isolateConfigHome(t)
 	dir := robustTempDir(t)

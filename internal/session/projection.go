@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"reasonix/internal/event"
+	"reasonix/internal/permissionpreset"
 	"reasonix/internal/provider"
 )
 
@@ -37,17 +38,20 @@ type Projection struct {
 	// ModelMessages is the exact provider-visible projection. Canonical Messages
 	// remains the complete UI/history transcript; compaction replaces only this
 	// view and never deletes the underlying business history.
-	ModelMessages []provider.Message
-	Todos         []event.Todo
-	TodoWritten   bool
-	Interactions  map[string]string
-	ActiveTools   map[string]string
-	StartedTools  map[string]bool
-	ActiveSteps   map[string]bool
-	Recovery      *event.RecoveryStatus
-	PlanState     json.RawMessage
-	GoalState     json.RawMessage
-	Title         string
+	ModelMessages    []provider.Message
+	Todos            []event.Todo
+	TodoWritten      bool
+	Interactions     map[string]string
+	ActiveTools      map[string]string
+	StartedTools     map[string]bool
+	ActiveSteps      map[string]bool
+	Recovery         *event.RecoveryStatus
+	PlanState        json.RawMessage
+	GoalState        json.RawMessage
+	PermissionPreset string
+	// One-based event identity; zero means no explicit preset in the log.
+	PermissionPresetSequence uint64
+	Title                    string
 	// TitleSequence is the sequence of the latest accepted session/title event.
 	// It is independent from CommittedSequence so ordinary chat appends do not
 	// conflict with a delayed title mutation.
@@ -86,7 +90,7 @@ var ProjectionKinds = map[string]bool{
 	"tool/call": true, "tool/start": true, "tool/result": true,
 	"turn/start": true, "turn/end": true, "step/start": true, "step/end": true,
 	"todo/write": true, "interaction/created": true, "interaction/resolved": true,
-	"plan/state": true, "goal/state": true, "session/title": true, "session/config": true,
+	"plan/state": true, "goal/state": true, "session/title": true, "session/config": true, "session/permission-preset": true,
 	"model/context-replace": true, "history/replace": true,
 	"compaction": true, "runtime/recovery": true, "legacy/import": true,
 	"diagnostic": true,
@@ -156,8 +160,8 @@ func applyProjectionEvents(projection *Projection, commit Commit) error {
 			err = projectModelContextReplace(projection, commit, ev)
 		case "session/title":
 			err = projectSessionTitle(projection, commit, ev)
-		case "session/config":
-			err = projectSessionConfig(projection, commit, ev)
+		case "session/config", "session/permission-preset":
+			err = projectSessionSettings(projection, commit, ev)
 		case "compaction":
 			err = projectCompaction(projection, commit, ev)
 		case "turn/start":
@@ -365,6 +369,28 @@ func projectSessionConfig(projection *Projection, commit Commit, ev Event) error
 	}
 	projection.ModelRef = strings.TrimSpace(body.ModelRef)
 	projection.ModelIdentity = strings.TrimSpace(body.ModelIdentity)
+	return nil
+}
+
+func projectSessionSettings(projection *Projection, commit Commit, ev Event) error {
+	if ev.Kind == "session/config" {
+		return projectSessionConfig(projection, commit, ev)
+	}
+	return projectSessionPermissionPreset(projection, commit, ev)
+}
+
+func projectSessionPermissionPreset(projection *Projection, _ Commit, ev Event) error {
+	var body struct {
+		Preset string `json:"preset"`
+	}
+	if err := strictPayload(ev.Payload, &body); err != nil {
+		return damagedPayload(ev, err)
+	}
+	if !permissionpreset.Valid(body.Preset) {
+		return damagedPayload(ev, fmt.Errorf("invalid permission preset %q", body.Preset))
+	}
+	projection.PermissionPreset = body.Preset
+	projection.PermissionPresetSequence = ev.Sequence
 	return nil
 }
 

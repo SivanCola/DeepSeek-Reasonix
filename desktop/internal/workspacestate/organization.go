@@ -184,6 +184,10 @@ func attachOrganizationSession(w *Workspace, id, parentID string) {
 	index := slices.Index(o.Order, parent)
 	if parentID != "" && index >= 0 {
 		o.Order = slices.Insert(o.Order, index+1, key)
+	} else if o.ManualOrderEnabled {
+		// The sidebar pages a manual order from its head; a tail entry sits
+		// behind every older session and is out of reach once history is long.
+		o.Order = slices.Insert(o.Order, 0, key)
 	} else {
 		o.Order = append(o.Order, key)
 	}

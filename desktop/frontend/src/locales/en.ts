@@ -1699,6 +1699,7 @@ export const en = {
   "projectTree.sortCriteria": "Sort criteria",
   "projectTree.sortByCreatedAt": "Created time",
   "projectTree.sortByUpdatedAt": "Updated time",
+  "projectTree.resetManualOrder": "Reset manual order",
   "projectTree.createBlankProject": "New blank project",
   "projectTree.useExistingFolder": "Use existing folder",
   "projectTree.collapseAllTooltip": "Collapse all projects",

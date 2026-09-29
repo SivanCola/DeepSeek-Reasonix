@@ -119,7 +119,8 @@ func (b bash) Description() string {
 			"The host prefers PowerShell 7 and can fall back to Windows PowerShell 5.1, so use syntax accepted by both:\n" +
 			"  - chaining: ';' runs both commands; use 'if ($?) { ... }' for conditional execution.\n" +
 			"  - redirect/vars: $null not /dev/null; $env:VAR not $VAR; '2>$null' drops stderr.\n" +
-			"  - file ops: Get-ChildItem (ls), Get-Content (cat), Remove-Item -Recurse -Force (rm -rf), Copy-Item (cp), Select-String (grep).\n" +
+			"  - file ops: Get-ChildItem (ls), Remove-Item -Recurse -Force (rm -rf), Copy-Item (cp), Select-String (grep).\n" +
+			"  - file text: read with read_file and change with edit_file/write_file, not Get-Content, Set-Content, Out-File or '>'. Windows PowerShell 5.1 reads BOM-less UTF-8 as the ANSI code page and writes ANSI or UTF-16; the built-in tools keep each file's encoding and BOM.\n" +
 			"  - no head/tail/which/touch: use Select-Object -First/-Last N, (Get-Command x).Source, New-Item.\n" +
 			"  - services/watchers: set run_in_background=true and manage the returned job id with job_output/job_kill.\n" +
 			"  - multi-line text to a native exe (e.g. git commit -m): use a single-quoted here-string @'...'@ (closing '@ at column 0)." +

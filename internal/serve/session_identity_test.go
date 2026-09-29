@@ -131,6 +131,136 @@ func newExclusiveSessionServe(t *testing.T) (*Server, *control.Controller, *sess
 	return newExclusiveSessionServeWithOptions(t, nil)
 }
 
+func TestExclusiveSessionPermissionPresetDoesNotFollowTheForegroundController(t *testing.T) {
+	srv, ctrl, service, first := newExclusiveSessionServe(t)
+	httpServer := httptest.NewServer(operatorHandler(srv))
+	defer httpServer.Close()
+	target, err := service.Create(t.Context(), session.CreateOptions{SessionID: "target"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := target.Session().Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Close(t.Context(), target.Ref()); err != nil {
+		t.Fatal(err)
+	}
+	set := func(preset string) {
+		t.Helper()
+		resp, err := http.Post(httpServer.URL+"/composer-profile", "application/json", strings.NewReader(`{"collaborationMode":"normal","toolApprovalMode":"`+preset+`","goal":""}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("set %s: %d", preset, resp.StatusCode)
+		}
+	}
+	open := func(id, want string) {
+		t.Helper()
+		resp, err := http.Post(httpServer.URL+"/resume", "application/json", strings.NewReader(`{"hostId":"serve-test","sessionId":"`+id+`"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusNoContent {
+			t.Fatalf("resume %s: %d", id, resp.StatusCode)
+		}
+		if got := ctrl.PermissionSnapshot(); got.SessionID != id || got.Preset != want {
+			t.Fatalf("resume %s: snapshot = %+v, want preset %s", id, got, want)
+		}
+	}
+	set(control.ToolApprovalDangerFullAccess)
+	open("target", control.ToolApprovalWorkspaceWrite)
+	set(control.ToolApprovalReadOnly)
+	open(first.SessionID, control.ToolApprovalDangerFullAccess)
+	open("target", control.ToolApprovalReadOnly)
+}
+
+func TestExclusiveSessionPermissionPresetRoutesRememberTheSelectedSession(t *testing.T) {
+	routes := []struct {
+		name   string
+		path   string
+		body   string
+		status int
+		serve  func(*Server, http.ResponseWriter, *http.Request)
+	}{
+		{"preset", "/permission/preset", `{"preset":"workspace-write","expectedRevision":2}`, http.StatusOK, func(s *Server, w http.ResponseWriter, r *http.Request) {
+			s.foregroundMutation(s.permissionPreset)(w, r)
+		}},
+		{"legacy mode", "/tool-approval-mode", `{"mode":"workspace-write"}`, http.StatusNoContent, func(s *Server, w http.ResponseWriter, r *http.Request) {
+			s.foregroundMutation(s.toolApprovalMode)(w, r)
+		}},
+		{"legacy auto", "/auto-approve-tools", `{"on":false}`, http.StatusNoContent, func(s *Server, w http.ResponseWriter, r *http.Request) {
+			s.foregroundMutation(s.autoApproveTools)(w, r)
+		}},
+	}
+	for _, route := range routes {
+		t.Run(route.name, func(t *testing.T) {
+			srv, ctrl, service, first := newExclusiveSessionServe(t)
+			target, err := service.Create(t.Context(), session.CreateOptions{SessionID: "target"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := target.Session().Flush(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if err := service.Close(t.Context(), target.Ref()); err != nil {
+				t.Fatal(err)
+			}
+			set := httptest.NewRecorder()
+			srv.composerProfile(set, httptest.NewRequest(http.MethodPost, "/composer-profile", strings.NewReader(`{"collaborationMode":"normal","toolApprovalMode":"danger-full-access","goal":""}`)))
+			if set.Code != http.StatusOK {
+				t.Fatalf("set first: %d %s", set.Code, set.Body.String())
+			}
+			resume := func(id string) {
+				t.Helper()
+				w := httptest.NewRecorder()
+				srv.resume(w, httptest.NewRequest(http.MethodPost, "/resume", strings.NewReader(`{"hostId":"serve-test","sessionId":"`+id+`"}`)))
+				if w.Code != http.StatusNoContent {
+					t.Fatalf("resume %s: %d %s", id, w.Code, w.Body.String())
+				}
+			}
+			resume("target")
+			before := ctrl.PermissionSnapshot()
+			body := route.body
+			if route.name == "preset" {
+				body = `{"preset":"workspace-write","expectedRevision":` + fmt.Sprint(ctrl.PermissionSnapshot().Revision) + `}`
+			}
+			req := httptest.NewRequest(http.MethodPost, route.path, strings.NewReader(body))
+			req.Header.Set(expectedSessionIDHeader, "target")
+			w := httptest.NewRecorder()
+			route.serve(srv, w, req)
+			if w.Code != route.status {
+				t.Fatalf("set target: %d %s", w.Code, w.Body.String())
+			}
+			if route.name == "preset" && ctrl.PermissionSnapshot().Revision <= before.Revision {
+				t.Fatal("an explicit same-value preset choice did not invalidate the prior revision")
+			}
+			resume(first.SessionID)
+			if got := ctrl.PermissionSnapshot().Preset; got != control.ToolApprovalDangerFullAccess {
+				t.Fatalf("first preset = %q", got)
+			}
+			if route.name == "preset" {
+				stale := httptest.NewRequest(http.MethodPost, route.path, strings.NewReader(`{"preset":"danger-full-access","expectedRevision":`+fmt.Sprint(ctrl.PermissionSnapshot().Revision)+`}`))
+				stale.Header.Set(expectedSessionIDHeader, "target")
+				refused := httptest.NewRecorder()
+				route.serve(srv, refused, stale)
+				if refused.Code != http.StatusConflict {
+					t.Fatalf("stale target update status = %d, want conflict", refused.Code)
+				}
+				if got := ctrl.PermissionSnapshot().Preset; got != control.ToolApprovalDangerFullAccess {
+					t.Fatalf("stale target update changed first preset to %q", got)
+				}
+			}
+			resume("target")
+			if got := ctrl.PermissionSnapshot().Preset; got != control.ToolApprovalWorkspaceWrite {
+				t.Fatalf("target preset = %q", got)
+			}
+		})
+	}
+}
+
 // newExclusiveSessionServeWithOptions lets a test shape the foreground
 // controller (for example install a blocking Runner so a turn can be held open)
 // before the exclusive identity is bound.

@@ -36,7 +36,21 @@ func (s *Server) composerProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	var drained []string
 	var err error
-	if body.ExpectedPermissionRevision != nil {
+	if ctrl, ok := s.ctl().(*control.Controller); ok && ctrl.UsesExclusiveSession() {
+		if _, bound := ctrl.SessionRef(); !bound {
+			if body.ExpectedPermissionRevision != nil {
+				drained, err = ctrl.ApplyComposerProfileAt(collaborationMode == "plan", body.ToolApprovalMode, body.Goal, *body.ExpectedPermissionRevision)
+			} else {
+				drained, err = ctrl.ApplyComposerProfile(collaborationMode == "plan", body.ToolApprovalMode, body.Goal)
+			}
+		} else {
+			revision := ctrl.PermissionSnapshot().Revision
+			if body.ExpectedPermissionRevision != nil {
+				revision = *body.ExpectedPermissionRevision
+			}
+			drained, err = ctrl.ApplyComposerProfileAtDurable(r.Context(), collaborationMode == "plan", body.ToolApprovalMode, body.Goal, revision)
+		}
+	} else if body.ExpectedPermissionRevision != nil {
 		ctrl, ok := s.ctl().(*control.Controller)
 		if !ok {
 			http.Error(w, "revision-checked permission profiles are unavailable", http.StatusNotImplemented)

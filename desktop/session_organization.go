@@ -31,6 +31,8 @@ type SessionOrganizationMutation struct {
 	Position string           `json:"position,omitempty"`
 	GroupID  string           `json:"groupId,omitempty"`
 	Title    string           `json:"title,omitempty"`
+	// SortMode is the activity order the sidebar shows while no manual order exists.
+	SortMode string `json:"sortMode,omitempty"`
 }
 
 func organizationSnapshot(o workspacestate.Organization, applied bool) SessionOrganizationSnapshot {
@@ -258,9 +260,15 @@ func (a *App) UpdateSessionOrganization(workspace SessionOrganizationWorkspace, 
 	// Group edits address either a group or one explicit source. Only moving
 	// in a manual order needs the complete relative order of other sources.
 	// Old source-dependent preferences still take their normal import path.
-	id, _, err := a.ensureSessionOrganizationSources(workspace.Scope, workspace.WorkspaceRoot, mutation.Kind == "move")
+	id, current, err := a.ensureSessionOrganizationSources(workspace.Scope, workspace.WorkspaceRoot, mutation.Kind == "move")
 	if err != nil {
 		return SessionOrganizationSnapshot{}, err
+	}
+	var shown []string
+	if mutation.Kind == "move" && !current.ManualOrderEnabled {
+		if shown, err = a.shownSessionOrder(workspace.Scope, workspace.WorkspaceRoot, mutation.SortMode); err != nil {
+			return SessionOrganizationSnapshot{}, err
+		}
 	}
 	resolved := []SessionTarget{}
 	resolve := func(selector *SessionSelector) (string, error) {
@@ -313,12 +321,66 @@ func (a *App) UpdateSessionOrganization(workspace SessionOrganizationWorkspace, 
 		}
 	}
 	o, applied, err := a.workspaceRegistry().UpdateOrganizationWithState(a.bootContext(), id, &expectedRevision, func(state *workspacestate.State, o *workspacestate.Organization) error {
+		if mutation.Kind == "move" && !o.ManualOrderEnabled {
+			seedManualOrder(o, shown)
+		}
 		return applyResolvedOrganizationMutation(state, id, o, resolved, mutation, key, anchor)
 	})
 	if err == nil && applied {
 		a.emitProjectTreeMetadataChanged()
 	}
 	return organizationSnapshot(o, applied), err
+}
+
+// shownSessionOrder lists a workspace in the activity order the sidebar is
+// showing, so the first manual move starts from what the user was looking at.
+func (a *App) shownSessionOrder(scope, root, sortMode string) ([]string, error) {
+	keys := []string{}
+	req := ProjectTopicPageRequest{Scope: scope, WorkspaceRoot: root, Limit: 200, SortMode: sortMode}
+	for {
+		page, err := a.unifiedProjectTopics(req)
+		a.ReleaseReadSnapshot(page.SnapshotID)
+		if err != nil {
+			return nil, err
+		}
+		for _, node := range page.Items {
+			for _, row := range expandSessionSourceRows(node) {
+				keys = append(keys, projectNodeSessionKey(row))
+			}
+		}
+		if page.NextCursor == "" {
+			return keys, nil
+		}
+		if page.NextCursor == req.Cursor {
+			return nil, fmt.Errorf("session order cursor did not advance")
+		}
+		req.Cursor = page.NextCursor
+	}
+}
+
+// seedManualOrder replaces the attach order, which is oldest first and never
+// what the sidebar showed, with the shown order. Unlisted keys keep their place
+// after the listed ones.
+func seedManualOrder(o *workspacestate.Organization, shown []string) {
+	rank := make(map[string]int, len(shown))
+	for i, key := range shown {
+		if _, ok := rank[key]; !ok {
+			rank[key] = i
+		}
+	}
+	slices.SortStableFunc(o.Order, func(left, right string) int {
+		l, lok := rank[left]
+		r, rok := rank[right]
+		switch {
+		case lok && rok:
+			return l - r
+		case lok:
+			return -1
+		case rok:
+			return 1
+		}
+		return 0
+	})
 }
 
 // Run inside the registry transaction: resolution precedes the write lock, so
@@ -416,6 +478,9 @@ func (a *App) replaceSessionOrganizationGroups(ctx context.Context, scope, root 
 
 func applyOrganizationMutation(o *workspacestate.Organization, mutation SessionOrganizationMutation, key, anchor string) error {
 	switch mutation.Kind {
+	case "reset-order":
+		// Keep the recorded order and groups; time sorting ignores ranks while disabled.
+		o.ManualOrderEnabled = false
 	case "move":
 		if key == anchor {
 			return nil

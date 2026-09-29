@@ -55,7 +55,9 @@ func (s *Server) commitLoadedResume(w http.ResponseWriter, cur control.SessionAP
 			return false
 		}
 		next.EnableInteractiveApproval()
-		next.SetToolApprovalMode(ctrl.ToolApprovalMode())
+		if _, bound := next.SessionRef(); !bound {
+			next.SetToolApprovalMode(ctrl.ToolApprovalMode())
+		}
 		next.SetPlanMode(ctrl.PlanMode())
 		next.SetOnSessionRecovered(s.sessionRecoveryHandler(next, s.leases))
 		if s.leases != nil {

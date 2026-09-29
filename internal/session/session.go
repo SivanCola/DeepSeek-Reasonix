@@ -125,6 +125,21 @@ func (s *Session) Manifest() Manifest {
 	return manifest
 }
 
+// ExplicitPermissionPreset excludes a fork's inherited parent choice. Only a
+// preset event written under this session's own identity is its user choice.
+func (s *Session) ExplicitPermissionPreset() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sequence := s.projection.PermissionPresetSequence
+	if sequence == 0 || (s.manifest.Source != nil && sequence <= s.manifest.InheritedEvents) {
+		return ""
+	}
+	return s.projection.PermissionPreset
+}
+
 // EventSequence reports the last accepted sequence. Accepted events may still
 // be waiting in the binding's write-behind queue.
 func (s *Session) EventSequence() uint64 {

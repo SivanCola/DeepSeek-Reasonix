@@ -22,6 +22,7 @@ type SessionPreparationView struct {
 	Revision    uint64              `json:"revision"`
 	Target      *session.SessionRef `json:"target,omitempty"`
 	ErrorCode   string              `json:"errorCode,omitempty"`
+	ErrorDetail string              `json:"errorDetail,omitempty"`
 	Retryable   bool                `json:"retryable"`
 }
 
@@ -43,7 +44,7 @@ type historicalSourceUpdateCall struct {
 
 func preparationSnapshot(call *historicalImportCall) SessionPreparationView {
 	view := SessionPreparationView{OperationID: call.operationID, SourceKey: call.sourceKey, Status: call.status,
-		Revision: call.revision, ErrorCode: call.errorCode,
+		Revision: call.revision, ErrorCode: call.errorCode, ErrorDetail: call.errorDetail,
 		Retryable: call.status == "blocked" || call.status == "failed" || call.status == "cancelled"}
 	if call.status == "ready" {
 		ref := call.result.Session

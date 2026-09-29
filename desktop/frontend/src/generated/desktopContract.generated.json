@@ -31383,6 +31383,13 @@
           }
         },
         {
+          "name": "errorDetail",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
           "name": "session",
           "optional": true,
           "type": {
@@ -40881,6 +40888,13 @@
           "type": {
             "kind": "string"
           }
+        },
+        {
+          "name": "sortMode",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
         }
       ]
     },
@@ -40988,6 +41002,13 @@
         },
         {
           "name": "errorCode",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "errorDetail",
           "optional": true,
           "type": {
             "kind": "string"

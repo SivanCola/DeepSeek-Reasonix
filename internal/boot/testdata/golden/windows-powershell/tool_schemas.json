@@ -226,7 +226,7 @@
   },
   {
     "Name": "pwsh",
-    "Description": "Execute one PowerShell command in an isolated process and return combined stdout/stderr. The host prefers PowerShell 7 and can fall back to Windows PowerShell 5.1, so use syntax accepted by both:\n  - chaining: ';' runs both commands; use 'if ($?) { ... }' for conditional execution.\n  - redirect/vars: $null not /dev/null; $env:VAR not $VAR; '2\u003e$null' drops stderr.\n  - file ops: Get-ChildItem (ls), Get-Content (cat), Remove-Item -Recurse -Force (rm -rf), Copy-Item (cp), Select-String (grep).\n  - no head/tail/which/touch: use Select-Object -First/-Last N, (Get-Command x).Source, New-Item.\n  - services/watchers: set run_in_background=true and manage the returned job id with job_output/job_kill.\n  - multi-line text to a native exe (e.g. git commit -m): use a single-quoted here-string @'...'@ (closing '@ at column 0). Use for builds, tests, git, package managers, etc. To search/read/list/edit/move files, prefer the dedicated tools (grep, read_file, ls, glob, edit_file, move_file) over shell grep/cat/ls/find/sed/mv/Move-Item — they behave identically on every OS. For symbol search or architecture questions, prefer LSP/read tools and targeted grep before shell commands.",
+    "Description": "Execute one PowerShell command in an isolated process and return combined stdout/stderr. The host prefers PowerShell 7 and can fall back to Windows PowerShell 5.1, so use syntax accepted by both:\n  - chaining: ';' runs both commands; use 'if ($?) { ... }' for conditional execution.\n  - redirect/vars: $null not /dev/null; $env:VAR not $VAR; '2\u003e$null' drops stderr.\n  - file ops: Get-ChildItem (ls), Remove-Item -Recurse -Force (rm -rf), Copy-Item (cp), Select-String (grep).\n  - file text: read with read_file and change with edit_file/write_file, not Get-Content, Set-Content, Out-File or '\u003e'. Windows PowerShell 5.1 reads BOM-less UTF-8 as the ANSI code page and writes ANSI or UTF-16; the built-in tools keep each file's encoding and BOM.\n  - no head/tail/which/touch: use Select-Object -First/-Last N, (Get-Command x).Source, New-Item.\n  - services/watchers: set run_in_background=true and manage the returned job id with job_output/job_kill.\n  - multi-line text to a native exe (e.g. git commit -m): use a single-quoted here-string @'...'@ (closing '@ at column 0). Use for builds, tests, git, package managers, etc. To search/read/list/edit/move files, prefer the dedicated tools (grep, read_file, ls, glob, edit_file, move_file) over shell grep/cat/ls/find/sed/mv/Move-Item — they behave identically on every OS. For symbol search or architecture questions, prefer LSP/read tools and targeted grep before shell commands.",
     "ReadOnly": false,
     "Schema": {
       "properties": {
@@ -361,7 +361,7 @@
   },
   {
     "Name": "update_goal",
-    "Description": "Update the exact current goal revision. edit, pause, and resume require current direct-human authority; complete and blocked are also allowed during the exact autonomous goal round. There is no continue action: leaving an active goal unchanged continues it automatically.",
+    "Description": "Update the exact current goal revision. edit, pause, and resume require current direct-human authority; complete and blocked are also allowed during the exact autonomous goal round. There is no continue action: leaving an active goal unchanged continues it automatically. Only edit consumes objective/max_goal_rounds; only blocked consumes blocked_reason. Omit unused fields; supplied unused fields are ignored.",
     "ReadOnly": false,
     "Schema": {
       "additionalProperties": false,
@@ -377,9 +377,15 @@
           "type": "string"
         },
         "blocked_reason": {
-          "description": "Concrete blocker; required only for blocked.",
-          "minLength": 1,
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Non-empty concrete blocker required for blocked. Ignored for other actions."
         },
         "goal_id": {
           "minLength": 1,
@@ -395,12 +401,18 @@
               "type": "null"
             }
           ],
-          "description": "Replacement limit for edit; null removes the limit."
+          "description": "Replacement limit for edit; omit to keep it, null removes the limit. Ignored for other actions."
         },
         "objective": {
-          "description": "Replacement objective; valid only for edit.",
-          "minLength": 1,
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Replacement non-empty objective for edit; omit or null to keep it. Ignored for other actions."
         },
         "revision": {
           "minimum": 1,

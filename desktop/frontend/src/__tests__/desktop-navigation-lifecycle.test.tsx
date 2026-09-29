@@ -23,6 +23,7 @@ const acceptedTopics: number[] = [];
 let intent = 0;
 let registration: ReturnType<typeof deferred<string>> | undefined;
 let preparationReads = 0;
+let lastTopicPath = "";
 let api!: ReturnType<typeof useDesktopNavigation>;
 const activate = (id: string) => { calls.push(`open:${id}`); const request = deferred<TabMeta>(); pending.set(id, request); return request.promise; };
 const ports: Parameters<typeof useDesktopNavigation>[0]["ports"] = {
@@ -30,7 +31,7 @@ const ports: Parameters<typeof useDesktopNavigation>[0]["ports"] = {
   registeredNavigationIntent: async seq => registration ? registration.promise : String(seq),
   openRemoteProject: async (_host, workspace) => activate(`remote:${workspace}`),
   switchRemoteTab: async (meta, seq) => { calls.push(`remote-switch:${meta.id}:${seq}`); },
-  activateTopic: async (_scope, _workspace, id) => activate(id),
+  activateTopic: async (_scope, _workspace, id, path) => { lastTopicPath = path; return activate(id); },
   openCanonicalSession: async (ref) => { await activate(`canonical:${ref.sessionId}`); },
   openTopicSession: async (_scope, _workspace, id) => { calls.push("tab-session"); return activate(id); },
   openGlobalTab: async id => { calls.push("tab-global"); return activate(id); },
@@ -103,6 +104,14 @@ try {
   const validIM = api.enqueueNavigation({ kind: "sidebar-im", connection });
   await finish("blank:im", validIM);
   assert.ok(calls.includes("channel:blank:im:channel.jsonl"));
+
+  calls.length = 0;
+  const botConnection = { ...connection, sessionId: "session:local:bot-conversation" };
+  const botNavigation = api.enqueueNavigation({ kind: "sidebar-im", connection: botConnection });
+  await finish("", botNavigation);
+  assert.equal(lastTopicPath, "bot-session:local:bot-conversation");
+  assert.ok(!calls.some(value => value.startsWith("open:blank:") || value.startsWith("channel:")),
+    "canonical bot sessions open through the shared runtime surface, not a new blank tab");
 
   calls.length = 0;
   const isolated = api.enqueueNavigation({ kind: "isolated-worktree", workspaceRoot: "dirty" });

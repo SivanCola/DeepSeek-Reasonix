@@ -342,6 +342,9 @@ func (r *ModelCapabilityResolver) providerFingerprint(entry ProviderEntry) strin
 
 func (r *ModelCapabilityResolver) providerFingerprintForCredentialRevision(entry ProviderEntry, credentialsRevision string) string {
 	h := hmac.New(sha256.New, []byte("reasonix-model-capabilities-cache-v2"))
+	if entry.HTTP1Only {
+		_, _ = h.Write([]byte("http1_only:"))
+	}
 	for _, value := range []string{
 		"reasonix-model-capabilities-v2", entry.Name, entry.Kind, entry.BaseURL, entry.ChatURL, entry.RequestURL,
 		entry.ModelsURL, entry.APIKeyEnv, fmt.Sprintf("%t", entry.AuthHeader), fmt.Sprintf("%t", entry.NoProxy),

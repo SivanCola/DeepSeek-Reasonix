@@ -469,6 +469,9 @@ func providerModelCatalogFingerprintForCredentials(p config.ProviderEntry, crede
 	write(p.ChatURL)
 	write(p.RequestURL)
 	write(fmt.Sprintf("%t", p.NoProxy))
+	if p.HTTP1Only {
+		write("http1_only")
+	}
 	write("api_key_env")
 	write(p.APIKeyEnv)
 	write("credentials_revision")
@@ -2716,6 +2719,10 @@ func (a *App) FetchAllProviderModels(providers []ProviderView) map[string][]stri
 	g, ctx := errgroup.WithContext(a.reqCtx())
 	g.SetLimit(4)
 	root := a.activeWorkspaceRoot()
+	cfg, err := config.LoadForRootWithoutCredentialsReadOnly(root)
+	if err != nil {
+		return results
+	}
 	proxy := a.networkProxySpecForRoot(root)
 	for i := range providers {
 		p := providers[i]
@@ -2728,6 +2735,9 @@ func (a *App) FetchAllProviderModels(providers []ProviderView) map[string][]stri
 				AuthHeader: p.AuthHeader, NoProxy: p.NoProxy,
 			}
 			e.ResolveAPIKeyForRoot(root)
+			if saved, ok := cfg.Provider(p.Name); ok {
+				e.HTTP1Only = saved.HTTP1Only
+			}
 			ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			defer cancel()
 			models, err := e.FetchModelsWithProxy(ctx, withProbeDirectHost(proxy, e.BaseURL, e.NoProxy))

@@ -380,7 +380,7 @@
     },
     {
       "name": "update_goal",
-      "description": "Update the exact current goal revision. edit, pause, and resume require current direct-human authority; complete and blocked are also allowed during the exact autonomous goal round. There is no continue action: leaving an active goal unchanged continues it automatically.",
+      "description": "Update the exact current goal revision. edit, pause, and resume require current direct-human authority; complete and blocked are also allowed during the exact autonomous goal round. There is no continue action: leaving an active goal unchanged continues it automatically. Only edit consumes objective/max_goal_rounds; only blocked consumes blocked_reason. Omit unused fields; supplied unused fields are ignored.",
       "parameters": {
         "additionalProperties": false,
         "properties": {
@@ -395,9 +395,15 @@
             "type": "string"
           },
           "blocked_reason": {
-            "description": "Concrete blocker; required only for blocked.",
-            "minLength": 1,
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Non-empty concrete blocker required for blocked. Ignored for other actions."
           },
           "goal_id": {
             "minLength": 1,
@@ -413,12 +419,18 @@
                 "type": "null"
               }
             ],
-            "description": "Replacement limit for edit; null removes the limit."
+            "description": "Replacement limit for edit; omit to keep it, null removes the limit. Ignored for other actions."
           },
           "objective": {
-            "description": "Replacement objective; valid only for edit.",
-            "minLength": 1,
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Replacement non-empty objective for edit; omit or null to keep it. Ignored for other actions."
           },
           "revision": {
             "minimum": 1,

@@ -85,7 +85,7 @@ import {
 } from "./controllerNotices";
 import { applyReadStatusEvent, type ReadStatusHost } from "./readStatus";
 import { upsertReadPause } from "./readPause";
-import { applyHydrateErrorState, hydratePlaceholderItems as resolveHydratePlaceholders } from "./hydrateErrorState";
+import { applyHydrateErrorState, hydrateFailureDetail, hydratePlaceholderItems as resolveHydratePlaceholders } from "./hydrateErrorState";
 import { canAdoptUnboundLiveSurface, hasCachedLiveTurn, hasReusableCachedTranscript, sameSessionHydrateIdentity, sameSessionPlaceholderItems, type HydrateSurfacePolicy } from "./hydrateHistoryApply";
 import { useSessionCatalogActions } from "./useSessionCatalogActions";
 import { hydrateIdentityCurrent, sessionIdentityFields, sessionIdentityRoute, sessionIdentityStableKey, type SessionHydrationOptions } from "./sessionIdentity";
@@ -2758,13 +2758,12 @@ export function useController() {
       };
 
       const modern = !skipHistory;
-      const snapshotLoaded = modern ? await loadTimed("transcript follow", async () => {
-        await startTranscriptFollow(tabId, sessionPath);
-        return true;
-      }) : false;
+      let followFailure: unknown;
+      const snapshotLoaded = modern ? await loadTimed("transcript follow", () => startTranscriptFollow(tabId, sessionPath)
+        .then(() => true, (err: unknown) => { followFailure = err; throw err; })) : false;
       if (!stillCurrent()) return;
       if (!skipHistory && snapshotLoaded !== true) {
-        const error = t("history.failedLoadHistory");
+        const error = hydrateFailureDetail(t("history.failedLoadHistory"), followFailure);
         dispatchTo(tabId, { type: "hydrate_error", reason, error });
         // SessionRecoveryBanner owns recovery; chat notices survive successful snapshots.
         return;
@@ -2918,7 +2917,7 @@ export function useController() {
           durationMs: Date.now() - startedAt,
         });
         if (!stillCurrent()) return "miss";
-        dispatchTo(tabId, { type: "hydrate_error", reason, error: t("history.failedLoadHistory") });
+        dispatchTo(tabId, { type: "hydrate_error", reason, error: hydrateFailureDetail(t("history.failedLoadHistory"), error) });
         return "failed";
       }
     })();

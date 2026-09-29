@@ -83,6 +83,10 @@ type GatewayConfig struct {
 	// status, event subscriptions, and remote approvals for any live desktop
 	// session. Nil when the gateway runs standalone (reasonix bot start).
 	Desktop DesktopBridge
+	// SessionServiceForRoot lets an embedded host share ownership of a session
+	// store. The host keeps the returned service alive until after Stop drains
+	// all gateway controllers; the gateway never shuts that service down.
+	SessionServiceForRoot func(string) (*session.Service, error)
 }
 
 // ChannelConfig overrides gateway defaults for one IM channel.

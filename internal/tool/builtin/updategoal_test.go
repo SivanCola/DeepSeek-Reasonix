@@ -167,12 +167,21 @@ func TestUpdateGoalValidatesActionSpecificFields(t *testing.T) {
 	ctx := goalLifecycleContext(stub, tool.GoalSourceDirectHuman)
 	for _, args := range []string{
 		`{"goal_id":"goal-1","revision":3,"action":"blocked"}`,
-		`{"goal_id":"goal-1","revision":3,"action":"complete","objective":"wrong"}`,
+		`{"goal_id":"goal-1","revision":3,"action":"blocked","blocked_reason":"  "}`,
+		`{"goal_id":"goal-1","revision":3,"action":"edit","objective":""}`,
+		`{"goal_id":"goal-1","revision":3,"action":"edit","max_goal_rounds":0}`,
+		`{"goal_id":"goal-1","revision":3,"action":"edit","objective":null}`,
+		`{"goal_id":"goal-1","revision":3,"action":"blocked","blocked_reason":null}`,
+		`{"goal_id":"goal-1","revision":3,"action":"resume","unknown":"field"}`,
+		`{"goal_id":"goal-1","revision":3,"action":"resume","objective":123}`,
 		`{"goal_id":"goal-1","revision":3,"action":"edit"}`,
 		`{"goal_id":"goal-1","revision":3,"action":"continue"}`,
 	} {
 		if _, err := (updateGoal{}).Execute(ctx, json.RawMessage(args)); err == nil {
 			t.Fatalf("accepted invalid args %s", args)
+		}
+		if stub.updateRequest != (tool.GoalUpdateRequest{}) {
+			t.Fatalf("invalid arguments reached owner: %+v", stub.updateRequest)
 		}
 	}
 }

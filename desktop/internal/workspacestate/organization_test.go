@@ -367,6 +367,32 @@ func TestOrganizationForkPreservesActivitySortWithoutEnablingManualOrder(t *test
 	assertStrings(t, o.Groups[0].Members, []string{SessionKey("parent"), SessionKey("child")})
 }
 
+func TestManualOrderPlacesNewSessionAtTheHead(t *testing.T) {
+	store := organizationTestStore(t)
+	ctx := t.Context()
+	if _, _, err := store.UpdateOrganization(ctx, GlobalWorkspaceID, nil, func(*Organization) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"older", "newer"} {
+		if err := store.AttachSession(ctx, "", GlobalWorkspaceID, id, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.MoveSession(ctx, GlobalWorkspaceID, "newer", "older"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AttachSession(ctx, "", GlobalWorkspaceID, "fresh", ""); err != nil {
+		t.Fatal(err)
+	}
+	state, err := NewStore(store.Path()).Load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := state.Workspaces[GlobalWorkspaceID].Organization
+	assertStrings(t, o.Order, []string{SessionKey("fresh"), SessionKey("newer"), SessionKey("older")})
+	assertStrings(t, state.Workspaces[GlobalWorkspaceID].SessionIDs, []string{"fresh", "newer", "older"})
+}
+
 func organizationTestStore(t *testing.T) *Store {
 	t.Helper()
 	store := NewStore(filepath.Join(t.TempDir(), "registry.json"))

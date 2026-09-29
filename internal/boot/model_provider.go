@@ -53,6 +53,7 @@ func newProviderWithSearchMode(e *config.ProviderEntry, proxy netclient.ProxySpe
 		}
 	}
 	return provider.New(e.Kind, provider.Config{
+		HTTP1Only:  e.HTTP1Only,
 		HTTPClient: tunnelClient,
 		Name:       e.Name, DisplayName: e.DisplayName, Protocol: e.Kind,
 		BaseURL: e.BaseURL, Model: e.Model, APIKey: e.APIKey(), ModelInfo: modelInfo,

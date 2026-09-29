@@ -1453,6 +1453,7 @@ export const zhTW: Record<DictKey, string> = {
   "projectTree.sortCriteria": "排序條件",
   "projectTree.sortByCreatedAt": "建立時間",
   "projectTree.sortByUpdatedAt": "更新時間",
+  "projectTree.resetManualOrder": "重設手動排序",
   "projectTree.createBlankProject": "新建空白專案",
   "projectTree.useExistingFolder": "使用現有資料夾",
 
