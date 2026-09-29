@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 11;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:7b54f163f56a5eef0839a8a1d1541ea5ce1f75c074e2faa569c4f98347bf09e3";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:b4fd48e18f5b4e766fb0da34f9d382961a0f9e07ee8385ac7b387babf63fa6e0";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -3603,7 +3603,6 @@ export interface ProviderView {
   extraBody: Record<string, unknown>;
   authHeader: boolean;
   noProxy: boolean;
-  http1Only?: boolean;
   keySet: boolean;
   requiresKey: boolean;
   configured: boolean;

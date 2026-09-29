@@ -54,14 +54,14 @@ func TestProviderHTTPCompatibilityPreservesWireBodyAndStreaming(t *testing.T) {
 					t.Fatal(err)
 				}
 				observationMu.Lock()
-				mode, protocol := observed.HTTPMode, observed.HTTPProtocol
+				protocol := observed.HTTPProtocol
 				observationMu.Unlock()
-				wantMode, wantProtocol := "auto", "HTTP/2.0"
+				wantProtocol := "HTTP/2.0"
 				if only {
-					wantMode, wantProtocol = "http1", "HTTP/1.1"
+					wantProtocol = "HTTP/1.1"
 				}
-				if mode != wantMode || protocol != wantProtocol {
-					t.Fatalf("observation = %s %s", mode, protocol)
+				if protocol != wantProtocol {
+					t.Fatalf("observation = %s", protocol)
 				}
 			}
 			mu.Lock()

@@ -5,16 +5,6 @@
 import type { DictKey } from "./en";
 
 export const zh: Record<DictKey, string> = {
-  "settings.connectionProtocol": "连接协议",
-  "settings.connectionProtocolAuto": "自动协商（默认）",
-  "settings.connectionProtocolHTTP1": "HTTP/1.1 兼容模式",
-  "settings.connectionProtocolHint": "仅对当前连接生效。自动模式支持 HTTP/2；兼容模式适用于 HTTP/2 连接异常，保留流式输出。",
-  "error.enableHTTP1": "启用 HTTP/1.1 兼容模式",
-  "error.http1Saving": "正在保存…",
-  "error.http1Saved": "兼容模式已保存，将在下一次请求前应用。准备好后请重新发送消息。",
-  "error.http1NoReplay": "仅修改此连接，本次请求不会自动重发。",
-  "error.http1ConnectionMissing": "此连接已不存在，请打开模型设置检查。",
-  "error.connectionSettings": "打开连接设置",
   "error.unknown": "操作出现问题，请展开详情查看原始报错。",
   "error.connection": "无法连接服务，请检查网络、代理和服务地址。",
   "error.transportProtocol": "HTTP/2 连接发生协议错误，请检查服务端或代理的兼容性，展开详情可查看错误信息。",

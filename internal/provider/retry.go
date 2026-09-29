@@ -244,7 +244,6 @@ func readErrorBody(resp *http.Response) []byte {
 func SendWithRetry(ctx context.Context, httpClient *http.Client, opts SendOptions, newReq func(context.Context) (*http.Request, error)) (*http.Response, error) {
 	identity := RequestIdentity{Provider: opts.Provider, DisplayName: opts.ProviderDisplayName, Protocol: opts.Protocol}
 	requestCtx, observation := observeRequest(ctx)
-	observation.transport(httpClient)
 	req, err := newReq(requestCtx)
 	if err != nil {
 		observation.finish(err, "build_error")

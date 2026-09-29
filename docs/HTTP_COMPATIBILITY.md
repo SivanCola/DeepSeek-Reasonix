@@ -1,66 +1,57 @@
-# Model connection compatibility / 模型连接兼容模式
+# HTTP/2 protocol compatibility / HTTP/2 协议兼容
 
-Model connections negotiate HTTP automatically by default. When a server or
-network path fails with an HTTP/2 protocol error, open the connection's
-**Compatibility settings → Connection protocol → HTTP/1.1 compatibility mode**.
-Save the change, then explicitly send the message again. The local chat error
-also offers an **Enable HTTP/1.1 compatibility mode** shortcut for an identified
-provider connection. It saves only that connection's transport choice.
+An affected provider connection can opt into HTTP/1.1 before sending requests.
+This is a compatibility workaround, not proof that a server or proxy defect
+has been repaired. It does not fix idle-connection EOF failures.
 
-模型连接默认自动协商 HTTP 协议。遇到 HTTP/2 协议错误时，可在该连接的
-**兼容设置 → 连接协议 → HTTP/1.1 兼容模式**中修改并保存，然后手动重新发送消息。
-本地聊天的结构化协议错误也会显示**启用 HTTP/1.1 兼容模式**入口，只修改错误中
-明确标识的连接。远程错误的连接身份可能属于远端，因此不直接修改同名本地连接；
-请在实际提供凭据的连接设置中选择兼容模式。
+受影响的模型连接可在发送请求前指定 HTTP/1.1。这是兼容性绕过，不代表服务端或
+代理的故障已被修复，也不是空闲连接 EOF 问题的修复。
 
-The same setting controls Chat Completions, Responses, Anthropic Messages,
-connection probes and model discovery. Desktop credential-proxy routes honor
-the source connection's choice. Other connections keep their own settings.
-SSE streaming, model selection and serialized request bodies are unchanged.
-The setting does not disable TLS verification or bypass the configured proxy.
-An invalid proxy configuration fails explicitly instead of falling back to a
-direct/default client. Credential-proxy upstreams use the same configured
-network policy in both automatic and HTTP/1.1 modes.
+Close Reasonix, back up the user configuration, and add the following line
+inside the affected existing `[[providers]]` entry. Do not create a duplicate
+entry or change its API address, model, credentials, or proxy for this test.
 
-此设置统一覆盖 Chat Completions、Responses、Anthropic Messages、连接测试与模型列表
-获取。Desktop 凭据代理向上游转发时也遵守源连接的设置。其他连接保持原有设置；
-SSE 流式输出、模型选择与请求正文不变，不关闭证书校验，也不绕过配置的代理。
-代理配置无效时会明确报错，不会退回直连或默认客户端。凭据代理的上游请求在自动
-模式和 HTTP/1.1 模式下遵守相同的网络设置。
-
-Saving never resends the failed request: a request written to the network may
-already have been processed or billed. Existing model-setting application gates
-install the new client before the next turn; busy runtimes can defer application.
-Saving is not a claim that the remote fault has been repaired. Restore
-**Automatic** to allow HTTP/2 negotiation again.
-
-保存不会重发失败请求，因为已经写出的请求可能已被服务端处理或计费。
-现有模型设置生效机制会在下一轮之前安装新客户端，运行中的任务可延后应用。
-保存成功不代表远端故障已修复。选择**自动协商**可恢复 HTTP/2 协商。
-
-For CLI or configuration-file use, add this field to the affected provider in
-the user configuration; omitted or `false` retains automatic negotiation:
-
-CLI 或配置文件用户可在用户配置中对应的 provider 条目添加以下字段；缺省或
-`false` 保持自动协商：
+退出 Reasonix，备份用户配置，在受影响的**已有** `[[providers]]` 条目内添加以下
+一行。不要新增重复条目，也不要同时修改 API 地址、模型、密钥或代理。
 
 ```toml
-[[providers]]
-name = "my-connection"
-kind = "openai"
-base_url = "https://provider.example/v1"
-model = "my-model"
 http1_only = true
 ```
 
-Diagnostics record the actual negotiated `httpProtocol` and, for ordinary
-owned HTTP transports, `httpMode` (`auto` or `http1`). Missing fields in older
-records remain unknown. Existing configurations read as automatic. Previous
-readers ignore the added field; the previous model-settings delta writer keeps
-unknown fields when editing other settings. Older clients cannot enforce the
-new option. No session storage migration is required.
+The user configuration is `%APPDATA%\reasonix\config.toml` on Windows or
+`~/.reasonix/config.toml` on macOS/Linux; `REASONIX_HOME` overrides the directory.
+Restart the patched application to load the policy. Missing or `false` keeps
+automatic negotiation. The v1.39.5 application ignores this field; adding it
+without installing a patched build does not enable compatibility mode.
 
-诊断记录实际协商的 `httpProtocol`，普通自有 HTTP 客户端还记录 `httpMode`
-（`auto` 或 `http1`）。旧记录缺字段仍表示未知。旧配置按自动模式读取；旧版读取器
-忽略新增字段，旧版模型设置增量写入器在修改其他设置时保留未知字段，但旧客户端
-不能执行此协议选项。不需要会话存储迁移。
+Windows 用户配置位于 `%APPDATA%\reasonix\config.toml`，macOS/Linux 位于
+`~/.reasonix/config.toml`；设置了 `REASONIX_HOME` 时以该目录为准。
+重启带此补丁的应用后生效。缺省或 `false` 保持自动协商。1.39.5 会忽略此字段，
+仅编辑配置而不安装修复版不会启用兼容模式。
+
+## Verification / 用户环境验证
+
+1. With the field absent or false, send a short, non-sensitive test prompt and
+   export diagnostics. Record `httpProtocol` and `transportCode`.
+2. Enable the field, restart, and manually send the same prompt on the same
+   connection and network. Confirm `HTTP/1.1` and successful streaming.
+3. Restore false, restart, and repeat only if an additional request is acceptable.
+   Record successes and failures; one success does not establish causality.
+
+1. 缺省或设为 `false`，发送简短无敏感信息的测试消息，导出诊断，记录
+   `httpProtocol` 与 `transportCode`。
+2. 启用后重启，在相同连接和网络下手动发送同样的测试消息，确认 `HTTP/1.1`
+   且流式回复成功。
+3. 若接受额外测试请求，可恢复 `false`、重启并复测。记录成功与失败，不能仅凭
+   一次成功判定原因。每次测试均可能产生供应商费用。
+
+Written requests are never automatically replayed by this compatibility feature:
+the server may already have processed them. TLS verification, configured proxy,
+SSE and request bodies remain unchanged. Chat Completions, Responses, Anthropic,
+model discovery, desktop probes and credential-proxy upstreams use the policy.
+Unrelated desktop settings edits retain it without a new desktop RPC field or UI.
+
+此兼容功能不会自动重发已写出的请求，因为服务端可能已经处理。
+证书校验、配置的代理、SSE 与请求正文均保持不变。Chat Completions、Responses、
+Anthropic、模型发现、桌面连接测试与凭据代理上游均遵守此策略。
+桌面修改其他设置时会保留该配置，不新增桌面 RPC 字段或设置界面。

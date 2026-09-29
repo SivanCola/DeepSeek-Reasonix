@@ -64,7 +64,6 @@ type ProviderView struct {
 	ExtraBody                   map[string]any                `json:"extraBody"`
 	AuthHeader                  bool                          `json:"authHeader"`
 	NoProxy                     bool                          `json:"noProxy"`
-	HTTP1Only                   bool                          `json:"http1Only,omitempty"`
 	KeySet                      bool                          `json:"keySet"` // the env var currently resolves to a non-empty value
 	RequiresKey                 bool                          `json:"requiresKey"`
 	Configured                  bool                          `json:"configured"` // selectable: either key is present or no key is required
@@ -690,7 +689,6 @@ func providerViewFromEntryForRootWithResolverAndCredentials(p config.ProviderEnt
 		ExtraBody:                   nonNilAnyMap(p.ExtraBody),
 		AuthHeader:                  p.AuthHeader,
 		NoProxy:                     p.NoProxy,
-		HTTP1Only:                   p.HTTP1Only,
 		KeySet:                      key.Set,
 		RequiresKey:                 requiresKey,
 		Configured:                  !requiresKey || key.Set,
@@ -2238,7 +2236,6 @@ func saveProviderConfig(c *config.Config, p ProviderView) error {
 	e.AuthHeader = p.AuthHeader
 	config.RepairProviderEndpointContract(&e)
 	e.NoProxy = p.NoProxy
-	e.HTTP1Only = p.HTTP1Only
 	e.BalanceURL = strings.TrimSpace(p.BalanceURL)
 	e.ContextWindow = p.ContextWindow
 	e.ReasoningProtocol = p.ReasoningProtocol
@@ -2722,6 +2719,10 @@ func (a *App) FetchAllProviderModels(providers []ProviderView) map[string][]stri
 	g, ctx := errgroup.WithContext(a.reqCtx())
 	g.SetLimit(4)
 	root := a.activeWorkspaceRoot()
+	cfg, err := config.LoadForRootWithoutCredentialsReadOnly(root)
+	if err != nil {
+		return results
+	}
 	proxy := a.networkProxySpecForRoot(root)
 	for i := range providers {
 		p := providers[i]
@@ -2732,9 +2733,11 @@ func (a *App) FetchAllProviderModels(providers []ProviderView) map[string][]stri
 				APIKeyEnv:  p.APIKeyEnv,
 				Headers:    p.Headers,
 				AuthHeader: p.AuthHeader, NoProxy: p.NoProxy,
-				HTTP1Only: p.HTTP1Only,
 			}
 			e.ResolveAPIKeyForRoot(root)
+			if saved, ok := cfg.Provider(p.Name); ok {
+				e.HTTP1Only = saved.HTTP1Only
+			}
 			ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			defer cancel()
 			models, err := e.FetchModelsWithProxy(ctx, withProbeDirectHost(proxy, e.BaseURL, e.NoProxy))

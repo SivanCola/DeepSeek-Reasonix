@@ -20,16 +20,6 @@ async function change(input:HTMLInputElement,value:string) {
   await act(async()=>{Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,"value")!.set!.call(input,value);input.dispatchEvent(new window.Event("input",{bubbles:true}));});
 }
 await render();
-await act(async()=>document.querySelector<HTMLElement>(".provider-editor-advanced summary")!.click());
-// Protocol-only edits must become clean without disturbing the key-draft slot.
-const http1 = document.querySelectorAll<HTMLInputElement>('.provider-http-compatibility input')[1];
-assert.ok(http1, "compatibility controls are available in advanced settings");
-await act(async()=>http1.click());
-await act(async()=>save().click());
-assert.equal(pending[0].provider.http1Only, true);
-await act(async()=>pending[0].resolve());
-assert.equal(save().disabled, true, "saved protocol-only draft becomes clean");
-pending.length = 0;
 await change(key(),"first-key");
 await act(async()=>save().click());
 assert.equal(pending.length,1);

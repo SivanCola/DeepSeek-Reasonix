@@ -1778,7 +1778,6 @@ export interface ProviderView {
   extraBody?: Record<string, unknown> | null; // optional extra top-level request body fields for compatible gateways
   authHeader?: boolean; // Anthropic-compatible: send Authorization: Bearer instead of x-api-key
   noProxy?: boolean; // reach this provider's endpoint directly, bypassing the configured/system proxy
-  http1Only?: boolean; // explicit per-connection HTTP/1.1 compatibility mode
   keySet: boolean; // the env var currently resolves to a value
   requiresKey?: boolean; // false for explicit no-auth providers
   configured?: boolean; // selectable: key is set or no key is required

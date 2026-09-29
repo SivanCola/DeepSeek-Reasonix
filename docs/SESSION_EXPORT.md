@@ -120,8 +120,6 @@ per-turn count does not include evictions belonging to other turns.
 Observations include the request host/path, method and byte count, last observed
 phase, connection reuse, negotiated HTTP protocol, dial/connected addresses,
 timestamps, response status/body byte count and a recognized HTTP/2 error code.
-Owned transports also record `httpMode` (`auto` or `http1`); see
-[connection compatibility](HTTP_COMPATIBILITY.md) for the per-connection option.
 `dialAddress` is the last dial attempt, while `remoteAddress` is the acquired
 connection's peer; neither proves which upstream hop caused a failure.
 URL userinfo/query/fragment, headers and request/response bodies are excluded.
@@ -131,8 +129,6 @@ cache prefixes, transport selection or the single-attempt request policy.
 
 观测记录请求主机/路径、方法和字节数、最后观察阶段、连接是否复用、协商的 HTTP
 协议、拨号/已连接地址、时间戳、响应状态/正文字节数，以及已识别的 HTTP/2 错误码。
-自有传输还记录 `httpMode`（`auto` 或 `http1`），对应的连接选项见
-[连接兼容模式](HTTP_COMPATIBILITY.md)。
 `dialAddress` 是最后一次拨号尝试，`remoteAddress` 是已取得连接的对端；两者均不能
 单独证明故障来自哪一跳。不保存 URL 用户信息/查询参数/片段、请求头或请求/响应正文。
 旧记录缺少的字段保持未知，`requestBytes = -1` 表示未知正文长度。
