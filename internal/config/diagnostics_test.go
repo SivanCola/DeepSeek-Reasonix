@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -153,6 +155,20 @@ func TestDiagnosticDetailsAreExplicitRedactedAndOrderIndependent(t *testing.T) {
 	}
 	if InspectDiagnosticDetails("local", root, "stale-id").Items[0].Values != nil {
 		t.Fatal("stale issue disclosed unrelated values")
+	}
+}
+
+func TestDiagnosticIDsAreNotAnUnkeyedDigestOfValues(t *testing.T) {
+	rule := "Bash=echo API_KEY=sk-proj-abcdefghijklmnop123456"
+	_, root := loadScoped(t, "", "[permissions]\nallow="+renderStringArray([]string{rule})+"\n")
+	d := InspectDiagnostics("local", root).Items[0]
+	for _, guess := range []string{rule, d.Scope + "\x00" + d.Source + "\x00" + d.Field + "\x00" + d.Code + "\x00" + rule} {
+		if sum := sha256.Sum256([]byte(guess)); d.ID == hex.EncodeToString(sum[:]) {
+			t.Fatalf("diagnostic ID confirms the declared value %q", guess)
+		}
+	}
+	if again := InspectDiagnostics("local", root).Items[0].ID; again != d.ID {
+		t.Fatalf("ID changed within one process: %s != %s", again, d.ID)
 	}
 }
 

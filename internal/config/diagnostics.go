@@ -1,7 +1,10 @@
 package config
 
 import (
+	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -86,6 +89,26 @@ func (c *Config) HasLoadWarnings() bool {
 	return len(c.LoadWarnings()) > 0
 }
 
+// Diagnostic IDs are process-local opaque values. Their identities include
+// project commands and error text, so an unkeyed digest in exports would let a
+// reader confirm guessed secrets. Restarting the process only re-shows issues.
+var diagnosticIDKey = func() []byte {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		panic(err)
+	}
+	return key
+}()
+
+func diagnosticDigest(parts ...string) string {
+	mac := hmac.New(sha256.New, diagnosticIDKey)
+	for _, part := range parts {
+		mac.Write([]byte(part))
+		mac.Write([]byte{0})
+	}
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
 func (c *Config) addDiagnostic(d Diagnostic, identity string) {
 	if c == nil {
 		return
@@ -95,7 +118,7 @@ func (c *Config) addDiagnostic(d Diagnostic, identity string) {
 			d.Source = abs
 		}
 	}
-	d.ID = fmt.Sprintf("%x", sha256.Sum256([]byte(d.Scope+"\x00"+d.Source+"\x00"+d.Field+"\x00"+d.Code+"\x00"+identity)))
+	d.ID = diagnosticDigest(d.Scope, d.Source, d.Field, d.Code, identity)
 	d.Count = 1
 	if slices.ContainsFunc(c.diagnostics, func(old Diagnostic) bool { return old.ID == d.ID }) {
 		return
@@ -148,7 +171,7 @@ func (c *Config) diagnosticGroups(detailID string) []Diagnostic {
 			continue
 		}
 		out[i].Count += d.Count
-		out[i].ID = fmt.Sprintf("%x", sha256.Sum256([]byte(out[i].ID+"\x00"+d.ID)))
+		out[i].ID = diagnosticDigest(out[i].ID, d.ID)
 	}
 	// Only an explicit detail request receives values. Exports and background
 	// snapshots contain counts and safe summaries, never historical commands.
