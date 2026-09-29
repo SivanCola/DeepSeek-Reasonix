@@ -18,7 +18,7 @@ export function ProviderHTTPCompatibilityActions({ diagnostic, tabId, hostId }: 
   const providerId = diagnostic?.providerId;
   // Remote diagnostics can use remote-owned or virtual provider identities.
   // Never apply those identities to an unrelated local connection.
-  if (diagnostic?.kind !== "transport_protocol" || !providerId || (hostId && hostId !== "local")) return null;
+  if (diagnostic?.kind !== "transport_protocol" || diagnostic.transportCode !== "PROTOCOL_ERROR" || !providerId || (hostId && hostId !== "local")) return null;
   const openSettings = () => {
     const navigation = useAppNavigationStore.getState();
     navigation.setSettingsFocus(current => ({ target: "model-access", providerName: providerId, sourceTabId: tabId, requestId: (current?.requestId ?? 0) + 1 }));

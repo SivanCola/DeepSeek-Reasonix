@@ -26,9 +26,13 @@ installDesktopHostStub({
 });
 const root = createRoot(document.getElementById("root")!);
 let key = 0;
-const render = async (kind = "transport_protocol", hostId = "local", providerId = "connection-id") => {
-  await act(async () => root.render(<LocaleProvider><ProviderHTTPCompatibilityActions key={++key} diagnostic={{ kind, providerId, transportCode: "PROTOCOL_ERROR" }} tabId="tab-one" hostId={hostId} /></LocaleProvider>));
+const render = async (kind = "transport_protocol", hostId = "local", providerId = "connection-id", transportCode = "PROTOCOL_ERROR") => {
+  await act(async () => root.render(<LocaleProvider><ProviderHTTPCompatibilityActions key={++key} diagnostic={{ kind, providerId, transportCode }} tabId="tab-one" hostId={hostId} /></LocaleProvider>));
 };
+for (const code of ["", "GOAWAY", "ENHANCE_YOUR_CALM", "INTERNAL_ERROR", "REFUSED_STREAM", "NO_ERROR"]) {
+  await render("transport_protocol", "local", "connection-id", code);
+  assert.equal(document.querySelector("button"), null, `${code} must not suggest a protocol change`);
+}
 await render("unknown"); assert.equal(document.querySelector("button"), null);
 await render("transport_protocol", "remote-host"); assert.equal(document.querySelector("button"), null, "remote identities cannot edit local providers");
 await render("transport_protocol", "local", ""); assert.equal(document.querySelector("button"), null);

@@ -1,15 +1,17 @@
-package netclient
+package netclient_test
 
 import (
 	"crypto/tls"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
 	"golang.org/x/net/http2"
+
+	"reasonix/internal/netclient"
+	"reasonix/internal/provider"
 )
 
 // A peer that negotiates h2 but sends an illegal frame reproduces the failure
@@ -36,7 +38,7 @@ func TestHTTP1CompatibilityAvoidsBrokenHTTP2Peer(t *testing.T) {
 	server.StartTLS()
 	defer server.Close()
 	for _, only := range []bool{false, true} {
-		client, err := NewHTTPClient(ProxySpec{Mode: ModeOff}, TransportOptions{HTTP1Only: only})
+		client, err := netclient.NewHTTPClient(netclient.ProxySpec{Mode: netclient.ModeOff}, netclient.TransportOptions{HTTP1Only: only})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -53,7 +55,7 @@ func TestHTTP1CompatibilityAvoidsBrokenHTTP2Peer(t *testing.T) {
 				resp.Body.Close()
 				t.Fatal("broken h2 unexpectedly succeeded")
 			}
-			if !strings.Contains(err.Error(), "PROTOCOL_ERROR") {
+			if provider.HTTP2TransportCode(err) != http2.ErrCodeProtocol.String() {
 				t.Fatalf("expected HTTP/2 protocol failure, got %v", err)
 			}
 			continue
@@ -70,7 +72,7 @@ func TestHTTP1CompatibilityAvoidsBrokenHTTP2Peer(t *testing.T) {
 }
 
 func TestHTTP1CompatibilityKeepsProxyAndTLSValidation(t *testing.T) {
-	tr, err := NewTransport(ProxySpec{Mode: ModeCustom, URL: "http://proxy.invalid:8080"}, TransportOptions{HTTP1Only: true})
+	tr, err := netclient.NewTransport(netclient.ProxySpec{Mode: netclient.ModeCustom, URL: "http://proxy.invalid:8080"}, netclient.TransportOptions{HTTP1Only: true})
 	if err != nil {
 		t.Fatal(err)
 	}
