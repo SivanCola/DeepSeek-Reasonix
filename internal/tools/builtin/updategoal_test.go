@@ -41,7 +41,14 @@ func TestUpdateGoalValidatesStatusAndReason(t *testing.T) {
 	}{
 		{"continue without reason rejected", `{"status":"continue"}`, "reason is required"},
 		{"blocked without reason rejected", `{"status":"blocked"}`, "reason is required"},
+		{"continue with empty reason rejected", `{"status":"continue","reason":""}`, "reason is required"},
+		{"blocked with blank reason rejected", `{"status":"blocked","reason":" \t\n"}`, "reason is required"},
+		{"continue with Unicode blank reason rejected", `{"status":"continue","reason":"\u0085\u00a0\u3000"}`, "reason is required"},
+		{"blocked with Unicode blank reason rejected", `{"status":"blocked","reason":"\u0085\u00a0\u3000"}`, "reason is required"},
 		{"complete without reason accepted", `{"status":"complete"}`, ""},
+		{"complete with blank reason accepted", `{"status":"complete","reason":" \t\u3000"}`, ""},
+		{"complete with empty verification list accepted", `{"status":"complete","completion":{"verified":[]}}`, ""},
+		{"blank first verification rejected", `{"status":"complete","completion":{"verified":["  "]}}`, "completion.verified[0] is empty"},
 		{"unknown status rejected", `{"status":"sideways"}`, "status must be one of"},
 		{"empty status rejected", `{}`, "status must be one of"},
 		{"invalid json rejected", `{not json`, "invalid update_goal args"},
@@ -117,13 +124,23 @@ func TestUpdateGoalCompleteWithoutAnAccountSaysSo(t *testing.T) {
 }
 
 func TestUpdateGoalRejectsAnEmptyVerifiedEntry(t *testing.T) {
-	toolFn, rec, ctx := goalTool(t)
-	_, err := toolFn.Execute(ctx, json.RawMessage(`{"status":"complete","completion":{"verified":["  "]}}`))
-	if err == nil || !strings.Contains(err.Error(), "completion.verified[0] is empty") {
-		t.Fatalf("Execute() error = %v, want the empty citation rejected", err)
-	}
-	if len(rec.reports) != 0 {
-		t.Fatalf("rejected call still recorded a report: %+v", rec.reports)
+	for _, status := range []string{"continue", "complete", "blocked"} {
+		for _, blank := range []string{"", "  ", "\t\n", "\u0085\u00a0\u3000"} {
+			t.Run(status+"/"+blank, func(t *testing.T) {
+				toolFn, rec, ctx := goalTool(t)
+				args := argsJSON(t, map[string]any{
+					"status": status, "reason": "explanation",
+					"completion": map[string]any{"verified": []string{"go test ./...", blank}},
+				})
+				_, err := toolFn.Execute(ctx, args)
+				if err == nil || !strings.Contains(err.Error(), "completion.verified[1] is empty") {
+					t.Fatalf("Execute() error = %v, want the invalid citation's index", err)
+				}
+				if len(rec.reports) != 0 {
+					t.Fatalf("rejected call still recorded a report: %+v", rec.reports)
+				}
+			})
+		}
 	}
 }
 

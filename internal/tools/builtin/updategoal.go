@@ -26,31 +26,24 @@ func (updateGoal) Description() string {
 	return "Report this turn's disposition for the active goal. Call it at the end of every goal turn instead of using prose markers: `continue` (work is ongoing — give a concrete next_action), `complete` (the request is fully done, output format and constraints satisfied, and verification was attempted or reported unavailable), or `blocked` (only the user can unblock: missing user-only information, an irreversible/externally visible operation, or changed scope). The host validates your claim against Delivery acceptance criteria and decides whether to continue automatically."
 }
 
-// Match strings.TrimSpace's Unicode whitespace set across schema regexp engines.
-const goalNonBlankStringSchema = `{"type":"string","pattern":"[^ \t\n\r\f\u000b\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]"}`
-
 func (updateGoal) Schema() json.RawMessage {
 	return json.RawMessage(`{
 "type":"object",
 "properties":{
-  "status":{"type":"string","enum":["continue","complete","blocked"]},
-  "reason":{"type":"string","description":"Reason, required for continue/blocked."},
-  "next_action":{"type":"string","description":"Concrete next step, recommended for continue."},
+  "status":{"type":"string","enum":["continue","complete","blocked"],"description":"continue = keep working autonomously; complete = the goal is fully done and verified; blocked = only the user can unblock."},
+  "reason":{"type":"string","description":"Short explanation. REQUIRED for continue and blocked; optional for complete."},
+  "next_action":{"type":"string","description":"Optional concrete next step. Recommended for continue so the host can guide the next turn."},
   "completion":{
     "type":"object",
-    "description":"Your completion account.",
+    "description":"Your own account of the finished work.",
     "properties":{
-      "verified":{"type":"array","items":` + goalNonBlankStringSchema + `,"description":"Commands actually run; host receipts flag nonexistent, failed, or stale claims."},
-      "unverified":{"type":"array","items":{"type":"string"},"description":"Skipped checks; recorded without blocking completion."},
-      "risks":{"type":"array","items":{"type":"string"},"description":"Known risks."}
+      "verified":{"type":"array","items":{"type":"string"},"description":"Commands you ran as proof, as they actually ran. One that never ran, failed, or predates your latest change is recorded as an unbacked claim."},
+      "unverified":{"type":"array","items":{"type":"string"},"description":"What you did NOT verify. The host cannot infer what you skipped, so stating it is the only way it is known — and it never blocks completion."},
+      "risks":{"type":"array","items":{"type":"string"},"description":"Known risks to carry forward."}
     }
   }
 },
-"required":["status"],
-"anyOf":[
-  {"type":"object","properties":{"status":{"type":"string","enum":["complete"]}}},
-  {"type":"object","properties":{"status":{"type":"string","enum":["continue","blocked"]},"reason":` + goalNonBlankStringSchema + `},"required":["reason"]}
-]
+"required":["status"]
 }`)
 }
 

@@ -613,60 +613,27 @@
       "name": "update_goal",
       "description": "Report this turn's disposition for the active goal. Call it at the end of every goal turn instead of using prose markers: `continue` (work is ongoing — give a concrete next_action), `complete` (the request is fully done, output format and constraints satisfied, and verification was attempted or reported unavailable), or `blocked` (only the user can unblock: missing user-only information, an irreversible/externally visible operation, or changed scope). The host validates your claim against Delivery acceptance criteria and decides whether to continue automatically.",
       "parameters": {
-        "anyOf": [
-          {
-            "properties": {
-              "status": {
-                "enum": [
-                  "complete"
-                ],
-                "type": "string"
-              }
-            },
-            "type": "object"
-          },
-          {
-            "properties": {
-              "reason": {
-                "pattern": "[^ \t\n\r\f\u000b   - \u2028\u2029  　]",
-                "type": "string"
-              },
-              "status": {
-                "enum": [
-                  "continue",
-                  "blocked"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "reason"
-            ],
-            "type": "object"
-          }
-        ],
         "properties": {
           "completion": {
-            "description": "Your completion account.",
+            "description": "Your own account of the finished work.",
             "properties": {
               "risks": {
-                "description": "Known risks.",
+                "description": "Known risks to carry forward.",
                 "items": {
                   "type": "string"
                 },
                 "type": "array"
               },
               "unverified": {
-                "description": "Skipped checks; recorded without blocking completion.",
+                "description": "What you did NOT verify. The host cannot infer what you skipped, so stating it is the only way it is known — and it never blocks completion.",
                 "items": {
                   "type": "string"
                 },
                 "type": "array"
               },
               "verified": {
-                "description": "Commands actually run; host receipts flag nonexistent, failed, or stale claims.",
+                "description": "Commands you ran as proof, as they actually ran. One that never ran, failed, or predates your latest change is recorded as an unbacked claim.",
                 "items": {
-                  "pattern": "[^ \t\n\r\f\u000b   - \u2028\u2029  　]",
                   "type": "string"
                 },
                 "type": "array"
@@ -675,14 +642,15 @@
             "type": "object"
           },
           "next_action": {
-            "description": "Concrete next step, recommended for continue.",
+            "description": "Optional concrete next step. Recommended for continue so the host can guide the next turn.",
             "type": "string"
           },
           "reason": {
-            "description": "Reason, required for continue/blocked.",
+            "description": "Short explanation. REQUIRED for continue and blocked; optional for complete.",
             "type": "string"
           },
           "status": {
+            "description": "continue = keep working autonomously; complete = the goal is fully done and verified; blocked = only the user can unblock.",
             "enum": [
               "continue",
               "complete",
