@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync/atomic"
 )
 
 // APIError is a refusal the kernel named. Code is the stable identity a
@@ -45,11 +46,17 @@ const (
 // http://reasonix.local/rt/r1; every write sends JSON, which serve requires of
 // state-changing requests.
 type Client struct {
-	HTTP *http.Client
-	Base string
+	HTTP        *http.Client
+	Base        string
+	streamStart atomic.Pointer[streamStart]
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
+	if method != http.MethodGet {
+		if err := c.awaitStream(ctx); err != nil {
+			return err
+		}
+	}
 	var rd io.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)

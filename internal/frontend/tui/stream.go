@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"reasonix/internal/contract/eventwire"
@@ -28,7 +29,9 @@ const reconnectDelay = 500 * time.Millisecond
 // Unnumbered frames (streaming deltas) are delivered as they come.
 func (c *Client) Subscribe(ctx context.Context) <-chan Update {
 	out := make(chan Update, 256)
-	s := &subscription{c: c, out: out}
+	start := &streamStart{ctx: ctx, ready: make(chan struct{})}
+	c.streamStart.Store(start)
+	s := &subscription{c: c, out: out, start: start}
 	go func() {
 		defer close(out)
 		for ctx.Err() == nil {
@@ -42,10 +45,34 @@ func (c *Client) Subscribe(ctx context.Context) <-chan Update {
 	return out
 }
 
+// Mutations can emit transient notices immediately. Wait for the server to
+// register the first subscription, not merely for its goroutine to start.
+type streamStart struct {
+	ctx   context.Context
+	ready chan struct{}
+	once  sync.Once
+}
+
+func (c *Client) awaitStream(ctx context.Context) error {
+	start := c.streamStart.Load()
+	if start == nil {
+		return nil
+	}
+	select {
+	case <-start.ready:
+		return nil
+	case <-start.ctx.Done():
+		return start.ctx.Err()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 type subscription struct {
-	c    *Client
-	out  chan<- Update
-	seen int64
+	c     *Client
+	out   chan<- Update
+	start *streamStart
+	seen  int64
 	// known is false until the stream states a position: 0 cannot tell a
 	// subscriber that just attached from one that has seen the stream start.
 	known bool
@@ -66,6 +93,9 @@ func (s *subscription) follow(ctx context.Context) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return
+	}
+	if s.start != nil {
+		s.start.once.Do(func() { close(s.start.ready) })
 	}
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 64<<10), 16<<20)
