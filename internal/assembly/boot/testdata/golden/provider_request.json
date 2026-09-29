@@ -619,9 +619,11 @@
               "status": {
                 "enum": [
                   "complete"
-                ]
+                ],
+                "type": "string"
               }
-            }
+            },
+            "type": "object"
           },
           {
             "properties": {
@@ -633,34 +635,36 @@
                 "enum": [
                   "continue",
                   "blocked"
-                ]
+                ],
+                "type": "string"
               }
             },
             "required": [
               "reason"
-            ]
+            ],
+            "type": "object"
           }
         ],
         "properties": {
           "completion": {
-            "description": "Your own account of the finished work.",
+            "description": "Your completion account.",
             "properties": {
               "risks": {
-                "description": "Known risks to carry forward.",
+                "description": "Known risks.",
                 "items": {
                   "type": "string"
                 },
                 "type": "array"
               },
               "unverified": {
-                "description": "What you did NOT verify. The host cannot infer what you skipped, so stating it is the only way it is known — and it never blocks completion.",
+                "description": "Skipped checks; recorded without blocking completion.",
                 "items": {
                   "type": "string"
                 },
                 "type": "array"
               },
               "verified": {
-                "description": "Commands you ran as proof, as they actually ran. One that never ran, failed, or predates your latest change is recorded as an unbacked claim.",
+                "description": "Commands actually run; host receipts flag nonexistent, failed, or stale claims.",
                 "items": {
                   "pattern": "[^ \t\n\r\f\u000b   - \u2028\u2029  　]",
                   "type": "string"
@@ -671,15 +675,14 @@
             "type": "object"
           },
           "next_action": {
-            "description": "Optional concrete next step. Recommended for continue so the host can guide the next turn.",
+            "description": "Concrete next step, recommended for continue.",
             "type": "string"
           },
           "reason": {
-            "description": "Short explanation. REQUIRED for continue and blocked; optional for complete.",
+            "description": "Reason, required for continue/blocked.",
             "type": "string"
           },
           "status": {
-            "description": "continue = keep working autonomously; complete = the goal is fully done and verified; blocked = only the user can unblock.",
             "enum": [
               "continue",
               "complete",
