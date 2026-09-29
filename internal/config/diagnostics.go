@@ -66,6 +66,26 @@ func (c *Config) Diagnostics() []Diagnostic {
 	return append([]Diagnostic{}, c.diagnostics...)
 }
 
+// LoadWarnings returns a copy of the warning/error projection for older callers.
+func (c *Config) LoadWarnings() []string {
+	out := []string{}
+	for _, d := range c.Diagnostics() {
+		if d.Severity == "warning" || d.Severity == "error" {
+			msg := d.legacyMessage
+			if msg == "" {
+				msg = d.Summary
+			}
+			out = append(out, msg)
+		}
+	}
+	return out
+}
+
+// HasLoadWarnings reports whether the load used a degraded in-memory fallback.
+func (c *Config) HasLoadWarnings() bool {
+	return len(c.LoadWarnings()) > 0
+}
+
 func (c *Config) addDiagnostic(d Diagnostic, identity string) {
 	if c == nil {
 		return

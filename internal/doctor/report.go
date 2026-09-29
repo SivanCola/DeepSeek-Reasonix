@@ -135,7 +135,6 @@ type PermissionReport struct {
 
 func Collect(opts Options) Report {
 	cfg := opts.Config
-	var warnings []string
 	var loadErr error
 	if cfg == nil {
 		var err error
@@ -154,16 +153,7 @@ func Collect(opts Options) Report {
 		root = abs
 	}
 	sourcePath := config.SourcePathForRoot(root)
-	diagnostics := cfg.DiagnosticGroups()
-	if loadErr != nil {
-		diagnostics = config.LoadFailureDiagnostics(root, loadErr)
-	}
-	for i := range diagnostics {
-		diagnostics[i].Source = redactHome(diagnostics[i].Source)
-		if diagnostics[i].Severity != "info" {
-			warnings = append(warnings, diagnostics[i].Summary)
-		}
-	}
+	diagnostics, warnings := collectConfigDiagnostics(cfg, root, loadErr)
 	userPath := config.UserConfigPath()
 	if legacyPath := config.LegacyUserConfigPath(); userPath != "" && legacyPath != "" {
 		if _, userErr := os.Stat(userPath); userErr == nil {
@@ -261,6 +251,21 @@ func Collect(opts Options) Report {
 		})
 	}
 	return report
+}
+
+func collectConfigDiagnostics(cfg *config.Config, root string, loadErr error) ([]config.Diagnostic, []string) {
+	diagnostics := cfg.DiagnosticGroups()
+	if loadErr != nil {
+		diagnostics = config.LoadFailureDiagnostics(root, loadErr)
+	}
+	var warnings []string
+	for i := range diagnostics {
+		diagnostics[i].Source = redactHome(diagnostics[i].Source)
+		if diagnostics[i].Severity != "info" {
+			warnings = append(warnings, diagnostics[i].Summary)
+		}
+	}
+	return diagnostics, warnings
 }
 
 func appendRecoveryWarnings(warnings []string, recovery RecoveryLifecycleReport) []string {

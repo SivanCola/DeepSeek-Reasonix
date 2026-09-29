@@ -192,27 +192,6 @@ func (c *Config) CLITelemetryMode() string {
 	}
 }
 
-// LoadWarnings returns non-fatal config load issues (corrupt files recovered in
-// memory). The returned slice is a copy.
-func (c *Config) LoadWarnings() []string {
-	out := []string{}
-	for _, d := range c.Diagnostics() {
-		if d.Severity == "warning" || d.Severity == "error" {
-			msg := d.legacyMessage
-			if msg == "" {
-				msg = d.Summary
-			}
-			out = append(out, msg)
-		}
-	}
-	return out
-}
-
-// HasLoadWarnings reports whether the load used a degraded in-memory fallback.
-func (c *Config) HasLoadWarnings() bool {
-	return len(c.LoadWarnings()) > 0
-}
-
 func (c *Config) addLoadWarning(msg string) {
 	if c == nil {
 		return
