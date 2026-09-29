@@ -39,6 +39,7 @@ func init() {
 
 // Config holds Responses API provider settings.
 type Config struct {
+	HTTP1Only   bool
 	HTTPClient  *http.Client
 	Name        string
 	DisplayName string
@@ -102,6 +103,7 @@ type client struct {
 	vision                             bool // model accepts image input; embed Images as input_image parts
 	modelInfo                          provider.ModelInfo
 	http                               *http.Client
+	initErr                            error
 	idleTimeout                        time.Duration
 	authed                             atomic.Bool
 
@@ -147,16 +149,7 @@ func New(cfg Config) provider.Provider {
 	// Official DeepSeek image input is pinned to one SKU. Ignore metadata or
 	// Extra["vision"] for Flash/Pro.
 	vision = openai.DeepSeekImageInputAllowed(vendor == "deepseek", cfg.RequestURL, cfg.Model, cfg.ModelInfo != nil, vision)
-	httpClient := &http.Client{}
-	if built, err := netclient.NewHTTPClient(cfg.Proxy, netclient.TransportOptions{
-		DialTimeout: 30 * time.Second, KeepAlive: 30 * time.Second,
-		TLSHandshakeTimeout: 15 * time.Second, ResponseHeaderTimeout: 300 * time.Second,
-	}); err == nil {
-		httpClient = built
-	}
-	if cfg.HTTPClient != nil {
-		httpClient = cfg.HTTPClient
-	}
+	httpClient, initErr := newHTTPClient(cfg)
 	baseURL, requestURL := resolveEndpoints(cfg.BaseURL, cfg.RequestURL)
 	modelInfo := provider.ModelInfo{ID: cfg.Model, InputModalities: []provider.ModelModality{provider.ModalityText}}
 	if cfg.ModelInfo != nil {
@@ -164,7 +157,7 @@ func New(cfg Config) provider.Provider {
 		modelInfo.ID = cfg.Model
 	}
 	clientWebSearch, _ := cfg.Extra["client_web_search"].(bool)
-	if reject, _ := cfg.Extra["reject_redirects"].(bool); reject {
+	if reject, _ := cfg.Extra["reject_redirects"].(bool); reject && httpClient != nil {
 		httpClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	}
 	if vision {
@@ -182,7 +175,7 @@ func New(cfg Config) provider.Provider {
 		vendor: vendor, caps: cap, mode: cfg.mode(), sessionCache: sessionCache, search: provider.SearchPolicy{NativeEnabled: cfg.WebSearch, ClientEnabled: clientWebSearch}, maxOutputTokens: maxOutputTokens,
 		vision:    vision,
 		modelInfo: modelInfo,
-		http:      httpClient, idleTimeout: defaultStreamIdleTimeout,
+		http:      httpClient, initErr: initErr, idleTimeout: defaultStreamIdleTimeout,
 	}
 }
 
@@ -242,6 +235,9 @@ func (c *client) ResetContext() {
 }
 
 func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
+	if c.initErr != nil {
+		return nil, c.initErr
+	}
 	if c.effort != "auto" && c.effort != "off" {
 		if err := c.reasoning.Validate(c.model, c.effort); err != nil {
 			return nil, err

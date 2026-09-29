@@ -7,6 +7,7 @@ export type ModelSettingsChange = { requestId: string; expectedFingerprint: stri
   | { kind: "provider_save"; provider: ProviderView; key?: string }
   | { kind: "credential"; key: string } & ({ name: string; names?: never } | { names: string[]; name?: never })
   | { kind: "web_search_capability"; names: string[]; enabled: boolean }
+  | { kind: "http1_compatibility"; name: string; enabled: boolean }
   | { kind: "connection_add"; presetId?: string; name?: string; key: string; baseURL?: string; protocol?: string }
   | { kind: "official_add"; name: string; key: string }
   | { kind: "preset_add"; presetId: string; key: string }

@@ -70,6 +70,12 @@ export function makeMockModelSettingsBindings(
           break;
         case "credential": for (const name of change.names ?? [change.name]) await this.SetConnectionKey(name, change.key); break;
         case "web_search_capability": await this.SetProviderWebSearch(change.names, change.enabled); break;
+        case "http1_compatibility": {
+          const provider = settings.providers.find(p => p.name === change.name);
+          if (!provider) throw new Error("Provider connection no longer exists");
+          provider.http1Only = change.enabled;
+          break;
+        }
         case "connection_add": await this.AddProviderConnectionWithOptions(change.presetId ?? "", change.name ?? "", change.key, change.baseURL ?? "", change.protocol ?? ""); break;
         case "official_add": await this.AddOfficialProviderAccess(change.name, change.key); break;
         case "preset_add": await this.AddProviderPresetAccess(change.presetId, change.key); break;

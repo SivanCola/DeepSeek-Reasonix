@@ -1,6 +1,7 @@
 import { createContext, lazy, Suspense, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { FileText, Globe, GitBranch, PackageOpen, Search, Terminal, Users, Wrench, X } from "lucide-react";
 import { ErrorMessage } from "./ErrorMessage";
+import { ProviderHTTPCompatibilityActions } from "./ProviderHTTPCompatibilityActions";
 import { ChatSource, type ChatNode } from "../lib/chatViewSource";
 import type { ChatContentLoader } from "../lib/chatContentLoader";
 import type { ChatScrollController } from "../lib/chatScrollController";
@@ -126,7 +127,7 @@ const ChatNodeSeat = memo(function ChatNodeSeat({ source, nodeKey, loader, scrol
     case "process": body = <TurnProcessNodeView node={node} onToggle={() => { scroll.beforeChange(); source.toggleProcess(node.turnKey); }} />; break;
     case "tool": body = <ChatTool node={node} loader={loader} actions={actions} scroll={scroll} />; break;
     case "phase": body = <ContextInjectionRow title={t("chat.activity")} summary={node.item.text} beforeToggle={scroll.beforeChange}>{node.item.text}</ContextInjectionRow>; break;
-    case "notice": body = <ChatNotice node={node} actions={actions} scroll={scroll} />; break;
+    case "notice": body = <ChatNotice node={node} actions={actions} scroll={scroll} tabId={tabId} hostId={hostId} />; break;
     case "compaction": body = <ChatCompaction node={node} loader={loader} />; break;
     case "extension": body = node.item.card.actions?.length ? <ExtensionCard item={node.item} tabId={tabId} /> :
       <ChatDisclosure label={node.item.card.title || node.item.pluginId}><ExtensionCard item={node.item} tabId={tabId} /></ChatDisclosure>; break;
@@ -136,7 +137,7 @@ const ChatNodeSeat = memo(function ChatNodeSeat({ source, nodeKey, loader, scrol
     data-turn-process-answer={visibility === "answer" || undefined}>{body}</div>;
 });
 
-function ChatNotice({ node, actions, scroll }: { node: Extract<ChatNode, { kind: "notice" }>; actions: ChatActions; scroll: ChatScrollController }) {
+function ChatNotice({ node, actions, scroll, tabId, hostId }: { node: Extract<ChatNode, { kind: "notice" }>; actions: ChatActions; scroll: ChatScrollController; tabId?: string; hostId?: string }) {
   const t = useT();
   const item = node.item;
   const summary = item.completionSummary;
@@ -145,6 +146,7 @@ function ChatNotice({ node, actions, scroll }: { node: Extract<ChatNode, { kind:
   if (summary && !summary.mutations && !summary.changed_files && !summary.checks_passed && !summary.checks_failed) return null;
   if (item.level === "warn" || item.action === "recover_context") return <div className="chat-notice" role="status" data-level={item.level}>
     {item.title && <strong>{item.title} </strong>}<ErrorMessage error={item.text} diagnostic={item.diagnostic} />
+    <ProviderHTTPCompatibilityActions key={item.diagnostic?.providerId} diagnostic={item.diagnostic} tabId={tabId} hostId={hostId} />
     {summary && <details className="chat-notice__details"><summary>{t("chat.details")}</summary><pre>{JSON.stringify(summary, null, 2)}</pre></details>}
     {item.detail && <ChatDisclosure label={t("chat.details")}><pre>{item.detail}</pre></ChatDisclosure>}
     {item.action === "recover_context" && item.recoveryId && <button className="btn" onClick={() => actions.recover(item.recoveryId!)}>{t("notice.protocolRecoveryAction")}</button>}

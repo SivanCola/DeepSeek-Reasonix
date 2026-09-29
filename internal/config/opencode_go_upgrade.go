@@ -51,7 +51,8 @@ func openCodeGoIdentity(p ProviderEntry) string {
 		Headers       map[string]string
 		Body          map[string]any
 		Auth, NoProxy bool
-	}{strings.TrimSpace(p.APIKeyEnv), normalizedProviderHeaders(p.Headers), p.ExtraBody, p.AuthHeader, p.NoProxy})
+		HTTP1Only     bool `json:",omitempty"`
+	}{strings.TrimSpace(p.APIKeyEnv), normalizedProviderHeaders(p.Headers), p.ExtraBody, p.AuthHeader, p.NoProxy, p.HTTP1Only})
 	return openCodeGoDigest(b)
 }
 

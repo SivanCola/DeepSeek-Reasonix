@@ -281,6 +281,8 @@ func applyModelSettingsChange(c *config.Config, change ModelSettingsChange, resu
 			names = []string{change.Name}
 		}
 		return setConnectionsCredentialConfig(c, names, *change.Key)
+	case "http1_compatibility":
+		return setProviderHTTP1OnlyConfig(c, change.Name, change.Enabled)
 	case "web_search_capability":
 		if change.Enabled == nil {
 			return fmt.Errorf("enabled is required")
@@ -423,6 +425,8 @@ func validateModelSettingsFields(change ModelSettingsChange) error {
 		allowed = "Provider Key"
 	case "credential":
 		allowed = "Name Names Key"
+	case "http1_compatibility":
+		allowed = "Name Enabled"
 	case "web_search_capability":
 		allowed = "Names Enabled"
 	case "connection_add":

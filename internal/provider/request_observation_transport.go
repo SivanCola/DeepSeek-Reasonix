@@ -7,6 +7,24 @@ import (
 	"net/http/httptrace"
 )
 
+func (s *requestObservationState) transport(client *http.Client) {
+	if s == nil || client == nil {
+		return
+	}
+	transport := client.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	if tr, ok := transport.(*http.Transport); ok {
+		s.update("request_started", func(v *RequestObservation) {
+			v.HTTPMode = "auto"
+			if tr.Protocols != nil && tr.Protocols.HTTP1() && !tr.Protocols.HTTP2() && !tr.Protocols.UnencryptedHTTP2() {
+				v.HTTPMode = "http1"
+			}
+		})
+	}
+}
+
 func (s *requestObservationState) request(req *http.Request) {
 	if s == nil || req == nil || req.URL == nil {
 		return
@@ -58,6 +76,8 @@ func (s *requestObservationState) traceContext(ctx context.Context) context.Cont
 				if conn, ok := info.Conn.(interface{ ConnectionState() tls.ConnectionState }); ok {
 					if conn.ConnectionState().NegotiatedProtocol == "h2" {
 						v.HTTPProtocol = "HTTP/2.0"
+					} else {
+						v.HTTPProtocol = "HTTP/1.1"
 					}
 				}
 			})

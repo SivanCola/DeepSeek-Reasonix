@@ -11,7 +11,18 @@ func (p *credentialProxy) revokeRoutes(match func(*credProxyRoute) bool) {
 	defer p.mu.Unlock()
 	for token, route := range p.routes {
 		if route != nil && match(route) {
+			route.retired = true
 			delete(p.routes, token)
+			closeCredentialRouteTransport(route)
 		}
+	}
+}
+
+func closeCredentialRouteTransport(route *credProxyRoute) {
+	if route == nil || route.proxy == nil {
+		return
+	}
+	if transport, ok := route.proxy.Transport.(interface{ CloseIdleConnections() }); ok {
+		transport.CloseIdleConnections()
 	}
 }

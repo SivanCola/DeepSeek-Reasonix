@@ -9,7 +9,7 @@ import (
 )
 
 func TestModelSettingsEveryOperationWithoutSessionRejectsForeignFields(t *testing.T) {
-	kinds := []string{"default", "planner", "vision", "search", "subagent", "subagent_effort", "profile_model", "profile_effort", "depth", "concurrency", "writers", "provider_save", "credential", "web_search_capability", "connection_add", "official_add", "preset_add", "preset_reset", "protocol_upgrade", "catalogs", "provider_remove", "access_remove", "rename"}
+	kinds := []string{"default", "planner", "vision", "search", "subagent", "subagent_effort", "profile_model", "profile_effort", "depth", "concurrency", "writers", "provider_save", "credential", "http1_compatibility", "web_search_capability", "connection_add", "official_add", "preset_add", "preset_reset", "protocol_upgrade", "catalogs", "provider_remove", "access_remove", "rename"}
 	for _, kind := range kinds {
 		t.Run(kind, func(t *testing.T) {
 			isolateDesktopUserDirs(t)
@@ -73,6 +73,9 @@ func sessionlessModelSettingsOperation(t *testing.T, app *App, kind, ref string)
 		change.Key = &key
 	case "credential":
 		change.Name, change.Key = "old", &key
+	case "http1_compatibility":
+		enabled = true
+		change.Name, change.Enabled = "old", &enabled
 	case "web_search_capability":
 		if _, err := app.AddOfficialProviderAccess("deepseek", key); err != nil {
 			t.Fatal(err)

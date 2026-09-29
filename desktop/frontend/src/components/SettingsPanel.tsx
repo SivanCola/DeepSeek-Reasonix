@@ -1419,6 +1419,7 @@ export function normalizeProviderView(p: ProviderView): ProviderView {
     extraBody: normalizeExtraBodyMap(p.extraBody),
     authHeader: Boolean(p.authHeader),
     noProxy: Boolean(p.noProxy),
+    http1Only: Boolean(p.http1Only),
     reasoningProtocol: normalizeReasoningProtocol(p.reasoningProtocol),
     thinking: normalizeThinkingMode(p.thinking),
     webSearch: Boolean(p.webSearch),
@@ -6080,6 +6081,7 @@ export function ProviderEditor({
   const [extraBodyDraft, setExtraBodyDraft] = useState(formatProviderExtraBody(initial?.extraBody));
   const [authHeader, setAuthHeader] = useState(Boolean(initial?.authHeader));
   const [noProxy, setNoProxy] = useState(Boolean(initial?.noProxy));
+  const [http1Only, setHTTP1Only] = useState(Boolean(initial?.http1Only));
   const [keyDraft, setKeyDraft] = useState("");
   const [balanceUrl, setBalanceUrl] = useState(initial?.balanceUrl ?? "");
   // Empty when unset so the placeholder (and its "0 = disabled" hint) reads instead
@@ -6097,7 +6099,7 @@ export function ProviderEditor({
   const [fetchStatus, setFetchStatus] = useState<string | null>(null);
   const [fetchFallback, setFetchFallback] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const draftSnapshot = JSON.stringify([name, hideConnectionName ? "" : displayName, kind, requestUrl, models, modelsUrl, headersDraft, extraBodyDraft, authHeader, noProxy, keyDraft, balanceUrl, ctx, modelContextWindows, modelOverrides, modelCapabilities, legacyVisionModels, reasoningProtocol, thinking, webSearch]);
+  const draftSnapshot = JSON.stringify([name, hideConnectionName ? "" : displayName, kind, requestUrl, models, modelsUrl, headersDraft, extraBodyDraft, authHeader, noProxy, keyDraft, balanceUrl, ctx, modelContextWindows, modelOverrides, modelCapabilities, legacyVisionModels, reasoningProtocol, thinking, webSearch, http1Only]);
   const [savedSnapshot, setSavedSnapshot] = useState(draftSnapshot);
   const latestDraftSnapshot = useRef(draftSnapshot);
   const saveGeneration = useRef(0);
@@ -6199,6 +6201,7 @@ export function ProviderEditor({
         extraBody: effectiveExtraBody,
         authHeader,
         noProxy,
+        http1Only,
         keySet: Boolean(keyDraft.trim()) || (initial?.keySet ?? false),
         balanceUrl: balanceUrl.trim(),
         contextWindow: Number(ctx) || 0,
@@ -6253,6 +6256,7 @@ export function ProviderEditor({
       extraBody: effectiveExtraBody,
       authHeader,
       noProxy,
+      http1Only,
       modelsUrl: effectiveModelsUrl,
       keySet: Boolean(keyDraft.trim()) || (initial?.keySet ?? false),
       balanceUrl: balanceUrl.trim(),
@@ -6391,6 +6395,12 @@ export function ProviderEditor({
           {t("settings.providerNoProxy")}
         </label>
         <div className="mem-hint">{t("settings.providerNoProxyHint")}</div>
+        <fieldset className="provider-http-compatibility">
+          <legend className="set-label">{t("settings.connectionProtocol")}</legend>
+          <label className="set-check"><input type="radio" name={`http-protocol-${name}`} checked={!http1Only} onChange={() => setHTTP1Only(false)} />{t("settings.connectionProtocolAuto")}</label>
+          <label className="set-check"><input type="radio" name={`http-protocol-${name}`} checked={http1Only} onChange={() => setHTTP1Only(true)} />{t("settings.connectionProtocolHTTP1")}</label>
+          <div className="mem-hint">{t("settings.connectionProtocolHint")}</div>
+        </fieldset>
         <label className="set-label">{t("settings.reasoningProtocol")}</label>
         <SettingsSelect className="mem-select" aria-label={t("settings.reasoningProtocol")} value={reasoningProtocol} onValueChange={(value) => setReasoningProtocol(value)}>
           {REASONING_PROTOCOLS.map((protocol) => (

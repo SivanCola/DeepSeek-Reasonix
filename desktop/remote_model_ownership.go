@@ -160,6 +160,7 @@ func (a *App) reconcileCredentialProxyGenerations(host, workspace string, status
 		route.retired = true
 		if route.active == 0 {
 			delete(p.routes, token)
+			closeCredentialRouteTransport(route)
 		}
 	}
 	return accepted

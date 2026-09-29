@@ -36614,6 +36614,13 @@
           }
         },
         {
+          "name": "http1Only",
+          "optional": true,
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
           "name": "keySet",
           "type": {
             "kind": "boolean"

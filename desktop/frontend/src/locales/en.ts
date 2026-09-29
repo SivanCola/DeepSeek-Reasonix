@@ -4,6 +4,16 @@
 // it at compile time), so adding a key here makes the build fail until zh has it.
 
 export const en = {
+  "settings.connectionProtocol": "Connection protocol",
+  "settings.connectionProtocolAuto": "Automatic (default)",
+  "settings.connectionProtocolHTTP1": "HTTP/1.1 compatibility mode",
+  "settings.connectionProtocolHint": "Applies only to this connection. Automatic mode supports HTTP/2; compatibility mode can help with HTTP/2 connection errors. Streaming output is preserved.",
+  "error.enableHTTP1": "Enable HTTP/1.1 compatibility mode",
+  "error.http1Saving": "Saving…",
+  "error.http1Saved": "Compatibility mode saved. It will apply before your next request; send your message again when ready.",
+  "error.http1NoReplay": "Only changes this connection. This request will not be resent automatically.",
+  "error.http1ConnectionMissing": "This connection no longer exists. Open model settings to check it.",
+  "error.connectionSettings": "Open connection settings",
   "error.unknown": "An error occurred. Open details to view the reported cause.",
   "error.connection": "Could not connect. Check the network, proxy and service address.",
   "error.transportProtocol": "The HTTP/2 connection failed with a protocol error. Check the service or proxy compatibility; expand the details for error information.",

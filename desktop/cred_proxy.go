@@ -90,8 +90,11 @@ func (p *credentialProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		p.mu.Lock()
 		route.active--
-		if route.retired && route.active == 0 && p.routes[token] == route {
-			delete(p.routes, token)
+		if route.retired && route.active == 0 {
+			if p.routes[token] == route {
+				delete(p.routes, token)
+			}
+			closeCredentialRouteTransport(route)
 		}
 		p.mu.Unlock()
 	}()
@@ -189,6 +192,9 @@ func (p *credentialProxy) setRouteLocked(token, ref string, up proxyUpstream) {
 		up.kind = "openai"
 	}
 	proxy := &httputil.ReverseProxy{FlushInterval: -1}
+	if up.transport != nil {
+		proxy.Transport = up.transport
+	}
 	proxy.Rewrite = func(req *httputil.ProxyRequest) {
 		req.SetURL(up.url)
 		if original := req.In.Header.Get(netclient.ModelProxyOriginalURLHeader); original != "" {
@@ -219,6 +225,9 @@ func (p *credentialProxy) setRouteLocked(token, ref string, up proxyUpstream) {
 	// A token is a connection version. Re-registration must never redirect
 	// requests already accepted by a runtime holding that token.
 	if route := p.routes[token]; route != nil {
+		if up.transport != nil {
+			up.transport.CloseIdleConnections()
+		}
 		if up.offerID != "" {
 			if route.holds == nil {
 				route.holds = map[string]bool{}
@@ -249,6 +258,10 @@ func (p *credentialProxy) close() {
 	p.mu.Lock()
 	server, listener := p.server, p.ln
 	p.server, p.ln = nil, nil
+	for _, route := range p.routes {
+		route.retired = true
+		closeCredentialRouteTransport(route)
+	}
 	p.mu.Unlock()
 	if server != nil {
 		_ = server.Close()
@@ -353,6 +366,7 @@ type credentialProxyRouteInfo struct {
 
 // proxyUpstream is the resolved desktop-side provider a route forwards to.
 type proxyUpstream struct {
+	transport                *http.Transport
 	modelSnapshot            *config.Config
 	host, workspace, offerID string
 	apiKey                   string
@@ -403,7 +417,12 @@ func resolveProxyProvider(cfg *config.Config, ref string) (proxyUpstream, error)
 			return proxyUpstream{}, fmt.Errorf("credential proxy: invalid request URL")
 		}
 	}
+	transport, err := netclient.NewTransport(cfg.NetworkProxySpec(), netclient.TransportOptions{HTTP1Only: entry.HTTP1Only})
+	if err != nil {
+		return proxyUpstream{}, err
+	}
 	return proxyUpstream{
+		transport:     transport,
 		modelSnapshot: cfg,
 		apiKey:        apiKey, url: upstream, model: entry.Model, kind: kind,
 		apiKeyEnv: entry.APIKeyEnv, provider: entry.Name,

@@ -61,6 +61,7 @@ func (a *App) FetchProviderModelCatalogDraft(p ProviderView, key string) ([]Prov
 		Headers:    p.Headers,
 		AuthHeader: p.AuthHeader,
 		NoProxy:    p.NoProxy,
+		HTTP1Only:  p.HTTP1Only,
 		ChatURL:    p.ChatURL,
 		RequestURL: p.RequestURL,
 	}

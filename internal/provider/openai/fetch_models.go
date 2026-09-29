@@ -35,8 +35,9 @@ const (
 )
 
 type FetchModelsOptions struct {
-	Headers  map[string]string
-	AuthMode ModelFetchAuthMode
+	HTTP1Only bool
+	Headers   map[string]string
+	AuthMode  ModelFetchAuthMode
 	// Proxy routes the model-list request through the same transport policy as
 	// chat requests, so a broken proxy surfaces at setup time instead of only
 	// stalling the first chat turn later (#9560).
@@ -88,11 +89,12 @@ func FetchModelsWithOptions(ctx context.Context, baseURL, apiKey string, opts Fe
 // FetchModelCatalogWithOptions is the metadata-preserving form of
 // FetchModelsWithOptions. It keeps the existing request/auth/size behavior.
 func FetchModelCatalogWithOptions(ctx context.Context, baseURL, apiKey string, opts FetchModelsOptions) ([]provider.ModelInfo, error) {
-	transport, err := netclient.NewTransport(opts.Proxy, netclient.TransportOptions{})
+	transport, err := netclient.NewTransport(opts.Proxy, netclient.TransportOptions{HTTP1Only: opts.HTTP1Only})
 	if err != nil {
 		return nil, fmt.Errorf("fetch models: network: %w", err)
 	}
 	cli := &http.Client{Timeout: 10 * time.Second, Transport: transport}
+	defer transport.CloseIdleConnections()
 	url := strings.TrimRight(baseURL, "/")
 	if !strings.HasSuffix(url, "/models") {
 		url += "/models"

@@ -35,6 +35,7 @@ type RequestObservation struct {
 	DialAddress      string    `json:"dialAddress,omitempty"`
 	RemoteAddress    string    `json:"remoteAddress,omitempty"`
 	HTTPProtocol     string    `json:"httpProtocol,omitempty"`
+	HTTPMode         string    `json:"httpMode,omitempty"` // auto|http1; absent for injected/custom transports
 	ConnectionReused bool      `json:"connectionReused,omitempty"`
 	TransportCode    string    `json:"transportCode,omitempty"`
 }

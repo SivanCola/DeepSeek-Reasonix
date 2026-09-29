@@ -5,6 +5,16 @@
 import type { DictKey } from "./en";
 
 export const zhTW: Record<DictKey, string> = {
+  "settings.connectionProtocol": "連線協定",
+  "settings.connectionProtocolAuto": "自動協商（預設）",
+  "settings.connectionProtocolHTTP1": "HTTP/1.1 相容模式",
+  "settings.connectionProtocolHint": "僅對目前連線生效。自動模式支援 HTTP/2；相容模式適用於 HTTP/2 連線異常，保留串流輸出。",
+  "error.enableHTTP1": "啟用 HTTP/1.1 相容模式",
+  "error.http1Saving": "正在儲存…",
+  "error.http1Saved": "相容模式已儲存，將在下一次請求前套用。準備好後請重新傳送訊息。",
+  "error.http1NoReplay": "僅修改此連線，本次請求不會自動重送。",
+  "error.http1ConnectionMissing": "此連線已不存在，請開啟模型設定檢查。",
+  "error.connectionSettings": "開啟連線設定",
   "error.unknown": "操作發生問題，請展開詳情查看原始錯誤。",
   "error.connection": "無法連線至服務，請檢查網路、代理和服務位址。",
   "error.transportProtocol": "HTTP/2 連線發生協定錯誤，請檢查服務端或代理的相容性，展開詳情可查看錯誤資訊。",
