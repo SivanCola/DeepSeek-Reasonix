@@ -23,6 +23,12 @@ function flushPromises(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function hasSingleRequestAddress(root: HTMLElement): boolean {
+  const fields = root.querySelector(".provider-connection-fields");
+  return fields?.querySelectorAll(".provider-url-input").length === 1
+    && fields.querySelectorAll('input[type="radio"]').length === 0;
+}
+
 const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
   pretendToBeVisual: true,
   url: "http://localhost/",
@@ -334,7 +340,7 @@ ok(!editorThrew, "provider editor can switch from built-in to custom without cha
 ok(rootEl.textContent?.includes("Chat Completions (/chat/completions)") === true, "provider editor renders the custom provider fields after the switch");
 ok((await settingsOptionValues(rootEl.querySelector<HTMLButtonElement>('button[aria-label="Model capability mode"]')!)).includes("kimi-k3"), "custom provider editor exposes the explicit Kimi K3 reasoning protocol");
 const providerUrlInput = rootEl.querySelector<HTMLInputElement>(".provider-url-input");
-ok(rootEl.querySelectorAll('input[type="radio"]:not(.sr-only)').length === 0, "custom provider editor exposes only one API address input");
+ok(hasSingleRequestAddress(rootEl), "custom provider editor exposes one API address input without an address mode selector");
 ok(providerUrlInput?.value === "", "new custom providers start with an empty exact request address");
 const providerUrlLabel = Array.from(rootEl.querySelectorAll<HTMLLabelElement>("label")).find(
   (label) => label.htmlFor === providerUrlInput?.id,
@@ -376,7 +382,7 @@ ok(
 const displayedRequestURL = (input: HTMLInputElement | null) =>
   input?.value;
 const customProviderUrlInput = rootEl.querySelector<HTMLInputElement>(".provider-url-input");
-ok(rootEl.querySelectorAll('input[type="radio"]').length === 0, "existing custom providers no longer expose an address mode selector");
+ok(hasSingleRequestAddress(rootEl), "existing custom providers expose one API address input without an address mode selector");
 ok(customProviderUrlInput?.value === "https://eu.deepseek.com/v1/chat/completions", "legacy base-only providers display their previously effective request URL");
 ok(rootEl.querySelector<HTMLInputElement>(".provider-name-input")?.disabled === false, "existing connection display name remains editable");
 ok(rootEl.querySelector("code")?.textContent === backendUnsupportedCustomProvider.name, "stable provider identity remains separate from display name");
