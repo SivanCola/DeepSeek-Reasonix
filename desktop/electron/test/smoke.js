@@ -14,6 +14,10 @@ const { app, BrowserWindow, Menu } = require("electron");
 // it. A home that already carries a configuration is left exactly as it is.
 seedHome(process.env.REASONIX_HOME);
 const { current } = require("../src/main.js");
+const { activationChecks } = require("./activation.js");
+
+// macOS can activate the app before the host has supplied its window.
+if (process.platform === "darwin") app.emit("activate");
 
 function seedHome(home) {
   if (!home || fs.existsSync(path.join(home, "config.toml"))) return;
@@ -80,7 +84,7 @@ async function run() {
     placed: typeof window.reasonixHost?.pathForFile(new File(['x'], 'x.txt')),
   }))()`);
 
-  const verbs = ["closeWindow", "controlBrowserView", "freezeBrowserView", "hideBrowserView", "isWindowMaximised", "minimiseWindow", "navigateBrowserView", "openExternal", "pathForFile", "pickFolder", "platform", "revealPath", "saveBytes", "saveText", "shell", "showBrowserView", "titleBar", "toggleMaximiseWindow"];
+  const verbs = ["answerBrowserLogin", "closeWindow", "controlBrowserView", "freezeBrowserView", "hideBrowserView", "isWindowMaximised", "minimiseWindow", "navigateBrowserView", "onBrowserLoadState", "onBrowserLogin", "openExternal", "pathForFile", "pickFolder", "platform", "revealPath", "saveBytes", "saveText", "shell", "showBrowserView", "titleBar", "toggleMaximiseWindow", "trustBrowserCertificate"];
   check("the bridge exposes verbs and nothing else", JSON.stringify(seen.bridge) === JSON.stringify(verbs), seen.bridge);
   check("the credential never reaches the page", !seen.cookie.includes("reasonix_token"), seen.cookie);
   check("the renderer has no node of its own", seen.globals.every((t) => t === "undefined"), seen.globals);
@@ -199,7 +203,8 @@ async function trayChecks(win) {
     visible: win.isVisible(),
   });
 
-  win.show();
+  if (process.platform === "darwin") await activationChecks(win, current, check);
+  else win.show();
   await wait(200);
   const off = await client.setTrayPrefs(true, false);
   check("backgrounding can be turned back off", off?.closeToTray === false, off);
@@ -237,7 +242,7 @@ async function instanceChecks(win) {
   const { client } = current();
   check("the running kernel is undisturbed", !!(await client.trayPrefs()));
 
-  const otherHome = path.join(os.tmpdir(), "rx-other-home");
+  const otherHome = fs.mkdtempSync(path.join(os.tmpdir(), "rx-other-home-"));
   const elsewhere = await launch(otherHome);
   check("a launch over another home is allowed to run", elsewhere.took === -1, elsewhere.took);
 
@@ -344,6 +349,9 @@ app.whenReady().then(async () => {
     failures.push(String(err && err.message));
     process.stdout.write(`  FAIL ${String(err && err.message)}\n`);
   }
-  process.stdout.write(failures.length ? `\n${failures.length} failed\n` : "\nall checks passed\n");
-  process.exit(failures.length ? 1 : 0);
+  app.once("will-quit", () => {
+    process.stdout.write(failures.length ? `\n${failures.length} failed\n` : "\nall checks passed\n");
+    app.exit(failures.length ? 1 : 0);
+  });
+  app.quit();
 });
