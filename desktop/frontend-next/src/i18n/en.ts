@@ -62,6 +62,8 @@ export const EN: Record<string, string> = {
   "收回 {rule}": "Take back {rule}",
   "放大第 {n} 张": "Enlarge image {n}",
   "工具截图 {n}": "Tool screenshot {n}",
+  "查看图片 {name}": "Preview image {name}",
+  "关闭图片预览": "Close image preview",
   "放大的工具截图": "The enlarged tool screenshot",
   "描述任务，其余交给 Reasonix": "Describe the task; Reasonix takes it from there",
   "要求扩大可改范围": "Asking to widen what it may change",

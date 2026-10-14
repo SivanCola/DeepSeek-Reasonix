@@ -63,7 +63,7 @@ Checked against `studio` at `d779d89bc` on 2026-10-08.
 | Subagents panel | Have differently | `ui/Pane.tsx`, `ui/delegation.ts`; running-state gaps in #12410, #12284 |
 | Goal mode controls | Unverified | Studio renders the `update_goal` tool in `ui/Sym.tsx`; the 1.x lifecycle actions were not compared |
 | Mermaid diagrams in Markdown | Missing | No `mermaid` dependency in `desktop/frontend-next/package.json`; no issue yet |
-| Image viewer for attachments | Unverified | Images render in `ui/Markdown.tsx`; a zoom viewer was not found or checked |
+| Image viewer for attachments / 附件图片预览 | Have | `ui/ImagePreview.tsx`: user messages, composer attachments and tool screenshots share the original-image overlay; click or keyboard opens it, Escape, backdrop or close button dismisses it. 用户消息、输入框附件和工具截图共用原图预览；#13006 |
 
 ## Reference: shell, status and settings
 

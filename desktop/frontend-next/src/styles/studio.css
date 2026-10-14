@@ -854,6 +854,7 @@ body { background: var(--page) !important; }
 .flow .user-images { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-bottom: 8px; }
 .flow .user-image { display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); place-items: center; width: 240px; max-width: 100%; height: 160px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--muted); }
 .flow .user-image img { width: 100%; height: 100%; object-fit: contain; border-radius: inherit; }
+.flow .user-image-trigger { width: 100%; height: 100%; border-radius: inherit; }
 .flow .call[data-k="me"] .out .txt {
   margin-inline-start: auto; padding: 12px 15px; border: 1px solid var(--border); border-radius: 12px;
   background: var(--raised); box-shadow: inset 0 1px rgb(255 255 255 / .024);

@@ -115,8 +115,9 @@ export const ACTIONS: UIAction[] = [
   { id: "permissions.revoke-session", kind: "kernel-mutation", target: "entity", proof: "authority-effect" },
   { id: "permissions.revoke-remembered", kind: "kernel-mutation", target: "entity", proof: "authority-effect" },
 
-  { id: "tool.image-open", kind: "view", target: "none", proof: "interaction" },
-  { id: "tool.image-close", kind: "view", target: "none", proof: "interaction" },
+  { id: "image.open", kind: "view", target: "none", proof: "interaction" },
+  { id: "image.close", kind: "view", target: "none", proof: "interaction" },
+  { id: "image.focus-trap", kind: "navigation", target: "none", proof: "interaction" },
   { id: "tool.show-all", kind: "view", target: "none", proof: "interaction" },
   { id: "agent.open", kind: "view", target: "entity", proof: "interaction" },
   { id: "agent.focus-trap", kind: "navigation", target: "none", proof: "interaction" },

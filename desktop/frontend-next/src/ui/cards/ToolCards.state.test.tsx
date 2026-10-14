@@ -32,17 +32,17 @@ describe("tool outcome cards", () => {
   // exists; it is not the person being shown one.
   it("shows what the call showed the model, and enlarges one on request", () => {
     const shot = "data:image/jpeg;base64,AAAA";
-    const { container } = render(
+    render(
       <ToolCard tool={{ id: "shot", name: "computer_read", output: "Notes: front window\n[image: screenshot]", images: [shot], readOnly: false }} running={false} />,
     );
-    const thumb = container.querySelector<HTMLButtonElement>('[data-action="tool.image-open"]');
+    const thumb = screen.getByRole("button", { name: "查看图片 工具截图 1" });
     expect(thumb?.querySelector("img")?.getAttribute("src")).toBe(shot);
-    expect(container.querySelector(".tshot-full")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
     act(() => thumb!.click());
-    expect(container.querySelector<HTMLImageElement>(".tshot-full img")?.getAttribute("src")).toBe(shot);
+    expect(screen.getByRole("dialog").querySelector("img")?.getAttribute("src")).toBe(shot);
     // A picture that fills the window has to close without a mouse.
     act(() => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); });
-    expect(container.querySelector(".tshot-full")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("says nothing where a call showed nothing", () => {

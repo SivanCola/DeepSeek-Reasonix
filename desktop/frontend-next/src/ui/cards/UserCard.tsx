@@ -15,11 +15,15 @@ import { useIme } from "../ime";
 import { touchKeyboard } from "../touchKeyboard";
 import { useFitHeight } from "../fitHeight";
 import { useViewer } from "../../state/viewer";
+import { ImagePreview } from "../ImagePreview";
 
 function SavedImage({ path, src }: { path: string; src: string }) {
   const [failed, setFailed] = useState(false);
+  const name = path.split("/").at(-1) ?? path;
   return <div className="user-image">
-    {failed ? <span>{t("图片不可用")}</span> : <img src={src} alt={path.split("/").at(-1)} loading="lazy" width={240} height={160} onError={() => setFailed(true)} />}
+    {failed ? <span>{t("图片不可用")}</span> : <ImagePreview src={src} name={name} className="user-image-trigger">
+      <img src={src} alt={name} loading="lazy" width={240} height={160} onError={() => setFailed(true)} />
+    </ImagePreview>}
   </div>;
 }
 

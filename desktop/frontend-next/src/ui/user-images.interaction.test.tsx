@@ -117,7 +117,7 @@ describe("saved images in user messages", () => {
   it("keeps the preview frame and reference readable if its file is missing", async () => {
     render(<UserCard item={item} port={port} />);
     const image = screen.getByRole("img");
-    const frame = image.parentElement;
+    const frame = image.closest(".user-image");
     fireEvent.error(image);
     await waitFor(() => expect(screen.queryByRole("img")).toBeNull());
     expect(screen.getByText("图片不可用").parentElement).toBe(frame);

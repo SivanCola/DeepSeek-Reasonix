@@ -23,8 +23,9 @@ it("delivers the perf scene's language, zoom, theme, and save instrumentation to
   await act(async () => { await import("../../perf/harness"); });
   const hub = captured.hub!;
   const runtimes = await hub.runtimes();
-  const { result } = renderHook(() => usePaint(hub, runtimes, false, () => {}));
-  await waitFor(() => expect(adopt).toHaveBeenCalled());
+  const onError = vi.fn();
+  const { result } = renderHook(() => usePaint(hub, runtimes, false, onError));
+  await waitFor(() => expect(result.current.look.language).toBe("zh"));
   expect(adopt).toHaveBeenCalledWith("zh");
   expect(result.current.look.language).toBe("zh");
   expect(result.current.look.zoom).toBe(1.25);

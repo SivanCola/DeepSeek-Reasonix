@@ -145,6 +145,7 @@ jobs:
           node perf/sessionrows.mjs
           node perf/wheel.mjs
           node perf/branch-tooltip.mjs
+          node perf/image-preview.mjs
           node perf/selfcheck.mjs branch-tooltip
 
   # A pull request with no platform-relevant change (scripts/ci-platform-scope.sh)

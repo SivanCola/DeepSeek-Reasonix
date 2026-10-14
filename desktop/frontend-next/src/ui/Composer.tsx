@@ -24,6 +24,7 @@ import { usePromptRefine } from "./PromptRefine";
 import { useProviderOrder } from "../state/providerorder";
 import { useDraft } from "./useDraft";
 import { touchKeyboard } from "./touchKeyboard";
+import { ImagePreview } from "./ImagePreview";
 
 interface Props {
   port: AgentPort;
@@ -441,11 +442,11 @@ export function Composer({ port, status, running, quote, restore, inject, focus,
               {c.k === "attachment" ? (
                 <>
                   {isPicture(c) ? (
-                    <span
+                    <ImagePreview src={c.url} name={c.name}
                       className="thumb"
-                      aria-hidden="true"
-                      style={c.url ? { backgroundImage: `url(${c.url})` } : undefined}
-                    />
+                    >
+                      <span aria-hidden="true" style={c.url ? { backgroundImage: `url(${c.url})` } : undefined} />
+                    </ImagePreview>
                   ) : (
                     <span className="glyph" aria-hidden="true">{kindOf(c.a?.path ?? c.name)}</span>
                   )}
