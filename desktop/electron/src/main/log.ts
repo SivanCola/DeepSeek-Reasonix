@@ -1,5 +1,6 @@
 import { closeSync, mkdirSync, openSync, renameSync, statSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
+import type { Writable } from "node:stream";
 
 export const LOG_ROTATE_BYTES = 5 * 1024 * 1024;
 
@@ -60,11 +61,30 @@ export function errorText(error: unknown): string {
   }
 }
 
-export function createLogger(file: RotatingFile, echo: boolean): Logger {
+// Share one guarded sink between shell diagnostics and service stderr. Both
+// asynchronous EPIPE and synchronous EIO must stop echoing before an exception
+// handler logs again. Backpressure must not create an unbounded output queue.
+export function createOutputEcho(stream: Writable = process.stderr): (chunk: Buffer | string) => void {
+  let failed = false;
+  let blocked = false;
+  stream.on("error", () => { failed = true; });
+  stream.on("drain", () => { blocked = false; });
+  return (chunk) => {
+    if (failed || blocked || stream.destroyed || stream.writableEnded) return;
+    try {
+      blocked = !stream.write(chunk, (error) => { if (error) failed = true; });
+    } catch {
+      failed = true;
+    }
+  };
+}
+
+export function createLogger(file: RotatingFile, echo: boolean | ((chunk: Buffer | string) => void)): Logger {
+  const writeEcho = typeof echo === "function" ? echo : echo ? createOutputEcho() : undefined;
   const emit = (level: string, message: string) => {
     const line = `${new Date().toISOString()} ${level} ${message}\n`;
     file.write(line);
-    if (echo) process.stderr.write(`[shell] ${line}`);
+    writeEcho?.(`[shell] ${line}`);
   };
   return {
     info: (message) => emit("info", message),

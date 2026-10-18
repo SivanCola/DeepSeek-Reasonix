@@ -30,7 +30,7 @@ export interface QuitSequencerDeps {
   recoveryDraftTimeoutMs?: number;
   onShutdownFailed?: (message: string) => Promise<boolean>;
   onCloseAllowed(): void;
-  cleanup?: Array<{ name: string; run(): void }>;
+  cleanup?: Array<{ name: string; run(): void | Promise<void> }>;
   schedule?: (run: () => void, milliseconds: number) => void;
   now?: () => number;
   log: Logger;
@@ -99,6 +99,10 @@ export class QuitSequencer {
 
   requestQuit(reason: "user_quit" | "system_signal" = "user_quit"): void {
     this.claimReason(reason);
+    // A terminated development owner or OS signal is an explicit shutdown,
+    // not the preference-controlled "keep running when window closes" path.
+    // finish still saves the renderer draft and awaits service persistence.
+    if (reason === "system_signal") this.approved = true;
     this.quitRequested = true;
     this.deps.app.quit();
   }
@@ -215,7 +219,7 @@ export class QuitSequencer {
     this.phase = "closing";
     for (const step of [{ name: "close permission", run: () => this.deps.onCloseAllowed() }, ...(this.deps.cleanup ?? [])]) {
       try {
-        step.run();
+        await step.run();
         this.deps.log.info(`exit ${this.attempt}: cleanup ${step.name} complete`);
       } catch (error) {
         this.deps.log.warn(`exit ${this.attempt}: cleanup ${step.name} failed: ${errorText(error)}`);

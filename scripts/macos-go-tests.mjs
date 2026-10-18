@@ -10,7 +10,7 @@ import { beneath, internalRoots, listPackages, runGoTest } from "./go-test-group
 // darwin source cannot quietly fall outside the pull-request lane.
 export const darwinRoots = internalRoots(
   "cli", "crashreport", "filelock", "fileutil", "mcplaunch", "notify", "pathidentity",
-  "projectiondb", "repair", "sandbox", "tool/builtin", "workspacelease",
+  "projectiondb", "repair", "resourcebudget", "sandbox", "tool/builtin", "workspacelease",
 );
 
 export function selectPackages(packages, group) {

@@ -10,6 +10,7 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 
 	"reasonix/internal/persistentshell"
+	"reasonix/internal/resourcebudget"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/shellparse"
 	"reasonix/internal/shellrun"
@@ -93,8 +94,8 @@ func rejectPowerShellChaining(ex *tool.ShellExecution, start time.Time, sh sandb
 		"conditional chaining, or issue the commands as separate calls"), true
 }
 
-func (b bash) tryPersistent(ctx context.Context, p bashParams, sh sandbox.Shell, prepared sandbox.Prepared, cmdEnv []string, start time.Time, ex *tool.ShellExecution) (tool.DetailedResult, error, bool) {
-	out, runEx, err, used := b.runPersistent(ctx, p, sh, prepared, cmdEnv)
+func (b bash) tryPersistent(ctx context.Context, p bashParams, sh sandbox.Shell, prepared sandbox.Prepared, cmdEnv []string, budget *resourcebudget.Lease, start time.Time, ex *tool.ShellExecution) (tool.DetailedResult, error, bool) {
+	out, runEx, err, used := b.runPersistent(ctx, p, sh, prepared, cmdEnv, budget)
 	if !used {
 		return tool.DetailedResult{}, nil, false
 	}
@@ -106,7 +107,7 @@ func (b bash) tryPersistent(ctx context.Context, p bashParams, sh sandbox.Shell,
 	}, err, true
 }
 
-func (b bash) runPersistent(ctx context.Context, p bashParams, sh sandbox.Shell, prepared sandbox.Prepared, cmdEnv []string) (string, *tool.ShellExecution, error, bool) {
+func (b bash) runPersistent(ctx context.Context, p bashParams, sh sandbox.Shell, prepared sandbox.Prepared, cmdEnv []string, budget *resourcebudget.Lease) (string, *tool.ShellExecution, error, bool) {
 	if !b.shouldUsePersistent(ctx, p, sh) {
 		return "", nil, nil, false
 	}
@@ -131,8 +132,8 @@ func (b bash) runPersistent(ctx context.Context, p bashParams, sh sandbox.Shell,
 	res := m.Run(ctx, persistentshell.Request{
 		Argv:     launch.Argv,
 		Dir:      b.workDir,
-		Env:      applyEnvOverrides(cmdEnv, launch.EnvOverrides),
-		Command:  p.Command,
+		Env:      applyEnvOverrides(resourcebudget.PersistentEnv(cmdEnv), launch.EnvOverrides),
+		Command:  budget.Command(p.Command),
 		Timeout:  b.foregroundTimeoutFor(p),
 		Shell:    sh,
 		Progress: progress,
@@ -141,7 +142,7 @@ func (b bash) runPersistent(ctx context.Context, p bashParams, sh sandbox.Shell,
 		var startup *persistentshell.StartupError
 		if !errors.As(res.Err, &startup) {
 			if sh.Kind == sandbox.ShellPowerShell {
-				out, ex, err := b.runForegroundDetailed(ctx, p, sh, prepared.Argv, prepared.Wrapped, cmdEnv)
+				out, ex, err := b.runForegroundDetailed(ctx, p, sh, prepared.Argv, prepared.Wrapped, budget.Env(cmdEnv))
 				return appendSessionDataHint(out, "Persistent PowerShell was unavailable before this command started. This call ran once in an isolated process; its directory and variable changes are not retained."), ex, err, true
 			}
 			return "", nil, nil, false

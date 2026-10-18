@@ -1841,6 +1841,7 @@ func (c *Controller) runShell(command string, admission turnAdmission) {
 
 		start := time.Now()
 		res := shellrun.RunForeground(ctx, shellrun.Request{
+			Command:        command,
 			Argv:           argv,
 			Dir:            c.workspaceRoot,
 			Timeout:        shellTimeout,

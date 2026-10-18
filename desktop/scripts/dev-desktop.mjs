@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createLauncherOwner } from "../electron/src/main/launcherOwner.ts";
 
 const desktopRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
@@ -20,7 +21,7 @@ if (process.argv.includes("--help")) {
 }
 
 function start(command, args, env = process.env) {
-  return spawn(command, args, { cwd: desktopRoot, env, stdio: "inherit" });
+  return spawn(command, args, { cwd: desktopRoot, env, stdio: "inherit", detached: process.platform !== "win32" });
 }
 
 function waitForExit(child, label) {
@@ -59,11 +60,28 @@ async function waitForVite(frontend) {
 let frontend;
 let electron;
 let exiting = false;
+const owner = await createLauncherOwner();
+
+function stopChild(child) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  try {
+    if (process.platform === "win32") {
+      const cleanup = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+      cleanup.on("error", () => {});
+    }
+    else process.kill(-child.pid, "SIGTERM");
+  } catch (error) { if (error.code !== "ESRCH") throw error; }
+}
 
 function stopChildren() {
-  if (electron?.exitCode === null) electron.kill("SIGTERM");
-  if (frontend?.exitCode === null) frontend.kill("SIGTERM");
+  // The ownership connection asks Electron to save before quitting, including
+  // on Windows where terminating a wrapper cannot deliver a graceful signal.
+  owner.close();
+  if (process.platform !== "win32") stopChild(electron);
+  stopChild(frontend);
 }
+
+process.once("exit", () => owner.close());
 
 function fail(error) {
   console.error(error instanceof Error ? error.message : error);
@@ -96,13 +114,14 @@ try {
     ...process.env,
     REASONIX_DESKTOP_SERVICE: servicePath,
     REASONIX_ELECTRON_DEV_URL: devUrl,
+    REASONIX_LAUNCH_OWNER: owner.value,
   });
   const electronExit = waitForExit(electron, "Electron");
   const frontendExit = frontend
     ? waitForExit(frontend, "Vite").then(() => { throw new Error("Vite stopped before Electron"); })
     : new Promise(() => {});
   await Promise.race([electronExit, frontendExit]);
-  if (frontend?.exitCode === null) frontend.kill("SIGTERM");
+  stopChild(frontend);
 } catch (error) {
   if (!exiting) fail(error);
 }

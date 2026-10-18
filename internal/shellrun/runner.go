@@ -16,6 +16,7 @@ import (
 
 	fileenc "reasonix/internal/fileutil/encoding"
 	"reasonix/internal/proc"
+	"reasonix/internal/resourcebudget"
 	"reasonix/internal/tool"
 )
 
@@ -41,8 +42,13 @@ const (
 var errForegroundTimeout = errors.New("shell foreground timeout")
 
 // Request describes one foreground shell launch. Argv must already include the
-// interpreter and any sandbox wrapping; Command is only for diagnostics.
+// interpreter and any sandbox wrapping; Command supplies resource admission,
+// while CommandPreview remains the bounded diagnostic label.
 type Request struct {
+	// Command is the complete source for admission; previews may be truncated.
+	Command string
+	// BudgetHeld is set by bash, which releases after stray-child cleanup.
+	BudgetHeld        bool
 	Argv              []string
 	Dir               string
 	Env               []string
@@ -97,6 +103,19 @@ func RunForeground(ctx context.Context, req Request) Result {
 	if req.Timeout > 0 {
 		runCtx, cancel = context.WithTimeoutCause(ctx, req.Timeout, errForegroundTimeout)
 		defer cancel()
+	}
+	if !req.BudgetHeld {
+		budgetCtx := resourcebudget.WithWaitDetails(runCtx, func(wait resourcebudget.WaitInfo) {
+			if req.Progress != nil {
+				req.Progress(wait.String() + "\n")
+			}
+		})
+		budget, err := resourcebudget.Acquire(budgetCtx, req.Command, req.Env)
+		if err != nil {
+			return classifyForegroundResult(runCtx, req, Result{}, err)
+		}
+		defer budget.Release()
+		req.Env = budget.Env(req.Env)
 	}
 
 	cmd := proc.CommandContext(runCtx, req.Argv[0], req.Argv[1:]...)

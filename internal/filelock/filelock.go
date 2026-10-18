@@ -18,6 +18,18 @@ const retryInterval = 20 * time.Millisecond
 // Callers normally see their context error after Acquire's bounded retry loop.
 var ErrHeld = errors.New("file lock held")
 
+// ExclusiveHeld observes an existing exclusive lock with a read-only shared
+// probe. It neither creates nor writes the file, so descendants can validate
+// inherited leases inside a read-only OS sandbox. Shared readers do not count
+// as exclusive ownership. A missing file reports false without error.
+func ExclusiveHeld(path string) (bool, error) {
+	canonical, err := canonicalLockPath(path)
+	if err != nil {
+		return false, err
+	}
+	return probeExclusive(canonical)
+}
+
 // localLock is a process-local reader-writer lock for one canonical path.
 // refs counts acquirers currently between registry entry and release/timeout
 // so the registry can reclaim entries when no one is waiting or holding —

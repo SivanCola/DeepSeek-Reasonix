@@ -10,7 +10,7 @@ const smokeRoots = internalRoots(
   "desktopinstance", "filelock", "fileops", "fileutil", "hook", "identitylock", "instruction", "mcplaunch", "notify",
   // persistentshell exercises native Git Bash pipes and PowerShell named pipes;
   // Windows is the only lane that can prove the actual Windows runtimes.
-  "persistentshell", "proc",
+  "persistentshell", "proc", "resourcebudget",
   "lsp", "pathidentity", "projectiondb", "remote", "repair", "sandbox", "sessioncatalog", "sqliteuri", "sysproxy",
   "topicstate", "winaclresidue", "workspacelease",
 ).concat("reasonix/cmd");

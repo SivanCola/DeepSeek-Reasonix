@@ -35,7 +35,8 @@ import { registerRendererIpc } from "./ipc.js";
 import { ProcessDiagnostics } from "./processDiagnostics.js";
 import { createPerformanceHost } from "./performanceHost.js";
 import { QuitSequencer } from "./lifecycle.js";
-import { createLogger, errorText, RotatingFile } from "./log.js";
+import { createLogger, createOutputEcho, errorText, RotatingFile } from "./log.js";
+import { bindDevelopmentOwner } from "./launcherOwner.js";
 import { installApplicationMenu } from "./menu.js";
 import { record } from "./params.js";
 import { APP_INDEX_URL, APP_SCHEME, registerAppProtocol, resolveDistRoot } from "./protocol.js";
@@ -83,11 +84,17 @@ if (home === "") {
 }
 
 function bootstrap(dataHome: string): void {
+  const detachedDevelopment = process.env.REASONIX_DETACHED_LAUNCH === "1";
+  delete process.env.REASONIX_DETACHED_LAUNCH;
   const graphicsBootstrap = loadGraphicsBootstrap(app.getPath("userData"), process.env, process.argv);
   const graphicsTemporary = consumeGraphicsRecoveryArg(process.argv);
   const graphics = new GraphicsSettingsStore(graphicsBootstrap.configPath, graphicsBootstrap);
   const logsDir = join(app.getPath("userData"), "logs");
-  const log = createLogger(new RotatingFile(join(logsDir, "shell.log")), !app.isPackaged);
+  const echo = createOutputEcho();
+  // Also consume failures from incidental console output without logging back
+  // into the failed stream through uncaughtException.
+  createOutputEcho(process.stdout);
+  const log = createLogger(new RotatingFile(join(logsDir, "shell.log")), !app.isPackaged && echo);
   log.info(
     `graphics acceleration: saved=${graphics.current.hardwareAcceleration} startup=${graphics.current.startupEnabled} override=${graphics.current.override} recovery=${graphicsTemporary} warning=${graphics.current.warning ?? "none"}`,
   );
@@ -322,6 +329,9 @@ function bootstrap(dataHome: string): void {
       quit: () => app.quit(),
       exit: (code) => app.exit(code),
       relaunch: (args: string[], execPath?: string) => {
+        // An intentional relaunch outlives the original development launcher.
+        delete process.env.REASONIX_LAUNCH_OWNER;
+        process.env.REASONIX_DETACHED_LAUNCH = "1";
         if (execPath) delete process.env.REASONIX_DESKTOP_SERVICE;
         app.relaunch({ args, ...(execPath ? { execPath } : {}) });
       },
@@ -419,7 +429,7 @@ function bootstrap(dataHome: string): void {
       env: process.env,
       onStderr: (chunk) => {
         serviceLog.write(chunk);
-        if (!app.isPackaged) process.stderr.write(chunk);
+        if (!app.isPackaged) echo(chunk);
       },
       log,
     },
@@ -547,6 +557,8 @@ function bootstrap(dataHome: string): void {
   // Session end and scripted shutdowns deliver SIGTERM; quit through the same
   // sequence as the menu so Go snapshots sessions before the process ends.
   process.on("SIGTERM", () => lifecycle.requestQuit("system_signal"));
+  process.on("SIGINT", () => lifecycle.requestQuit("system_signal"));
+  bindDevelopmentOwner(app, detachedDevelopment, log, () => lifecycle.requestQuit("system_signal"));
   app.on("second-instance", (_event, argv) => {
     if (argv.includes(QUIT_REQUEST)) {
       lifecycle.requestQuit();
@@ -776,7 +788,7 @@ function bootstrap(dataHome: string): void {
         },
       });
       const probed = serviceLookup.probed.length > 0 ? ` (probed ${serviceLookup.probed.join(", ")})` : "";
-      log.info(`shell starting: service ${serviceBinary}${probed}, ui ${appURL}, dist ${distRoot}, home ${dataHome}`);
+      log.info(`shell starting: pid ${process.pid}, service ${serviceBinary}${probed}, ui ${appURL}, dist ${distRoot}, home ${dataHome}`);
       return service.start().catch(() => undefined);
     })
     .catch((error: unknown) => {

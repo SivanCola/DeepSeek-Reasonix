@@ -203,6 +203,11 @@ jobs:
           REASONIX_RELEASE_CACHE_GUARD: "1"
         run: node scripts/windows-go-tests.mjs smoke
 
+      - name: Test shared resource runner on native macOS and Windows
+        if: env.RUN_STEPS == 'true' && runner.os != 'Linux'
+        timeout-minutes: 3
+        run: node --test scripts/resource-run.test.mjs
+
       - name: test (Windows credential ACL identity)
         if: env.RUN_STEPS == 'true' && runner.os == 'Windows' && github.event_name == 'pull_request'
         timeout-minutes: 3
@@ -1041,6 +1046,12 @@ jobs:
       - name: Test native macOS signing coverage
         run: node --test packaging/sign-macos.test.mjs
 
+      - name: Test owned Electron termination and broken output
+        timeout-minutes: 3
+        run: |
+          go build -o build/bin/reasonix-desktop-service .
+          pnpm --dir electron test:process-lifecycle
+
       - name: Test native graphics recovery
         timeout-minutes: 3
         run: node electron/scripts/graphics-recovery-smoke.mjs
@@ -1247,6 +1258,12 @@ jobs:
       - name: Smoke-test Electron native startup
         timeout-minutes: 3
         run: node packaging/smoke.mjs build/electron/windows-amd64/app --service build/bin/reasonix-desktop.exe
+
+      - name: Test owned Electron termination and broken output on Windows
+        timeout-minutes: 3
+        env:
+          REASONIX_DESKTOP_SERVICE: ${{ github.workspace }}/desktop/build/bin/reasonix-desktop.exe
+        run: pnpm --dir electron test:process-lifecycle
 
       - name: Test native window geometry on Windows
         timeout-minutes: 2

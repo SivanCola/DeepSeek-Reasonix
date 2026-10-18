@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createLauncherOwner, watchLauncherOwner } from "../src/main/launcherOwner.ts";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const dev = process.argv.includes("--dev");
@@ -22,5 +23,15 @@ if (dev) {
 }
 
 const electron = createRequire(import.meta.url)("electron");
+const owner = await createLauncherOwner();
+const ancestor = env.REASONIX_LAUNCH_OWNER;
+env.REASONIX_LAUNCH_OWNER = owner.value;
 const child = spawn(electron, [root], { env, stdio: "inherit", windowsHide: false });
-child.on("exit", (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
+// Closing ownership reaches Electron's save/quit path on every platform.
+// Windows child.kill("SIGTERM") force-terminates instead of delivering a signal.
+const stop = () => owner.close();
+const parent = watchLauncherOwner(ancestor, stop);
+for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, stop);
+process.once("exit", () => { owner.close(); parent.dispose(); });
+child.once("error", error => { console.error(error.message); owner.close(); parent.dispose(); process.exitCode = 1; });
+child.once("exit", (code, signal) => { owner.close(); parent.dispose(); process.exitCode = code ?? (signal ? 1 : 0); });

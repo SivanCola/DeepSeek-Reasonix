@@ -236,6 +236,14 @@ export class ServiceSupervisor {
       return;
     }
     session.expectExit = true;
+    // Before hello completes no lifecycle RPC is accepted and no interactive
+    // runtime has been published. Cancel this owned startup via transport
+    // close/termination instead of asking an uninitialized host to save.
+    if (!session.generation) {
+      await this.terminate(session);
+      this.setState({ phase: "exited", generation: "" });
+      return;
+    }
     if (!this.shutdownRequestId) this.shutdownRequestId = randomUUID();
     const result = await this.awaitShutdown(session, reason, onProgress);
     if (result.outcome === "failed") {
@@ -356,6 +364,7 @@ export class ServiceSupervisor {
       windowsHide: true,
       env,
     });
+    log.info(`desktop service spawned: pid ${child.pid ?? "unknown"}`);
     const session: Session = {
       child,
       client: null as unknown as RpcClient,

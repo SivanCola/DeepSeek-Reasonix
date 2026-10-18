@@ -23,7 +23,7 @@ class FakeChild extends EventEmitter {
   heldShutdown: number | null = null;
   private buffered = "";
 
-  constructor(readonly generation: string, readonly behaviour: { helloError?: { code: number; message: string }; exitOnStdinEnd?: boolean; holdShutdown?: boolean;
+  constructor(readonly generation: string, readonly behaviour: { helloError?: { code: number; message: string }; holdHello?: boolean; exitOnStdinEnd?: boolean; holdShutdown?: boolean;
       shutdownResults?: Array<Record<string, unknown>>; },) {
     super();
     this.stdin.on("data", (chunk: Buffer) => {
@@ -78,6 +78,7 @@ class FakeChild extends EventEmitter {
       return;
     }
     if (frame.method === "desktop/hello") {
+      if (this.behaviour.holdHello) return;
       if (this.behaviour.helloError) {
         this.send({ id: frame.id, error: this.behaviour.helloError });
         return;
@@ -387,6 +388,20 @@ test("a shutdown that keeps advancing still ends at the ceiling", async () => {
   } finally {
     clearInterval(flip);
   }
+});
+
+test("owner shutdown before hello cancels startup without sending unsupported lifecycle RPCs", async () => {
+  const child = new FakeChild("g-early", { holdHello: true, holdShutdown: true });
+  child.status = { phase: "idle", outcome: "", completed: false };
+  const h = harness({ children: [child], shutdownTiming: fastShutdown });
+  const launched = h.supervisor.start().catch(error => error);
+  await tick();
+  await h.supervisor.shutdown("system_signal");
+  assert.equal(child.alive, false);
+  assert.equal(h.supervisor.current.phase, "exited");
+  assert.deepEqual(child.requests.map(request => request.method), ["desktop/hello"]);
+  assert.ok(await launched instanceof Error);
+  assert.deepEqual(h.failures, []);
 });
 
 test("shutdown fences a hello completion queued before shutdown", async () => {

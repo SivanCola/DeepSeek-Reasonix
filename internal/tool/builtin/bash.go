@@ -18,6 +18,7 @@ import (
 
 	"reasonix/internal/persistentshell"
 	"reasonix/internal/proc"
+	"reasonix/internal/resourcebudget"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/secrets"
 	"reasonix/internal/sessiontemp"
@@ -198,6 +199,22 @@ func (b bash) ExecuteDetailed(ctx context.Context, args json.RawMessage) (tool.D
 	if res, err, reject := rejectPowerShellChaining(ex, start, sh, p.Command); reject {
 		return res, err
 	}
+	// Admission belongs to the logical command across terminal/persistent/
+	// one-shot runners. Background jobs acquire inside their job goroutine.
+	var budget *resourcebudget.Lease
+	if !p.RunInBackground {
+		var err error
+		budgetCtx := resourcebudget.WithWaitDetails(ctx, func(wait resourcebudget.WaitInfo) {
+			if emit, ok := tool.ProgressFrom(ctx); ok {
+				emit(wait.String() + "\n")
+			}
+		})
+		budget, err = resourcebudget.Acquire(budgetCtx, p.Command, nil)
+		if err != nil {
+			return bashLaunchFailure(ex, start, err)
+		}
+		defer budget.Release()
+	}
 
 	// Pin the session-private temporary generation before any launch path so
 	// foreground, background, and host-terminal runs share one directory, and
@@ -223,6 +240,12 @@ func (b bash) ExecuteDetailed(ctx context.Context, args json.RawMessage) (tool.D
 	// background jobs. ok=false falls back to local execution unchanged.
 	if b.terminal != nil && sh.Kind != sandbox.ShellPowerShell && !p.RunInBackground && !b.sb.Enforce() && !secrets.FilterSubprocessEnv() {
 		envMap := sandbox.SessionTempEnvMap(prepared.SessionTemp, prepared.LinuxSandboxed)
+		for key, value := range budget.Overrides(nil) {
+			if envMap == nil {
+				envMap = make(map[string]string)
+			}
+			envMap[key] = value
+		}
 		if out, ok, termErr := b.terminal.RunCommand(ctx, p.Command, b.workDir, b.timeout, envMap); ok {
 			out = appendSessionDataHint(out, b.guard.CommandHint(b.workDir, p.Command))
 			applyTerminalResult(ex, termErr)
@@ -233,9 +256,10 @@ func (b bash) ExecuteDetailed(ctx context.Context, args json.RawMessage) (tool.D
 
 	argv, wrapped := prepared.Argv, prepared.Wrapped
 	cmdEnv := applyEnvOverrides(bashCommandEnv(ctx), prepared.EnvOverrides)
-	if res, err, used := b.tryPersistent(ctx, p, sh, prepared, persistEnv(cmdEnv), start, ex); used {
+	if res, err, used := b.tryPersistent(ctx, p, sh, prepared, persistEnv(cmdEnv), budget, start, ex); used {
 		return res, err
 	}
+	cmdEnv = budget.Env(cmdEnv)
 	if err := checkCommandLine(argv); err != nil {
 		return bashPreflightFailure(ex, start, err)
 	}
@@ -397,6 +421,8 @@ func (b bash) runForegroundDetailed(ctx context.Context, p bashParams, sh sandbo
 	}
 	track := shouldTrackShellProcess(wrapped, sh, p.Command, p.PreserveBackgroundProcesses)
 	res := shellrun.RunForeground(ctx, shellrun.Request{
+		Command:           p.Command,
+		BudgetHeld:        true,
 		Argv:              argv,
 		Dir:               b.workDir,
 		Env:               cmdEnv,

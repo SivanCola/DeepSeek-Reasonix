@@ -7,13 +7,14 @@
   "main": "dist/main.cjs",
   "packageManager": "pnpm@10.34.5",
   "scripts": {
-    "build": "node scripts/build.mjs",
-    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.preload.json",
-    "test": "node scripts/build-browser-page.mjs && node --import tsx --test \"src/**/*.test.ts\"",
-    "test:graphics-recovery": "node scripts/graphics-recovery-smoke.mjs",
+    "build": "node ../../scripts/resource-run.mjs --script \"node scripts/build.mjs\"",
+    "typecheck": "node ../../scripts/resource-run.mjs --script \"tsc -p tsconfig.json && tsc -p tsconfig.preload.json\"",
+    "test": "node ../../scripts/resource-run.mjs --script \"node scripts/build-browser-page.mjs && node --import tsx --test --test-concurrency=2 \\\"src/**/*.test.ts\\\"\"",
+    "test:process-lifecycle": "node ../../scripts/resource-run.mjs --script \"node scripts/build.mjs && node scripts/process-lifecycle-smoke.mjs\"",
+    "test:graphics-recovery": "node ../../scripts/resource-run.mjs --script \"node scripts/graphics-recovery-smoke.mjs\"",
     "start": "node scripts/build.mjs && node scripts/start.mjs",
     "dev": "node scripts/build.mjs && node scripts/start.mjs --dev",
-    "smoke": "node scripts/build.mjs && node scripts/smoke.mjs"
+    "smoke": "node ../../scripts/resource-run.mjs --script \"node scripts/build.mjs && node scripts/smoke.mjs\""
   },
   "devDependencies": {
     "@types/jsdom": "30.0.0",

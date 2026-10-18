@@ -9,6 +9,31 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+func probeExclusive(path string) (bool, error) {
+	f, err := os.Open(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if errors.Is(err, windows.ERROR_SHARING_VIOLATION) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	handle := windows.Handle(f.Fd())
+	var overlapped windows.Overlapped
+	err = windows.LockFileEx(handle, windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &overlapped)
+	if errors.Is(err, windows.ERROR_LOCK_VIOLATION) || errors.Is(err, windows.ERROR_SHARING_VIOLATION) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	_ = windows.UnlockFileEx(handle, 0, 1, 0, &overlapped)
+	return false, nil
+}
+
 func tryLockFile(path string) (func(), error) {
 	return tryLockFileMode(path, ModeExclusive)
 }

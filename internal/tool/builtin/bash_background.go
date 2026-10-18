@@ -11,6 +11,7 @@ import (
 
 	"reasonix/internal/jobs"
 	"reasonix/internal/proc"
+	"reasonix/internal/resourcebudget"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/sessiontemp"
 	"reasonix/internal/shellrun"
@@ -41,9 +42,17 @@ func (b bash) startBackground(ctx context.Context, p bashParams, sh sandbox.Shel
 		if jobLease != nil {
 			defer jobLease.Release()
 		}
+		budgetCtx := resourcebudget.WithWaitDetails(resourcebudget.InheritDirectory(jobCtx, ctx), func(wait resourcebudget.WaitInfo) {
+			_, _ = io.WriteString(out, wait.String()+"\n")
+		})
+		budget, err := resourcebudget.Acquire(budgetCtx, p.Command, cmdEnv)
+		if err != nil {
+			return "", err
+		}
+		defer budget.Release()
 		cmd := proc.CommandContext(jobCtx, argv[0], argv[1:]...)
 		cmd.Dir = b.workDir
-		cmd.Env = cmdEnv
+		cmd.Env = budget.Env(cmdEnv)
 		cmd.WaitDelay = bashWaitDelay
 		capture := &boundedDiagnosticWriter{limit: 64 << 10}
 		combined := io.MultiWriter(out, capture)

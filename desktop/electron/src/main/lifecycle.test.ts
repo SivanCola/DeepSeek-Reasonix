@@ -5,6 +5,48 @@ import { QuitSequencer } from "./lifecycle.js";
 const silent = { info() {}, warn() {}, error() {} };
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
+test("launcher termination saves drafts and shuts down even when background-close policy would veto", async () => {
+  let q!: QuitSequencer;
+  const { app, calls } = fakeApp(() => q);
+  const events: string[] = [];
+  q = new QuitSequencer({
+    app, log: silent,
+    service: {
+      beforeClose: async () => { events.push("veto"); return true; },
+      shutdown: async reason => { events.push(String(reason)); },
+    },
+    flushRenderer: async () => { events.push("draft saved"); }, onCloseAllowed() {},
+  });
+  q.requestQuit("system_signal"); await tick(); await tick();
+  assert.deepEqual(events, ["draft saved", "system_signal"]);
+  assert.ok(calls.includes("exit"));
+});
+
+test("quit waits for asynchronous resource cleanup and catches rejected cleanup", async () => {
+  const cleanup = deferred();
+  let q!: QuitSequencer;
+  const { app, calls } = fakeApp(() => q);
+  const events: string[] = [];
+  q = new QuitSequencer({
+    app, log: silent,
+    service: { beforeClose: async () => false, shutdown: async () => {} },
+    onCloseAllowed() {},
+    cleanup: [
+      { name: "browser recorder", run: () => cleanup.promise },
+      { name: "rejected cleanup", run: async () => { throw new Error("cleanup failed"); } },
+      { name: "remaining resources", run: () => { events.push("closed"); } },
+    ],
+  });
+  app.quit(); await tick();
+  assert.equal(q.currentPhase, "closing");
+  assert.equal(calls.includes("exit"), false);
+  assert.deepEqual(events, []);
+  cleanup.resolve(); await tick(); await tick();
+  assert.deepEqual(events, ["closed"]);
+  assert.equal(q.currentPhase, "completed");
+  assert.ok(calls.includes("exit"));
+});
+
 test("recovery bounds a wedged draft save, confirms loss, and shuts down before relaunch", async () => {
   const events: string[] = [];
   let q!: QuitSequencer;

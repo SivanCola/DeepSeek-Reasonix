@@ -9,6 +9,26 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func probeExclusive(path string) (bool, error) {
+	f, err := os.Open(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	err = unix.Flock(int(f.Fd()), unix.LOCK_SH|unix.LOCK_NB)
+	if errors.Is(err, unix.EWOULDBLOCK) || errors.Is(err, unix.EAGAIN) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	_ = unix.Flock(int(f.Fd()), unix.LOCK_UN)
+	return false, nil
+}
+
 func tryLockFile(path string) (func(), error) {
 	return tryLockFileMode(path, ModeExclusive)
 }
