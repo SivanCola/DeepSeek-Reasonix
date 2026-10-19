@@ -3,10 +3,13 @@ package tool
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"io"
 	"strings"
 )
+
+// ErrResultUnavailable means the call context carries no session result reader.
+var ErrResultUnavailable = errors.New("tool result is unavailable in this session")
 
 // ResultRecorder retains a lossless tool result outside the model transcript.
 type ResultRecorder func(json.RawMessage) (string, error)
@@ -26,7 +29,7 @@ func WithResultReader(ctx context.Context, read ResultReader) context.Context {
 func OpenResult(ctx context.Context, ref string) (io.ReadCloser, error) {
 	read, _ := ctx.Value(resultReaderKey{}).(ResultReader)
 	if read == nil {
-		return nil, fmt.Errorf("tool result is unavailable in this session")
+		return nil, ErrResultUnavailable
 	}
 	return read(ref)
 }

@@ -15,6 +15,13 @@ import (
 	"reasonix/internal/contract/tool"
 )
 
+var (
+	// ErrRemoteTaskIncomplete refuses a checkpoint missing an identity field.
+	ErrRemoteTaskIncomplete = errors.New("incomplete remote task checkpoint")
+	// ErrRemoteTaskOwned refuses a checkpoint another live job already follows.
+	ErrRemoteTaskOwned = errors.New("remote task already has a live owner")
+)
+
 type remoteJob struct {
 	task      tool.RemoteTask
 	startErr  error
@@ -129,7 +136,7 @@ func (m *Manager) prepareRemote(j *Job) error {
 		path := remotePath(j, ".remote-task")
 		release, ok := claimRemoteTask(path)
 		if !ok {
-			j.remote.startErr = fmt.Errorf("remote task already has a live owner")
+			j.remote.startErr = ErrRemoteTaskOwned
 		} else {
 			j.remote.release = release
 			j.remote.startErr = createSidecar(path, remoteTaskRecord{Version: 1, Task: j.remote.task})
@@ -148,7 +155,7 @@ func (m *Manager) StartRemoteForSession(session string, task tool.RemoteTask, ru
 		return tool.RemoteTaskHandle{}, err
 	}
 	if task.Server == "" || task.Tool == "" || task.TaskID == "" || task.Binding == "" || task.Protocol == "" || task.Deadline <= 0 || run == nil {
-		return tool.RemoteTaskHandle{}, fmt.Errorf("incomplete remote task checkpoint")
+		return tool.RemoteTaskHandle{}, ErrRemoteTaskIncomplete
 	}
 	remote := &remoteJob{task: task}
 	j := m.StartForSession(session, "mcp_task", task.Server+"."+task.Tool,
