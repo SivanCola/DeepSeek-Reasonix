@@ -38,9 +38,9 @@ func TestParseToolResultFallsBackToStructuredContent(t *testing.T) {
 	if err != nil || text != `{"temperature":22.5,"unit":"C"}` {
 		t.Fatalf("text = %q, err %v; want the structured content as compact JSON", text, err)
 	}
-	// A server that also wrote the text block is read from the text, as before.
+	// Human-readable text must not hide machine-readable handles.
 	text, _, _ = parseToolResult(json.RawMessage(`{"content":[{"type":"text","text":"22.5 C"}],"structuredContent":{"temperature":22.5}}`))
-	if text != "22.5 C" {
-		t.Fatalf("text = %q, want the text block", text)
+	if !strings.Contains(text, "22.5 C") || !strings.Contains(text, `{"temperature":22.5}`) {
+		t.Fatalf("text = %q, want both projections", text)
 	}
 }

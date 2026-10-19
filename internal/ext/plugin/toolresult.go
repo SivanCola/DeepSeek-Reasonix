@@ -2,9 +2,12 @@ package plugin
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"reasonix/internal/contract/tool"
 )
 
 // toolContent is one item of a tools/call result, across every content type
@@ -66,16 +69,44 @@ func parseToolResult(res json.RawMessage) (string, []string, error) {
 		}
 	}
 	text := sb.String()
-	if strings.TrimSpace(text) == "" && hasStructured(out.StructuredContent) {
+	if hasStructured(out.StructuredContent) {
 		var compact bytes.Buffer
 		if json.Compact(&compact, out.StructuredContent) == nil {
-			text = compact.String()
+			if strings.TrimSpace(text) == "" {
+				text = compact.String()
+			} else if strings.TrimSpace(text) != compact.String() {
+				text += "\n[structuredContent]\n" + compact.String()
+			}
 		}
 	}
 	if out.IsError {
 		return text, images, fmt.Errorf("plugin tool reported error: %s", text)
 	}
 	return text, images, nil
+}
+
+func captureToolResult(ctx context.Context, raw json.RawMessage) (string, []string, error) {
+	text, images, parseErr := parseToolResult(raw)
+	ref, err := tool.RecordResult(ctx, raw)
+	if err != nil {
+		return text, images, fmt.Errorf("retain MCP result: %w", err)
+	}
+	if ref != "" {
+		var result struct {
+			Structured json.RawMessage `json:"structuredContent"`
+			Content    []toolContent   `json:"content"`
+		}
+		_ = json.Unmarshal(raw, &result)
+		rich := hasStructured(result.Structured)
+		for _, item := range result.Content {
+			rich = rich || item.Type != "text"
+		}
+		if rich {
+			text += "\n[MCP result artifact: " + ref + "]"
+			text += "\nUse read_file with this reference to inspect the full result."
+		}
+	}
+	return text, images, parseErr
 }
 
 func hasStructured(raw json.RawMessage) bool {

@@ -15,6 +15,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -30,6 +31,7 @@ import (
 	"reasonix/internal/base/nilutil"
 	"reasonix/internal/base/scratch"
 	"reasonix/internal/contract/event"
+	"reasonix/internal/contract/tool"
 	"reasonix/internal/safety/evidence"
 )
 
@@ -125,6 +127,7 @@ type Job struct {
 
 	evidence          evidence.ChildEvidenceSummary
 	evidenceCommitted bool
+	remote            *remoteJob
 }
 
 // Manager is the session's background-job table. It is safe for concurrent use.
@@ -156,7 +159,8 @@ type Manager struct {
 	stalledWarning time.Duration
 	teardownGrace  time.Duration
 
-	taskRecorder TaskRecorder // optional task-monitoring lifecycle hook
+	taskRecorder  TaskRecorder // optional task-monitoring lifecycle hook
+	remoteResumer tool.RemoteTaskResumer
 }
 
 type completion struct {
@@ -402,6 +406,9 @@ func (m *Manager) StartForSession(parentSession, kind, label string, run func(ct
 	applyOptions(j, opts)
 	ctx = WithSession(ctx, parentSession)
 	ctx = context.WithValue(ctx, jobCtxKey{}, j)
+	ctx = tool.WithResultRecorder(ctx, func(raw json.RawMessage) (string, error) {
+		return m.SaveToolResultForSession(parentSession, id, raw)
+	})
 	key := jobKey(parentSession, id)
 	m.jobs[key] = j
 	m.order = append(m.order, key)
@@ -412,86 +419,18 @@ func (m *Manager) StartForSession(parentSession, kind, label string, run func(ct
 		j.artifact.err = err.Error()
 	}
 	j.mu.Unlock()
+	if j.remote != nil {
+		if err := m.prepareRemote(j); err != nil {
+			run = func(context.Context, io.Writer) (string, error) { return "", err }
+		}
+	}
 	m.emitIfActive(parentSession, event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: startedText(kind, id, label)})
 
 	if !nilutil.IsNil(m.taskRecorder) {
 		m.taskRecorder.RecordStart(id, kind, label)
 	}
 
-	m.wg.Add(1)
-	if m.stalledWarning > 0 {
-		m.wg.Add(1)
-		go m.monitorStalled(parentSession, j)
-	}
-	go func() {
-		defer m.wg.Done()
-		result, err := runRecovered(ctx, jobWriter{j}, run)
-		j.mu.Lock()
-		j.runReturned = true
-		j.mu.Unlock()
-
-		var st Status
-		switch {
-		case ctx.Err() != nil:
-			st = m.cancelledStatus()
-		case err != nil:
-			st = Failed
-			if result == "" {
-				result = err.Error()
-			}
-		default:
-			st = Done
-		}
-		finishedAt := nowMs()
-		if result != "" {
-			j.mu.Lock()
-			if j.artifact.open() {
-				j.artifact.writeString(result)
-			} else {
-				j.result = result
-			}
-			j.tail = appendTail(j.tail, []byte(result), defaultTailBytes)
-			j.mu.Unlock()
-		}
-		targetDir := m.artifactTargetDirForJob(j)
-		j.mu.Lock()
-		j.artifact.close()
-		if j.artifact.err != "" {
-			j.artifact.complete = false
-		}
-		j.times.finished = finishedAt
-		if targetDir != "" {
-			if moveErr := j.moveArtifactToDirLocked(targetDir); moveErr != nil {
-				j.noteArtifactErr("migration: " + moveErr.Error())
-			}
-		}
-		metaErr := m.writeJobMetaLocked(j, st)
-		if metaErr != nil {
-			j.noteArtifactErr("metadata: " + metaErr.Error())
-		}
-		resultRef := j.artifactRefLocked()
-		j.mu.Unlock()
-		// Queue the drain note (and emit the closing Notice) BEFORE publishing the
-		// terminal status. Wait(nil)/resolve only block on Running jobs, so if the
-		// status flipped to terminal before the note was queued, a Wait could observe
-		// completion, skip j.done, and DrainCompletedNote would race ahead of the
-		// bookkeeping (the TestDrainMultiple -race flake). Recording first makes an
-		// observed terminal status imply the note is already queued.
-		ev := m.recordCompletion(parentSession, id, kind, label, resultRef, st, err)
-
-		j.mu.Lock()
-		if j.status != Killed && j.status != Interrupted { // a status published on cancel stands
-			j.status = st
-		}
-		if j.artifact.path != "" && j.artifact.complete {
-			j.result = ""
-			j.tail = nil
-		}
-		j.mu.Unlock()
-		close(j.done)
-		// Only now would a woken turn's first question get "terminal".
-		m.publishCompletion(ev)
-	}()
+	m.launchJob(ctx, j, run)
 	return j
 }
 
@@ -893,6 +832,10 @@ func (m *Manager) KillForSession(parentSession, id string) bool {
 	if !running {
 		return false
 	}
+	if err := m.markRemoteCancellation(j); err != nil {
+		m.emitIfActive(parentSession, event.Event{Kind: event.Notice, Level: event.LevelWarn,
+			Text: "Remote task cancellation intent could not be retained.", Detail: err.Error()})
+	}
 	j.cancel()
 	return true
 }
@@ -1093,7 +1036,7 @@ func (m *Manager) SetActiveSessionPath(parentSession, sessionPath string) {
 	m.active = parentSession
 	oldDir := m.artifactDirLocked(parentSession)
 	adoptDefault := false
-	if _, hasDir := m.artifactDirs[parentSession]; !hasDir && m.hasUnscopedJobsLocked() {
+	if _, hasDir := m.artifactDirs[parentSession]; !hasDir && (m.hasUnscopedJobsLocked() || m.hasUnscopedResultsLocked()) {
 		oldDir = m.artifactDirLocked("")
 		adoptDefault = true
 	}
@@ -1118,6 +1061,7 @@ func (m *Manager) SetActiveSessionPath(parentSession, sessionPath string) {
 			m.mu.Lock()
 			if adoptDefault {
 				m.adoptUnscopedJobsLocked(parentSession)
+				m.artifactDirs[""] = newDir
 			}
 			m.mu.Unlock()
 		}
@@ -1437,10 +1381,10 @@ func (m *Manager) loadSessionArtifacts(parentSession, sessionPath, dir string) {
 		})
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	for _, j := range loaded {
+	for i, j := range loaded {
 		key := jobKey(parentSession, j.ID)
-		if _, exists := m.jobs[key]; exists {
+		if existing, exists := m.jobs[key]; exists {
+			loaded[i] = existing
 			continue
 		}
 		m.jobs[key] = j
@@ -1450,6 +1394,8 @@ func (m *Manager) loadSessionArtifacts(parentSession, sessionPath, dir string) {
 		m.seq = maxSeq
 	}
 	m.loaded[parentSession] = !deferredLiveOwner
+	m.mu.Unlock()
+	m.resumeRemoteJobs(parentSession, sessionPath, loaded)
 }
 
 // BeginDestroySession marks a parent session as being removed from active use
@@ -1561,7 +1507,9 @@ func (m *Manager) Close() {
 // persistent cleanup, but still needs the manager's root context and temporary
 // artifact root released eventually.
 func (m *Manager) CloseAsync() {
+	m.mu.Lock()
 	m.cancel()
+	m.mu.Unlock()
 	go func() {
 		m.wg.Wait()
 		m.releaseOwner()
@@ -1572,7 +1520,9 @@ func (m *Manager) CloseAsync() {
 // CloseWithGrace is Close with an explicit wait window, used by tests and
 // callers that need to surface non-cooperative jobs.
 func (m *Manager) CloseWithGrace(grace time.Duration) TeardownResult {
+	m.mu.Lock()
 	m.cancel()
+	m.mu.Unlock()
 	done := make(chan struct{})
 	go func() {
 		m.wg.Wait()
