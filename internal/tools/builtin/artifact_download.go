@@ -19,9 +19,19 @@ import (
 )
 
 const (
-	CodeArtifactTooLarge    = "artifact.too_large"
-	artifactDownloadTimeout = 10 * time.Minute
+	ArtifactDownloadName        = "download_artifact"
+	CodeArtifactTooLarge        = "artifact.too_large"
+	CodeArtifactTargetExists    = "artifact.target_exists"
+	CodeArtifactRedirectRefused = "artifact.redirect_refused"
+	artifactDownloadTimeout     = 10 * time.Minute
 )
+
+func init() { tool.RegisterConditional(artifactDownload{}) }
+
+// ArtifactDownload binds download_artifact to the workspace's writer roots.
+func (w Workspace) ArtifactDownload() tool.Tool {
+	return artifactDownload{workDir: w.Dir, roots: w.writerRoots(), guard: w.SessionGuard, proxySpec: w.ProxySpec, receipt: w.FileWriteReceipt}
+}
 
 type artifactDownload struct {
 	workDir   string
@@ -46,16 +56,17 @@ type artifactReceipt struct {
 	Bytes          int64  `json:"bytes"`
 }
 
+// artifactSourceReceipt is portable: the signed address stays in the private result sidecar.
 type artifactSourceReceipt struct {
 	artifactReceipt
-	Source       string    `json:"source"`
-	Pointer      string    `json:"pointer"`
-	URL          string    `json:"url"`
-	Redirects    []string  `json:"redirects"`
-	DownloadedAt time.Time `json:"downloaded_at"`
+	Source        string    `json:"source"`
+	Pointer       string    `json:"pointer"`
+	Origin        string    `json:"origin"`
+	RedirectHosts []string  `json:"redirect_hosts"`
+	DownloadedAt  time.Time `json:"downloaded_at"`
 }
 
-func (artifactDownload) Name() string           { return "download_artifact" }
+func (artifactDownload) Name() string           { return ArtifactDownloadName }
 func (artifactDownload) ReadOnly() bool         { return false }
 func (artifactDownload) WritesNamedPaths() bool { return true }
 func (artifactDownload) Description() string {
@@ -117,16 +128,15 @@ func (w artifactDownload) Execute(ctx context.Context, args json.RawMessage) (st
 	}
 	defer root.Close()
 	for _, path := range []string{p.Path, p.Path + ".source.json"} {
-		if _, err := root.Lstat(path); !errors.Is(err, os.ErrNotExist) {
-			if err == nil {
-				err = os.ErrExist
-			}
+		if _, err := root.Lstat(path); err == nil {
+			return "", artifactExistsError(path)
+		} else if !errors.Is(err, os.ErrNotExist) {
 			return "", err
 		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, artifactDownloadTimeout)
 	defer cancel()
-	resp, redirects, err := w.fetch(ctx, u.String())
+	resp, redirectHosts, err := w.fetch(ctx, u.String())
 	if err != nil {
 		return "", err
 	}
@@ -167,7 +177,7 @@ func (w artifactDownload) Execute(ctx context.Context, args json.RawMessage) (st
 		return "", err
 	}
 	receipt := artifactReceipt{Version: 1, Path: p.Path, ProvenancePath: p.Path + ".source.json", SHA256: hex.EncodeToString(hash.Sum(nil)), Bytes: n}
-	source := artifactSourceReceipt{artifactReceipt: receipt, Source: p.Source, Pointer: p.Pointer, URL: u.String(), Redirects: redirects, DownloadedAt: time.Now().UTC()}
+	source := artifactSourceReceipt{artifactReceipt: receipt, Source: p.Source, Pointer: p.Pointer, Origin: u.Scheme + "://" + u.Host, RedirectHosts: redirectHosts, DownloadedAt: time.Now().UTC()}
 	if err := publishArtifact(root, stage, source); err != nil {
 		return "", err
 	}
@@ -184,6 +194,10 @@ func validateArtifactTarget(path string) error {
 		return fmt.Errorf("new workspace-relative video path required")
 	}
 	return nil
+}
+
+func artifactExistsError(path string) error {
+	return tool.Refusal{Code: CodeArtifactTargetExists, Message: path + " already exists; choose a new path, artifacts are never overwritten"}
 }
 
 func artifactSizeError(limit int64) error {

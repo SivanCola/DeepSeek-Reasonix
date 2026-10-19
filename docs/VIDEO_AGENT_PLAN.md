@@ -39,11 +39,11 @@ side effect of implementing the harness.
 | Full MCP result retention / 完整结果保留 | Implemented / 已实现 | `internal/ext/plugin/toolresult.go`, `internal/tools/jobs/tool_result.go` |
 | Session-scoped result readback / 会话范围结果读取 | Implemented / 已实现 | `internal/contract/tool/result.go`, `internal/tools/builtin/readfile_result.go` |
 | Accepted MCP Tasks restart recovery / 已接收 MCP 任务重启接管 | Implemented / 已实现 | `internal/ext/plugin/task_recovery.go`, `internal/tools/jobs/remote_task.go`, `internal/assembly/boot/remote_task.go` |
-| Provenance-backed download / 带来源下载 | Unregistered prototype; hardening and integration pending / 未注册原型，待加固和集成 | `internal/tools/builtin/artifact_{source,download,transfer}.go` |
+| Provenance-backed download / 带来源下载 | Conditional tool, wired when an MCP server is configured / 条件工具，配置 MCP 服务时挂载 | `internal/tools/builtin/artifact_{source,download,transfer}.go` |
 | Download tests / 下载测试 | Focused tests implemented / 已有定向测试 | `internal/tools/builtin/artifact_download_test.go` |
-| Technical video acceptance / 成片技术验收 | Not implemented / 未实现 | [Non-executable test draft](fixtures/video_check_test.go.txt) |
-| Storyboard/content/audiovisual acceptance / 分镜内容与视听验收 | Not implemented / 未实现 | Stage 2 below / 见第二阶段 |
-| Video production skill and manifest / 制作技能与清单 | Not implemented / 未实现 | Stage 3 below / 见第三阶段 |
+| Technical video acceptance / 成片技术验收 | Conditional tool, wired when ffmpeg is installed / 条件工具，安装 ffmpeg 时挂载 | `internal/tools/builtin/checkvideo{,_probe}.go` |
+| Storyboard/content/audiovisual acceptance / 分镜内容与视听验收 | Manifest review records; `unverified` without a declared reviewer / 清单验收记录，无声明审查者时记为未验证 | [VIDEO_MANIFEST.md](VIDEO_MANIFEST.md) |
+| Video production skill and manifest / 制作技能与清单 | Inline builtin skill + manifest v1 spec / 内置技能与清单 v1 | `internal/ext/skill/builtincontent/video-production/SKILL.md`, [VIDEO_MANIFEST.md](VIDEO_MANIFEST.md) |
 | Unified preview/download/version UI / 统一产物界面 | Deferred / 后续阶段 | Stage 4 below / 见第四阶段 |
 | Typed scripts, bounded concurrency, host waits / 类型化脚本、并发、等待 | Deferred / 后续阶段 | Stage 5 below / 见第五阶段 |
 | Live video-service and model evaluation / 真实服务与模型评测 | Not run / 未执行 | Stage 6 below / 见第六阶段 |
@@ -65,26 +65,25 @@ the current controller before evaluating the integrated branch.
 与 `0b8de9e636` 的试合并发现 `internal/session/control/controller.go` 内容冲突；尚未将
 上游整合到本检查点。接手后先对齐当前控制器生命周期和依赖所有权，再验证整合分支。
 
-The test draft is deliberately stored as `.go.txt`: it references a checker
-that does not exist yet and is not counted as executable coverage. Adapt it to
-the chosen implementation, then move it into the owning package. Do not weaken
-its behavioral requirements just to make it compile.
+The checker test draft now runs as `internal/tools/builtin/checkvideo_test.go`
+with every original requirement intact.
 
-验收测试草稿以 `.go.txt` 保存，引用了尚未实现的检查器，不参与构建，也不计入测试覆盖。
-接手时按最终实现调整并迁入所属包；不要为了编译通过而删掉有效的行为要求。
+验收测试草稿已迁为 `internal/tools/builtin/checkvideo_test.go` 并执行，原有行为要求均保留。
 
-The download prototype compiles and its component tests execute, but it is
-deliberately not registered in `tool.Builtins` or bound by `Workspace.Tools`.
-The attempted registration measured 7,347 schema tokens against the existing
-7,185-token full-builtins budget. No budget was widened.
+`download_artifact` registration:
 
-Completing discovery, workspace binding, generated tool-contract
-documentation, snip stance, and provider-boundary tests is outstanding work,
-not a completed integration.
+- Declared with `tool.RegisterConditional`; `addMediaTools`
+  (`internal/assembly/boot/media_tools.go`) attaches it only when an MCP server
+  is configured, since only MCP results produce `tool-result:` references.
+- Outside the 7,185-token built-in total and the provider prefix; the model
+  reaches it through `use_capability`.
+- `TestConditionalMediaSchemasStayCompact` caps its schema. No budget was widened.
 
-下载原型可编译且组件测试会执行，但尚未注册进 `tool.Builtins` 或绑定到 `Workspace.Tools`。
-尝试注册时全量内置工具 schema 为 7,347 tokens，超过现有 7,185 的预算；未放宽预算。
-工具发现、工作区绑定、生成契约文档、结果裁剪策略及 provider 边界测试仍待实现，不能视为已集成。
+`download_artifact` 注册方式：
+
+- 以 `tool.RegisterConditional` 声明，仅在配置了 MCP 服务时由 `addMediaTools` 挂载。
+- 不计入 7,185 内置预算，不进入 provider 前缀，模型经 `use_capability` 调用。
+- 其 schema 由单工具上限测试约束；未放宽任何预算。
 
 ## Architecture and invariants / 架构与约束
 
@@ -140,16 +139,27 @@ The implementation streams into a private staging file, bounds size and time,
 recognizes container magic bytes, computes SHA-256, and publishes without
 replacing an existing target.
 
-It creates a versioned `<path>.source.json` receipt with source reference,
-pointer, original address, redirects, byte count, hash, and completion time.
-Model output contains relative paths, byte count, and hash, not signed
-addresses.
+Publication and receipt:
+
+- The media is published create-only first, then a versioned
+  `<path>.source.json` receipt, so a receipt always names bytes that exist.
+- The receipt records source reference, pointer, origin (scheme and host),
+  redirect hosts, byte count, hash, and completion time.
+- It never holds a query, fragment, or userinfo; the exact signed address
+  stays in the private `.tool-result` sidecar the reference names.
+- Redirects may cross origins: at most 5, every hop through the SSRF dial
+  guard, no HTTPS downgrade, credentials dropped on a change of origin.
+- Model output contains relative paths, byte count, and hash only.
 
 POSIX receipt mode is `0600`; Windows permission behavior needs its own
 acceptance rather than a POSIX-mode assertion.
 
 原型流式下载到临时文件，限制大小和耗时，识别容器头、计算摘要，并拒绝覆盖目标。
-来源旁文件包含结果引用、指针、原始地址、重定向链、大小、摘要和时间；模型仅收到精简回执。
+- 先只新建发布媒体，再写来源旁文件，有回执就一定有文件。
+- 回执记录结果引用、指针、来源 scheme+host、重定向主机、大小、摘要和时间。
+- 回执不含 query、fragment、userinfo；精确签名地址只留在私有 `.tool-result` 中。
+- 重定向允许跨源：最多 5 跳、每跳 SSRF 拨号校验、禁止 HTTPS 降级、换源丢弃凭据。
+- 模型仅收到精简回执。
 POSIX 使用 0600，Windows 权限需要单独验证。容器头识别仅用于下载准入，不代表完整解码成功。
 
 ### Remaining implementation / 待完成实现
@@ -161,20 +171,12 @@ POSIX 使用 0600，Windows 权限需要单独验证。容器头识别仅用于�
 
   Do not describe it as a blanket public-address-only guarantee. Any policy
   change belongs in the shared owner.
-- Specify interrupted publication recovery. The prototype writes provenance
-  before linking the finished media; a process crash can leave a receipt or
-  staging file without a published artifact. Never treat that receipt alone as
-  download success.
+- Crash states are not download success:
+  - between linking and the receipt, media exists without provenance;
+  - during transfer, a `.reasonix-artifact-*` staging file stays beside the target.
 
-  Reconcile only owned temporary files and verify the hash; preserve unknown
-  receipts and user files. Define disk-full and unsupported hard-link behavior
-  without an overwrite fallback.
-- Resolve receipt privacy/lifetime. Signed addresses in a workspace sidecar
-  may reach Git, sync tools, or a manually read transcript despite file mode.
-
-  Prefer a redacted portable provenance record plus a private session record
-  for any address needed for retry; preserve exact source identity through the
-  result reference. Do not silently discard provenance or log URL credentials.
+  `check_video` with the expected hash establishes success. Without hard
+  links the media is copied into a create-only target; nothing overwrites.
 - Add explicit generic artifact identities and relationships to host job,
   remote task, shot, and version where needed. Obtain identities from declared
   contracts, not field-name or message-text inference.
@@ -205,9 +207,13 @@ provider system/tool-prefix bytes before and after the workflow.
 
 ### Technical tool / 技术检查工具
 
-Implement `check_video` in `internal/tools/builtin`, reusing the confinement,
-container recognition, media-process launching, and sandbox contracts of
-`read_video`.
+`check_video` (`internal/tools/builtin/checkvideo.go`):
+
+- wraps the workspace's `read_video` binding, sharing its confinement,
+  container recognition, media-process launching, and sandbox;
+- is attached by `addMediaTools` only when ffmpeg and ffprobe are on `PATH`;
+- asks before its first use where no OS sandbox wraps the decoder
+  (`media_approval.go`).
 
 Inputs should name a local file and explicit expected duration with tolerance,
 dimensions, display aspect ratio, and audio presence policy. An optional
@@ -437,14 +443,13 @@ go test ./internal/tools/jobs -run 'TestRemoteTask|TestRemoteTerminal|TestRemote
 go test ./internal/assembly/boot -run 'TestEffectMCPStructuredResult|TestEffectMCPRemoteTask'
 go test ./internal/contract/tool -run TestBuiltinToolContractDocumentation
 go test ./internal/tools/builtin -run TestBuiltinSchemaSurfaceStaysWithinBudget
+go test ./internal/tools/builtin -run 'TestCheckVideo|TestConditionalMediaSchemas'
+go test ./internal/assembly/boot -run 'TestEffectDownloadArtifact|TestEffectCheckVideo|TestMediaDecoders'
 ```
 
-The checker fixture is not part of these commands. Its eventual implementation
-also needs `media_approval.go`, workspace wiring, snip-policy, generated-contract,
-and real-provider-boundary coverage; copying the fixture alone is insufficient.
+`TestCheckVideoRealFFmpegFailsATruncatedTail` skips where ffmpeg is not installed.
 
-验收检查器草稿不属于这些已运行测试。实现后还要接入媒体审批、工作区、结果裁剪与生成契约，
-并补真实 provider 边界测试，不能只复制测试草稿。
+`TestCheckVideoRealFFmpegFailsATruncatedTail` 在未安装 ffmpeg 时跳过。
 
 | Contract / 契约 | Existing data / 旧数据 | New behavior / 新行为 | Older reader / 旧读取器 |
 | --- | --- | --- | --- |

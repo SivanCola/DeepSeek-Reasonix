@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"slices"
 	"strings"
 	"time"
@@ -377,6 +378,7 @@ func (b *builder) wireTools() error {
 	if err := b.wireMCP(); err != nil {
 		return err
 	}
+	addMediaTools(t.reg, cfg.Tools.Enabled, mediaWorkspace(root, env, b.proxy, b.fileWriteReceipt), t.mcp, exec.LookPath)
 	t.browser = bindMachineTools(t.reg, cfg, root, opts.BrowserSession, opts.ComputerDriver)
 	b.timer.mark("mcp")
 

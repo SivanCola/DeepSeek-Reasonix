@@ -57,11 +57,11 @@ func TestDownloadArtifactRetainsSourceAndDoesNotOverwrite(t *testing.T) {
 		t.Fatalf("saved bytes %q: %v", saved, err)
 	}
 	source, err := os.ReadFile(filepath.Join(dir, receipt.ProvenancePath))
-	if err != nil || !strings.Contains(string(source), "signature=private") || !strings.Contains(string(source), "tool-result:fixture") {
-		t.Fatalf("source receipt %s: %v", source, err)
+	if err != nil || strings.Contains(string(source), "signature") || !strings.Contains(string(source), "tool-result:fixture") || !strings.Contains(string(source), server.URL) {
+		t.Fatalf("source receipt must name the origin without its signed query %s: %v", source, err)
 	}
-	if _, err := w.Execute(ctx, args); err == nil {
-		t.Fatal("existing artifact overwritten")
+	if _, err := w.Execute(ctx, args); refusalCode(err) != CodeArtifactTargetExists {
+		t.Fatalf("existing artifact: %v", err)
 	}
 	if info, err := os.Stat(filepath.Join(dir, receipt.ProvenancePath)); err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
 		t.Fatalf("private provenance permissions: %v %v", info, err)
@@ -129,17 +129,66 @@ func TestArtifactSourceSelectsExactFieldsWithoutURLRewriting(t *testing.T) {
 }
 
 func TestDownloadArtifactTransportFailureRedactsSignedAddress(t *testing.T) {
+	dead := httptest.NewServer(http.NotFoundHandler())
+	deadURL := dead.URL
+	dead.Close()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "http://user:private-password@127.0.0.1/video", http.StatusFound)
+		if r.URL.Path == "/creds" {
+			http.Redirect(w, r, "http://user:private-password@127.0.0.1/video", http.StatusFound)
+			return
+		}
+		http.Redirect(w, r, deadURL+"/video?signature=private-hop", http.StatusFound)
 	}))
 	defer server.Close()
 	w := artifactDownload{proxySpec: netclient.ProxySpec{Mode: netclient.ModeOff}}
-	_, _, err := w.fetch(context.Background(), server.URL+"?signature=private-token")
+	_, _, err := w.fetch(context.Background(), server.URL+"/creds?signature=private-token")
+	if refusalCode(err) != CodeArtifactRedirectRefused || strings.Contains(err.Error(), "private-") {
+		t.Fatalf("credentialed redirect: %v", err)
+	}
+	_, _, err = w.fetch(context.Background(), server.URL+"/dead?signature=private-token")
 	var cause *url.Error
 	if err == nil || !errors.As(err, &cause) {
 		t.Fatalf("missing transport cause: %v", err)
 	}
 	if strings.Contains(err.Error(), "private-") {
 		t.Fatalf("signed URL leaked: %v", err)
+	}
+}
+
+func TestDownloadArtifactRefusesLongRedirectChains(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, r.URL.Path+"x", http.StatusFound)
+	}))
+	defer server.Close()
+	w := artifactDownload{proxySpec: netclient.ProxySpec{Mode: netclient.ModeOff}}
+	_, _, err := w.fetch(context.Background(), server.URL+"/v")
+	if refusalCode(err) != CodeArtifactRedirectRefused {
+		t.Fatalf("redirect chain past the cap: %v", err)
+	}
+}
+
+func TestDownloadArtifactFollowsCrossOriginRedirectWithoutCredentials(t *testing.T) {
+	var gotAuth, gotCookie string
+	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth, gotCookie = r.Header.Get("Authorization"), r.Header.Get("Cookie")
+		_, _ = w.Write(mp4Head())
+	}))
+	defer cdn.Close()
+	cdnURL := strings.Replace(cdn.URL, "127.0.0.1", "localhost", 1)
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, cdnURL+"/clip?sig=private", http.StatusFound)
+	}))
+	defer origin.Close()
+	w := artifactDownload{proxySpec: netclient.ProxySpec{Mode: netclient.ModeOff}}
+	resp, hosts, err := w.fetch(context.Background(), origin.URL+"/start")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if gotAuth != "" || gotCookie != "" {
+		t.Fatalf("credentials crossed origins: %q %q", gotAuth, gotCookie)
+	}
+	if len(hosts) != 1 || strings.Contains(hosts[0], "sig") {
+		t.Fatalf("redirect hosts %v", hosts)
 	}
 }
