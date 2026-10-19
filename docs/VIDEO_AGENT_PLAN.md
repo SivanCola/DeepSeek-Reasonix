@@ -44,7 +44,7 @@ side effect of implementing the harness.
 | Technical video acceptance / 成片技术验收 | Conditional tool, wired when ffmpeg is installed / 条件工具，安装 ffmpeg 时挂载 | `internal/tools/builtin/checkvideo{,_probe}.go` |
 | Storyboard/content/audiovisual acceptance / 分镜内容与视听验收 | Manifest review records; `unverified` without a declared reviewer / 清单验收记录，无声明审查者时记为未验证 | [VIDEO_MANIFEST.md](VIDEO_MANIFEST.md) |
 | Video production skill and manifest / 制作技能与清单 | Inline builtin skill + manifest v1 spec / 内置技能与清单 v1 | `internal/ext/skill/builtincontent/video-production/SKILL.md`, [VIDEO_MANIFEST.md](VIDEO_MANIFEST.md) |
-| Unified preview/download/version UI / 统一产物界面 | Deferred / 后续阶段 | Stage 4 below / 见第四阶段 |
+| Unified preview/download/version UI / 统一产物界面 | Workbench video player and manifest view over `/workspace/video` / 工作台视频播放与清单视图 | `internal/frontend/serve/workspace_video.go`, `desktop/frontend-next/src/ui/WorkspaceMedia.tsx` |
 | Typed scripts, bounded concurrency, host waits / 类型化脚本、并发、等待 | Deferred / 后续阶段 | Stage 5 below / 见第五阶段 |
 | Live video-service and model evaluation / 真实服务与模型评测 | Not run / 未执行 | Stage 6 below / 见第六阶段 |
 
