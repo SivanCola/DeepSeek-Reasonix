@@ -37,6 +37,9 @@ const (
 	projectCheckDir = "../../benchmarks/project-check"
 )
 
+// videoDir is the video-production corpus, graded against a fakevideomcp log.
+const videoDir = "../../benchmarks/video"
+
 // protectedFiles reads the manifest embedded in a no-solution grader. The
 // manifest lives inside verify.sh precisely because e2ebench drops that file
 // in only after the run, so the agent never sees which files are watched.
