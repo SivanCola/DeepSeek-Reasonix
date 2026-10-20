@@ -26,11 +26,11 @@ func artifactSourceURL(ctx context.Context, ref, pointer string) (*url.URL, erro
 		return nil, err
 	}
 	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, (16<<20)+1))
+	data, err := io.ReadAll(io.LimitReader(f, int64(tool.ResultRetainLimit)+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > 16<<20 {
+	if len(data) > tool.ResultRetainLimit {
 		return refuse()
 	}
 	var envelope struct {

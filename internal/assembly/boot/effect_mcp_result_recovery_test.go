@@ -140,11 +140,11 @@ func TestEffectMCPStructuredResultPreservesPrefixAndDurableEnvelope(t *testing.T
 		}
 	}
 	output := toolResults(reqs)["probe-0"]
-	if !strings.Contains(output, `"media_id":"media-1"`) {
-		t.Fatalf("structured result missing at provider: %s", output)
+	if !strings.Contains(output, "[structuredContent fields: media_id, seed]") || strings.Contains(output, "media-1") {
+		t.Fatalf("the provider should name the structured fields and leave their values in the retained result: %s", output)
 	}
 	readBack := toolResults(reqs)["read-result"]
-	if !strings.Contains(readBack, `"future":"keep"`) || !strings.Contains(readBack, "[external content") {
+	if !strings.Contains(readBack, `"media_id":"media-1"`) || !strings.Contains(readBack, `"future":"keep"`) || !strings.Contains(readBack, "[external content") {
 		t.Fatalf("model could not inspect retained external result: %s", readBack)
 	}
 	match := regexp.MustCompile(`\[MCP result artifact: ([^\n]+)\]`).FindStringSubmatch(output)
@@ -229,7 +229,7 @@ func TestEffectMCPRemoteTaskSurvivesControllerCloseAndResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	results, _ := second.JobManager().Wait(t.Context(), []string{running[0].ID}, jobs.WaitOptions{Timeout: 5 * time.Second})
-	if len(results) != 1 || results[0].Status != jobs.Done || !strings.Contains(results[0].Output, `"media_id":"media-1"`) {
+	if len(results) != 1 || results[0].Status != jobs.Done || !strings.Contains(results[0].Output, "[structuredContent fields: media_id, seed]") {
 		t.Fatalf("recovered job = %+v", results)
 	}
 	if s.submissions.Load() != 1 {

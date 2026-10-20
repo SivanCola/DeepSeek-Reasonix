@@ -82,6 +82,14 @@ func (c *Client) runDurableTask(ctx context.Context, t transport, desc tool.Remo
 	result := tool.RemoteTaskResult{Result: raw, Terminal: terminal}
 	if len(raw) > 0 {
 		text, _, parseErr := parseToolResult(raw)
+		var envelope struct {
+			Structured json.RawMessage `json:"structuredContent"`
+		}
+		if json.Unmarshal(raw, &envelope) == nil {
+			if fields := structuredFields(envelope.Structured); fields != "" {
+				text += "\n[structuredContent fields: " + fields + "]"
+			}
+		}
 		result.Output = tool.ProvenanceHeader(tool.Provenance{Kind: tool.ProvenanceMCP, Source: c.name}) + text
 		err = errors.Join(err, parseErr)
 	}

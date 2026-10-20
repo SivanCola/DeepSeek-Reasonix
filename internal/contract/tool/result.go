@@ -20,6 +20,10 @@ type ResultReader func(string) (io.ReadCloser, error)
 
 const ResultReferencePrefix = "tool-result:"
 
+// ResultRetainLimit is the largest raw result kept on disk, and so the most a
+// reader of a retained result ever has to load.
+const ResultRetainLimit = 16 << 20
+
 func IsResultReference(ref string) bool { return strings.HasPrefix(ref, ResultReferencePrefix) }
 
 func WithResultReader(ctx context.Context, read ResultReader) context.Context {
@@ -36,6 +40,12 @@ func OpenResult(ctx context.Context, ref string) (io.ReadCloser, error) {
 
 func WithResultRecorder(ctx context.Context, record ResultRecorder) context.Context {
 	return context.WithValue(ctx, resultRecorderKey{}, record)
+}
+
+// CanRecordResult reports whether this call has somewhere to retain a result.
+func CanRecordResult(ctx context.Context) bool {
+	record, _ := ctx.Value(resultRecorderKey{}).(ResultRecorder)
+	return record != nil
 }
 
 func RecordResult(ctx context.Context, raw json.RawMessage) (string, error) {

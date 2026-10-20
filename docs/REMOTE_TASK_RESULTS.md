@@ -9,22 +9,20 @@ reviewed: 2026-10-20
 
 ## Result retention / 结果保留
 
-MCP text and non-null `structuredContent` both reach the tool-result tail. Text-only
-results retain their previous rendering.
+- A text-only MCP result is read exactly as before and never written to disk.
+- A rich result (non-null `structuredContent`, or any non-text content) is kept
+  whole in a private, versioned `.tool-result` sidecar, up to
+  `tool.ResultRetainLimit` (16 MiB). A larger one is not kept, and the result
+  text says so.
+- The model sees the result's text, its `tool-result:` reference and the names
+  of its top-level structured fields, never the structured values; they are
+  read back with `read_file`.
+- Content-addressed filenames keep a reused call ID from overwriting an earlier
+  result. Transcript, provider tool schemas and system prompt are unchanged.
 
-Full MCP envelopes, including unknown
-fields and rich content, are retained in private, versioned `.tool-result`
-sidecars. Rich results carry an artifact reference; binary payloads are not
-inserted into text.
-
-Content-addressed filenames prevent reused call IDs from
-overwriting earlier results. Transcript, provider tool schemas, and system
-prompt formats do not change.
-
-MCP 文本与非空 `structuredContent` 一起进入工具结果尾部，纯文本结果保持原有渲染。
-完整 MCP 返回保存在权限为 0600、带版本的 `.tool-result` 文件中，包含未知字段与富内容。
-富结果携带文件引用；二进制内容不混入文本。文件名包含内容摘要，重复调用 ID 不会覆盖旧结果。
-会话格式、提供给模型的工具 schema 与系统提示词格式保持不变。
+纯文本 MCP 结果保持原样且不落盘。富结果（含 `structuredContent` 或非文本内容）完整保存在 0600、
+带版本的 `.tool-result` 中，上限 16 MiB，超限不保存并在结果文本中说明。模型看到文本、引用和
+结构字段名，不直接看到结构值，需要时用 `read_file` 读取。
 
 The model receives a stable `tool-result:<digest>` reference. `read_file` resolves
 it only within the current session, including after temporary artifacts migrate

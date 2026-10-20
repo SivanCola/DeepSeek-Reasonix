@@ -56,7 +56,7 @@ func TestDurableMCPTaskResumesWithoutRepeatingSubmission(t *testing.T) {
 	m2.SetRemoteTaskResumer(host2.RemoteTaskResumer([]Spec{spec}))
 	m2.SetActiveSessionPath("session", path)
 	results, _ := m2.WaitForSession(t.Context(), "session", []string{"mcp_task-1"}, jobs.WaitOptions{Timeout: 5 * time.Second})
-	if len(results) != 1 || results[0].Status != jobs.Done || !strings.Contains(results[0].Output, `"media_id":"v"`) {
+	if len(results) != 1 || results[0].Status != jobs.Done || !strings.Contains(results[0].Output, "[structuredContent fields: media_id, url]") {
 		t.Fatalf("recovered output: %+v", results)
 	}
 	if calls := len(s.requests("tools/call")); calls != 1 {
