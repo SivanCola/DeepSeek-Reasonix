@@ -59,7 +59,7 @@ export function ProductionManifest({ text, onOpen }: { text: string; onOpen: (pa
                 {row.versions.length === 0 && <span className="production-pending">{t("尚无产物")}</span>}
                 {row.versions.map((v) => (
                   <div key={v.version} className={v.current ? "production-version current" : "production-version"}>
-                    <button type="button" onClick={() => onOpen(v.path)} title={v.path}>v{v.version}</button>
+                    <button type="button" data-action-click="workbench.file" data-target={v.path} onClick={() => onOpen(v.path)} title={v.path}>v{v.version}</button>
                     {v.reviews.map((r) => (
                       <span key={r.scope} className={`production-verdict ${r.stale ? "stale" : r.verdict}`} title={r.stale ? t("已过期：文件或需求已变") : r.verdict}>
                         {r.scope}

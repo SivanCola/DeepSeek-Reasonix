@@ -107,3 +107,16 @@ func parseRatio(v string) (float64, bool) {
 	}
 	return n / d, true
 }
+
+// decodedSeconds reads the last out_time_us ffmpeg's -progress stream reported.
+func decodedSeconds(progress []byte) (float64, bool) {
+	seconds, found := 0.0, false
+	for line := range strings.SplitSeq(string(progress), "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "out_time_us="); ok {
+			if us, err := strconv.ParseInt(v, 10, 64); err == nil && us >= 0 {
+				seconds, found = float64(us)/1e6, true
+			}
+		}
+	}
+	return seconds, found
+}

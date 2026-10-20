@@ -24,6 +24,9 @@ const (
 	checkVideoDefaultDurTol  = 0.5
 	checkVideoAspectTol      = 0.01
 	checkVideoDiagnosticSize = 512
+	// checkVideoTruncationTol is how far decoded time may fall short of the
+	// declared duration before the tail counts as missing.
+	checkVideoTruncationTol = 0.15
 )
 
 func init() { tool.RegisterConditional(videoCheck{}) }
@@ -61,6 +64,7 @@ type videoCheckResult struct {
 
 type videoObserved struct {
 	Duration      float64 `json:"duration,omitempty"`
+	Decoded       float64 `json:"decoded_duration,omitempty"`
 	Width         int     `json:"width,omitempty"`
 	Height        int     `json:"height,omitempty"`
 	DisplayAspect float64 `json:"display_aspect,omitempty"`
@@ -148,8 +152,8 @@ func (c videoCheck) Execute(ctx context.Context, args json.RawMessage) (string, 
 	if observed.Width == 0 {
 		report.fail("no_video_stream", "")
 	}
-	report.compare(p, observed)
 	incomplete := c.decode(ctx, ffmpeg, demuxer, snap, dir, &report)
+	report.compare(p, report.Observed)
 	return report.finish(incomplete)
 }
 
@@ -210,20 +214,29 @@ func (c videoCheck) snapshot(rp ResolvedPath, dir string) (string, string, int64
 
 func (c videoCheck) decode(ctx context.Context, ffmpeg, demuxer, snap, dir string, report *videoCheckReport) (incomplete bool) {
 	argv := append([]string{ffmpeg, "-hide_banner", "-nostdin", "-v", "error", "-xerror", "-protocol_whitelist", "file"}, demuxArgs(demuxer)...)
-	argv = append(argv, "-i", snap, "-map", "0:v:0", "-map", "0:a?", "-f", "null", "-")
+	argv = append(argv, "-i", snap, "-map", "0:v:0", "-map", "0:a?", "-f", "null", "-", "-progress", "pipe:1", "-nostats")
 	timeout := c.timeout
 	if timeout <= 0 {
 		timeout = checkVideoDecodeTimeout
 	}
 	dctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	_, tail, err := c.media.execIn(dctx, argv, 1<<16, dir)
+	out, tail, err := c.media.execIn(dctx, argv, 1<<20, dir)
 	switch {
 	case dctx.Err() != nil:
 		report.fail("decode_incomplete", "decode did not finish: "+dctx.Err().Error())
 		return true
 	case err != nil:
 		report.fail("decode", strings.TrimSpace(err.Error()+" "+tail))
+		return false
+	}
+	// A cut container ends early without a decode error; only the time actually
+	// decoded shows the missing tail.
+	if decoded, ok := decodedSeconds(out); ok {
+		report.Observed.Decoded = decoded
+		if declared := report.Observed.Duration; declared > 0 && decoded < declared-checkVideoTruncationTol {
+			report.fail("truncated", fmt.Sprintf("decoded %.3fs of a declared %.3fs", decoded, declared))
+		}
 	}
 	return false
 }
@@ -248,11 +261,15 @@ func (r *videoCheckReport) compare(p videoCheckArgs, o videoObserved) {
 		if p.DurationTolerance != nil && *p.DurationTolerance >= 0 {
 			tol = *p.DurationTolerance
 		}
-		observed := "unknown"
-		if o.Duration > 0 {
-			observed = fmt.Sprintf("%.3f", o.Duration)
+		got := o.Duration
+		if o.Decoded > 0 {
+			got = o.Decoded
 		}
-		r.check("duration", fmt.Sprintf("%.3f±%.3f", *p.Duration, tol), observed, o.Duration > 0 && math.Abs(o.Duration-*p.Duration) <= tol)
+		observed := "unknown"
+		if got > 0 {
+			observed = fmt.Sprintf("%.3f", got)
+		}
+		r.check("duration", fmt.Sprintf("%.3f±%.3f", *p.Duration, tol), observed, got > 0 && math.Abs(got-*p.Duration) <= tol)
 	}
 	if p.Width > 0 {
 		r.check("width", fmt.Sprint(p.Width), fmt.Sprint(o.Width), o.Width == p.Width)

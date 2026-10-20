@@ -193,3 +193,27 @@ func TestCheckVideoRealFFmpegFailsATruncatedTail(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckVideoDecodedTimeShortOfTheDeclaredDurationIsTruncated(t *testing.T) {
+	for _, tc := range []struct {
+		progress string
+		pass     bool
+	}{
+		{"frame=10\nout_time_us=80000000\nprogress=end\n", true},
+		{"frame=10\nout_time_us=40000000\nprogress=continue\nout_time_us=52000000\nprogress=end\n", false},
+	} {
+		m := &fakeMedia{probe: goodProbe, frame: func(int) ([]byte, string, error) { return []byte(tc.progress), "", nil }}
+		r, _ := videoTool(t, m)
+		out, err := (videoCheck{media: r}).Execute(context.Background(), json.RawMessage(`{"path":"clip.mp4","duration":80}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var report videoCheckReport
+		if err := json.Unmarshal([]byte(out), &report); err != nil || report.TechnicalPass != tc.pass {
+			t.Fatalf("%s: %v", out, err)
+		}
+		if !tc.pass && (!strings.Contains(strings.Join(report.Failures, ","), "truncated") || report.Observed.Decoded != 52) {
+			t.Fatalf("truncation not reported with the decoded time: %s", out)
+		}
+	}
+}
