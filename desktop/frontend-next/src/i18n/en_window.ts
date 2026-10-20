@@ -140,4 +140,7 @@ export const EN_WINDOW: Record<string, string> = {
   "未读": "Unread",
   "1 个会话未读": "1 unread session",
   "{n} 个会话未读": "{n} unread sessions",
+  "从这里开始有新回答": "New answers start here",
+  "新回答分隔线": "New-answer divider",
+  "打开有未读回答的会话时，在回答开始的位置画一条分隔线。只在这个窗口里记着，重启后不再显示。": "When a session with unread answers opens, draw a line where they begin. Kept in this window only; gone after a restart.",
 };

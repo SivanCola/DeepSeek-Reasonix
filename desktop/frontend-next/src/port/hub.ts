@@ -56,6 +56,9 @@ export interface TreeSession {
   autoArchivedAt?: number;
   // A turn finished since the person last looked. Absent means seen.
   unread?: boolean;
+  // Unix ms of the last time the person looked, sent only while the row is
+  // unread; absent from a kernel that predates it.
+  viewedAt?: number;
   // Conflict-recovery copies of this same conversation. A save that keeps
   // conflicting writes one per turn, all under one title.
   copies?: TreeSession[];
@@ -187,6 +190,9 @@ export interface HubPort extends SharePort {
   archiveSession(path: string, archived: boolean, host?: string): Promise<void>;
   // Tells the kernel which conversations automatic archiving must leave alone.
   pinSession(path: string, pinned: boolean, host?: string): Promise<void>;
+  // Clears one saved conversation's unread mark without opening it; a remote host
+  // that predates the route refuses and the caller reports it.
+  markSessionRead(path: string, host?: string): Promise<void>;
   // Adds pins made before the kernel kept them. The first call also opens the
   // gate: until then the kernel archives nothing on its own.
   syncPins(paths: string[]): Promise<void>;
@@ -398,6 +404,10 @@ export class SseHub implements HubPort {
 
   async pinSession(path: string, pinned: boolean, host?: string) {
     await this.post<void>(host ? `/remotes/${encodeURIComponent(host)}/sessions/pin` : "/tree/sessions/pin", { path, pinned });
+  }
+
+  async markSessionRead(path: string, host?: string) {
+    await this.post<void>(host ? `/remotes/${encodeURIComponent(host)}/sessions/viewed` : "/tree/sessions/viewed", { path });
   }
 
   async syncPins(paths: string[]) {

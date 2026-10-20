@@ -1,0 +1,2 @@
+- 修复：输入框下方的 Git 指示和相邻的 Agent、询问等控件字号、行高一致，放大界面文字后也不再错位。关联 #13982。
+- Fixed: the composer's Git indicator now shares its neighbours' font and line height, so it stays level with them at larger interface text. Refs #13982.

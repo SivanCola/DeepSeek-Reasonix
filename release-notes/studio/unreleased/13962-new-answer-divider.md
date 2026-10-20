@@ -1,0 +1,2 @@
+- 新增：打开有未读回答的会话时，在新回答开始的位置画一条分隔线；可在设置的外观里关闭。关联 #13962。
+- Added: opening a session with unread answers draws a line where they begin; it can be turned off in Settings, Appearance. Refs #13962.

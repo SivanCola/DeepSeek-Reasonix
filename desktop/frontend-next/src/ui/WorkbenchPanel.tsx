@@ -158,7 +158,7 @@ export function WorkbenchPanel({
   onQuoteSelection?: (text: string, path: string) => void;
   wideMode?: { wide: boolean; onToggle: () => void };
   fullMode?: { full: boolean; onToggle: () => void };
-  fileRequest?: { path: string };
+  fileRequest?: { path: string; consumed?: () => void };
 }) {
   const preview = useHtmlPreview(port, allTabs, remote);
   const tabs = preview.tabs;
@@ -406,7 +406,7 @@ export function WorkbenchPanel({
     fromExplorer.current = showFiles ? path : "";
     pick(`file:${path}`);
   }, [pick, showFiles]);
-  useEffect(() => { if (fileRequest) openFile(fileRequest.path); }, [fileRequest, openFile]);
+  useEffect(() => { if (fileRequest) { openFile(fileRequest.path); fileRequest.consumed?.(); } }, [fileRequest, openFile]);
   // A rendered document's own links open beside it and its images load from the
   // tree. Held stable per document, so typing re-renders the text alone.
   const openRef = useRef(openFile);

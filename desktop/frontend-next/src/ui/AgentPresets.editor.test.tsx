@@ -111,3 +111,17 @@ it("keeps a refused save editable with the same draft", async () => {
   expect(screen.getByRole("form", { name: "新建预设" })).toBeTruthy();
   expect((screen.getByRole("textbox", { name: "预设名称" }) as HTMLInputElement).value).toBe("冲突草稿");
 });
+
+it("names the missing module and why when an imported preset needs one this host lacks", async () => {
+  const user = userEvent.setup();
+  const port = new MockPort();
+  const definition = (await port.agentPresets()).presets[0].definition;
+  vi.spyOn(port, "importAgentPreset").mockResolvedValue({ definition, diagnostics: [
+    { code: "agent_composition.unavailable", module: "tools:browser_act", detail: "Dependency is not available on this host." }] });
+  render(<AgentPresets port={port} />);
+  const file = new File(["{}"], "preset.json", { type: "application/json" });
+  Object.defineProperty(file, "text", { value: async () => "{}" });
+  await user.upload(await screen.findByLabelText("导入预设文件（先预览，再保存）"), file);
+  const said = await screen.findByText(/tools:browser_act/);
+  expect(said.textContent).toContain("Dependency is not available on this host.");
+});

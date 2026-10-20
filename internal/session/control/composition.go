@@ -83,7 +83,7 @@ func (c *Controller) SelectAgentComposition(ctx context.Context, id string) erro
 	}
 	c.mu.Unlock()
 	if selectPreset == nil {
-		return agentcomposition.ErrUnavailable
+		return agentcomposition.Unavailable("composition", "This frontend cannot switch the session's composition.")
 	}
 	return selectPreset(ctx, id)
 }
@@ -123,7 +123,7 @@ func (c *Controller) newCompositionSession() error {
 	}
 	c.mu.Unlock()
 	if create == nil {
-		return fmt.Errorf("%w: create a new session through the owning frontend", agentcomposition.ErrUnavailable)
+		return agentcomposition.Unavailable("composition", "Create a new session through the owning frontend.")
 	}
 	return create(context.Background())
 }

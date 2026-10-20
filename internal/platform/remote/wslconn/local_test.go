@@ -8,8 +8,10 @@ import (
 	"errors"
 	"io"
 	"os/exec"
+	"strings"
 	"testing"
 
+	"reasonix/internal/platform/remote/execfs/fstest"
 	"reasonix/internal/platform/wsl"
 )
 
@@ -42,5 +44,13 @@ func TestFileLayerAgainstALocalPOSIXShell(t *testing.T) {
 		t.Skip("needs GNU stat")
 	}
 	c := &Conn{distro: "local", run: localCommand(t)}
-	runFileScenario(t, c, t.TempDir())
+	fstest.RunScenario(t, c.Volume(), t.TempDir())
+}
+
+func TestExecRunsUnderTheShellInTheDistribution(t *testing.T) {
+	c := &Conn{distro: "local", run: localCommand(t)}
+	res, err := c.Exec(context.Background(), "printf '%s' \"$((6*7))\"; echo err >&2; exit 3")
+	if err != nil || string(res.Stdout) != "42" || strings.TrimSpace(string(res.Stderr)) != "err" || res.ExitCode != 3 {
+		t.Fatalf("Exec = %+v, %v", res, err)
+	}
 }

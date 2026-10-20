@@ -25,8 +25,7 @@ type DirectorySnapshot struct {
 	Files []AssetFile `json:"files"`
 }
 
-// CaptureDirectory retains executable bits without retaining mutable ownership.
-func CaptureDirectory(root string) (DirectorySnapshot, error) {
+func captureRetainedDirectory(root string) (DirectorySnapshot, error) {
 	snapshot := DirectorySnapshot{Files: []AssetFile{}}
 	size := 0
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
@@ -67,6 +66,7 @@ func CaptureDirectory(root string) (DirectorySnapshot, error) {
 		snapshot.Files = append(snapshot.Files, AssetFile{Path: filepath.ToSlash(rel), Data: data, Mode: uint32(info.Mode().Perm() & 0o700)})
 		return nil
 	})
+	sort.Slice(snapshot.Files, func(i, j int) bool { return snapshot.Files[i].Path < snapshot.Files[j].Path })
 	return snapshot, err
 }
 
@@ -105,7 +105,7 @@ func (s *Store) Materialize(snapshot DirectorySnapshot) (string, error) {
 	}
 	defer unlock()
 	if _, err := os.Lstat(root); err == nil {
-		existing, err := CaptureDirectory(root)
+		existing, err := captureRetainedDirectory(root)
 		if err != nil {
 			return "", err
 		}

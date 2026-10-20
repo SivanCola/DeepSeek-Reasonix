@@ -468,8 +468,6 @@ func (m *model) onScreenMsg(msg tea.Msg) (tea.Cmd, bool) {
 		return m.onModelSwitched(msg), true
 	case sessionsMsg:
 		return m.onSessions(msg), true
-	case deletedMsg:
-		return m.onDeleted(msg), true
 	case resumedMsg:
 		return m.onResumed(msg), true
 	case checkpointsMsg:

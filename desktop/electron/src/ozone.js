@@ -1,4 +1,5 @@
 "use strict";
+const { handOver } = require("./launcher");
 
 const X11 = "--ozone-platform=x11";
 
@@ -33,6 +34,7 @@ function wantsX11(platform, env, args) {
 function relaunchForOzonePlatform(app, { platform, env, argv }) {
   const args = argv.slice(1);
   if (!wantsX11(platform, env, args)) return false;
+  handOver(env);
   app.relaunch({ args: [X11, ...args] });
   app.exit(0);
   return true;

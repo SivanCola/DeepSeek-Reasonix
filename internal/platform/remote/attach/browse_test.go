@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sync/atomic"
 	"testing"
@@ -140,6 +141,32 @@ func TestBrowseReportsAPathTheFarMachineDoesNotHave(t *testing.T) {
 	p := testPool(t, m)
 	if _, err := p.Browse(t.Context(), "box", "/no/such/folder"); err == nil {
 		t.Fatal("a missing folder listed as if it were there")
+	}
+}
+
+// A folder the far machine will not list is still a folder: the picker can use
+// it, which is the difference from a path that is not there.
+func TestBrowseOffersAFolderTheMachineWillNotList(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs a mode that keeps this account out")
+	}
+	m := fakeMachine(t)
+	p := testPool(t, m)
+	shut := m.workspace(t, "shut")
+	if err := os.Chmod(shut, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(shut, 0o700) })
+
+	got, err := p.Browse(t.Context(), "box", filepath.ToSlash(shut))
+	if err != nil {
+		t.Fatalf("browse of a folder that exists but cannot be listed: %v", err)
+	}
+	if !got.Unlisted || len(got.Folders) != 0 || !sameFarPath(got.Path, filepath.ToSlash(shut)) {
+		t.Fatalf("listing = %+v, want the folder itself, marked unlisted", got)
+	}
+	if _, err := p.Browse(t.Context(), "box", filepath.ToSlash(shut)+"/none"); err == nil {
+		t.Fatal("a path under it that is not there listed")
 	}
 }
 

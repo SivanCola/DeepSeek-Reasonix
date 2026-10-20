@@ -88,11 +88,6 @@ func (c *Client) RenameSession(ctx context.Context, name, title string) error {
 	return c.do(ctx, http.MethodPost, "/sessions/rename", map[string]string{"id": name, "title": title}, nil)
 }
 
-// DeleteSession erases the saved conversation listed under name.
-func (c *Client) DeleteSession(ctx context.Context, name string) error {
-	return c.do(ctx, http.MethodPost, "/delete-session", map[string]string{"name": name}, nil)
-}
-
 // Resume binds the runtime to the saved conversation at path.
 func (c *Client) Resume(ctx context.Context, path string) error {
 	return c.do(ctx, http.MethodPost, "/resume", map[string]string{"path": path}, nil)
@@ -104,9 +99,6 @@ type sessionPicker struct {
 	all   []SessionInfo
 	query string
 	sel   int
-	// arming is the path a first Ctrl+D marked for deletion; notice is the last refusal.
-	arming string
-	notice string
 }
 
 type (
@@ -115,10 +107,6 @@ type (
 		err  error
 	}
 	resumedMsg struct{ err error }
-	deletedMsg struct {
-		path string
-		err  error
-	}
 )
 
 func (m *model) openPicker() tea.Cmd {
@@ -185,19 +173,7 @@ func (m *model) pickerKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		return nil, false
 	}
 	items := p.shown()
-	k := msg.String()
-	arming := p.arming
-	p.arming, p.notice = "", ""
-	switch k {
-	case "ctrl+d":
-		if p.sel >= len(items) {
-			break
-		}
-		if s := items[p.sel]; arming != s.Path {
-			p.arming = s.Path
-		} else {
-			return m.deleteSession(s), true
-		}
+	switch k := msg.String(); k {
 	case "esc":
 		m.picker = nil
 	case "up", "ctrl+p":
@@ -219,26 +195,6 @@ func (m *model) pickerKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		}
 	}
 	return nil, true
-}
-
-func (m *model) deleteSession(s SessionInfo) tea.Cmd {
-	return func() tea.Msg { return deletedMsg{path: s.Path, err: m.client.DeleteSession(m.ctx, s.Name)} }
-}
-
-// onDeleted drops the erased row and keeps the picker open for the next one;
-// a refusal stays on the picker, where the user is looking.
-func (m *model) onDeleted(msg deletedMsg) tea.Cmd {
-	p := m.picker
-	if p == nil {
-		return nil
-	}
-	if msg.err != nil {
-		p.notice = fmt.Sprintf(i18n.M.ResumeDeleteFailedFmt, msg.err.Error())
-		return nil
-	}
-	p.all = slices.DeleteFunc(p.all, func(s SessionInfo) bool { return s.Path == msg.path })
-	p.sel = min(p.sel, max(len(p.shown())-1, 0))
-	return nil
 }
 
 func (m *model) pickSession(s SessionInfo) tea.Cmd {
@@ -312,17 +268,6 @@ func (m *model) pickerPanel() []string {
 	}
 	if end < len(items) {
 		lines = append(lines, termrender.Dim("  ↓ more"))
-	}
-	if p.arming != "" {
-		for _, s := range items {
-			if s.Path == p.arming {
-				room := max(width-termrender.VisibleWidth(fmt.Sprintf(i18n.M.ResumeDeleteAskFmt, "")), 1)
-				lines = append(lines, termrender.Accent(clipVisible(fmt.Sprintf(i18n.M.ResumeDeleteAskFmt, clipVisible(sessionLabel(s), room)), width)))
-			}
-		}
-	}
-	if p.notice != "" {
-		lines = append(lines, termrender.Accent(p.notice))
 	}
 	lines = append(lines, termrender.Dim(i18n.M.ResumePickFilter+" · "+i18n.M.ResumePickHint))
 	return panel(lines, m.width, accentEdge)

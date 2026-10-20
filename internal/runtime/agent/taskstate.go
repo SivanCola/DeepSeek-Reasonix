@@ -25,10 +25,10 @@ type taskRuntime struct {
 	ledger         *evidence.Ledger
 	// origins keeps the text of this task's external results, apart from the messages.
 	origins *originLedger
-	// unprovenExplained is the obligation whose full explanation an ended turn already carried.
-	unprovenExplained string
-	outcome           *evidence.OutcomeTracker
-	budget            runBudget
+	// explained holds the obligations whose full explanation an ended turn already carried.
+	explained []string
+	outcome   *evidence.OutcomeTracker
+	budget    runBudget
 	// witness holds, per changed path, the lines a later output has to carry to
 	// have shown that change. It is working state, not evidence: the verdict
 	// lands on the receipt, so the ledger never holds file content.

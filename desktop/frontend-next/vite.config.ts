@@ -24,7 +24,7 @@ const ROUTES = [
   "/changes", "/commit", "/attachments", "/drop", "/checkpoints", "/branches", "/compact", "/compaction", "/rewind", "/branch",
   "/extensions", "/themes", "/plugins", "/market", "/surfaces", "/feedback",
   "/fork", "/summarize", "/forget", "/bypass", "/auto-approve-tools",
-  "/permissions", "/subagent-steer-limits", "/sandbox", "/progress-watch", "/ask-timeout", "/session-ref-settings", "/changed-files-settings", "/feedback-level-notices", "/observability", "/fold-work-settings", "/turn-narration-settings", "/display-currency", "/auto-archive", "/persona", "/context", "/storage", "/tray", "/browser", "/browser-host", "/asks", "/update", "/receipt-settings", "/subagent-claims", "/write-lease", "/peers",
+  "/permissions", "/subagent-steer-limits", "/sandbox", "/progress-watch", "/ask-timeout", "/session-ref-settings", "/changed-files-settings", "/schedules", "/feedback-level-notices", "/observability", "/fold-work-settings", "/turn-narration-settings", "/display-currency", "/auto-archive", "/persona", "/context", "/storage", "/tray", "/browser", "/browser-host", "/asks", "/update", "/receipt-settings", "/subagent-claims", "/write-lease", "/peers",
   "/mods", "/git",
   "/host", "/notifications", "/share", "/pair", "/device",
   "/web-access-settings", "/slash", "/workspaces", "/welcome", "/usage", "/config", "/studio",
@@ -44,6 +44,10 @@ export default defineConfig(({ mode }) => {
     // Threads rather than forks: a worker per file either way, but a thread is
     // cheaper to start, which is most of what a suite of small files pays.
     //
+    // At most ten workers: every first lazy import goes through the one vite
+    // transform queue, and past that a cold import waits longer than a test's
+    // own budget, so files that pass alone in 0.4s fail in a full run.
+    //
     // Sharing a worker across files was tried and taken back out. It was fast —
     // about 9s against 15 — and it made the suite intermittent: vi.mock cannot
     // see a module another file already imported unmocked, and a render test
@@ -55,6 +59,7 @@ export default defineConfig(({ mode }) => {
       testTimeout: 60_000,
       hookTimeout: 60_000,
       pool: "threads",
+      maxWorkers: Math.min(navigator.hardwareConcurrency, 10),
     },
     server: {
       port: 5273,

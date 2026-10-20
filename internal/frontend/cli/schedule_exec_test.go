@@ -159,6 +159,22 @@ func TestScheduleExecRefusesAnEditedManifestAndSpendsNothing(t *testing.T) {
 	}
 }
 
+// Trust is the person's to withdraw: a schedule confirmed while its project was
+// trusted does not read it once it is not.
+func TestScheduleExecDoesNotReadAProjectThatIsNoLongerTrusted(t *testing.T) {
+	w := newExecWorld(t, "", "Look around.", fakeModelRef, fakeTurn{text: "x", prompt: 1, cl: 1})
+	if err := config.NewProjectGrantStore(config.RootsForHome("").Home()).SetTrust(w.ws, config.WorkspaceTrustDeclined); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := w.supervisor().Run(t.Context(), w.run.TriggerID)
+	if err != nil || rep.Code != schedrun.CodeWorkspaceUntrust || rep.State != schedule.RunFailed {
+		t.Fatalf("Run = %+v, %v", rep, err)
+	}
+	if n := len(w.model.requests()); n != 0 {
+		t.Fatalf("provider saw %d requests from a run in a project nobody trusts", n)
+	}
+}
+
 func TestScheduleExecDoesNotSubstituteAModelThatIsNoLongerConfigured(t *testing.T) {
 	w := newExecWorld(t, "", "Look around.", schedule.Model{Provider: "gone", Model: "m"}, fakeTurn{text: "x", prompt: 1, cl: 1})
 	rep, err := w.supervisor().Run(t.Context(), w.run.TriggerID)

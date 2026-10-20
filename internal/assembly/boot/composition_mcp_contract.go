@@ -19,7 +19,7 @@ func (b *builder) bindCompositionMCPContracts(ctx context.Context) error {
 		tools, err := b.tools.host.EnsureConnectedWithLifecycle(b.ctx, call, spec, 0)
 		cancel()
 		if err != nil {
-			return fmt.Errorf("%w: MCP %s: %w", agentcomposition.ErrUnavailable, spec.Name, err)
+			return compositionResourceError("mcp", spec.Name, err)
 		}
 		addServerTools(b.tools.reg, b.tools.host, spec, tools)
 		expected := ""
@@ -27,17 +27,17 @@ func (b *builder) bindCompositionMCPContracts(ctx context.Context) error {
 			for _, r := range binding.Resources {
 				if r.Kind == "mcp-contract" && r.ID == spec.Name {
 					if err := jsonResource(r, &expected); err != nil {
-						return err
+						return compositionResourceError("mcp", spec.Name, err)
 					}
 				}
 			}
 			if expected == "" {
-				return fmt.Errorf("%w: MCP contract missing", agentcomposition.ErrUnavailable)
+				return compositionResourceError("mcp", spec.Name, fmt.Errorf("%w: MCP contract missing", agentcomposition.ErrUnavailable))
 			}
 		}
 		hash, err := b.tools.host.PinCompositionTools(spec.Name, expected)
 		if err != nil {
-			return fmt.Errorf("%w: %w", agentcomposition.ErrUnavailable, err)
+			return compositionResourceError("mcp", spec.Name, err)
 		}
 		if binding.Digest == "" {
 			if err := keepResource(binding, "mcp-contract", spec.Name, hash); err != nil {

@@ -30,6 +30,9 @@ type Listing struct {
 	Parent    string
 	Folders   []Folder
 	Truncated bool
+	// Unlisted: the folder exists and is a directory, but the machine would not
+	// list what is inside. It can still be chosen.
+	Unlisted bool
 }
 
 // Folder is one directory inside a Listing. The name comes from the machine
@@ -63,6 +66,11 @@ func (p *Pool) Browse(ctx context.Context, host, dir string) (Listing, error) {
 		dir = "~"
 	}
 	at, entries, err := l.client.Dirs(ctx, dir)
+	if errors.Is(err, sftpfs.ErrNotListable) {
+		out := listingOf(at, nil)
+		out.Unlisted = true
+		return out, nil
+	}
 	if err != nil {
 		return Listing{}, err
 	}

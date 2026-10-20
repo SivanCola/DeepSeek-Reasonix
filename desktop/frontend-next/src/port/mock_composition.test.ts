@@ -42,4 +42,11 @@ describe("project composition authority", () => {
     await expect(presets.saveAgentPreset(definition,"")).resolves.toMatchObject({definition});
     await expect(presets.importAgentPreset(definition)).resolves.toMatchObject({definition});
   });
+
+  it("refuses a selection whose module is missing and says which one", async () => {
+    const presets = new MockCompositions();
+    const definition = {...builtinCompositions()[0],id:"user:gone",tools:{mode:"select" as const,members:[{id:"no_such_tool"}]}};
+    await presets.saveAgentPreset(definition,"");
+    await expect(presets.selectAgentComposition("user:gone")).rejects.toMatchObject({reason:{code:"agent_composition.unavailable",params:{module:"tools:no_such_tool"}}});
+  });
 });

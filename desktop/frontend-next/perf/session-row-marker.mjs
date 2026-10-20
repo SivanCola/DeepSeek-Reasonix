@@ -3,13 +3,13 @@
 // each other. Guard: for every state, at most one of the two is rendered, in light and dark.
 import { chromium } from "playwright";
 
-const URL = process.env.ROW_URL ?? "http://127.0.0.1:5541/";
+const BASE = process.env.PERF_URL ?? "http://localhost:4399/perf.html";
 const STATES = ["running", "halt", "done"];
 const browser = await chromium.launch();
 const fails = [];
 for (const theme of ["light", "dark"]) {
   const page = await (await browser.newContext({ locale: "zh-CN", viewport: { width: 1280, height: 800 }, colorScheme: theme })).newPage();
-  await page.goto(URL, { waitUntil: "networkidle" });
+  await page.goto(BASE, { waitUntil: "networkidle" });
   await page.getByText("稍后再说").first().click().catch(() => {});
   await page.waitForSelector('.rail .sessrow[aria-selected="true"]');
   for (const state of STATES) {

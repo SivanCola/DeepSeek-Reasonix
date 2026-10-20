@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import { streamBudget } from "../port/streambudget";
 import { loadReceiptPref, receiptPrefOf } from "../state/receiptpref";
 import { ReceiptPrefContext } from "../state/foldpref";
@@ -70,6 +70,9 @@ import { loadFoldWorkPref, useFoldsTurnWork } from "../state/foldwork";
 import { ChangedFilesPill } from "./ChangedFilesPill";
 import { RootMissingBanner } from "./RootMissingBanner";
 import { useConversationFiles } from "./useConversationFiles";
+import { NewAnswerAnchor } from "./NewAnswerLine";
+import { useFrozenNewAnswerAnchor } from "./newAnswerMark";
+import { onNewAnswerMarkerChange, sessionKey, showsNewAnswerMarker, useUnreadSince } from "../state/newAnswers";
 
 export type { PaneReport };
 
@@ -117,6 +120,8 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFoc
   const workbench = docked || tab === "browser";
   const flow = useRef<HTMLDivElement>(null);
   const running = s.running || !!status?.running; // A paired device can join after turn_started.
+  const marker = useSyncExternalStore(onNewAnswerMarkerChange, showsNewAnswerMarker, showsNewAnswerMarker);
+  const newAnswerAt = useFrozenNewAnswerAnchor(s.items, useUnreadSince(rt.sessionPath ? sessionKey(rt.host, rt.sessionPath) : undefined), running);
   const fail = useCallback((e: unknown, from?: string) => {
     const shown = reason(e);
     noteFault(e, shown);
@@ -489,6 +494,7 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFoc
       <ReceiptPrefContext.Provider value={receiptPref}>
       <PaneShown.Provider value={shown}>
       <LiveWork.Provider value={live}>
+      <NewAnswerAnchor.Provider value={marker ? newAnswerAt : null}>
       <Transcript port={port}
         onSettings={onSettings}
         brought={brought}
@@ -523,6 +529,7 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFoc
         onOpenProject={onOpenProject}
         onKeepHere={onKeepHere}
       />
+      </NewAnswerAnchor.Provider>
       </LiveWork.Provider>
       </PaneShown.Provider>
       </ReceiptPrefContext.Provider>

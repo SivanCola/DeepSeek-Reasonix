@@ -25,7 +25,7 @@ func (b *builder) prepareCompositionMCP() error {
 		var err error
 		available[i], err = b.rebaseCompositionMCP(available[i])
 		if err != nil && member(binding.Resolved.MCP, available[i].Name) {
-			return err
+			return compositionResourceError("mcp", available[i].Name, err)
 		}
 	}
 	for _, spec := range b.opts.ExtraPlugins {
@@ -52,13 +52,13 @@ func (b *builder) prepareCompositionMCP() error {
 				}
 				entry, err := saved.Resolve(live)
 				if err != nil {
-					return err
+					return compositionResourceError("mcp", saved.Entry.Name, err)
 				}
 				selected = append(selected, entry)
 				found = true
 			}
 			if !found {
-				return fmt.Errorf("%w: MCP %s", agentcomposition.ErrUnavailable, saved.Entry.Name)
+				return compositionResourceError("mcp", saved.Entry.Name, agentcomposition.ErrUnavailable)
 			}
 		}
 	} else {
@@ -69,7 +69,7 @@ func (b *builder) prepareCompositionMCP() error {
 			}
 			selected = append(selected, entry)
 		}
-		if err := verifySelected(binding.Resolved.MCP, selected, func(p config.PluginEntry) string { return p.Name }); err != nil {
+		if err := verifySelected("mcp", binding.Resolved.MCP, selected, func(p config.PluginEntry) string { return p.Name }); err != nil {
 			return err
 		}
 	}

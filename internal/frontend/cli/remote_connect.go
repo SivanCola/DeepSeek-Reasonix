@@ -612,7 +612,7 @@ func remoteFSLs(operand string) int {
 		return 2
 	}
 	return withRemoteFS(host, func(ctx context.Context, client *remote.Client) int {
-		fsys, err := client.SFTP()
+		fsys, err := client.Volume()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			return 1
@@ -648,7 +648,7 @@ func remoteFSGet(args []string) int {
 		localPath = args[1]
 	}
 	return withRemoteFS(host, func(ctx context.Context, client *remote.Client) int {
-		fsys, err := client.SFTP()
+		fsys, err := client.Volume()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			return 1
@@ -692,7 +692,7 @@ func remoteFSPut(args []string) int {
 	}
 	defer in.Close()
 	return withRemoteFS(host, func(ctx context.Context, client *remote.Client) int {
-		fsys, err := client.SFTP()
+		fsys, err := client.Volume()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			return 1

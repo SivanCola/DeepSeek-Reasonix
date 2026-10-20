@@ -24,6 +24,7 @@ import { NoticeCard } from "./cards/NoticeCard";
 import { RememberCard } from "./cards/RememberCard";
 import { ExtensionCard } from "./cards/ExtensionCard";
 import { toolChangedFile, toolFailed } from "./cards/outcome";
+import { NewAnswerLine, useNewAnswerAnchor } from "./NewAnswerLine";
 import { drawn, foldStats, repeatedSpeakers, sameMembers, transcriptRows, type Shown } from "./turnrows";
 import { BroughtResults } from "./BroughtResults";
 import { ReceiptSlot } from "./ReceiptSlot";
@@ -562,6 +563,7 @@ const Block = memo(function Block({
   // Tool traffic is evidence for the answer, not a stack of equally important
   // messages; transcriptRows folds it and keeps each sentence above its own.
   const rows = transcriptRows(items, foldWork ? { running: tail } : undefined);
+  const newAnswerAt = useNewAnswerAnchor();
   // Which runs of work are open, held here so re-hosting one under its sentence
   // does not close it.
   const [opened, setOpened] = useState<Record<string, boolean>>({});
@@ -577,7 +579,8 @@ const Block = memo(function Block({
     }
     return "item" in row ? (
       <Fragment key={row.item.id}>
-        {opensTurn(row.item) && <hr className="turn-rule" />}
+        {row.item.id === newAnswerAt && <NewAnswerLine />}
+        {opensTurn(row.item) && row.item.id !== newAnswerAt && <hr className="turn-rule" />}
         <Row
           it={row.item}
           {...rowProps}

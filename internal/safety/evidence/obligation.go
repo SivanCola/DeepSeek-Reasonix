@@ -53,6 +53,18 @@ type CheckContract struct {
 	observeRoot   string
 	// unseenWriter: something outside the receipts may write the workspace.
 	unseenWriter bool
+	// unversioned: no version-control root encloses the workspace, so no
+	// recognized check can say anything about a document written there.
+	unversioned bool
+}
+
+// WithUnversionedWorkspace records that no version-control root encloses the
+// workspace. A delivery turn is then no longer held to a generic check for
+// prose whose every write the receipts can name: the recognized checks all read
+// a repository or a toolchain, and none of them can run over a bare folder.
+func (c CheckContract) WithUnversionedWorkspace(unversioned bool) CheckContract {
+	c.unversioned = unversioned
+	return c
 }
 
 // WithUnseenWriter records that a writer the receipts never name — a tool hook
@@ -67,10 +79,11 @@ func (c CheckContract) WithUnseenWriter(unseen bool) CheckContract {
 func (c CheckContract) UnseenWriter() bool { return c.unseenWriter }
 
 // waivesProse reports whether prose may be exempt from the generic check here:
-// no check of the project's or task's own, no delivery role, and every writer
-// one the receipts can name.
+// no check of the project's or task's own, no delivery role unless nothing
+// recognized could run in an unversioned workspace, and every writer one the
+// receipts can name.
 func (c CheckContract) waivesProse() bool {
-	return !c.delivery && !c.DeclaresChecks() && !c.unseenWriter
+	return (!c.delivery || c.unversioned) && !c.DeclaresChecks() && !c.unseenWriter
 }
 
 func (c CheckContract) WithObserveRoot(root string) CheckContract {

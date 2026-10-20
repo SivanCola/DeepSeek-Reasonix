@@ -9,6 +9,7 @@ func (h *Hub) registerRemoteSessionRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /remotes/{host}/sessions/remove", h.removeRemoteSession)
 	mux.HandleFunc("POST /remotes/{host}/sessions/pin", h.remoteSessionFlag("pin"))
 	mux.HandleFunc("POST /remotes/{host}/sessions/archive", h.remoteSessionFlag("archive"))
+	mux.HandleFunc("POST /remotes/{host}/sessions/viewed", h.remoteSessionFlag("viewed"))
 }
 
 func (h *Hub) remoteSessionFlag(action string) http.HandlerFunc {
@@ -37,9 +38,10 @@ func (h *Hub) remoteSessionFlag(action string) http.HandlerFunc {
 		}
 		defer release()
 		payload := map[string]any{"path": path}
-		if action == "pin" {
+		switch action {
+		case "pin":
 			payload["pinned"] = body.Pinned
-		} else {
+		case "archive":
 			payload["archived"] = body.Archived
 		}
 		if err := farRequest(r.Context(), ep, http.MethodPost, "/tree/sessions/"+action, payload, nil); err != nil {

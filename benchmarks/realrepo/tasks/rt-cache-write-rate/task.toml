@@ -1,0 +1,12 @@
+prompt = """Some providers bill tokens written into their prompt cache at a rate of their own. Add that to the pricing contract in this repository:
+
+- `RateCard` gains a `CacheWrite` rate, per 1M tokens like the others. Zero means the card has no separate cache-write price, and cache-written tokens keep being charged at `Input` exactly as they are today.
+- When a card sets `CacheWrite`, `OriginalCostAmount` charges the billed cache-write units (`CacheWriteBilledTokens` when set, otherwise `CacheWriteTokens`) at `CacheWrite` instead of `Input`.
+- `PricingFingerprint` must tell apart two cards that differ only in `CacheWrite`, but a card without one must keep exactly the fingerprint it has today: stored ledgers are keyed by it.
+- Two cards that differ only in `CacheWrite` are different cards everywhere cards are compared, including official-card recognition and catalog matching.
+- `CatalogEntry` carries the rate too, and `RateCardFromCatalog` and `CatalogEntry.RatesAt` hand it back.
+- Add Anthropic to the official price book: `claude-sonnet-4-5`, pay-as-you-go in USD, cache hit 0.30, input 3, output 15 and cache write 3.75 per 1M tokens, documented at https://www.anthropic.com/pricing and checked 2026-10-19. `api.anthropic.com` is Anthropic's own endpoint.
+- `benchctl cost` gains a `-write` flag for cache-written tokens, and `benchctl rate` shows a card's cache-write rate when it has one.
+- Add tests for the new behaviour and update the README's pricing section."""
+class = "multi-file-feature"
+timeout_sec = 1200

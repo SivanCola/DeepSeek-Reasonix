@@ -1,5 +1,6 @@
 import { SseShell } from "./sse_shell";
 import type { AgentComposition, AgentPresetVersion, AgentPresetCatalog, CompositionSummary } from "./composition";
+import type { ScheduleBoard, ScheduleDraft, SchedulePreview, ScheduleResultView, ScheduleView } from "./schedule";
 import type { PersonaDraft, PersonaSettings } from "./boundary";
 import type { Adjudications, BrowserToolsSettings, SubagentClaimsSettings, SubagentSteerSettings, WriteLeaseSettings, PlanApprovalSettings, DefaultModeSettings, ToolSettings, PeerReceipt, PeersState, PeersSettings, PeersSettingsEdit, PeerRemember, ConfigProblem, ConfigRepair, PermissionLists, PermissionRules, SandboxSettings } from "./port";
 import type { AskTimeoutSettings, ModStatus, ModsSettings, ModsSettingsEdit, SessionRefSettings, AutoArchiveSettings, ChangedFilesSettings, FeedbackLevelNotices, FoldWorkSettings, TurnNarrationSettings, ObservabilityPatch, ObservabilitySettings, WebAccessPatch, WebAccessSettings, SearxngProbe, DisplayCurrencyMode, DisplayCurrencySettings, ProgressWatchSettings, WorkspaceRoots, ReceiptSettings } from "./boundary";
@@ -77,6 +78,24 @@ export class SseBoundary extends SseShell {
   }
   saveWriteLease(edit: { optimistic?: boolean; maxWaitMinutes?: number }) {
     return this.post0<WriteLeaseSettings>("/write-lease", edit);
+  }
+  schedules() {
+    return this.get<ScheduleBoard>("/schedules");
+  }
+  previewSchedule(draft: ScheduleDraft) {
+    return this.post0<SchedulePreview>("/schedules/preview", draft);
+  }
+  createSchedule(draft: ScheduleDraft, confirm: string) {
+    return this.post0<ScheduleView>("/schedules", { ...draft, confirm });
+  }
+  scheduleAction(id: string, verb: "pause" | "resume" | "renew" | "delete") {
+    return this.post0<ScheduleBoard>(`/schedules/${encodeURIComponent(id)}/${verb}`, {});
+  }
+  setSchedulesPaused(paused: boolean) {
+    return this.post0<ScheduleBoard>(paused ? "/schedules/pause-all" : "/schedules/resume-all", {});
+  }
+  scheduleResult(triggerId: string) {
+    return this.get<ScheduleResultView>(`/schedules/result?trigger=${encodeURIComponent(triggerId)}`);
   }
   peers() {
     return this.get<PeersState>("/peers");

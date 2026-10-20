@@ -43,17 +43,9 @@ type sshLink struct{ *remote.Client }
 func (l sshLink) Forwards() Forwards { return l.Client.Forwards() }
 
 func (l sshLink) Dirs(ctx context.Context, dir string) (string, []sftpfs.Entry, error) {
-	fsys, err := l.SFTP()
+	vol, err := l.Volume()
 	if err != nil {
 		return "", nil, err
 	}
-	// The far machine resolves it: ~ belongs to the account that logged in, and
-	// a symlinked project must be listed under the path it really has, or
-	// stepping up from it would leave the tree it was reached through.
-	at, err := fsys.RealPath(ctx, dir)
-	if err != nil {
-		return "", nil, err
-	}
-	entries, err := fsys.List(ctx, at)
-	return at, entries, err
+	return sftpfs.Dirs(ctx, vol, dir)
 }

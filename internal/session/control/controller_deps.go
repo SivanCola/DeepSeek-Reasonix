@@ -82,6 +82,7 @@ type controllerDeps struct {
 	skills              skillSet
 	rules               rulesSet
 	date                dateAnchor
+	scratch             scratchAnchor
 	skillRunner         skill.SubagentRunner
 	side                sideSet // see side_session.go
 	readOnlySkillRunner skill.SubagentRunner
@@ -181,6 +182,7 @@ func newControllerDeps(opts Options, sink event.Sink, usageTee *goalUsageTee, ru
 		modelFace:              faceOfEntry(opts.ModelEntry),
 		sessionDir:             opts.SessionDir,
 		date:                   newDateAnchor(opts.Clock),
+		scratch:                scratchAnchor{temp: opts.SessionTemp},
 		skills:                 newSkillSet(opts.Skills, opts.AllSkills, opts.SkillStore, opts.AllSkillStore, opts.DisableImplicitSkillInvocation, opts.WorkspaceRoot),
 		skillRunner:            opts.SkillRunner,
 		side:                   sideSet{factory: opts.SideFactory},

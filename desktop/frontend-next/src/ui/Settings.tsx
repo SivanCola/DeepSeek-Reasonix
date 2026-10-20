@@ -4,7 +4,7 @@ import { SettingsLeaveContext, useSettingsLeave } from "./SettingsLeave";
 import { t } from "../i18n";
 import { listenAction } from "./listen";
 import { useRuntimeReload } from "./RuntimeReload";
-import type { AccountState, AgentPort, Appearance as Look, CapabilityScope, McpEntry, ModelEntry, PluginPackage, SessionStatus, SkillEntry } from "../port/port";
+import type { CapabilityScope, McpEntry, ModelEntry, PluginPackage, SkillEntry } from "../port/port";
 import { useSettingsSearch } from "./useSettingsSearch";
 import { bytes, tokens as fmtTokens } from "../i18n/format";
 import { SECTION_NAME } from "./prefsnav";
@@ -20,7 +20,6 @@ import { PhoneReminders } from "./PhoneReminders";
 import { remoteDeviceId } from "../port/cloud_remote";
 import { PhoneNotifications } from "./PhoneNotifications";
 import { Remotes } from "./Remotes";
-import type { HubPort } from "../port/hub";
 import type { RemoteHost } from "../port/remote";
 import { AddPlugin } from "./AddPlugin";
 import { Packages } from "./Packages";
@@ -30,6 +29,7 @@ import { Switch } from "./Switch";
 import { ServerRow } from "./ServerRow";
 import { SkillGroups } from "./SkillRow";
 import { Hooks } from "./Hooks";
+import { ScheduledRuns } from "./ScheduledRuns";
 import { Network } from "./Network";
 import { Shell as ShellPicker } from "./Shell";
 import { ExternalOrigin } from "./ExternalOrigin";
@@ -68,6 +68,7 @@ import { Appearance, SCHEMES } from "./Appearance";
 import { ScopeBar } from "./CapabilityScope";
 import { savedNotApplied, reason } from "../i18n/kernel";
 import { SettingsHeading } from "./SettingsHeading";
+import type { SettingsProps as Props } from "./SettingsProps";
 import { APPROVALS, approvalName, approvalNote } from "./approvals";
 
 // An empty list hides Advanced. Only features available in the legacy app
@@ -78,36 +79,6 @@ const ELSEWHERE: string[] = [];
 // label. A failed server keeps its error on the row that names it.
 const NET_MODE: Record<string, string> = { auto: "跟随系统", env: "环境变量", custom: "手动", off: "直连" };
 
-interface Props {
-  // The window's own port, not a pane's: remote machines belong to the window,
-  // and their endpoints sit above every pane's prefix.
-  hub: HubPort;
-  onError: (e: unknown) => void;
-  port: AgentPort;
-  // Machine-scoped pages use the window owner; session and project controls
-  // continue to use the active pane.
-  networkPort?: AgentPort;
-  localWorkspacePort?: AgentPort;
-  networkHost?: string;
-  status: SessionStatus | null;
-  theme: string;
-  reloadThemes: () => void;
-  onTheme: (t: string) => void;
-  contrast: string;
-  weight: string;
-  onWeight: (v: string) => void;
-  look: Look;
-  onLook: (look: Look) => void;
-  onContrast: (c: string) => void;
-  onClose: () => void;
-  onChanged: () => void;
-  onSessionsRecovered?: () => void;
-  at?: string;
-  account: AccountState | null;
-  accountUnread: string;
-  reloadAccount: () => void;
-  workspaceRoot?: string;
-}
 export function Settings({ hub, onError, port, networkPort, localWorkspacePort, networkHost, status, theme, onTheme, contrast, onContrast, weight, onWeight, look, onLook, onClose, onChanged, onSessionsRecovered, reloadThemes, at: opened, account: acct, accountUnread, reloadAccount, workspaceRoot }: Props) {
   const navigation = useSettingsLeave();
   const close = useCallback(() => navigation.leave(onClose), [navigation.leave, onClose]);
@@ -619,12 +590,15 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
           {at === "peers" && <PeersSection port={port} hub={hub} />}
 
           {at === "hooks" && (
-            <Group id="hooks"
-              title={t("自动化")}
-              hint={t("在 agent 执行任务前后运行自定义命令。这些命令在本机以当前用户权限运行；可拦截 agent 的两个事件已在下方标出。")}
-            >
-              <Hooks port={port} onChanged={afterExtChange} />
-            </Group>
+            <>
+              <Group id="hooks"
+                title={t("自动化")}
+                hint={t("在 agent 执行任务前后运行自定义命令。这些命令在本机以当前用户权限运行；可拦截 agent 的两个事件已在下方标出。")}
+              >
+                <Hooks port={port} onChanged={afterExtChange} />
+              </Group>
+              <ScheduledRuns port={port} />
+            </>
           )}
           {at === "ext" && (
             <>

@@ -62,11 +62,14 @@ async function startEmbedded(executable, contract, onStderr = () => {}, spawnDri
       if (child.exitCode !== null || child.signalCode !== null) throw new Error("Embedded CUA exited during startup");
       try {
         const current = await fs.lstat(socket);
-        if (!current.isSocket() || (current.mode & 0o777) !== 0o600) throw new Error("Invalid private CUA socket");
-        const reply = await metadata(socket);
-        if (!accepts(reply, child.pid, contract)) throw new Error("Embedded CUA identity/version mismatch");
-        identity = current;
-        return;
+        if (!current.isSocket()) throw new Error("Invalid private CUA socket");
+        // The driver binds before chmod: existence alone does not establish readiness.
+        if ((current.mode & 0o777) === 0o600) {
+          const reply = await metadata(socket);
+          if (!accepts(reply, child.pid, contract)) throw new Error("Embedded CUA identity/version mismatch");
+          identity = current;
+          return;
+        }
       } catch (error) { if (!["ENOENT", "ECONNREFUSED"].includes(error.code)) throw error; }
       await new Promise(resolve => setTimeout(resolve, 50));
     }

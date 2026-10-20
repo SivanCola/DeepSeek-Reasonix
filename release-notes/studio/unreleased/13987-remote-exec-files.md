@@ -1,0 +1,2 @@
+- 修复：服务器拒绝 sftp（如群晖 NAS）时，远程目录选择、连接和 `remote test` 改用普通命令通道；见 #13981、#13987。
+- Fixed: when a server refuses sftp (e.g. a Synology NAS), the remote folder picker, connect and `remote test` now use the plain command channel. #13981, #13987

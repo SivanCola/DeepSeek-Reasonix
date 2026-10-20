@@ -11,6 +11,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -23,8 +25,47 @@ import (
 
 // FS wraps an SFTP client bound to one SSH connection.
 type FS struct {
-	client *sftp.Client
+	client  *sftp.Client
+	session *ssh.Session
 }
+
+// Mode is how a Volume's bytes travel.
+type Mode string
+
+const (
+	ModeSFTP Mode = "sftp"
+	ModeExec Mode = "exec"
+)
+
+// Volume is a machine's whole file layer: what bootstrap needs, plus listing
+// and whole-file transfer. SFTP is one implementation and scripts under /bin/sh
+// (package execfs) the other, for a server that refuses the subsystem.
+type Volume interface {
+	Files
+	Mode() Mode
+	List(ctx context.Context, dir string) ([]Entry, error)
+	Download(ctx context.Context, p string, w io.Writer) (int64, error)
+	UploadAtomic(ctx context.Context, p string, r io.Reader, perm fs.FileMode) (int64, error)
+	Close() error
+}
+
+// ModeOf reports how f's bytes travel; empty when f does not say.
+func ModeOf(f Files) Mode {
+	if m, ok := f.(interface{ Mode() Mode }); ok {
+		return m.Mode()
+	}
+	return ""
+}
+
+// ErrSubsystemRefused: the server answered the sftp subsystem request with a
+// refusal. It is the server's reply to that one request, so it says nothing of
+// a dead link, a failed login or a permission; those stay their own errors.
+var ErrSubsystemRefused = errors.New("sftp: the server refused the sftp subsystem")
+
+var _ Volume = (*FS)(nil)
+
+// Mode says SFTP carries the bytes.
+func (f *FS) Mode() Mode { return ModeSFTP }
 
 // Files is the part of a remote filesystem the kernel bootstrap needs: state
 // files, tokens and the installed binary. Anything that can answer these eight
@@ -53,13 +94,69 @@ type Entry struct {
 	Symlink bool
 }
 
-// New opens an SFTP session over an established SSH client.
+// New opens an SFTP session over an established SSH client. The subsystem is
+// requested here rather than inside pkg/sftp so a refusal arrives as
+// ErrSubsystemRefused: the library reports it as an unnamed error string.
 func New(cl *ssh.Client) (*FS, error) {
-	c, err := sftp.NewClient(cl)
+	s, err := cl.NewSession()
 	if err != nil {
 		return nil, err
 	}
-	return &FS{client: c}, nil
+	fail := func(err error) (*FS, error) {
+		_ = s.Close()
+		return nil, err
+	}
+	pw, err := s.StdinPipe()
+	if err != nil {
+		return fail(err)
+	}
+	pr, err := s.StdoutPipe()
+	if err != nil {
+		return fail(err)
+	}
+	perr, err := s.StderrPipe()
+	if err != nil {
+		return fail(err)
+	}
+	ok, err := s.SendRequest("subsystem", true, ssh.Marshal(struct{ Name string }{"sftp"}))
+	if err != nil {
+		return fail(err)
+	}
+	if !ok {
+		return fail(ErrSubsystemRefused)
+	}
+	go func() { _, _ = io.Copy(io.Discard, perr) }()
+	c, err := sftp.NewClientPipe(pr, pw)
+	if err != nil {
+		return fail(err)
+	}
+	return &FS{client: c, session: s}, nil
+}
+
+// ErrNotListable: the path is a directory the machine will not list, a
+// permission or a transport quirk. It wraps the listing's own error and travels
+// with the resolved path, so a caller can still offer the directory itself.
+var ErrNotListable = errors.New("sftp: the directory exists but cannot be listed")
+
+// Dirs resolves dir (empty or ~ meaning the login home) on v and lists what is
+// inside it. The machine resolves the path: ~ belongs to the account that
+// logged in, and a symlinked project is listed under the path it really has, or
+// stepping up from it would leave the tree it was reached through.
+func Dirs(ctx context.Context, v Volume, dir string) (string, []Entry, error) {
+	if strings.TrimSpace(dir) == "" {
+		dir = "~"
+	}
+	at, err := v.RealPath(ctx, dir)
+	if err != nil {
+		return "", nil, err
+	}
+	entries, err := v.List(ctx, at)
+	if err != nil {
+		if st, serr := v.Stat(ctx, at); serr == nil && st.IsDir {
+			return at, nil, fmt.Errorf("%w: %w", ErrNotListable, err)
+		}
+	}
+	return at, entries, err
 }
 
 // Close tears down the SFTP session (not the SSH connection).
@@ -67,7 +164,11 @@ func (f *FS) Close() error {
 	if f == nil || f.client == nil {
 		return nil
 	}
-	return f.client.Close()
+	err := f.client.Close()
+	if f.session != nil {
+		_ = f.session.Close()
+	}
+	return err
 }
 
 // run executes op in a goroutine and honors ctx cancellation. pkg/sftp has no

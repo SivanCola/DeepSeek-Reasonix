@@ -237,9 +237,29 @@ func compositionError(w http.ResponseWriter, err error) {
 		}
 	}
 	var diagnosed *agentcomposition.DiagnosticError
-	if errors.As(err, &diagnosed) {
-		refuse(w, status, code, err.Error(), map[string]any{"diagnostics": diagnosed.Diagnostics})
+	if !errors.As(err, &diagnosed) && errors.Is(err, agentcomposition.ErrUnavailable) {
+		detail := strings.TrimPrefix(err.Error(), agentcomposition.ErrUnavailable.Error()+": ")
+		diagnosed = &agentcomposition.DiagnosticError{Diagnostics: []agentcomposition.Diagnostic{{Code: code, Module: "composition", Detail: detail}}}
+	}
+	if diagnosed != nil {
+		if len(diagnosed.Diagnostics) == 1 && diagnosed.Diagnostics[0].Code == "agent_composition.mcp_unavailable" {
+			code = "agent_composition.mcp_unavailable"
+		}
+		refuse(w, status, code, err.Error(), diagnosedParams(diagnosed))
 		return
 	}
 	saveFailed(w, status, code, err)
+}
+
+// diagnosedParams keeps `diagnostics` for readers of the full list and adds
+// the scalar pair a refusal's sentence is filled from.
+func diagnosedParams(e *agentcomposition.DiagnosticError) map[string]any {
+	var modules, details []string
+	for _, d := range e.Diagnostics {
+		modules = append(modules, d.Module)
+		if !slices.Contains(details, d.Detail) {
+			details = append(details, d.Detail)
+		}
+	}
+	return map[string]any{"diagnostics": e.Diagnostics, "module": strings.Join(modules, ", "), "detail": strings.Join(details, "; ")}
 }

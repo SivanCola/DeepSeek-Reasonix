@@ -67,7 +67,7 @@ export function PresetPage({ entry, catalog, port, onClose, onSaved, onDeleted, 
           onValidityChange={setValid} onChange={(next) => { setDraft(next); setError(""); }} />
         {entry.version && !changed && valid && <PresetActions port={port} version={entry.version} busy={busy} run={run}
           onDeleted={onDeleted} onPersona={onPersona} />}
-        {entry.diagnostics?.map((d, i) => <p className="ds" key={i}>{d.module}: {say({ code: d.code })}</p>)}
+        {entry.diagnostics?.map((d, i) => <p className="ds" key={i}>{say({ code: d.code, params: { module: d.module ?? "", detail: d.detail } })}</p>)}
         {error && <p className="find" data-lvl="err" role="alert">{error}</p>}
       </div>
       <footer className="preset-page-footer">

@@ -261,6 +261,9 @@ pack states a shape, never a number the layout has to agree with.
 - Workspace controls share the branch slot in the composer's bottom toolbar,
   including its pill radius, hover surface and narrow-pane label folding.
   Runtime statistics remain below the input card.
+- Git labels inherit the toolbar control's font and line-height. Mode, effort
+  and branch wrappers use flex layout so inline baselines do not shift their
+  labels when interface text is enlarged.
 - Empty phone toolbars keep their compact geometry when a control receives
   focus, so a pointer press and release target the same button. Draft content,
   attachments and open menus expand the toolbar.

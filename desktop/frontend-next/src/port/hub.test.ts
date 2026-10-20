@@ -34,12 +34,16 @@ it("keeps local project moves and host-qualified pin/archive calls on their owni
     await hub.pinSession("/same/session.jsonl", false, "gpu box");
     await hub.archiveSession("/same/session.jsonl", true);
     await hub.archiveSession("/same/session.jsonl", false, "gpu box");
+    await hub.markSessionRead("/same/session.jsonl");
+    await hub.markSessionRead("/same/session.jsonl", "gpu box");
     await hub.moveSessionTo("/same/session.jsonl", "/other-project");
     expect(fetch.mock.calls.map(([path, init]) => [path, JSON.parse(init.body)])).toEqual([
       ["/tree/sessions/pin", { path: "/same/session.jsonl", pinned: true }],
       ["/remotes/gpu%20box/sessions/pin", { path: "/same/session.jsonl", pinned: false }],
       ["/tree/sessions/archive", { path: "/same/session.jsonl", archived: true }],
       ["/remotes/gpu%20box/sessions/archive", { path: "/same/session.jsonl", archived: false }],
+      ["/tree/sessions/viewed", { path: "/same/session.jsonl" }],
+      ["/remotes/gpu%20box/sessions/viewed", { path: "/same/session.jsonl" }],
       ["/tree/sessions/move-to", { path: "/same/session.jsonl", target: "/other-project" }],
     ]);
   } finally { vi.unstubAllGlobals(); }

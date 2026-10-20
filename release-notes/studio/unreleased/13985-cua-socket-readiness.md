@@ -1,0 +1,2 @@
+- 修复：Studio 计算机操作功能首次启动或中断后重启时，会等待驱动就绪，避免偶发启动失败。关联 #13985。
+- Fixed: Studio computer use waits for driver readiness on initial launch and restart after interruption, preventing intermittent startup failures. Refs #13985.

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"reasonix/internal/base/fileutil"
 	"reasonix/internal/base/secrets"
 	"reasonix/internal/contract/agentcomposition"
 )
@@ -29,24 +30,47 @@ func CaptureFiles(paths []string) (DirectorySnapshot, map[string]string, error) 
 }
 
 func readAssetFile(path string) (os.FileInfo, []byte, error) {
-	root, err := os.OpenRoot(filepath.Dir(path))
+	parent, err := fileutil.ResolveExistingPath(filepath.Dir(path))
+	if err != nil {
+		return nil, nil, resourceReadError(filepath.Base(path), err)
+	}
+	parent, err = filepath.Abs(parent)
+	if err != nil {
+		return nil, nil, err
+	}
+	root, err := os.OpenRoot(parent)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer root.Close()
 	name := filepath.Base(path)
-	info, err := root.Lstat(name)
+	if secrets.SensitiveFileName(name) || vcsResource(name) {
+		return nil, nil, resourceCaptureError(name, "resource requires an external credential reference")
+	}
+	capture := resourceCapture{root: root, path: parent}
+	source, err := capture.resolve(name)
+	if err != nil {
+		return nil, nil, err
+	}
+	info, err := root.Lstat(source)
 	if err != nil {
 		return nil, nil, err
 	}
 	if !info.Mode().IsRegular() || secrets.SensitiveFileName(info.Name()) || info.Size() > maxAssetBytes {
 		return nil, nil, fmt.Errorf("%w: unsupported hook resource", agentcomposition.ErrUnavailable)
 	}
-	file, err := root.Open(name)
+	file, err := root.Open(source)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer file.Close()
+	info, err = file.Stat()
+	if err != nil {
+		return nil, nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, nil, resourceCaptureError(name, "unsupported file type")
+	}
 	data, err := io.ReadAll(io.LimitReader(file, maxAssetBytes+1))
 	if len(data) > maxAssetBytes {
 		return nil, nil, agentcomposition.ErrUnavailable

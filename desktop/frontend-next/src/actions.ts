@@ -1,3 +1,6 @@
+import { MARKET_ACTIONS } from "./actions_market";
+import { SCHEDULE_ACTIONS } from "./actions_schedule";
+
 // The census oracle is independent of production literals so disagreements fail.
 // An id names the intent; data-target and data-value name its entity and choice.
 
@@ -92,6 +95,7 @@ export const ACTIONS: UIAction[] = [
   { id: "appearance.open-session-limit", kind: "view", target: "none", proof: "interaction" },
   { id: "appearance.live-stream-budget", kind: "view", target: "none", proof: "interaction" },
   { id: "appearance.session-quick-actions", kind: "view", target: "none", proof: "interaction" },
+  { id: "appearance.new-answer-marker", kind: "view", target: "none", proof: "interaction" },
   { id: "appearance.graphics", kind: "view", target: "none", proof: "interaction" },
   { id: "appearance.session-tabs", kind: "view", target: "none", proof: "interaction" },
   { id: "appearance.esc-stop", kind: "view", target: "none", proof: "interaction" },
@@ -141,6 +145,7 @@ export const ACTIONS: UIAction[] = [
   { id: "workspace.menu", kind: "view", target: "entity", proof: "interaction" },
   { id: "machine.menu", kind: "view", target: "none", proof: "interaction" },
   { id: "session.pin", kind: "view", target: "entity", proof: "interaction" },
+  { id: "session.mark-read", kind: "kernel-mutation", target: "entity", proof: "interaction" },
   { id: "session.pause", kind: "kernel-mutation", target: "entity", proof: "interaction" },
   // Closing a conversation's pane ends its runtime and keeps the transcript;
   // refused while a turn runs, so it never stops work.
@@ -375,40 +380,7 @@ export const ACTIONS: UIAction[] = [
   { id: "extensions.tab", kind: "view", target: "none", proof: "interaction" },
   { id: "extensions.search", kind: "view", target: "none", proof: "interaction" },
   { id: "extensions.clear-search", kind: "view", target: "none", proof: "interaction" },
-  // The community market: reads are views, and the one write is the install
-  // its confirmation page answers with the plan the person just read.
-  { id: "market.search", kind: "view", target: "none", proof: "interaction" },
-  { id: "market.kind", kind: "view", target: "none", proof: "interaction" },
-  { id: "market.sort", kind: "view", target: "none", proof: "interaction" },
-  { id: "market.pinned", kind: "view", target: "none", proof: "interaction" },
-  { id: "market.show-all", kind: "view", target: "none", proof: "interaction" },
-  { id: "market.retry", kind: "view", target: "none", proof: "interaction" },
-  { id: "market.detail-retry", kind: "view", target: "none", proof: "interaction" },
-  { id: "market.more", kind: "view", target: "none", proof: "interaction" },
-  { id: "market.open", kind: "navigation", target: "none", proof: "interaction" },
-  { id: "market.back", kind: "navigation", target: "none", proof: "interaction" },
-  { id: "market.cancel", kind: "navigation", target: "none", proof: "interaction" },
-  { id: "market.inspect", kind: "kernel-mutation", target: "none", proof: "interaction" },
-  { id: "market.trust", kind: "kernel-mutation", target: "none", proof: "interaction" },
-  { id: "market.confirm-many", kind: "view", target: "none", proof: "interaction" },
-  { id: "market.install", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
-  { id: "market.view-installed", kind: "navigation", target: "none", proof: "interaction" },
-  // Publishing: the draft is on screen only, and the submission is the one
-  // write, spending the account session on the registry.
-  { id: "market.view", kind: "view", target: "none", proof: "interaction" },
-  { id: "market.signin", kind: "navigation", target: "none", proof: "interaction" },
-  { id: "market.draft", kind: "view", target: "none", proof: "interaction" },
-  { id: "market.publish", kind: "kernel-mutation", target: "none", proof: "interaction" },
-  { id: "market.prepare-version", kind: "view", target: "none", proof: "interaction" },
-  { id: "market.publish-again", kind: "view", target: "none", proof: "interaction" },
-  // The account's own packages: a preview, an install pinned to that preview's
-  // digest, and sending a private one to review.
-  { id: "market.own-inspect", kind: "kernel-mutation", target: "none", proof: "interaction" },
-  { id: "market.own-retry", kind: "kernel-mutation", target: "none", proof: "interaction" },
-  { id: "market.mine-retry", kind: "view", target: "none", proof: "interaction" },
-  { id: "market.submit", kind: "kernel-mutation", target: "none", proof: "interaction" },
-  { id: "market.vote", kind: "kernel-mutation", target: "none", proof: "interaction" },
-  { id: "market.vote-retry", kind: "view", target: "none", proof: "interaction" },
+  ...MARKET_ACTIONS,
   // Taking back the innermost open thing: a popover, an inline form. One
   // intent, reached by pressing away and by Escape.
   { id: "layer.dismiss", kind: "navigation", target: "none", proof: "interaction" },
@@ -791,6 +763,7 @@ export const ACTIONS: UIAction[] = [
   // ── The two side panels. Reached from the keyboard here, and from each
   //    gutter's own grip, which this pass has not annotated yet.
   { id: "rail.toggle", kind: "view", target: "none", proof: "interaction" },
+  ...SCHEDULE_ACTIONS,
 ];
 
 // No action in Studio is reachable from the keyboard alone: every shortcut in

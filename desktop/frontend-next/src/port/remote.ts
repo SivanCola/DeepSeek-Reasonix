@@ -114,6 +114,8 @@ export interface RemoteListing {
   parent?: string;
   folders: RemoteFolder[];
   truncated?: boolean;
+  // The folder exists but the machine would not list it; it can still be chosen.
+  unlisted?: boolean;
 }
 
 // A question the link layer stopped for. Three identities: the kernel lifetime

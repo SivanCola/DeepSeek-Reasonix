@@ -4,6 +4,7 @@ import { act, renderHook } from "@testing-library/react";
 import type { AgentPort } from "../port/port";
 import type { RuntimeView, TreeWorkspace } from "../port/hub";
 import { useViewed } from "./unread";
+import { sessionKey, useUnreadSince } from "../state/newAnswers";
 
 const rt: RuntimeView = { id: "r1", base: "", root: "/w", name: "w", sessionPath: "/a" };
 const book = (unread: boolean): TreeWorkspace[] => [{ root: "/w", name: "w", sessions: [{ path: "/a", name: "a", ...(unread ? { unread: true } : {}) }] }];
@@ -64,5 +65,38 @@ describe("a session that is already in front", () => {
       await act(async () => {});
     }
     expect(port.markSessionViewed.mock.calls.length).toBeLessThanOrEqual(2);
+  });
+});
+
+describe("where the person last looked is kept for the new-answer line", () => {
+  const row = (path: string, over: object): TreeWorkspace[] => [{ root: "/w", name: "w", sessions: [{ path, name: path, ...over }] }];
+
+  it("is taken from the unread row the moment it is marked seen, and kept after the mark clears", async () => {
+    const own = { ...rt, sessionPath: "/since-a" };
+    const { view } = mount({ tree: row("/since-a", { unread: true, viewedAt: 1234 }), rts: [own] });
+    const since = renderHook(() => useUnreadSince(sessionKey(undefined, "/since-a")));
+    await act(async () => {});
+    expect(since.result.current).toBe(1234);
+    view.rerender({ tree: row("/since-a", {}), rts: [own] });
+    await act(async () => {});
+    expect(since.result.current).toBe(1234);
+  });
+
+  it("is not taken for a row that is not unread, or from a kernel that sends no time", async () => {
+    mount({ tree: row("/since-b", { viewedAt: 99 }), rts: [{ ...rt, sessionPath: "/since-b" }] });
+    await act(async () => {});
+    expect(renderHook(() => useUnreadSince(sessionKey(undefined, "/since-b"))).result.current).toBeUndefined();
+    mount({ tree: row("/since-c", { unread: true }), rts: [{ ...rt, sessionPath: "/since-c" }] });
+    await act(async () => {});
+    expect(renderHook(() => useUnreadSince(sessionKey(undefined, "/since-c"))).result.current).toBeUndefined();
+  });
+
+  it("is taken when the list reports the row unread after the pane was already in front", async () => {
+    const own = { ...rt, sessionPath: "/since-d" };
+    const { view } = mount({ tree: row("/since-d", {}), rts: [own] });
+    await act(async () => {});
+    view.rerender({ tree: row("/since-d", { unread: true, viewedAt: 55 }), rts: [own] });
+    await act(async () => {});
+    expect(renderHook(() => useUnreadSince(sessionKey(undefined, "/since-d"))).result.current).toBe(55);
   });
 });

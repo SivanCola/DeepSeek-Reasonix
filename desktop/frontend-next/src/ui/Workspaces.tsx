@@ -256,7 +256,7 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
   const mutate = (session: TreeSession, kind: SessionMutation) => {
     if (sessionMenu) dismissMenu();
     const row = [...(treeKeys.ref.current?.querySelectorAll<HTMLElement>('[role="treeitem"]') ?? [])].find((el) => el.dataset.target === session.path) ?? null;
-    void mutations.run(session.path, kind, row, () => kind === "pin" ? onPin(session.path) : onArchive(session.path, !session.archived, session.runtimeId));
+    void mutations.run(session.path, kind, row, () => kind === "read" ? hub.markSessionRead(session.path).then(reload) : kind === "pin" ? onPin(session.path) : onArchive(session.path, !session.archived, session.runtimeId));
   };
   const archive = (session: TreeSession) => mutate(session, "archive");
 
@@ -658,6 +658,7 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
                             exporting={busy === "export:" + session.path}
                             autoNaming={busy === "name:" + session.path}
                             onPin={() => mutate(session, "pin")}
+                            onMarkRead={session.unread ? () => mutate(session, "read") : undefined}
                             onRename={() => { setSessionMenu(""); onRename(session.path, session.title || session.name); }}
                             onAutoName={() => void autoName(session)}
                             onPause={() => { onPause(session.runtimeId!); setSessionMenu(""); }}

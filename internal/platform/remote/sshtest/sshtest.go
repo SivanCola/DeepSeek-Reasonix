@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os/exec"
 	"sync"
 	"testing"
 
@@ -26,6 +27,7 @@ type Server struct {
 	execFunc  func(cmd string) (stdout string, stderr string, exit int)
 	sftpRoot  string
 	enableSFT bool
+	shell     bool
 
 	mu    sync.Mutex
 	conns []net.Conn
@@ -49,6 +51,9 @@ type Options struct {
 	Exec func(cmd string) (stdout string, stderr string, exit int)
 	// SFTPRoot enables the SFTP subsystem rooted at this directory.
 	SFTPRoot string
+	// Shell runs each exec request under this machine's /bin/sh, with the
+	// channel as its stdin, stdout and stderr, instead of answering from Exec.
+	Shell bool
 }
 
 // Start launches a server on 127.0.0.1:0.
@@ -102,6 +107,7 @@ func Start(t *testing.T, opts Options) *Server {
 		execFunc:  opts.Exec,
 		sftpRoot:  opts.SFTPRoot,
 		enableSFT: opts.SFTPRoot != "",
+		shell:     opts.Shell,
 	}
 	s.wg.Add(1)
 	go s.serve()
@@ -232,6 +238,21 @@ func (s *Server) handleSession(newCh ssh.NewChannel) {
 }
 
 func (s *Server) runExec(ch ssh.Channel, cmd string) {
+	if s.shell {
+		c := exec.Command("/bin/sh", "-c", cmd)
+		c.Stdin, c.Stdout, c.Stderr = ch, ch, ch.Stderr()
+		code := 0
+		if err := c.Run(); err != nil {
+			var ee *exec.ExitError
+			if !errors.As(err, &ee) {
+				code = 127
+			} else {
+				code = ee.ExitCode()
+			}
+		}
+		sendExitStatus(ch, code)
+		return
+	}
 	stdout, stderr, exit := "", "", 0
 	if s.execFunc != nil {
 		stdout, stderr, exit = s.execFunc(cmd)

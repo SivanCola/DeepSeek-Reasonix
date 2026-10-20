@@ -1,6 +1,10 @@
 package gemini
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"reasonix/internal/base/flexstr"
+)
 
 // The request and the steps it carries, as the Interactions API reference
 // (https://ai.google.dev/api/interactions-api, read 2026-10-17) defines them.
@@ -95,8 +99,8 @@ type streamEvent struct {
 }
 
 type wireErr struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code    flexstr.String `json:"code"`
+	Message string         `json:"message"`
 }
 
 type wireUsage struct {

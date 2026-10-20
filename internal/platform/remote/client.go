@@ -13,6 +13,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"reasonix/internal/base/netclient"
+	"reasonix/internal/platform/remote/execfs"
 	"reasonix/internal/platform/remote/forward"
 	"reasonix/internal/platform/remote/sftpfs"
 )
@@ -41,7 +42,7 @@ type JumpHostOptions struct {
 
 // Client is a supervised SSH connection: it dials, verifies the host key,
 // attaches forwards, keeps the link alive, and reconnects with backoff. It
-// shares one SFTP session and one forward.Set across its lifetime.
+// shares one file layer and one forward.Set across its lifetime.
 type Client struct {
 	opts     Options
 	clock    Clock
@@ -52,8 +53,8 @@ type Client struct {
 	mu          sync.Mutex
 	ssh         *ssh.Client
 	hops        []*ssh.Client
-	sftp        *sftpfs.FS
-	generation  uint64 // bumps on every (re)connect; SFTP handles carry it
+	volume      sftpfs.Volume // SFTP, or scripts when the server refuses the subsystem
+	generation  uint64        // bumps on every (re)connect; file handles carry it
 	status      Status
 	closed      bool
 	hopHosts    map[string]ResolvedHost
@@ -173,33 +174,47 @@ func (c *Client) SSH() (*ssh.Client, error) {
 	return c.ssh, nil
 }
 
-// SFTP returns the shared SFTP handle, lazily created for the current
-// connection. Handles obtained before a reconnect return ErrDisconnected on
-// use; re-fetch via SFTP.
-func (c *Client) SFTP() (*sftpfs.FS, error) {
+// Volume returns the connection's file layer, created on first use. SFTP is
+// preferred; only a server's refusal of the subsystem gets the script layer
+// instead, and the connection keeps that answer until it is replaced. Any other
+// failure to open SFTP is returned as it is: the scripts ride the same channel.
+// Handles obtained before a reconnect return ErrDisconnected; re-fetch.
+func (c *Client) Volume() (sftpfs.Volume, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.ssh == nil {
 		return nil, ErrNotConnected
 	}
-	if c.sftp != nil {
-		return c.sftp, nil
+	if c.volume != nil {
+		return c.volume, nil
 	}
 	fsys, err := sftpfs.New(c.ssh)
-	if err != nil {
+	switch {
+	case err == nil:
+		c.volume = fsys
+	case errors.Is(err, sftpfs.ErrSubsystemRefused):
+		c.volume = execfs.New(scriptRunner{c})
+	default:
 		return nil, err
 	}
-	c.sftp = fsys
-	return c.sftp, nil
+	return c.volume, nil
 }
 
-// Files is the SFTP handle as the file layer a kernel bootstrap needs.
+// Files is the connection's file layer as a kernel bootstrap needs it.
 func (c *Client) Files() (sftpfs.Files, error) {
-	fsys, err := c.SFTP()
+	v, err := c.Volume()
 	if err != nil {
 		return nil, err
 	}
-	return fsys, nil
+	return v, nil
+}
+
+// scriptRunner runs execfs scripts over the connection's exec channel.
+type scriptRunner struct{ c *Client }
+
+func (r scriptRunner) Script(ctx context.Context, stdin io.Reader, body string, args ...string) (execfs.Result, error) {
+	res, err := r.c.execIn(ctx, stdin, execfs.CommandLine(body, args...))
+	return execfs.Result{Stdout: res.Stdout, Stderr: res.Stderr, ExitCode: res.ExitCode}, err
 }
 
 // ExecResult is the outcome of a one-shot remote command.
@@ -274,6 +289,11 @@ func openExecSession(ctx context.Context, cl io.Closer, open execSessionOpener) 
 // opening, the shared client is closed to unblock NewSession; the supervisor
 // reconnects it.
 func (c *Client) Exec(ctx context.Context, cmd string) (ExecResult, error) {
+	return c.execIn(ctx, nil, cmd)
+}
+
+// execIn is Exec with stdin fed to the command; nil leaves it empty.
+func (c *Client) execIn(ctx context.Context, stdin io.Reader, cmd string) (ExecResult, error) {
 	cl, err := c.SSH()
 	if err != nil {
 		return ExecResult{}, err
@@ -293,6 +313,9 @@ func (c *Client) Exec(ctx context.Context, cmd string) (ExecResult, error) {
 		_ = sess.Close()
 		return ExecResult{}, ctxErr
 	}
+	if in, ok := sess.(interface{ feed(io.Reader) }); ok && stdin != nil {
+		in.feed(stdin)
+	}
 	return runExec(ctx, sess, cmd)
 }
 
@@ -304,6 +327,8 @@ type execSession interface {
 }
 
 type sshExecSession struct{ *ssh.Session }
+
+func (s *sshExecSession) feed(r io.Reader) { s.Stdin = r }
 
 func (s *sshExecSession) capture(stdout, stderr *bytes.Buffer) {
 	s.Stdout, s.Stderr = stdout, stderr
@@ -534,18 +559,18 @@ func (c *Client) installConn(cl *ssh.Client, hops []*ssh.Client) {
 	c.mu.Lock()
 	c.ssh = cl
 	c.hops = hops
-	c.sftp = nil
+	c.volume = nil
 	c.generation++
 	c.mu.Unlock()
 }
 
 func (c *Client) teardownConn() {
 	c.mu.Lock()
-	sftpH, cl, hops := c.sftp, c.ssh, c.hops
-	c.sftp, c.ssh, c.hops = nil, nil, nil
+	vol, cl, hops := c.volume, c.ssh, c.hops
+	c.volume, c.ssh, c.hops = nil, nil, nil
 	c.mu.Unlock()
-	if sftpH != nil {
-		_ = sftpH.Close()
+	if vol != nil {
+		_ = vol.Close()
 	}
 	if cl != nil {
 		_ = cl.Close()

@@ -578,6 +578,7 @@ type SessionAPI interface {
 	SubagentView
 	PeerMail
 	Mods
+	Schedules
 	MCPSignIn
 	LocalShell
 	DiffRendering
@@ -631,6 +632,7 @@ var (
 	_ SubagentView       = (*Controller)(nil)
 	_ PeerMail           = (*Controller)(nil)
 	_ Mods               = (*Controller)(nil)
+	_ Schedules          = (*Controller)(nil)
 	_ MCPSignIn          = (*Controller)(nil)
 	_ SessionHistory     = (*Controller)(nil)
 	_ MemoryControl      = (*Controller)(nil)

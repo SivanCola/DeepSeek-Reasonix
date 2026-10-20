@@ -77,7 +77,12 @@ type Messages struct {
 	RenameUsage            string // /rename with no args
 	RenameNoSession        string // /rename with no active session
 	RenameDoneFmt          string // /rename succeeded (one %s = new title)
+	ResumePickTitle        string // header in the interactive resume picker
+	ResumePickHint         string // keyboard hint in the interactive resume picker
 	ResumeRecoveryBadgeFmt string // recovery-copy badge — %s = short parent session id
+	ResumePickFilter       string // resume picker: typing narrows the list
+	ResumePickSearch       string // resume picker: label before the typed query
+	ResumePickNoMatch      string // resume picker: the query matches no session
 
 	// terminal transcript rows the kernel does not word.
 	TUIDeclinedFmt          string // an approval the user refused — %s tool, %s subject
@@ -166,7 +171,6 @@ type Messages struct {
 	NotifyMessages
 	SlashHintMessages
 	QueueMessages
-	ResumePickerMessages
 	GoalMessages
 	SettingMessages
 	ApprovalNeededFmt              string // notification text for a pending approval, tool only

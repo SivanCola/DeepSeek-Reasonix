@@ -498,7 +498,7 @@ func TestAnUnprovenChangeIsExplainedOnceThenReferredTo(t *testing.T) {
 	if again := a.appendUnprovenMutationGap(&out, nil); again[0] != unprovenMutationAsk {
 		t.Fatalf("asking twice without ending the turn must not shorten it: %q", again)
 	}
-	a.noteUnprovenMutationExplained()
+	a.noteObligationsExplained()
 	second := a.appendUnprovenMutationGap(&out, nil)
 	if len(second) != 1 || second[0] != unprovenMutationAgain {
 		t.Fatalf("second = %q, want the short reference", second)

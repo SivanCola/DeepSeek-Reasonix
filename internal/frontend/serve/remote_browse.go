@@ -25,6 +25,9 @@ type RemoteListing struct {
 	Parent    string         `json:"parent,omitempty"`
 	Folders   []RemoteFolder `json:"folders"`
 	Truncated bool           `json:"truncated,omitempty"`
+	// Unlisted: the folder exists but the machine would not list it; it can
+	// still be chosen.
+	Unlisted bool `json:"unlisted,omitempty"`
 }
 
 // remoteDirs lists one folder on a machine in the book. An absent path is that

@@ -10,9 +10,9 @@ afterEach(cleanup);
 
 const session = (over: Partial<TreeSession> = {}): TreeSession => ({ path: "/s/a.jsonl", name: "a", title: "第一个", turns: 1, ...over });
 
-function draw(s: TreeSession, extra: { live?: boolean; pinned?: boolean; exporting?: boolean; naming?: boolean; branch?: boolean } = {}) {
+function draw(s: TreeSession, extra: { markRead?: () => void; live?: boolean; pinned?: boolean; exporting?: boolean; naming?: boolean; branch?: boolean } = {}) {
   const on = { onPin: vi.fn(), onRename: vi.fn(), onAutoName: vi.fn(), onPause: vi.fn(), onClose: vi.fn(), onArchive: vi.fn(), onCopyInfo: vi.fn(), onExport: vi.fn(), onDelete: vi.fn(), onBranch: vi.fn() };
-  render(<SessionMenu session={s} label="第一个" live={extra.live ?? false} pinned={extra.pinned ?? false} exporting={extra.exporting ?? false} autoNaming={extra.naming ?? false} {...on} onBranch={extra.branch === false ? undefined : on.onBranch} />);
+  render(<SessionMenu session={s} label="第一个" live={extra.live ?? false} pinned={extra.pinned ?? false} exporting={extra.exporting ?? false} autoNaming={extra.naming ?? false} {...on} onBranch={extra.branch === false ? undefined : on.onBranch} onMarkRead={extra.markRead} />);
   return on;
 }
 
@@ -62,4 +62,14 @@ it("offers no branch for a conversation without an open pane", () => {
 it("shows naming in progress and cannot be started twice", () => {
   draw(session(), { naming: true });
   expect((screen.getByRole("menuitem", { name: /命名中/ }) as HTMLButtonElement).disabled).toBe(true);
+});
+
+it("offers mark as read only where the row is unread, and reports the choice", async () => {
+  draw(session());
+  expect(screen.queryByRole("menuitem", { name: /标为已读/ })).toBeNull();
+  cleanup();
+  const markRead = vi.fn();
+  draw(session({ unread: true }), { markRead });
+  await userEvent.click(screen.getByRole("menuitem", { name: /标为已读/ }));
+  expect(markRead).toHaveBeenCalledTimes(1);
 });

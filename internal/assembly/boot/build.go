@@ -559,7 +559,7 @@ func (b *builder) executor() *agent.Agent {
 		// Reserving writes at the executor entry covers every writer, late MCP
 		// adds included, without wrapping tool schemas.
 		WriteScheduler:     t.sub.scheduler,
-		WriteWorkspaceRoot: b.root, ExtraWorkspaceRoots: b.workspaceExtraRoots(), WorkspaceScanLimit: b.opts.WorkspaceScanLimit, WorkspaceVCS: b.prompt.workspaceVCS, RenderRoot: renderRoot(t.browser, entry, b.root),
+		WriteWorkspaceRoot: b.root, ExtraWorkspaceRoots: b.workspaceExtraRoots(), WorkspaceScanLimit: b.opts.WorkspaceScanLimit, WorkspaceVCS: b.prompt.workspaceVCS, WorkspaceUnversioned: b.prompt.workspaceVCS == "", RenderRoot: renderRoot(t.browser, entry, b.root),
 		ProjectChecks: b.prompt.projectChecks, ProjectSensitivePaths: b.prompt.sensitivePaths,
 		EvidenceSeal:                 t.env.evidenceSeal,
 		AgentPreset:                  b.model.preset,

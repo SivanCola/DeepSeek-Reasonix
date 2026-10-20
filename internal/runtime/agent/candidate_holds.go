@@ -41,7 +41,7 @@ func (a *contextWindow) foldCannotFit(trigger string, msgs []provider.Message, h
 	if trigger == CompactionTriggerManual && a.estimatedPromptTokens(msgs) < limit {
 		return "", nil
 	}
-	kept, _, _, _ := a.partitionFoldWith(msgs[head:start], policy)
+	kept, _, _, _ := a.partitionFoldWith(msgs[head:start], msgs[start:], policy)
 	held := candidateHolds{Prefix: prefix, Kept: a.estimatedPromptTokens(kept), Tail: a.estimatedPromptTokens(msgs[start:])}
 	if held.Prefix+held.Kept+held.Tail < limit {
 		return "", nil

@@ -291,6 +291,14 @@ describe("rebuilding a reopened transcript", () => {
     expect(got[0].text).toBe("继续");
   });
 
+  it("strips a session-scratch block from a replayed turn", () => {
+    const got = users([
+      { role: "user", content: "<session-scratch>\nThis session has a private scratch directory, $TMPDIR.\n</session-scratch>\n继续" },
+    ]);
+    expect(got).toHaveLength(1);
+    expect(got[0].text).toBe("继续");
+  });
+
   it("leaves an ordinary turn as its text", () => {
     const got = users([{ role: "user", content: "第一句话" }]);
     expect(got).toHaveLength(1);

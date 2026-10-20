@@ -121,7 +121,7 @@ func compositionHookSet(opts Options, home, workspace string) ([]hook.ResolvedHo
 		}
 		h, err := restoreCompositionHook(store, saved, workspace, byID[r.ID])
 		if err != nil {
-			return nil, err
+			return nil, compositionResourceError("hook", r.ID, err)
 		}
 		out = append(out, h)
 	}

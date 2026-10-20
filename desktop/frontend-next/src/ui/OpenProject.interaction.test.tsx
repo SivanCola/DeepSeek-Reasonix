@@ -49,3 +49,19 @@ it("handles Escape once after moving into the SSH directory picker", async () =>
   expect(onClose).toHaveBeenCalledOnce();
   expect(onOpen).not.toHaveBeenCalled();
 });
+
+it("opens a typed folder the machine would not list, on the path it confirmed", async () => {
+  const onOpen = vi.fn().mockResolvedValue(undefined);
+  const remoteDirs = vi.fn(async (_host: string, path?: string) =>
+    path === "/srv/private"
+      ? { path: "/srv/private", parent: "/srv", folders: [], unlisted: true }
+      : { path: "/srv", folders: [{ name: "private", path: "/srv/private" }] },
+  );
+  render(<OpenProject hub={{ remoteDirs } as never} adder={{ add: vi.fn() } as never}
+    hosts={[{ name: "gpu", target: "dev@gpu", status: "idle" }]} onOpen={onOpen} onClose={vi.fn()} onError={vi.fn()} />);
+  await userEvent.click(screen.getByRole("button", { name: "gpu · SSH" }));
+  await userEvent.click(await screen.findByRole("button", { name: "private" }));
+  expect(await screen.findByText(/不让列出该目录里的内容/)).toBeTruthy();
+  await userEvent.click(screen.getByRole("button", { name: "使用此目录" }));
+  expect(onOpen).toHaveBeenCalledWith("gpu", "/srv/private");
+});

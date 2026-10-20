@@ -46,7 +46,7 @@ func TestKeptFailuresStayWithinTheirBudgetAcrossFolds(t *testing.T) {
 			region = append(region, failureGroup(next, 8000)...)
 			next++
 		}
-		kept, _, _, _ := a.window().partitionFoldWith(region, a.keepPolicy)
+		kept, _, _, _ := a.window().partitionFoldWith(region, nil, a.keepPolicy)
 		tokens, ids := keptFailureTokens(kept)
 		if tokens > budget {
 			t.Fatalf("round %d: %d tokens of failures kept, budget %d", round, tokens, budget)
@@ -67,7 +67,7 @@ func TestKeptFailuresUnderBudgetAllStay(t *testing.T) {
 	for i := range 3 {
 		region = append(region, failureGroup(i, 400)...)
 	}
-	kept, fold, _, _ := a.window().partitionFoldWith(region, a.keepPolicy)
+	kept, fold, _, _ := a.window().partitionFoldWith(region, nil, a.keepPolicy)
 	if _, ids := keptFailureTokens(kept); len(ids) != 3 || len(fold) != 0 {
 		t.Fatalf("kept failures = %v, fold = %d messages, want all three kept and nothing folded", ids, len(fold))
 	}
@@ -82,7 +82,7 @@ func TestKeptFailuresBudgetLeavesUserMarkedTurnsAlone(t *testing.T) {
 	for i := range 20 {
 		region = append(region, failureGroup(i, 8000)...)
 	}
-	kept, _, _, _ := a.window().partitionFoldWith(region, a.keepPolicy)
+	kept, _, _, _ := a.window().partitionFoldWith(region, nil, a.keepPolicy)
 	if len(kept) == 0 || kept[0].Content != marked.Content {
 		t.Fatalf("the [[keep]] turn did not survive intact among %d kept messages", len(kept))
 	}

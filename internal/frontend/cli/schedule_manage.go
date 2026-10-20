@@ -19,7 +19,6 @@ import (
 	"golang.org/x/term"
 
 	"reasonix/internal/base/secrets"
-	"reasonix/internal/contract/config"
 	"reasonix/internal/runtime/schedrun"
 	"reasonix/internal/runtime/scheduler"
 	"reasonix/internal/state/schedule"
@@ -249,8 +248,7 @@ func scheduleAdd(args []string, store *schedule.Store, p schedule.Policy, sio sc
 		fmt.Fprintln(sio.err, "schedule:", err)
 		return scheduleExitUsage
 	}
-	budget := p.DefaultBudget()
-	plan := preview(req, budget, p, sio.now())
+	plan := preview(req, p, sio.now())
 	code := planCode(plan)
 	fmt.Fprint(sio.out, plan)
 	fmt.Fprintf(sio.out, "Type %s to create this schedule, anything else cancels: ", code)
@@ -269,48 +267,41 @@ func scheduleAdd(args []string, store *schedule.Store, p schedule.Policy, sio sc
 }
 
 func (f addFlags) request() (schedule.CreateRequest, error) {
-	req := schedule.CreateRequest{Label: strings.TrimSpace(f.label), Prompt: strings.TrimSpace(f.prompt), ConfirmedBy: schedule.ConfirmedByHuman, ConfirmedVia: schedule.ConfirmedViaTerminal}
+	d := scheduler.Draft{Label: f.label, Prompt: f.prompt, Workspace: f.workspace, Model: f.model}
+	wd, err := os.Getwd()
+	if err != nil {
+		return schedule.CreateRequest{}, err
+	}
+	if d.Workspace == "" {
+		d.Workspace = wd
+	}
 	switch {
 	case (f.every == "") == (f.at == ""):
-		return req, errors.New("give exactly one of --every and --at")
+		return schedule.CreateRequest{}, errors.New("give exactly one of --every and --at")
 	case f.every != "":
-		d, err := time.ParseDuration(f.every)
-		if err != nil || d <= 0 {
-			return req, fmt.Errorf("--every %q is not a duration such as 90m or 2h", f.every)
+		dur, err := time.ParseDuration(f.every)
+		if err != nil || dur <= 0 {
+			return schedule.CreateRequest{}, fmt.Errorf("--every %q is not a duration such as 90m or 2h", f.every)
 		}
-		req.Trigger = schedule.Trigger{Kind: schedule.TriggerEvery, EverySec: int64(d / time.Second)}
+		d.EverySec = int64(dur / time.Second)
 	default:
 		at, err := parseAt(f.at)
 		if err != nil {
-			return req, err
+			return schedule.CreateRequest{}, err
 		}
-		req.Trigger = schedule.Trigger{Kind: schedule.TriggerAt, At: at}
+		d.At = at
 	}
-	ws := f.workspace
-	if ws == "" {
-		wd, err := os.Getwd()
-		if err != nil {
-			return req, err
-		}
-		ws = wd
+	req, err := d.Request(scheduler.Folders(wd))
+	switch {
+	case errors.Is(err, scheduler.ErrDraftFolderUnknown):
+		return req, fmt.Errorf("%q is not a trusted project: open it in Studio or the terminal UI and trust it first, then run this again", d.Workspace)
+	case errors.Is(err, scheduler.ErrDraftWorkspace):
+		return req, fmt.Errorf("--workspace %q is not a folder", f.workspace)
+	case errors.Is(err, scheduler.ErrDraftModel):
+		return req, fmt.Errorf("%w; give one with --model", err)
 	}
-	abs, err := filepath.Abs(ws)
-	if err != nil {
-		return req, err
-	}
-	if real, err := filepath.EvalSymlinks(abs); err == nil {
-		abs = real
-	}
-	if info, err := os.Stat(abs); err != nil || !info.IsDir() {
-		return req, fmt.Errorf("--workspace %q is not a folder", ws)
-	}
-	req.Target = schedule.Target{Workspace: abs}
-	model, err := pinModel(f.model, abs)
-	if err != nil {
-		return req, err
-	}
-	req.Model = model
-	return req, nil
+	req.ConfirmedVia = schedule.ConfirmedViaTerminal
+	return req, err
 }
 
 func parseAt(s string) (time.Time, error) {
@@ -323,25 +314,6 @@ func parseAt(s string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("--at %q is not a time (RFC 3339, or 2006-01-02 15:04 in local time)", s)
 }
 
-// pinModel fixes the model at creation from the user's own configuration, so a
-// repository cannot change which model, or whose key, a confirmed run uses.
-func pinModel(ref, workspace string) (schedule.Model, error) {
-	cfg, err := config.RootsForHome("").LoadUserScopeForRoot(workspace)
-	if err != nil {
-		return schedule.Model{}, err
-	}
-	if ref == "" {
-		ref = cfg.DefaultModel
-	}
-	entry, ok := cfg.ResolveModel(ref)
-	if !ok || entry == nil {
-		return schedule.Model{}, fmt.Errorf("model %q is not a configured model; give one with --model", ref)
-	}
-	return schedule.Model{Provider: entry.Name, Model: entry.Model}, nil
-}
-
-// preview is what a person confirms: when it first runs, what it may do, and the
-// most it can spend, in the policy's own numbers.
 // planCode is the short id a person types back: it names the exact plan shown,
 // so a confirmation typed for one plan cannot be replayed for another.
 func planCode(plan string) string {
@@ -349,18 +321,20 @@ func planCode(plan string) string {
 	return hex.EncodeToString(sum[:3])
 }
 
-func preview(req schedule.CreateRequest, b schedule.Budget, p schedule.Policy, now time.Time) string {
+// preview is what a person confirms: when it first runs, what it may do, and the
+// most it can spend, in the policy's own numbers.
+func preview(req schedule.CreateRequest, p schedule.Policy, now time.Time) string {
+	f := scheduler.FactsFor(req, p, now)
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Schedule %s\n", describeTrigger(req.Trigger))
 	if req.Trigger.Kind == schedule.TriggerEvery {
-		fmt.Fprintf(&sb, "  first run:   %s\n", now.Add(time.Duration(req.Trigger.EverySec)*time.Second).Local().Format("2006-01-02 15:04"))
+		fmt.Fprintf(&sb, "  first run:   %s\n", f.FirstRun.Local().Format("2006-01-02 15:04"))
 	}
-	fmt.Fprintf(&sb, "  folder:      %s (read-only: it can read files here and write nothing)\n", req.Target.Workspace)
-	fmt.Fprintf(&sb, "  model:       %s/%s\n", req.Model.Provider, req.Model.Model)
-	fmt.Fprintf(&sb, "  prompt:      %s\n", req.Prompt)
-	fmt.Fprintf(&sb, "  each run:    up to %d tokens, %d steps, %d s\n", b.PerRunTokens, b.PerRunSteps, b.PerRunWallSec)
-	perDay := min(b.PerRunTokens*b.MaxRunsPerDay, p.GlobalTokensDay)
-	fmt.Fprintf(&sb, "  at most:     %d tokens per day, %d over its lifetime; it ends on its own after %d days\n", perDay, b.LifetimeTokens, p.ExpiryDays)
+	fmt.Fprintf(&sb, "  folder:      %s (read-only: it can read files here and write nothing)\n", f.Folder)
+	fmt.Fprintf(&sb, "  model:       %s/%s\n", f.Model.Provider, f.Model.Model)
+	fmt.Fprintf(&sb, "  prompt:      %s\n", f.Prompt)
+	fmt.Fprintf(&sb, "  each run:    up to %d tokens, %d steps, %d s\n", f.Budget.PerRunTokens, f.Budget.PerRunSteps, f.Budget.PerRunWallSec)
+	fmt.Fprintf(&sb, "  at most:     %d tokens per day, %d over its lifetime; it ends on its own after %d days\n", f.PerDayMax, f.Lifetime, p.ExpiryDays)
 	sb.WriteString("  Anything that needs your approval is parked for you, never answered for you.\n")
 	return sb.String()
 }

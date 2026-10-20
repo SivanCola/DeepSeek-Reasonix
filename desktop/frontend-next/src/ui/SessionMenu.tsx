@@ -13,6 +13,8 @@ export interface SessionMenuProps {
   exporting: boolean;
   autoNaming: boolean;
   onPin: () => void;
+  /** Absent where the row is not unread. */
+  onMarkRead?: () => void;
   onRename: () => void;
   onAutoName: () => void;
   onPause: () => void;
@@ -33,7 +35,7 @@ export interface SessionMenuProps {
  *  sidebar's clipping cannot cut it. Every action closes the menu itself:
  *  the parent's handlers do that, this only says which one was chosen. */
 export const SessionMenu = forwardRef<HTMLDivElement, SessionMenuProps>(function SessionMenu(
-  { session, label, live, pinned, exporting, autoNaming, onPin, onRename, onAutoName, onPause, onClose, onArchive, onBranch, onCopyInfo, onExport, onDelete, onMove, canMove, onMoveTo },
+  { session, label, live, pinned, exporting, autoNaming, onPin, onMarkRead, onRename, onAutoName, onPause, onClose, onArchive, onBranch, onCopyInfo, onExport, onDelete, onMove, canMove, onMoveTo },
   ref,
 ) {
   const target = session.path;
@@ -47,6 +49,11 @@ export const SessionMenu = forwardRef<HTMLDivElement, SessionMenuProps>(function
         <button role="menuitem" data-action="session.pin" data-target={target} onClick={onPin}>
           <StudioIcon name="pin" /><span>{pinned ? t("取消置顶") : t("置顶会话")}</span>
         </button>
+        {onMarkRead && (
+          <button role="menuitem" data-action="session.mark-read" data-target={target} onClick={onMarkRead}>
+            <StudioIcon name="check" /><span>{t("标为已读")}</span>
+          </button>
+        )}
         {onMove && canMove && ([-1, 1] as const).map((direction) => (
           <button key={direction} role="menuitem" data-action="session.move" data-target={target} data-value={direction}
             disabled={direction === -1 ? !canMove.up : !canMove.down} onClick={() => onMove(direction)}>

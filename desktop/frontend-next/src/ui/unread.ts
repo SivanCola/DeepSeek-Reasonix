@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { host } from "../port/host";
 import type { AgentPort } from "../port/port";
 import type { RuntimeView, TreeWorkspace } from "../port/hub";
+import { rememberUnreadSince, sessionKey } from "../state/newAnswers";
 
 type Trees = Record<string, TreeWorkspace[] | null>;
 
-const keyOf = (host: string | undefined, path: string) => `${host ?? ""}\n${path}`;
+const keyOf = sessionKey;
 
 // The kernel's answer with the rows the person has just opened drawn as seen.
 // Same reference back when nothing is cleared, so a memoised sidebar stays put.
@@ -24,6 +25,13 @@ export function isUnread(rt: RuntimeView, tree: TreeWorkspace[], remote: Trees):
   if (!rt.sessionPath) return false;
   const book = rt.host ? remote[rt.host] ?? [] : tree;
   return book.some((ws) => ws.sessions.some((s) => s.path === rt.sessionPath && !!s.unread));
+}
+
+function unreadSince(rt: RuntimeView, tree: TreeWorkspace[], remote: Trees): number | undefined {
+  if (!rt.sessionPath) return undefined;
+  const book = rt.host ? remote[rt.host] ?? [] : tree;
+  for (const ws of book) for (const s of ws.sessions) if (s.path === rt.sessionPath && s.unread) return s.viewedAt;
+  return undefined;
 }
 
 interface Inputs {
@@ -59,6 +67,8 @@ export function useViewed({ runtimes, ports, active, tree, remote, reload }: Inp
       return;
     }
     if (!owed && !isUnread(rt, cur.tree, cur.remote)) return;
+    const since = unreadSince(rt, cur.tree, cur.remote);
+    if (!owed && since) rememberUnreadSince(key, since);
     inflight.current.add(key);
     const set = (on: boolean) =>
       setCleared((prev) => {

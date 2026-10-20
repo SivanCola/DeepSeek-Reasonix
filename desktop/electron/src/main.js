@@ -13,6 +13,7 @@ const { showStarting } = require("./starting");
 const { StudioHost } = require("./hostclient");
 const { installTray } = require("./tray");
 const { instanceID, profileFor } = require("./instance");
+const { watchLauncher, consoleEcho } = require("./launcher");
 const { installApplicationMenu, installContextMenu } = require("./menu");
 const { uiLanguage } = require("./uilang");
 const { installFullScreenKey } = require("./fullscreen");
@@ -74,6 +75,7 @@ const computerDriver = layout.computerDriver(where);
 const pageDir = layout.pageDir(where);
 
 const acts = actHandler({ app, showWindow: () => showWindow(), log: (line) => logs?.shell.line(line) });
+const toConsole = consoleEcho(process.stderr);
 let kernel = null;
 let cua = null;
 let win = null;
@@ -126,7 +128,7 @@ async function launchKernel(args) {
       },
       onStderr: (text) => {
         logs.host.raw(text);
-        process.stderr.write(text);
+        toConsole(text);
       },
       onExit: (code, signal) => {
         logs.shell.line(`host: exited code=${code} signal=${signal}${handshaken ? "" : " before its handshake"}`);
@@ -141,6 +143,7 @@ async function launchKernel(args) {
       onAct: (act) => acts(act),
     });
     const current = kernel;
+    logs.shell.line(`host: pid ${current.child.pid ?? "(none)"}`);
     current.child.on("error", (err) => logs.shell.line(`host: spawn failed: ${err.message}`));
     current.child.stderr.on("close", () => logs.host.flush());
     try {
@@ -513,7 +516,7 @@ if (gpuLaunch.launchedOff) app.disableHardwareAcceleration();
 logs = openLogs(app.getPath("userData"));
 logs.shell.line(
   `shell: start version=${app.getVersion()} packaged=${app.isPackaged} platform=${process.platform}/${process.arch} ` +
-    `instance=${identity || "(unknown)"} argv=${JSON.stringify(redactArgv(process.argv))}`,
+    `instance=${identity || "(unknown)"} pid=${process.pid} argv=${JSON.stringify(redactArgv(process.argv))}`,
 );
 const primary = app.requestSingleInstanceLock();
 if (!primary) {
@@ -524,6 +527,13 @@ if (!primary) {
   app.on("second-instance", showWindow);
   // macOS reopens an existing app through activation, without a second process.
   app.on("activate", showWindow);
+  watchLauncher({
+    packaged: app.isPackaged,
+    onLost: () => {
+      logs.shell.line("shell: launcher gone; quitting");
+      app.quit();
+    },
+  });
   grants = stripPackageGrants(hostBinary, { ...where, execPath: process.execPath });
   if (grants?.stripped.length) {
     const note = `removed app-package grants that stop sandboxed processes loading: ${grants.stripped.join(", ")}`;

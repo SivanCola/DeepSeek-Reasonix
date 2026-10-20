@@ -43,6 +43,7 @@ var leaves = []string{
 	"internal/base/fileref",
 	"internal/base/fileutil",
 	"internal/base/fileutil/encoding",
+	"internal/base/flexstr",
 	"internal/base/frontmatter",
 	"internal/base/i18n",
 	"internal/contract/mcpdiag",

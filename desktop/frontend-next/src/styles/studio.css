@@ -1125,7 +1125,7 @@ body { background: var(--page) !important; }
 .turntools .policy[data-quiet] .lb { font-size: 0; }
 .turntools .policy[data-quiet] .lb::after { content: attr(data-display); font: 500 calc(11px * var(--fs-scale, 1))/1 var(--ui); }
 .turntools .studio-branch { max-width: 160px; }
-.turntools .studio-branch .lb { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.turntools .studio-branch .lb { font: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .turntools .model-picker { max-width: 180px; }
 .turntools .model-picker .nm { max-width: 130px; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .compose .mode {
@@ -2201,7 +2201,8 @@ button, input, select, textarea { font-size: calc(13.3333px * var(--fs-scale, 1)
   justify-content: flex-end;
 }
 .studio-mode-control,
-.studio-effort-control { min-width: 0; flex: none; }
+.studio-effort-control { display: flex; min-width: 0; flex: none; }
+.studio-mode-control > .picker, .studio-effort-control > .picker, .studio-branch-pop > .picker { display: flex; }
 .studio-model-control { min-width: 0; max-width: 180px; flex: 0 1 auto; }
 .studio-mode-picker,
 .studio-effort-picker,
@@ -2242,7 +2243,7 @@ button, input, select, textarea { font-size: calc(13.3333px * var(--fs-scale, 1)
   transform: translateY(-52%);
   pointer-events: none;
 }
-.studio-branch-pop { position: relative; flex: none; }
+.studio-branch-pop { position: relative; display: flex; flex: none; }
 .studio-branch {
   cursor: pointer;
   box-shadow: none;

@@ -50,6 +50,14 @@ describe("the folders a remote machine answered with", () => {
     expect(draw(at())).not.toContain("仅列出前一部分");
   });
 
+  // A folder the machine will not list is not an empty one: the rows are gone
+  // because it said no, and "nothing below" would claim otherwise.
+  it("says a folder it would not list exists and can be used, not that it is empty", () => {
+    const markup = draw(at({ unlisted: true }));
+    expect(markup).toContain("不让列出该目录里的内容");
+    expect(markup).not.toContain("它本身即可作为工作区");
+  });
+
   // The first answer can be a cold dial that stops to ask for a host key. A
   // dimmed empty box says none of that, and reads as a folder with nothing in it.
   it("says it is still connecting before the first answer", () => {

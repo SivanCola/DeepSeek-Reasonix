@@ -7,9 +7,17 @@ import { GRANTED_FILE, grantedFileKey } from "./grantedfiles";
 import { WorkbenchFileMenu, absoluteWorkspacePath, type FileMenu } from "./WorkbenchFileMenu";
 
 export function useConversationFiles(port: AgentPort, root: string, remote: boolean, shown: boolean, reveal: () => void, fail: (e: unknown) => void) {
-  const [request, setRequest] = useState<{ path: string; port: AgentPort; root: string }>();
+  const [request, setRequest] = useState<{ path: string; port: AgentPort; root: string; consumed: () => void }>();
   const [menu, setMenu] = useState<(FileMenu & { id: number; port: AgentPort; root: string }) | null>(null);
   const menuID = useRef(0);
+  // A link opens its file once: the workbench reports it taken, so a later press
+  // on Files, or anything else that re-renders it, finds nothing to replay.
+  const ask = useCallback((path: string) => {
+    const req = { path, port, root, consumed: () => setRequest((now) => (now === req ? undefined : now)) };
+    setRequest(req);
+    reveal();
+  }, [port, root, reveal]);
+  useEffect(() => () => setRequest(undefined), [port, root]);
   const [platform, setPlatform] = useState("");
   const close = useCallback(() => setMenu(null), []);
   // The folders the user granted this workspace: a picture in one is served by
@@ -62,17 +70,17 @@ export function useConversationFiles(port: AgentPort, root: string, remote: bool
       title: (href) => { const file = path(href); return file ? absoluteWorkspacePath(root, file) : ""; },
       link: (href) => {
         const file = path(href);
-        if (file) return () => { setRequest({ path: file, port, root }); reveal(); };
+        if (file) return () => ask(file);
         const held = href.startsWith(`${GRANTED_FILE}/`) || href.includes(`/${GRANTED_FILE}/`)
           ? decodeURIComponent(href.slice(href.indexOf(GRANTED_FILE)))
           : isLocalPathShape(href) ? grantedFileKey(granted, href) : null;
-        return held ? () => { setRequest({ path: held, port, root }); reveal(); } : null;
+        return held ? () => ask(held) : null;
       },
       image,
       granted: grantedMark,
       menu: offer,
     };
-  }, [port, root, reveal, granted]);
+  }, [port, root, ask, granted]);
   const menuView = shown && menu?.port === port && menu.root === root && <WorkbenchFileMenu key={menu.id} menu={menu} root={root} platform={platform}
     revealable={!remote && port.revealsFiles()} onClose={close}
     onOpen={!remote && port.opensFiles() ? (path) => { void port.openFile(path).catch(fail); } : undefined}

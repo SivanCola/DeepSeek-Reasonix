@@ -32,18 +32,19 @@ const REGISTRY = (() => {
   // Anchored to the tree being scanned, like every other path here: a literal
   // "src/actions.ts" would load the product's registry into a fixture run and
   // report all 47 of its entries as having no production root.
-  const at = join(SRC, "actions.ts");
-  const src = existsSync(at) ? readFileSync(at, "utf8") : null;
-  if (!src) return null;
-  const tree = parse(src, { sourceType: "module", plugins: ["typescript"], errorRecovery: true });
+  const files = existsSync(SRC) ? readdirSync(SRC).filter((f) => /^actions(_\w+)?\.ts$/.test(f)).sort() : [];
+  if (!files.length) return null;
   const out = new Map();
-  walk(tree, (n) => {
-    if (n.type !== "ObjectExpression") return;
-    const props = n.properties.filter((x) => x.type === "ObjectProperty" && x.key?.name);
-    const id = props.find((x) => x.key.name === "id");
-    const kind = props.find((x) => x.key.name === "kind");
-    if (id?.value?.type === "StringLiteral") out.set(id.value.value, kind?.value?.type === "StringLiteral" ? kind.value.value : null);
-  });
+  for (const f of files) {
+    const tree = parse(readFileSync(join(SRC, f), "utf8"), { sourceType: "module", plugins: ["typescript"], errorRecovery: true });
+    walk(tree, (n) => {
+      if (n.type !== "ObjectExpression") return;
+      const props = n.properties.filter((x) => x.type === "ObjectProperty" && x.key?.name);
+      const id = props.find((x) => x.key.name === "id");
+      const kind = props.find((x) => x.key.name === "kind");
+      if (id?.value?.type === "StringLiteral") out.set(id.value.value, kind?.value?.type === "StringLiteral" ? kind.value.value : null);
+    });
+  }
   return out;
 })();
 

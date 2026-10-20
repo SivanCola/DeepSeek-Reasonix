@@ -381,3 +381,34 @@ it("does not clear a completion when focus returns to settings covering the conv
   await userEvent.keyboard("{Escape}");
   await waitFor(() => expect(badge).toHaveBeenLastCalledWith(false));
 });
+
+describe("mark as read from the row menu", () => {
+  it("clears an unread row that is not open, through the kernel and not the pane", async () => {
+    const k = kernel([RELEASE, DOCS]);
+    const marked: string[] = [];
+    k.hub.markSessionRead = async (path) => { marked.push(path); k.unread.delete(path); };
+    render(<App hub={k.hub} />);
+    const unread = await row(/Release notes/);
+    await waitFor(() => expect(dotIn(unread)).toBeTruthy());
+    await userEvent.pointer({ keys: "[MouseRight]", target: within(unread).getByText("Release notes") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "标为已读" }));
+    await waitFor(() => expect(dotIn(screen.getByRole("treeitem", { name: /Release notes/ }))).toBeNull());
+    expect(marked).toEqual([RELEASE]);
+    expect(dotIn(screen.getByRole("treeitem", { name: /Docs sweep/ }))).toBeTruthy();
+    expect(k.viewed).toEqual([]);
+    await userEvent.pointer({ keys: "[MouseRight]", target: screen.getByText("Release notes") });
+    expect(screen.queryByRole("menuitem", { name: "标为已读" })).toBeNull();
+  });
+
+  it("keeps the dot and reports the error when the kernel refuses", async () => {
+    const k = kernel([RELEASE]);
+    k.hub.markSessionRead = async () => { throw new Error("refused"); };
+    render(<App hub={k.hub} />);
+    const unread = await row(/Release notes/);
+    await waitFor(() => expect(dotIn(unread)).toBeTruthy());
+    await userEvent.pointer({ keys: "[MouseRight]", target: within(unread).getByText("Release notes") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "标为已读" }));
+    await act(async () => {});
+    expect(dotIn(screen.getByRole("treeitem", { name: /Release notes/ }))).toBeTruthy();
+  });
+});

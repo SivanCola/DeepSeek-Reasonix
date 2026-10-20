@@ -82,7 +82,7 @@ func TestProjectCompositionCannotActivateUnauthorizedProgramsOrChooseDefault(t *
 				t.Fatalf("unauthorized %s selection was not refused: %v", kind, err)
 			}
 			var diagnostic *agentcomposition.DiagnosticError
-			if !errors.As(err, &diagnostic) || len(diagnostic.Diagnostics) != 1 || diagnostic.Diagnostics[0].Module != id {
+			if !errors.As(err, &diagnostic) || len(diagnostic.Diagnostics) != 1 || diagnostic.Diagnostics[0].Module != kind+":"+id {
 				t.Fatalf("wrong missing authority: %v", err)
 			}
 			if _, err := os.Stat(marker); !os.IsNotExist(err) {

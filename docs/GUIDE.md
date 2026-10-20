@@ -1896,8 +1896,8 @@ accepted for compatibility but are hidden from help and completion.
 
 ## Scheduled runs
 
-A schedule makes Reasonix run a read-only task for you at a time you chose and leave the result waiting. It is
-the command line only for now; Studio gets a list later.
+A schedule makes Reasonix run a read-only task for you at a time you chose and leave the result waiting. Create
+and manage them in Studio under Settings, Automation, Scheduled runs, or with the command line below.
 
 ```bash
 reasonix schedule add --every 2h --prompt "Summarize what changed in the open TODOs" --workspace ~/src/app
@@ -1919,6 +1919,9 @@ reasonix schedule tick            # claim and run what is due now, then exit
   - Otherwise call `reasonix schedule tick` from the operating system's scheduler (cron, launchd, Task
     Scheduler).
   - Every tick goes through the store's own budget and expiry checks, so neither route can bypass them.
+- **Trusted folders only.** A schedule's folder must be a project you have trusted in Studio or the terminal UI.
+  Anything else is refused by the kernel (`schedule.workspace_unknown`), and trust is checked again at every run:
+  withdrawing it stops the schedule's runs.
 - **Read-only.** A run reads files in its folder and writes nothing. Anything that needs your approval is parked
   for you and never answered on your behalf.
 - **Ceilings.** `[schedule]` in your user config can change them; a repository's `reasonix.toml` can only

@@ -1,2 +1,0 @@
-- 终端的会话选择器（/resume）里按 Ctrl+D 询问、对同一行再按一次 Ctrl+D 才永久删除该会话；当前打开的会话会被拒绝并说明原因。见 #13954。
-- In the terminal's session picker (/resume), Ctrl+D asks and a second Ctrl+D on the same row erases that conversation for good; the open session is refused with the reason. See #13954.

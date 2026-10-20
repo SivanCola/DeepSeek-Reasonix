@@ -1,0 +1,2 @@
+- 修复：Agent 预设提示「组合所需资源不可用」时，现在会写明是哪个模块（如 tools:xxx）以及原因，不再只显示一句笼统的话。关联 #13988。
+- Fixed: when an Agent preset reports that its required resources are unavailable, the message now names the module (such as tools:xxx) and the reason instead of a generic sentence. Refs #13988.

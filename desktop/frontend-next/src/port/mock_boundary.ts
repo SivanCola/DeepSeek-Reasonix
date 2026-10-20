@@ -1,6 +1,7 @@
 import type { Adjudications, BrowserToolsSettings, SubagentClaimsSettings, SubagentSteerSettings, WriteLeaseSettings, PlanApprovalSettings, DefaultModeSettings, ToolSettings, PeerReceipt, PeersState, PeersSettings, PeersSettingsEdit, PeerRemember, ConfigProblem, ConfigRepair, PermissionLists, PermissionRules, SandboxSettings, UpdateMode } from "./port";
 import type { AskTimeoutSettings, ModStatus, ModsSettings, ModsSettingsEdit, SessionRefSettings, AutoArchiveSettings, ChangedFilesSettings, FeedbackLevelNotices, FoldWorkSettings, TurnNarrationSettings, ObservabilityPatch, ObservabilitySettings, WebAccessPatch, WebAccessSettings, SearxngProbe, DisplayCurrencyMode, DisplayCurrencySettings, ProgressWatchSettings, WorkspaceRoots, ReceiptSettings } from "./boundary";
 import { mockMods } from "./mock_mods";
+import type { ScheduleBoard, ScheduleDraft, SchedulePreview, ScheduleResultView, ScheduleView } from "./schedule";
 import { HttpError } from "./http_error";
 import { MockShell } from "./mock_shell";
 import { MockCompositions } from "./mock_composition";
@@ -235,6 +236,63 @@ export class MockBoundary extends MockShell {
   }
 
   protected peerState: PeersState = { enabled: false, peers: [], held: [] };
+
+  private scheduled: ScheduleBoard = {
+    pausedAll: false,
+    policy: { minIntervalMinutes: 60, maxSchedules: 8, globalTokensDay: 1_200_000, expiryDays: 30 },
+    folders: [{ path: "/Users/you/src/app", name: "app" }, { path: "/Users/you/src/docs", name: "docs" }],
+    schedules: [
+      { id: "sch_a1b2c3d4", label: "Morning briefing", status: "active", everySec: 86_400, workspace: "/Users/you/src/app", model: "deepseek/deepseek-v4-pro",
+        prompt: "Summarize what changed in the repository since yesterday and list open TODOs.", perRunTokens: 250_000, lifetimeTokens: 3_000_000, spentLifetimeTokens: 410_000,
+        expiresAtUnix: 1_793_000_000 },
+      { id: "sch_e5f6a7b8", label: "Docs drift", status: "paused", pausedReason: "consecutive_failures", everySec: 604_800, workspace: "/Users/you/src/docs", model: "deepseek/deepseek-v4-pro",
+        prompt: "Check the docs against the code and report what is out of date.", perRunTokens: 250_000, lifetimeTokens: 3_000_000, spentLifetimeTokens: 1_240_000,
+        consecutiveFailures: 3, expiresAtUnix: 1_793_000_000 },
+    ],
+    runs: [
+      { triggerId: "sch_a1b2c3d4/1790000000", scheduleId: "sch_a1b2c3d4", slotUnix: 1_790_000_000, state: "succeeded", chargedTokens: 118_400, endedUnix: 1_790_000_260 },
+      { triggerId: "sch_a1b2c3d4/1789913600", scheduleId: "sch_a1b2c3d4", slotUnix: 1_789_913_600, state: "blocked", chargedTokens: 64_000, endedUnix: 1_789_913_700 },
+      { triggerId: "sch_e5f6a7b8/1789400000", scheduleId: "sch_e5f6a7b8", slotUnix: 1_789_400_000, state: "skipped", skipReason: "missed", chargedTokens: 0 },
+    ],
+  };
+
+  async schedules(): Promise<ScheduleBoard> {
+    return structuredClone(this.scheduled);
+  }
+
+  async previewSchedule(d: ScheduleDraft): Promise<SchedulePreview> {
+    return { firstRunUnix: 1_790_100_000, workspace: d.workspace, model: d.model || "deepseek/deepseek-v4-pro", prompt: d.prompt, perRunTokens: 250_000, perRunSteps: 40,
+      perRunWallSec: 900, perDayMax: 1_000_000, lifetimeTokens: 3_000_000, expiresAtUnix: 1_792_700_000, confirm: "mock-confirm" };
+  }
+
+  async createSchedule(d: ScheduleDraft, confirm: string): Promise<ScheduleView> {
+    // A refused write is the only thing that shows the read-only state, so a rendered check reaches it by this label.
+    if (d.label === "no-edit-grant") throw new HttpError(403, "x", { code: "schedule.editing_disabled", error: "this window has no edit grant" });
+    if (confirm !== "mock-confirm") throw new HttpError(409, "x", { code: "schedule.digest_mismatch", error: "what is being created is not what was previewed" });
+    const sc: ScheduleView = { id: "sch_" + Math.random().toString(16).slice(2, 10), label: d.label, status: "active", everySec: d.everySec, atUnix: d.atUnix, workspace: d.workspace,
+      model: d.model || "deepseek/deepseek-v4-pro", prompt: d.prompt, perRunTokens: 250_000, lifetimeTokens: 3_000_000, spentLifetimeTokens: 0, expiresAtUnix: 1_792_700_000 };
+    this.scheduled.schedules = [...this.scheduled.schedules, sc];
+    return sc;
+  }
+
+  async scheduleAction(id: string, verb: "pause" | "resume" | "renew" | "delete"): Promise<ScheduleBoard> {
+    const sc = this.scheduled.schedules.find((s) => s.id === id);
+    if (!sc) throw new HttpError(404, "x", { code: "schedule.not_found", error: "no such schedule" });
+    if (verb === "delete") this.scheduled.schedules = this.scheduled.schedules.filter((s) => s.id !== id);
+    else if (verb === "pause") { sc.status = "paused"; sc.pausedReason = "user"; }
+    else if (verb === "resume") { sc.status = "active"; sc.pausedReason = undefined; sc.consecutiveFailures = undefined; }
+    return structuredClone(this.scheduled);
+  }
+
+  async setSchedulesPaused(paused: boolean): Promise<ScheduleBoard> {
+    this.scheduled.pausedAll = paused;
+    return structuredClone(this.scheduled);
+  }
+
+  async scheduleResult(triggerId: string): Promise<ScheduleResultView> {
+    if (!this.scheduled.runs.some((r) => r.triggerId === triggerId)) throw new HttpError(404, "x", { code: "schedule.not_found", error: "no such result" });
+    return { triggerId, report: "Three files changed since yesterday. Two TODOs were added in `internal/store`.", pending: [{ kind: "approval", summary: "Wanted to run a shell command", detail: "git log --stat" }], enforcement: "tool-filter", recordedUnix: 1_790_000_260 };
+  }
 
   async peers(): Promise<PeersState> {
     return { ...this.peerState, peers: [...this.peerState.peers], held: [...this.peerState.held], threads: [...(this.peerState.threads ?? [])] };

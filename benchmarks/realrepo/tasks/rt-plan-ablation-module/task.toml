@@ -1,0 +1,11 @@
+prompt = """[Reasonix: plan-first]
+
+Add a `memory` module to the benchmark ablation arms: switching it off means the run gets no saved-fact memory store. Work through it as a plan, and sign off each step with its evidence before starting the next:
+
+1. Declare the module so `Parse`, `all` and arm names know it. It goes last in the order arm names use.
+2. Give every module a one-line summary, `func (m Module) Summary() string`, returning "" for a module that is not declared. Take the wording from the README's ablation table.
+3. Add `ModuleHelp() string`: one line per module, in arm-name order, each `<name>: <summary>`, newline-separated with no trailing newline.
+4. Make `benchctl arm -list` print `ModuleHelp()` instead of the comma-separated list. The `-ablate` flag's help must still name every module.
+5. Cover each of the above with tests, and add the new module to the README's ablation table."""
+class = "plan-mode"
+timeout_sec = 1200

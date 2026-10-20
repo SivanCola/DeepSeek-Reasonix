@@ -8,6 +8,7 @@ import (
 	"os"
 	"testing"
 
+	"reasonix/internal/platform/remote/execfs/fstest"
 	"reasonix/internal/platform/wsl"
 )
 
@@ -28,7 +29,7 @@ func TestFileLayerInARealDistribution(t *testing.T) {
 	}
 	dir := string(res.Stdout[:len(res.Stdout)-1])
 	defer c.Exec(ctx, "rm -rf '"+dir+"'")
-	runFileScenario(t, c, dir)
+	fstest.RunScenario(t, c.Volume(), dir)
 	runPathScenario(t, c)
 }
 

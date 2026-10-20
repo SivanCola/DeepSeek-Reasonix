@@ -1,0 +1,2 @@
+- 修复：连接 WSL 后，含空格的 IPv6 区域名被写进已知主机文件，之后所有远程连接都读不了它；现在不再写区域名，并跳过已损坏的行、给出警告。关联 #13967。
+- Fixed: an IPv6 zone with spaces was written to the managed known_hosts file and broke later remote connections; zones are no longer written, broken lines are skipped with a warning. Refs #13967.

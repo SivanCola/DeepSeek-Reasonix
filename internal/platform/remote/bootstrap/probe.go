@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"reasonix/internal/platform/releaseasset"
+	"reasonix/internal/platform/remote/sftpfs"
 )
 
 // Routes the auto strategy takes that are not serve_install values — nobody
@@ -23,6 +24,10 @@ const (
 // answers all of them at once.
 type Report struct {
 	OS, Arch, Home string
+	// Files is how that machine's files are reached: sftp, or exec when its
+	// server refuses the subsystem and scripts stand in. Empty when the
+	// connection does not say.
+	Files sftpfs.Mode
 	// Kernel is a reasonix already there that this caller could drive.
 	Kernel, Version string
 	// Outdated is one that is there and below the floor — having an old one is
@@ -78,7 +83,7 @@ func Probe(ctx context.Context, conn Conn, opts Options) (Report, error) {
 	// Home as that machine spells it: the file layer's /C:/Users/... is not a
 	// path anybody there would type.
 	conn, env := connWithLoginEnv(ctx, conn, target)
-	rep := Report{env: env, OS: goos, Arch: goarch, Home: target.NativePath(home)}
+	rep := Report{env: env, OS: goos, Arch: goarch, Home: target.NativePath(home), Files: sftpfs.ModeOf(fs)}
 	// The whole set, not the subset this call carries: a probe answers for a
 	// connect, and every connect that opens a pane publishes a broker. Calling
 	// a kernel usable that the connect then refuses is what this prevents.

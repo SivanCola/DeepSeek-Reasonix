@@ -230,6 +230,7 @@ function RemoteHostsView({ hub, hosts, runtimes, active, onOpen, onFocus, reload
                       onOpen={() => void open(host, session.workspaceRoot || ws.root, session.path)} onFocus={onFocus}
                       onWrite={(kind, row) => void mutations.run(JSON.stringify([host.name, session.path]), kind, row, async () => {
                         if (kind === "pin") await hub.pinSession(session.path, !session.pinned, host.name);
+                        else if (kind === "read") await hub.markSessionRead(session.path, host.name);
                         else {
                           if (held && !session.archived) await onClose([held.id]);
                           await hub.archiveSession(session.path, !session.archived, host.name);

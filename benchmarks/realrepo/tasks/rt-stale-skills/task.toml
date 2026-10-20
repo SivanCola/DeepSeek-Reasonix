@@ -1,0 +1,5 @@
+prompt = """The project skills under `.reasonix/skills/` have drifted from the code. Bring every one of them back in line with this repository: every file path, identifier, `make` target and `benchctl` command a skill names must exist here, with flags the command really takes, and each skill's procedure must agree with the rules in REASONIX.md and with what the code actually does. Keep each skill's frontmatter `name` and `description`, and keep its procedure a numbered list. Then make the README's skills table list every skill.
+
+This is a documentation change only: do not modify any Go source, `go.mod`, the `Makefile` or `REASONIX.md`."""
+class = "docs-only"
+timeout_sec = 1200

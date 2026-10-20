@@ -26,12 +26,11 @@ func (a *contextWindow) keptForProjection(m provider.Message) provider.Message {
 	return m
 }
 
-// supersedeStandingState drops each standing-state block a later retained turn
-// repeats. A block is superseded only by a newer one carrying the same tag AND
-// the same attributes: a short reminder must never displace the fuller
-// statement it points at, or the fold leaves the model following a dangling
-// reference. Newest-first, so the survivor is the newest of each variant.
-func supersedeStandingState(kept []provider.Message) []provider.Message {
+// supersedeStandingState drops each standing-state block a later turn — kept or
+// in the verbatim tail — repeats. Only a newer block with the same tag AND the
+// same attributes supersedes: a short reminder must never displace the fuller
+// statement it points at. Newest-first, so the newest of each variant survives.
+func supersedeStandingState(kept, tail []provider.Message) []provider.Message {
 	seen := make(map[string]bool)
 	drop := func(tag, opening string) bool {
 		if !sessionstore.SupersededUserBlock[tag] || seen[opening] {
@@ -39,6 +38,11 @@ func supersedeStandingState(kept []provider.Message) []provider.Message {
 		}
 		seen[opening] = true
 		return false
+	}
+	for _, m := range tail {
+		if carriesStandingState(m) {
+			filterLeadingBlocks(m.Content, drop)
+		}
 	}
 	for i, m := range slices.Backward(kept) {
 		if !carriesStandingState(m) {

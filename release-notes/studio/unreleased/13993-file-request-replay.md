@@ -1,0 +1,2 @@
+- 修复：点过聊天里的文件链接并关掉那个文件后，再点侧栏「文件」会重新打开它，而不是显示文件树。关联 #13993。
+- Fixed: after opening a file from a link in the conversation and closing it, pressing Files reopened that file instead of showing the file tree. Refs #13993.

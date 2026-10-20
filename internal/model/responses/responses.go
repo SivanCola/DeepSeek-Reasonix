@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"reasonix/internal/base/flexstr"
 	"reasonix/internal/base/netclient"
 	"reasonix/internal/contract/provider"
 	provideropenai "reasonix/internal/model/openai"
@@ -328,14 +329,14 @@ func isStalePreviousResponseError(err error) bool {
 	}
 	var body struct {
 		Error struct {
-			Param string `json:"param"`
-			Code  string `json:"code"`
+			Param string         `json:"param"`
+			Code  flexstr.String `json:"code"`
 		} `json:"error"`
 	}
 	if json.Unmarshal([]byte(apiErr.Body), &body) != nil {
 		return false
 	}
-	return body.Error.Param == "previous_response_id" || body.Error.Code == "previous_response_not_found"
+	return body.Error.Param == "previous_response_id" || body.Error.Code.String() == "previous_response_not_found"
 }
 
 func (c *client) buildRequestBody(req provider.Request) (map[string]any, bool, []provider.Message) {
@@ -610,7 +611,7 @@ func authErrorFromResponse(c *client, responseError *sseError) error {
 	if responseError == nil {
 		return nil
 	}
-	status, ok := responsesAuthCodes[strings.ToLower(strings.TrimSpace(responseError.Code))]
+	status, ok := responsesAuthCodes[strings.ToLower(strings.TrimSpace(responseError.Code.String()))]
 	if !ok {
 		return nil
 	}
@@ -625,12 +626,12 @@ type sseEvent struct {
 	Arguments string `json:"arguments"`
 	// Code and Message ride the protocol's top-level `error` event, which is
 	// not a response event and carries no response object to read them from.
-	Code         string       `json:"code"`
-	Message      string       `json:"message"`
-	ItemID       string       `json:"item_id"`
-	ContentIndex int          `json:"content_index"`
-	Item         *sseItem     `json:"item"`
-	Response     *sseResponse `json:"response"`
+	Code         flexstr.String `json:"code"`
+	Message      string         `json:"message"`
+	ItemID       string         `json:"item_id"`
+	ContentIndex int            `json:"content_index"`
+	Item         *sseItem       `json:"item"`
+	Response     *sseResponse   `json:"response"`
 }
 
 type sseItem struct {
@@ -666,8 +667,8 @@ type incompleteDetails struct {
 	Reason string `json:"reason"`
 }
 type sseError struct {
-	Message string `json:"message"`
-	Code    string `json:"code"`
+	Message string         `json:"message"`
+	Code    flexstr.String `json:"code"`
 }
 type sseUsage struct {
 	InputTokens        int `json:"input_tokens"`

@@ -707,6 +707,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *sessionstore.Ses
 			workspaceScanLimit:      opts.WorkspaceScanLimit,
 			renderRoot:              strings.TrimSpace(opts.RenderRoot),
 			workspaceVCS:            strings.TrimSpace(opts.WorkspaceVCS),
+			workspaceUnversioned:    opts.WorkspaceUnversioned,
 			subagentDepth:           subagentDepth,
 			maxSubagentDepth:        maxSubagentDepth,
 			providerRetries:         opts.ProviderRetries,

@@ -58,6 +58,7 @@ func (c *Controller) turnBlocksFor(source string, includeOwed bool, notes []stri
 		blocks = append(blocks,
 			turnBlock{hookContextTag, c.drainHookContextBlock()},
 			turnBlock{currentDateTag, wrapTurnBlock(currentDateTag, c.date.owed())},
+			turnBlock{sessionScratchTag, wrapTurnBlock(sessionScratchTag, c.scratch.owed())},
 			turnBlock{"available-skills", wrapTurnBlock("available-skills", c.skills.owedCatalog())},
 			turnBlock{"project-instructions", wrapTurnBlock("project-instructions", c.memory.owedInstructions())},
 			turnBlock{"project-rules", wrapTurnBlock("project-rules", always)},
@@ -176,6 +177,7 @@ func (c *Controller) runWithRunner(ctx context.Context, input string) error {
 
 func (c *Controller) settleTurnProjections() {
 	c.date.debt.settle()
+	c.scratch.debt.settle()
 	c.skills.catalog.settle()
 	c.memory.instructions.settle()
 	c.rules.settle()

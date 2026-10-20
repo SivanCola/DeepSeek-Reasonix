@@ -156,6 +156,10 @@ type Options struct {
 	// WorkspaceVCS names the workspace's version control ("" for none) for
 	// the turn block. Resolved once by the host, never probed per turn.
 	WorkspaceVCS string
+	// WorkspaceUnversioned says the host established that no version-control
+	// root encloses the workspace. Unset means unknown, which keeps the
+	// delivery contract whole.
+	WorkspaceUnversioned bool
 
 	// WorkspaceLease serializes Delivery mutations across sessions that target
 	// the same workspace. nil preserves source compatibility for direct Agent

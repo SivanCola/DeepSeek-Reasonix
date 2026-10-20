@@ -103,6 +103,7 @@ func orderInfoOf(full string, e fs.DirEntry) (SessionOrderInfo, bool) {
 	row.Pinned = meta.Pinned
 	row.ManualRank = meta.ManualRank
 	row.Unread = meta.Unread()
+	row.ViewedAt = meta.ViewedAt
 	row.Recovered = meta.Recovered
 	row.RecoveryReason = meta.RecoveryReason
 	row.RecoveryDigest = meta.RecoveryDigest

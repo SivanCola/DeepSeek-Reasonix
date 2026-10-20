@@ -1,0 +1,9 @@
+prompt = """The lookups in the pricing contract make their callers guess. `CurrentRate` returns a `*RateCard` that is nil when nothing is priced, and the others take runs of positional strings that are easy to pass in the wrong order. Change them:
+
+- `CurrentRate(provider, model, currency string) (RateCard, bool)`, where the bool reports whether the catalog prices that model.
+- `LookupCatalog(key CatalogKey) (CatalogEntry, bool)`, with a new exported `CatalogKey` struct holding `Provider`, `Model`, `Currency` and `BillingMode`. An empty `BillingMode` still matches pay-as-you-go first.
+- `IsOfficialCard`, `MatchesCatalog` and `LiveTariff` take a new exported `ModelRef` struct, holding `Provider` and `Model`, in place of their two leading strings; their other parameters stay as they are.
+
+Migrate every caller in the repository, tests included. Behaviour must not change, no existing test may be deleted or skipped, and `make check` must pass."""
+class = "api-migration"
+timeout_sec = 1200

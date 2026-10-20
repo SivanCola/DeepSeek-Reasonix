@@ -137,14 +137,14 @@ func (b *builder) bindCompositionSkills() error {
 			var err error
 			sk, err = b.retainSkill(sk)
 			if err != nil {
-				return err
+				return compositionResourceError("skill", sk.SlashName(), err)
 			}
 			if err := keepResource(binding, "skill", sk.SlashName(), sk); err != nil {
 				return err
 			}
 			skills = append(skills, sk)
 		}
-		if err := verifySelected(binding.Resolved.Skills, skills, func(s skill.Skill) string { return s.SlashName() }); err != nil {
+		if err := verifySelected("skills", binding.Resolved.Skills, skills, func(s skill.Skill) string { return s.SlashName() }); err != nil {
 			return err
 		}
 		binding.Resolved.Skills = selectionOf(skills, func(s skill.Skill) string { return s.SlashName() })
@@ -165,13 +165,13 @@ func selectionOf[T any](items []T, id func(T) string) agentcomposition.Selection
 	return s
 }
 
-func verifySelected[T any](s agentcomposition.Selection, items []T, id func(T) string) error {
+func verifySelected[T any](kind string, s agentcomposition.Selection, items []T, id func(T) string) error {
 	if s.Mode == agentcomposition.Inherit {
 		return nil
 	}
 	for _, m := range s.Members {
 		if !slices.ContainsFunc(items, func(v T) bool { return id(v) == m.ID }) {
-			return agentcomposition.Unavailable(m.ID, "Required module is unavailable or was revoked.")
+			return agentcomposition.Unavailable(kind+":"+m.ID, "Required module is unavailable or was revoked.")
 		}
 	}
 	return nil
@@ -193,7 +193,7 @@ func (b *builder) finishComposition(ctrl *control.Controller, snap *extension.Ru
 			return fmt.Errorf("%w: tool contract changed", agentcomposition.ErrUnavailable)
 		}
 	} else {
-		if err := verifySelected(binding.Resolved.Tools, b.tools.reg.AllNames(), func(v string) string { return v }); err != nil {
+		if err := verifySelected("tools", binding.Resolved.Tools, b.tools.reg.AllNames(), func(v string) string { return v }); err != nil {
 			return err
 		}
 		binding.Resolved.Tools = selectionOf(b.tools.reg.AllNames(), func(v string) string { return v })

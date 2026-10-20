@@ -1,0 +1,2 @@
+- 新增：设置 → 自动化 → 定时运行：查看、预览确认后创建、暂停、续期、删除定时任务，并查看每次运行的结果。关联 #11406。
+- Added: Settings, Automation, Scheduled runs: list, create after a confirmed preview, pause, renew and delete scheduled tasks, and read each run's result. Refs #11406.

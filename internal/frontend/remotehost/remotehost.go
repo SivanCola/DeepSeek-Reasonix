@@ -92,7 +92,7 @@ func (r *Link) Browse(ctx context.Context, host, dir string) (serve.RemoteListin
 	if err != nil {
 		return serve.RemoteListing{}, identifyBrowse(host, dir, err)
 	}
-	out := serve.RemoteListing{Path: listing.Path, Parent: listing.Parent, Truncated: listing.Truncated}
+	out := serve.RemoteListing{Path: listing.Path, Parent: listing.Parent, Truncated: listing.Truncated, Unlisted: listing.Unlisted}
 	out.Folders = make([]serve.RemoteFolder, 0, len(listing.Folders))
 	for _, f := range listing.Folders {
 		out.Folders = append(out.Folders, serve.RemoteFolder{Name: f.Name, Path: f.Path})

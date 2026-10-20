@@ -26,6 +26,7 @@
 *.xml text eol=lf
 *.yaml text eol=lf
 *.yml text eol=lf
+Makefile text eol=lf
 .githooks/** text eol=lf
 benchmarks/**/*.sh text eol=lf
 internal/runtime/agent/testdata/perseveration/** -text

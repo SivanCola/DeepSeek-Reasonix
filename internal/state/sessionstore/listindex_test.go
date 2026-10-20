@@ -217,7 +217,7 @@ func TestListIndexFormatTracksTheRowShape(t *testing.T) {
 	for f := range reflect.TypeFor[SessionOrderInfo]().Fields() {
 		shape.WriteString(f.Name + " " + f.Type.String() + ";")
 	}
-	const known = "Path string;CreatedAt time.Time;LastActivityAt time.Time;ModTime time.Time;Scope string;WorkspaceRoot string;TopicID string;TopicTitle string;CustomTitle string;Archived bool;Pinned bool;ManualRank float64;Unread bool;Recovered bool;RecoveryReason string;RecoveryDigest string;ParentID string;RecoveryRootID string;Turns int;Preview string;SchemaVersion int;Revision int64;ContentDigest string;"
+	const known = "Path string;CreatedAt time.Time;LastActivityAt time.Time;ModTime time.Time;Scope string;WorkspaceRoot string;TopicID string;TopicTitle string;CustomTitle string;Archived bool;Pinned bool;ManualRank float64;Unread bool;ViewedAt time.Time;Recovered bool;RecoveryReason string;RecoveryDigest string;ParentID string;RecoveryRootID string;Turns int;Preview string;SchemaVersion int;Revision int64;ContentDigest string;"
 	if shape.String() != known {
 		t.Fatalf("SessionOrderInfo changed shape: bump listIndexFormat (now %d) and update this table.\nnow:   %s\nknown: %s", listIndexFormat, shape.String(), known)
 	}

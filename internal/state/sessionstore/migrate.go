@@ -240,7 +240,7 @@ func importJsonlSessions(entries []os.DirEntry, srcDir, globalDest string, hasEv
 	hadArtifactFailure := false
 	for _, e := range entries {
 		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".jsonl") || strings.HasSuffix(name, ".events.jsonl") || strings.HasSuffix(name, ".jsonl.bak") {
+		if e.IsDir() || !store.IsSessionTranscriptName(name) {
 			continue
 		}
 		base := strings.TrimSuffix(name, ".jsonl")
@@ -361,7 +361,7 @@ func migrateSubDirectory(subDir, globalDest string, projectDir func(string) stri
 			} else {
 				reconstruct = true
 			}
-		case strings.HasSuffix(name, ".jsonl") && !strings.HasSuffix(name, ".events.jsonl") && !strings.HasSuffix(name, ".jsonl.bak"):
+		case store.IsSessionTranscriptName(name):
 			base = strings.TrimSuffix(name, ".jsonl")
 			if hasEvents[base] {
 				continue // handled by the events branch above

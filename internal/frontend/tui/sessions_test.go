@@ -8,7 +8,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"reasonix/internal/contract/eventwire"
-	"reasonix/internal/frontend/termrender"
 )
 
 // The picker opens on the first conversation that is not the open one, what
@@ -36,62 +35,6 @@ func TestPickerResumesTheChosenSession(t *testing.T) {
 	}
 	if m.picker != nil || len(m.tr.Items) == 0 || m.tr.Items[0].Text != "write the docs" {
 		t.Fatalf("transcript after resume = %+v", m.tr.Items)
-	}
-}
-
-// Ctrl+D arms the row under the cursor and only a second Ctrl+D on the same row
-// deletes it; any other key disarms, and a refusal stays on the picker.
-func TestPickerDeletesOnlyAfterAConfirmingSecondPress(t *testing.T) {
-	m, k := testModel(t)
-	run(m, m.openPicker())
-	deleted := func() bool { return strings.Contains(strings.Join(k.seen(), "\n"), "POST /delete-session") }
-
-	run(m, press(m, "ctrl+d"))
-	if deleted() || !strings.Contains(m.View().Content, "Ctrl+D again") {
-		t.Fatalf("first press should only ask:\n%s", m.View().Content)
-	}
-	run(m, press(m, "down"))
-	run(m, press(m, "ctrl+d"))
-	if deleted() {
-		t.Fatal("a press after moving the cursor deleted a row that was never confirmed")
-	}
-	run(m, press(m, "ctrl+d"))
-	if !strings.Contains(strings.Join(k.seen(), "\n"), `POST /delete-session {"name":"c"}`) {
-		t.Fatalf("confirmed delete did not reach the kernel: %v", k.seen())
-	}
-	if m.picker == nil || len(m.picker.all) != 2 {
-		t.Fatalf("picker should stay open without the erased row: %+v", m.picker)
-	}
-}
-
-// The confirmation is the one line that says what a second press does, so it is the
-// title that gives way on a narrow terminal, never the instruction.
-func TestPickerConfirmationKeepsItsInstructionOnANarrowTerminal(t *testing.T) {
-	m, _ := testModel(t)
-	m.width = 70
-	run(m, m.openPicker())
-	m.picker.all[1].Title = strings.Repeat("a long conversation title ", 6)
-	m.picker.sel = 1
-	run(m, press(m, "ctrl+d"))
-	var line string
-	for l := range strings.SplitSeq(m.View().Content, "\n") {
-		if strings.Contains(l, "Delete") {
-			line = l
-		}
-	}
-	if !strings.Contains(line, "other key cancels") || termrender.VisibleWidth(strings.TrimRight(line, " ")) > m.width {
-		t.Fatalf("confirmation line = %q (width %d)", line, termrender.VisibleWidth(line))
-	}
-}
-
-func TestPickerShowsWhyTheOpenSessionWasNotDeleted(t *testing.T) {
-	m, _ := testModel(t)
-	run(m, m.openPicker())
-	m.picker.sel = 0
-	run(m, press(m, "ctrl+d"))
-	run(m, press(m, "ctrl+d"))
-	if m.picker == nil || len(m.picker.all) != 3 || !strings.Contains(m.View().Content, "Not deleted") {
-		t.Fatalf("refusal should stay on the picker:\n%s", m.View().Content)
 	}
 }
 

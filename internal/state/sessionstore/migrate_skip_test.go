@@ -4,8 +4,11 @@ import (
 	"bufio"
 	"fmt"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"reasonix/internal/base/testenv"
 	"reasonix/internal/state/sessionv4"
 )
 
@@ -34,5 +37,24 @@ func TestClassifyWriteSkipKeepsCopyFailedForWrites(t *testing.T) {
 	}
 	if got := classifyWriteSkip(fmt.Errorf("x: %w", fs.ErrPermission)); got != SkipPermission {
 		t.Errorf("denied write classified %q, want permission", got)
+	}
+}
+
+func TestImportLegacySessionsDoesNotReportSidecarsAsUnreadableSessions(t *testing.T) {
+	src := testenv.TempDir(t)
+	dest := testenv.TempDir(t)
+	os.WriteFile(filepath.Join(src, "chat.jsonl"), []byte(legacyMessageLog), 0o644)
+	os.WriteFile(filepath.Join(src, "chat.turns.jsonl"), []byte(`{"turn":1,"usage":{}}`+"\n"), 0o644)
+	os.WriteFile(filepath.Join(src, "chat.guardian.jsonl"), []byte(`{"verdict":"ok"}`+"\n"), 0o644)
+
+	n, rep, err := ImportLegacySessionsFromExplicitDir(src, dest, nil)
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("imported %d, want 1", n)
+	}
+	if len(rep.Skipped) != 0 {
+		t.Errorf("sidecars reported as skipped sessions: %+v", rep.Skipped)
 	}
 }

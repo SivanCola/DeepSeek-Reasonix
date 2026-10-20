@@ -1,6 +1,6 @@
 # Reasonix Benchmarks
 
-Five harnesses live under `benchmarks/`; `cmd/e2ebench` also exposes a
+Six harnesses live under `benchmarks/`; `cmd/e2ebench` also exposes a
 SWE-bench Verified mode:
 
 - `e2e/` — the committed end-to-end task suite, driven by
@@ -19,6 +19,10 @@ SWE-bench Verified mode:
 - `fanout-width/` — a shape-instructed fleet whose members share nothing, for
   pricing what running them at the same time is worth. See
   [Pricing the run graph](#pricing-the-run-graph) below.
+- `realrepo/` — long tasks over a pinned snapshot of this repository, for
+  measuring changes that cut model round trips (13–31 requests per task on
+  `deepseek-flash`). See
+  [its README](realrepo/README.md).
 
 ## Directory layout
 

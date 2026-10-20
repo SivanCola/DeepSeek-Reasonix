@@ -282,10 +282,38 @@ func (p *HostKeyPolicy) loadCallback() (ssh.HostKeyCallback, string, error) {
 		var err error
 		base, err = knownhosts.New(files...)
 		if err != nil {
+			base, err = tolerantCallback(files, managed, err)
+		}
+		if err != nil {
 			return nil, "", fmt.Errorf("load known_hosts: %w", err)
 		}
 	}
 	return base, managed, nil
+}
+
+// tolerantCallback retries a failed load with the managed file's unreadable
+// lines left out, because that file is the one Reasonix writes: a line in it that
+// no parser reads names no host and trusts nothing, so it costs a repeated question,
+// where failing here would refuse every connection. Any other cause, and any
+// failure that remains with those lines gone, is the original error.
+func tolerantCallback(files []string, managed string, loadErr error) (ssh.HostKeyCallback, error) {
+	if managed == "" {
+		return nil, loadErr
+	}
+	repaired, skipped, cleanup, ok := tolerantManagedFiles(files, managed)
+	if !ok {
+		return nil, loadErr
+	}
+	defer cleanup()
+	base, err := knownhosts.New(repaired...)
+	if err != nil {
+		return nil, loadErr
+	}
+	warnSkippedKnownHostsLines(managed, skipped)
+	copyPath := repaired[len(repaired)-1]
+	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		return remapKnownHostsFile(base(hostname, remote, key), copyPath, managed)
+	}, nil
 }
 
 func (p *HostKeyPolicy) tofu(ctx context.Context, host, hostname string, remote net.Addr, key ssh.PublicKey, managed string) error {
@@ -314,22 +342,27 @@ func (p *HostKeyPolicy) tofu(ctx context.Context, host, hostname string, remote 
 func (p *HostKeyPolicy) appendManaged(managed, hostname string, remote net.Addr, key ssh.PublicKey) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	addrs := []string{knownhosts.Normalize(hostname)}
+	candidates := []string{hostname}
 	if remote != nil {
-		if norm := knownhosts.Normalize(remote.String()); norm != addrs[0] {
-			addrs = append(addrs, norm)
-		}
+		candidates = append(candidates, remote.String())
 	}
-	line := knownhosts.Line(addrs, key)
-	f, err := os.OpenFile(managed, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o600)
+	addrs := recordableHosts(candidates...)
+	if len(addrs) == 0 {
+		return nil // accepted for this session; no address of it can be written as a record
+	}
+	line := strings.TrimRight(knownhosts.Line(addrs, key), "\n") + "\n"
+	f, err := os.OpenFile(managed, os.O_APPEND|os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	if _, err := f.WriteString(strings.TrimRight(line, "\n") + "\n"); err != nil {
+	if clean, err := endsInNewline(f); err != nil {
 		return err
+	} else if !clean {
+		line = "\n" + line
 	}
-	return nil
+	_, err = f.WriteString(line)
+	return err
 }
 
 func (p *HostKeyPolicy) systemFiles() []string {

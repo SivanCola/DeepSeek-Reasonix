@@ -46,6 +46,13 @@ func (d *projectionDebt) sent() bool {
 	return prev != nil && *prev != ""
 }
 
+// inherit takes over what another controller's model was told, for a
+// replacement that carries that conversation verbatim.
+func (d *projectionDebt) inherit(from *projectionDebt) {
+	d.pending.Store(nil)
+	d.delivered.Store(from.delivered.Load())
+}
+
 // forget returns the debt to unknown: what was sent is no longer in the context
 // the model samples from. A new session starts here, and so does a fold — which
 // also discards a turn's pending bytes, since the fold decided their fate.

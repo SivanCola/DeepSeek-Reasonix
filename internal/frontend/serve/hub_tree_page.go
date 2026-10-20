@@ -101,7 +101,7 @@ func (h *Hub) projectPage(roots []string, name string, open map[string]string, w
 			lead[lineage] = len(out)
 		}
 		out = append(out, treeSession{
-			Path: si.Path, Name: name, Title: title, Turns: si.Turns, RuntimeID: runtimeID, Archived: si.Archived, Unread: si.Unread, LastActiveAt: activeAtMs(si), Legacy: sessionstore.IsForeignSessionLog(si.Path),
+			Path: si.Path, Name: name, Title: title, Turns: si.Turns, RuntimeID: runtimeID, Archived: si.Archived, Unread: si.Unread, ViewedAt: unreadSinceMs(si), LastActiveAt: activeAtMs(si), Legacy: sessionstore.IsForeignSessionLog(si.Path),
 		})
 		decorateArchiveState(&out[len(out)-1], si.Path)
 	}
@@ -184,6 +184,13 @@ func (w treeWindow) matchesRow(si sessionstore.SessionInfo, title func() string,
 		label = name
 	}
 	return strings.Contains(strings.ToLower(label), w.query)
+}
+
+func unreadSinceMs(si sessionstore.SessionInfo) int64 {
+	if !si.Unread || si.ViewedAt.IsZero() {
+		return 0
+	}
+	return si.ViewedAt.UnixMilli()
 }
 
 func activeAtMs(si sessionstore.SessionInfo) int64 {

@@ -43,10 +43,14 @@ export function DirRows({
         {/* The first answer may be a cold dial, and it may stop to ask for a
             host key on the way. A dimmed empty box says none of that. */}
         {!listing && busy ? <p className="pickempty">{t("正在建立连接…")}</p> : null}
-        {listing && !listing.folders.length && !busy ? (
+        {listing && !listing.folders.length && !listing.unlisted && !busy ? (
           <p className="pickempty">{t("该目录下没有子目录 —— 它本身即可作为工作区")}</p>
         ) : null}
       </div>
+      {/* Empty rows under a folder that has contents would read as "nothing here". */}
+      {listing?.unlisted ? (
+        <p className="picknote">{t("这台机器不让列出该目录里的内容，但目录存在，可以直接使用它。")}</p>
+      ) : null}
       {/* A cap that says nothing reads as "that folder is not there". */}
       {listing?.truncated ? (
         <p className="picknote">{t("该目录内容过多，仅列出前一部分。如需查找靠后的项，请直接输入路径。")}</p>

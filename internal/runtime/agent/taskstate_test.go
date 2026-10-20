@@ -79,7 +79,7 @@ var taskRestarted = map[string]bool{
 	"contract":       true,
 	"contractRecord": true,
 	// The explanation answers for an obligation of the ledger a new task replaces.
-	"unprovenExplained": true,
+	"explained": true,
 }
 
 // restartLedger is one assignment, so an unlisted field resets by default —

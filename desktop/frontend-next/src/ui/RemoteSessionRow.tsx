@@ -24,7 +24,7 @@ export function RemoteSessionRow({ host, target, session, held, active, busy, pe
   live: boolean;
   onOpen: () => void;
   onFocus: (id: string) => void;
-  onWrite: (kind: "pin" | "archive", row: HTMLElement | null) => void;
+  onWrite: (kind: "pin" | "archive" | "read", row: HTMLElement | null) => void;
   onDelete: (row: HTMLElement | null) => void;
 }) {
   const [at, setAt] = useState<{ x: number; y: number } | null>(null);
@@ -36,7 +36,7 @@ export function RemoteSessionRow({ host, target, session, held, active, busy, pe
   useDismiss(!!at, row, close, menu);
   useLayoutEffect(() => { if (at && menu.current) pinToViewport(menu.current, at.x, at.y, 12); }, [at]);
   useEffect(() => { if (at) menu.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus(); }, [at]);
-  const write = (kind: "pin" | "archive") => {
+  const write = (kind: "pin" | "archive" | "read") => {
     if (pending || busy || kind === "archive" && live) return;
     setAt(null);
     onWrite(kind, row.current);
@@ -73,6 +73,11 @@ export function RemoteSessionRow({ host, target, session, held, active, busy, pe
         <button role="menuitem" data-action="session.pin" data-target={target} disabled={!!pending || busy} onClick={() => { close(); write("pin"); }}>
           <StudioIcon name="pin" /><span>{t(session.pinned ? "取消置顶" : "置顶会话")}</span>
         </button>
+        {session.unread && (
+          <button role="menuitem" data-action="session.mark-read" data-target={target} disabled={!!pending || busy} onClick={() => { close(); write("read"); }}>
+            <StudioIcon name="check" /><span>{t("标为已读")}</span>
+          </button>
+        )}
         <button role="menuitem" data-action="session.archive" data-target={target} data-value={session.archived ? "restore" : "archive"}
           disabled={!!pending || busy || live} onClick={() => { close(); write("archive"); }}>
           <StudioIcon name="archive" /><span>{t(session.archived ? "取消归档" : "归档会话")}</span>

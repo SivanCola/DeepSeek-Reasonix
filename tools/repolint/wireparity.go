@@ -23,6 +23,7 @@ const (
 	tsVersionFile   = "desktop/frontend-next/src/port/version.ts"
 	tsModelFile     = "desktop/frontend-next/src/port/model.ts"
 	tsMcpFile       = "desktop/frontend-next/src/port/mcp.ts"
+	tsScheduleFile  = "desktop/frontend-next/src/port/schedule.ts"
 	tsReplayFile    = "desktop/frontend-next/src/port/surface_replay.ts"
 	tsShellFile     = "desktop/frontend-next/src/port/shell.ts"
 	tsShareFile     = "desktop/frontend-next/src/port/share.ts"
@@ -179,6 +180,15 @@ var mirroredWireTypes = []wireMirror{
 	{"internal/session/control/progress_watch_settings.go", "ProgressWatchSettings", tsBoundaryFile, "ProgressWatchSettings"},
 	{"internal/session/control/changed_files_settings.go", "ChangedFilesSettings", tsBoundaryFile, "ChangedFilesSettings"},
 	{"internal/session/control/observability_settings.go", "ObservabilitySettings", tsBoundaryFile, "ObservabilitySettings"},
+	{"internal/session/control/schedules.go", "ScheduleDraft", tsScheduleFile, "ScheduleDraft"},
+	{"internal/session/control/schedules.go", "ScheduleView", tsScheduleFile, "ScheduleView"},
+	{"internal/session/control/schedules.go", "ScheduleRunView", tsScheduleFile, "ScheduleRunView"},
+	{"internal/session/control/schedules.go", "SchedulePolicyView", tsScheduleFile, "SchedulePolicyView"},
+	{"internal/session/control/schedules.go", "ScheduleBoard", tsScheduleFile, "ScheduleBoard"},
+	{"internal/session/control/schedules.go", "ScheduleFolder", tsScheduleFile, "ScheduleFolder"},
+	{"internal/session/control/schedules.go", "SchedulePreview", tsScheduleFile, "SchedulePreview"},
+	{"internal/session/control/schedules.go", "SchedulePendingView", tsScheduleFile, "SchedulePendingView"},
+	{"internal/session/control/schedules.go", "ScheduleResultView", tsScheduleFile, "ScheduleResultView"},
 	{"internal/session/control/fold_work_settings.go", "FoldWorkSettings", tsBoundaryFile, "FoldWorkSettings"},
 	{"internal/session/control/ask_timeout.go", "AskTimeoutSettings", tsBoundaryFile, "AskTimeoutSettings"},
 	{"internal/session/control/session_ref_settings.go", "SessionRefSettings", tsBoundaryFile, "SessionRefSettings"},

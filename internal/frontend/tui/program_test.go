@@ -134,13 +134,6 @@ func (k *recordingKernel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"planId": "p-1", "canFiles": true, "canConversation": true})
 	case "/rewind/commit":
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "conversationOk": true})
-	case "/delete-session":
-		if strings.Contains(string(body), `"a"`) {
-			w.WriteHeader(http.StatusConflict)
-			_ = json.NewEncoder(w).Encode(map[string]any{"code": "session.active", "message": "this session is the one open here"})
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
 	default:
 		w.WriteHeader(http.StatusNoContent)
 	}
@@ -207,7 +200,6 @@ func press(m *model, k string) tea.Cmd {
 		"enter":        {Code: tea.KeyEnter},
 		"esc":          {Code: tea.KeyEscape},
 		"ctrl+s":       {Code: 's', Mod: tea.ModCtrl},
-		"ctrl+d":       {Code: 'd', Mod: tea.ModCtrl},
 		"ctrl+c":       {Code: 'c', Mod: tea.ModCtrl},
 		"ctrl+o":       {Code: 'o', Mod: tea.ModCtrl},
 		"ctrl+g":       {Code: 'g', Mod: tea.ModCtrl},

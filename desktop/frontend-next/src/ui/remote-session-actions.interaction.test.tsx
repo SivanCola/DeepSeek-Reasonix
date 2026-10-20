@@ -19,9 +19,10 @@ function draw(over: Partial<TreeSession> = {}, live = false) {
   const onError = vi.fn();
   const pinSession = vi.fn(async (_path: string, pinned: boolean, _host?: string) => { session.pinned = pinned; });
   const archiveSession = vi.fn(async (_path: string, archived: boolean, _host?: string) => { session.archived = archived; });
+  const markSessionRead = vi.fn(async (_path: string, _host?: string) => { session.unread = false; });
   function Harness() {
     const [book, setBook] = useState([{ root: "/project", name: "Project", sessions: [{ ...session }] }]);
-    return <RemoteHosts hub={{ pinSession, archiveSession } as never}
+    return <RemoteHosts hub={{ pinSession, archiveSession, markSessionRead } as never}
       hosts={[{ name: "gpu", target: "test@host", status: "connected", workspace: "/project" }]}
       trees={{ gpu: book }} runtimes={over.runtimeId ? [{ id: over.runtimeId, host: "gpu", base: "", root: "/project", name: "Remote task", sessionPath: session.path }] : []}
       active="" scope={over.archived ? "archived" : "all"} onOpen={onOpen} onFocus={onFocus} onClose={onClose} liveIds={(ids) => live ? ids : []}
@@ -29,7 +30,7 @@ function draw(over: Partial<TreeSession> = {}, live = false) {
       onError={onError} />;
   }
   render(<Harness />);
-  return { onOpen, onFocus, onClose, onError, pinSession, archiveSession };
+  return { onOpen, onFocus, onClose, onError, pinSession, archiveSession, markSessionRead };
 }
 
 it("pins and unpins on the remote host without opening the same local path", async () => {
@@ -129,4 +130,18 @@ it("does not steal focus back after the reader moves to another control during a
   elsewhere.focus();
   await act(async () => { finish(); });
   expect(document.activeElement).toBe(elsewhere);
+});
+
+it("marks a remote conversation read from its menu on that host, only while it is unread", async () => {
+  const { markSessionRead, onOpen } = draw({ unread: true });
+  const row = screen.getByRole("treeitem", { name: "Remote task" });
+  row.focus();
+  await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+  await userEvent.click(screen.getByRole("menuitem", { name: "标为已读" }));
+  await waitFor(() => expect(markSessionRead).toHaveBeenCalledWith("/same/task.jsonl", "gpu"));
+  expect(onOpen).not.toHaveBeenCalled();
+  await waitFor(() => expect(screen.queryByRole("img", { name: "未读" })).toBeNull());
+  screen.getByRole("treeitem", { name: "Remote task" }).focus();
+  await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+  expect(screen.queryByRole("menuitem", { name: "标为已读" })).toBeNull();
 });

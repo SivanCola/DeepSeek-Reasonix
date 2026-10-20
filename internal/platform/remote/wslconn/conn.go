@@ -4,10 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/fs"
-	"strings"
 
 	"reasonix/internal/platform/remote"
+	"reasonix/internal/platform/remote/execfs"
 	"reasonix/internal/platform/remote/sftpfs"
 	"reasonix/internal/platform/wsl"
 )
@@ -47,7 +46,23 @@ func (c *Conn) Exec(ctx context.Context, cmd string) (remote.ExecResult, error) 
 }
 
 // Files is the distribution's file layer.
-func (c *Conn) Files() (sftpfs.Files, error) { return &files{c: c}, nil }
+func (c *Conn) Files() (sftpfs.Files, error) { return c.Volume(), nil }
+
+// Volume is the file layer with listing and whole-file transfer too.
+func (c *Conn) Volume() sftpfs.Volume { return execfs.New(runner{c}) }
+
+// Dirs resolves dir (empty or ~ meaning the home directory) and lists what is
+// inside it.
+func (c *Conn) Dirs(ctx context.Context, dir string) (string, []sftpfs.Entry, error) {
+	return sftpfs.Dirs(ctx, c.Volume(), dir)
+}
+
+type runner struct{ c *Conn }
+
+func (r runner) Script(ctx context.Context, stdin io.Reader, body string, args ...string) (execfs.Result, error) {
+	res, err := r.c.script(ctx, stdin, body, args...)
+	return execfs.Result{Stdout: res.Stdout, Stderr: res.Stderr, ExitCode: res.ExitCode}, err
+}
 
 // Script runs body under /bin/sh with args as $1... and stdin.
 func (c *Conn) Script(ctx context.Context, stdin io.Reader, body string, args ...string) (wsl.Result, error) {
@@ -64,23 +79,4 @@ func (c *Conn) Run(ctx context.Context, stdin io.Reader, argv ...string) (wsl.Re
 func (c *Conn) script(ctx context.Context, stdin io.Reader, body string, args ...string) (wsl.Result, error) {
 	argv := append([]string{"/bin/sh", "-c", body, "sh"}, args...)
 	return c.run(ctx, stdin, wsl.ExecArgs(c.distro, argv...)...)
-}
-
-// Exit statuses of the file scripts. Anything else non-zero is a failure
-// whose text is the tool's, kept for the log and never matched.
-const (
-	exitMissing = 44
-	exitIsDir   = 45
-)
-
-func failure(op string, res wsl.Result) error {
-	switch res.ExitCode {
-	case 0:
-		return nil
-	case exitMissing:
-		return fmt.Errorf("%s: %w", op, fs.ErrNotExist)
-	case exitIsDir:
-		return fmt.Errorf("%s: is a directory", op)
-	}
-	return fmt.Errorf("%s: exit %d: %s", op, res.ExitCode, strings.TrimSpace(string(res.Stderr)))
 }

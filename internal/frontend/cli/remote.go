@@ -14,6 +14,7 @@ import (
 	"reasonix/internal/contract/config"
 	"reasonix/internal/platform/remote"
 	"reasonix/internal/platform/remote/bootstrap"
+	"reasonix/internal/platform/remote/sftpfs"
 )
 
 // remoteCommand dispatches `reasonix remote <sub>`, mirroring mcpCommand.
@@ -369,8 +370,24 @@ func remoteInstallMode(name string) string {
 	return entry.ServeInstallMode()
 }
 
+// remoteFilesLine says how that machine's files are reached. Exec is named
+// because it is slower and Linux-only, and a person whose server refuses sftp
+// should see why folders still list.
+func remoteFilesLine(mode sftpfs.Mode) string {
+	switch mode {
+	case sftpfs.ModeSFTP:
+		return "  files     sftp"
+	case sftpfs.ModeExec:
+		return "  files     exec — the server refuses the sftp subsystem, so folders and files are read through shell commands"
+	}
+	return ""
+}
+
 func printRemoteReport(rep bootstrap.Report) {
 	fmt.Printf("  machine   %s/%s, home %s\n", rep.OS, rep.Arch, rep.Home)
+	if line := remoteFilesLine(rep.Files); line != "" {
+		fmt.Println(line)
+	}
 	switch {
 	case rep.Kernel != "" && rep.Version != "":
 		fmt.Printf("  reasonix  %s %s\n", rep.Kernel, rep.Version)

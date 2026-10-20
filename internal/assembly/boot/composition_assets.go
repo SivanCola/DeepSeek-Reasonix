@@ -49,7 +49,7 @@ func (b *builder) restoreSkills(skills []skill.Skill) error {
 			}
 			root, err := agentpreset.New(b.roots.Home(), b.root).Materialize(asset)
 			if err != nil {
-				return err
+				return compositionResourceError("skill", skills[i].SlashName(), err)
 			}
 			skills[i].Path = filepath.Join(root, filepath.Base(skills[i].Path))
 		}

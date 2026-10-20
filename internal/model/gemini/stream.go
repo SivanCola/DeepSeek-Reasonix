@@ -296,7 +296,7 @@ func finishReason(status string, calls int) string {
 func streamError(name string, wire *wireErr, emitted bool) error {
 	payload := &provider.StreamPayloadError{Provider: name, Message: "stream error"}
 	if wire != nil {
-		payload.Message, payload.Type = wire.Message, wire.Code
+		payload.Message, payload.Type = wire.Message, wire.Code.String()
 	}
 	if !emitted {
 		return provider.StreamInterrupt(payload, provider.StreamInterruptUpstreamError)

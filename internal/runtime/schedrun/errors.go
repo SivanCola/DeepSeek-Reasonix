@@ -35,6 +35,8 @@ const (
 	CodeRunStarted       = "schedule.run_started"
 	CodeRunSettled       = "schedule.run_settled"
 	CodeDigest           = "schedule.digest_mismatch"
+	CodeWorkspaceGone    = "schedule.workspace_gone"
+	CodeWorkspaceUntrust = "schedule.workspace_untrusted"
 	CodeBuild            = "schedule.build_failed"
 	CodePolicy           = "schedule.policy_invalid"
 	CodeProviderAuth     = "provider.auth"

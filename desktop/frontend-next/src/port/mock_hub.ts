@@ -17,7 +17,7 @@ export class MockHub implements HubPort {
   ];
   private readonly roots = ["~/projects/DeepSeek-Reasonix", "~/projects/my-website"];
   private seq = 1;
-  private readonly flags = new Map<string, Pick<TreeSession, "pinned" | "archived">>();
+  private readonly flags = new Map<string, Pick<TreeSession, "pinned" | "archived" | "unread">>();
 
   private decorate(tree: TreeWorkspace[], host = ""): TreeWorkspace[] {
     return tree.map((ws) => ({ ...ws, sessions: ws.sessions.map((session) => ({ ...session,
@@ -127,13 +127,14 @@ export class MockHub implements HubPort {
       "/home": ["ada"],
       "/home/ada": [".config", "notes", "projects"],
       "/home/ada/projects": ["pipeline", "site"],
-      "/srv": ["eval", "training"],
+      "/srv": ["eval", "private", "training"],
     };
     const folders = (kids[at] ?? []).map((name) => ({ name, path: at === "/" ? "/" + name : at + "/" + name }));
     return Promise.resolve<RemoteListing>({
       path: at,
       parent: at === "/" ? undefined : at.slice(0, at.lastIndexOf("/")) || "/",
       folders,
+      unlisted: at === "/srv/private" || undefined,
     });
   }
 
@@ -285,6 +286,12 @@ export class MockHub implements HubPort {
   pinSession(path: string, pinned: boolean, host = "") {
     const key = JSON.stringify([host, path]);
     this.flags.set(key, { ...this.flags.get(key), pinned });
+    return Promise.resolve();
+  }
+
+  markSessionRead(path: string, host = "") {
+    const key = JSON.stringify([host, path]);
+    this.flags.set(key, { ...this.flags.get(key), unread: false });
     return Promise.resolve();
   }
 

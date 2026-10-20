@@ -1,0 +1,2 @@
+- 新增：会话右键菜单有「标为已读」，未读的会话（本机或远端）不用打开就能清掉未读标记。关联 #13962。
+- Added: the session context menu has "Mark as read", which clears the unread mark of a local or remote conversation without opening it. Refs #13962.

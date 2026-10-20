@@ -27,7 +27,7 @@ func saveTestRemoteHosts(t *testing.T, names ...string) {
 
 func TestRemoteRequestsRefuseUnknownHostsBeforeDial(t *testing.T) {
 	for _, host := range []string{"missing", "attacker@evil.example:22"} {
-		for _, route := range []string{"sessions/pin", "sessions/archive", "sessions/remove", "tree", "dirs", "probe", "open"} {
+		for _, route := range []string{"sessions/pin", "sessions/archive", "sessions/viewed", "sessions/remove", "tree", "dirs", "probe", "open"} {
 			t.Run(host+"/"+route, func(t *testing.T) {
 				calls := 0
 				far := remoteWorkspaceKernel(t)
@@ -64,7 +64,7 @@ func TestRemoteRequestsRefuseUnknownHostsBeforeDial(t *testing.T) {
 }
 
 func TestRemoteSessionMutationsBoundEntireBodyBeforeDial(t *testing.T) {
-	for _, action := range []string{"pin", "archive", "remove"} {
+	for _, action := range []string{"pin", "archive", "viewed", "remove"} {
 		for _, payload := range []string{
 			fmt.Sprintf(`{"path":%q}`, strings.Repeat("x", 64<<10)),
 			`{"path":"/same/session.jsonl"}` + strings.Repeat(" ", 64<<10),

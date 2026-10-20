@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"fmt"
+	"reasonix/internal/platform/remote/execfs"
 	"strings"
 )
 
@@ -27,9 +28,7 @@ type StatePaths struct {
 // shellQuote wraps s in single quotes safe for POSIX sh, escaping embedded
 // single quotes as '\”. This is the only quoting used for remote command
 // operands; every interpolated path/workspace passes through it.
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
+func shellQuote(s string) string { return execfs.ShellQuote(s) }
 
 // LaunchSpec is what one serve is started with beyond where its state lives.
 type LaunchSpec struct {

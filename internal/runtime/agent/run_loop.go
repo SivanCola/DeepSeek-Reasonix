@@ -609,7 +609,7 @@ func (a *Agent) handleFinalResponse(ctx context.Context, state *turnRuntime, tex
 		// the recovery card for an explicit user continuation.
 		event.RecordReadinessAudit(a.svc.sink, readiness.audit(hostaudit.ReadinessErrored, false))
 		a.pending.deliveryRecovery = true
-		a.noteUnprovenMutationExplained()
+		a.noteObligationsExplained()
 		// The blocked turn is the one whose summary matters most — it is where
 		// a rewritten check or an unverified mutation is still outstanding —
 		// and it was the only turn that never reported one.

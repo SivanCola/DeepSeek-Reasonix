@@ -25,7 +25,8 @@
     "ime-live": "electron test/ime_live.js",
     "freeze-live": "electron test/freeze_live.js",
     "windowstate-live": "electron test/windowstate_live.js",
-    "computer-live": "electron test/computer_live.js"
+    "computer-live": "electron test/computer_live.js",
+    "launcher-live": "node test/launcher_live.mjs"
   },
   "devDependencies": {
     "electron": "44.7.2",

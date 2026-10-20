@@ -47,7 +47,7 @@ h1{font-size:1.35rem}h2{font-size:1rem;margin-top:2rem}@media(prefers-color-sche
 <h2>Use the interface</h2>
 <p>Open the Reasonix Studio app, or serve its page from this command. Install Studio once, then start the server with the folder that holds Studio's <code>index.html</code>:</p>
 <pre>reasonix serve --page "&lt;Studio install folder&gt;/resources/frontend-next/dist"</pre>
-<p>Open the address it prints again afterwards.</p>
+<p>On macOS the folder sits inside the app bundle, so the path is <code>Reasonix Studio.app/Contents/Resources/frontend-next/dist</code>. Open the address it prints again afterwards.</p>
 <h2>Talk to the API</h2>
 <p>A client that asks for JSON gets a JSON answer with the code <code>page.not_built</code>; nothing about the API is missing.</p>
 <hr>
@@ -55,7 +55,7 @@ h1{font-size:1.35rem}h2{font-size:1rem;margin-top:2rem}@media(prefers-color-sche
 <p>单独的 <code>reasonix</code> 程序只提供接口。网页界面随 Reasonix Studio 桌面版一起发布，所以在浏览器里打开这个地址看不到界面。</p>
 <p>请直接打开 Studio 桌面版；或者先安装一次 Studio，再用包含 Studio 的 <code>index.html</code> 的文件夹启动服务：</p>
 <pre>reasonix serve --page "&lt;Studio 安装目录&gt;/resources/frontend-next/dist"</pre>
-<p>之后重新打开它打印出的地址即可。要求 JSON 的客户端仍会收到带 <code>page.not_built</code> 代码的 JSON。</p>
+<p>macOS 上这个文件夹在应用包里面，路径是 <code>Reasonix Studio.app/Contents/Resources/frontend-next/dist</code>。之后重新打开它打印出的地址即可。要求 JSON 的客户端仍会收到带 <code>page.not_built</code> 代码的 JSON。</p>
 </body></html>
 `
 

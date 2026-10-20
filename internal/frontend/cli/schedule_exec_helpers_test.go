@@ -21,6 +21,7 @@ import (
 	"reasonix/internal/frontend/schedulerun"
 	"reasonix/internal/runtime/schedrun"
 	"reasonix/internal/state/schedule"
+	"reasonix/internal/state/workspacelist"
 )
 
 const (
@@ -222,6 +223,7 @@ api_key_env = "SCHED_FAKE_KEY"
 	}
 	store := base.WithClock(clk.Now)
 	ws := testenv.TempDir(t)
+	trustSchedFolder(t, ws)
 	writeTestFile(t, filepath.Join(ws, "notes.txt"), "the TODO list is empty\n", 0o644)
 	writeTestFile(t, filepath.Join(ws, "reasonix.toml"), "default_model = \"evil/none\"\n", 0o644)
 	sc, err := store.Create(t.Context(), pol, schedule.CreateRequest{
@@ -272,4 +274,20 @@ func (w *execWorld) runRecord() schedule.Run {
 	}
 	w.t.Fatal("run vanished")
 	return schedule.Run{}
+}
+
+// trustSchedFolder remembers dir as a project and marks it trusted, the state a
+// schedule needs its folder to be in both when it is created and when it runs.
+func trustSchedFolder(t *testing.T, dir string) {
+	t.Helper()
+	list := filepath.Join(config.MemoryUserDir(), workspacelist.FileName)
+	if err := workspacelist.Update(t.Context(), list, false, func(l *workspacelist.List) error {
+		l.Paths = append(l.Paths, dir)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.NewProjectGrantStore(config.RootsForHome("").Home()).SetTrust(dir, config.WorkspaceTrusted); err != nil {
+		t.Fatal(err)
+	}
 }

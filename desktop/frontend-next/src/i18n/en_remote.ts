@@ -34,6 +34,8 @@ export const EN_REMOTE: Record<string, string> = {
   "使用此目录": "Use this folder",
   "该目录下没有子目录 —— 它本身即可作为工作区":
     "Nothing below this folder — it can be the workspace itself",
+  "这台机器不让列出该目录里的内容，但目录存在，可以直接使用它。":
+    "This machine will not list what is inside this folder, but the folder exists — you can use it.",
   "该目录内容过多，仅列出前一部分。如需查找靠后的项，请直接输入路径。":
     "This folder is too big to list whole, so only the first entries are here. If what you want is further down, type its path.",
 

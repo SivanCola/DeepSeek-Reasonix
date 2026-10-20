@@ -10,7 +10,7 @@ import (
 
 func (b *builder) validateCompositionAvailability() error {
 	if err := b.prompt.skillStore.ValidateSnapshot(); err != nil {
-		return fmt.Errorf("%w: %w", agentcomposition.ErrUnavailable, err)
+		return agentcomposition.Unavailable("skills", err.Error())
 	}
 	if err := b.tools.host.CompositionContractError(); err != nil {
 		return fmt.Errorf("%w: %w", agentcomposition.ErrUnavailable, err)
@@ -25,5 +25,5 @@ func (b *builder) validateCompositionAvailability() error {
 		}
 	}
 	installed, _ := pluginpkg.LoadInstalled(b.roots.Home())
-	return verifySelected(b.opts.Composition.Resolved.Extensions, installed, func(p pluginpkg.InstalledPackage) string { return p.Installed.Name })
+	return verifySelected("extensions", b.opts.Composition.Resolved.Extensions, installed, func(p pluginpkg.InstalledPackage) string { return p.Installed.Name })
 }

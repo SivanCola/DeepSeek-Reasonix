@@ -1,0 +1,2 @@
+- 修复：在不属于任何版本库的文件夹里，只改文档的交付任务不再被要求补一次根本跑不通的检查，也不再每轮重复同一条验证提示。关联 #13971。
+- Fixed: a Delivery task that only edits documents outside any repository is no longer asked for a check that cannot run there, and a verification debt is explained once. Refs #13971.

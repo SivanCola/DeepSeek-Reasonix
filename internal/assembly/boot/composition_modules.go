@@ -19,13 +19,13 @@ func (b *builder) prepareCompositionModules() error {
 			selected = append(selected, pkg)
 		}
 	}
-	if err := verifySelected(binding.Resolved.Extensions, selected, func(p pluginpkg.InstalledPackage) string { return p.Installed.Name }); err != nil {
+	if err := verifySelected("extensions", binding.Resolved.Extensions, selected, func(p pluginpkg.InstalledPackage) string { return p.Installed.Name }); err != nil {
 		return err
 	}
 	if binding.Digest == "" {
 		for _, p := range selected {
 			if err := b.retainExtension(p); err != nil {
-				return err
+				return compositionResourceError("extension", p.Installed.Name, err)
 			}
 		}
 		if binding.Resolved.Extensions.Mode == agentcomposition.Inherit {
@@ -54,7 +54,7 @@ func (b *builder) prepareCompositionCommands() error {
 		}
 	}
 	if binding.Digest == "" {
-		if err := verifySelected(binding.Resolved.Commands, kept, func(c command.Command) string { return c.Name }); err != nil {
+		if err := verifySelected("commands", binding.Resolved.Commands, kept, func(c command.Command) string { return c.Name }); err != nil {
 			return err
 		}
 		for _, c := range kept {
@@ -96,7 +96,7 @@ func (b *builder) prepareCompositionHooks(selected []pluginpkg.InstalledPackage)
 		}
 		if binding.Digest == "" {
 			if err := b.retainHook(id, h); err != nil {
-				return err
+				return compositionResourceError("hook", id, err)
 			}
 			available = append(available, id)
 		}
@@ -108,7 +108,7 @@ func (b *builder) prepareCompositionHooks(selected []pluginpkg.InstalledPackage)
 				ids = append(ids, r.ID)
 			}
 		}
-		if err := verifySelected(binding.Resolved.Hooks, available, func(id string) string { return id }); err != nil {
+		if err := verifySelected("hooks", binding.Resolved.Hooks, available, func(id string) string { return id }); err != nil {
 			return err
 		}
 		binding.Resolved.Hooks = selectionOf(ids, func(id string) string { return id })

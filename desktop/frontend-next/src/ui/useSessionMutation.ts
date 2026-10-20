@@ -1,6 +1,6 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 
-export type SessionMutation = "pin" | "archive" | "delete";
+export type SessionMutation = "pin" | "archive" | "delete" | "read";
 
 export function captureSessionFocus(row: HTMLElement | null): () => void {
   const from = document.activeElement as HTMLElement | null;

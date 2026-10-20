@@ -1573,6 +1573,135 @@ test("a host that exits before its handshake is logged and shown, not swallowed"
   }
 });
 
+test("a development shell leaves once the process that launched it is gone", () => {
+  const { watchLauncher } = require("../src/launcher.js");
+  mock.timers.enable({ apis: ["setInterval"] });
+  try {
+    // POSIX hands an orphan to another parent; Windows leaves the dead pid in place.
+    for (const [why, end] of [["reparented", (s) => { s.ppid = 1; }], ["died in place", (s) => { s.alive = false; }]]) {
+      const state = { ppid: 4242, alive: true };
+      let lost = 0;
+      watchLauncher({ packaged: false, env: {}, onLost: () => lost++, parent: () => state.ppid, alive: () => state.alive });
+      mock.timers.tick(5000);
+      assert.equal(lost, 0, `${why}: left while the launcher was still there`);
+      end(state);
+      mock.timers.tick(1000);
+      assert.equal(lost, 1, `${why}: stayed after its launcher was gone`);
+      mock.timers.tick(5000);
+      assert.equal(lost, 1, `${why}: told more than once`);
+    }
+
+    const state = { ppid: 4242 };
+    let lost = 0;
+    const watch = watchLauncher({ packaged: false, env: {}, onLost: () => lost++, parent: () => state.ppid, alive: () => true });
+    watch.dispose();
+    state.ppid = 1;
+    mock.timers.tick(5000);
+    assert.equal(lost, 0, "a disposed watch still acted");
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("a packaged, handed-over or parentless shell belongs to no launcher", () => {
+  const { watchLauncher, handOver } = require("../src/launcher.js");
+  mock.timers.enable({ apis: ["setInterval"] });
+  try {
+    const handed = {};
+    handOver(handed);
+    for (const [why, options] of [
+      ["packaged", { packaged: true, env: {}, parent: () => 4242 }],
+      ["handed over by a relaunch", { packaged: false, env: handed, parent: () => 4242 }],
+      ["started by init", { packaged: false, env: {}, parent: () => 1 }],
+    ]) {
+      let lost = 0;
+      let ppid = options.parent();
+      watchLauncher({ ...options, onLost: () => lost++, parent: () => ppid, alive: () => false });
+      ppid = 7;
+      mock.timers.tick(5000);
+      assert.equal(lost, 0, why);
+    }
+    assert.deepEqual(handed, {}, "the hand-over mark reached this shell's own children");
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("a relaunch hands the shell over before it asks for the restart", () => {
+  const { actHandler } = require("../src/acts.js");
+  const { relaunchForOzonePlatform } = require("../src/ozone.js");
+  const key = "REASONIX_STUDIO_HANDED_OVER";
+  const saved = process.env[key];
+  delete process.env[key];
+  try {
+    const seen = [];
+    actHandler({ app: { relaunch: () => seen.push(process.env[key]) }, showWindow: () => {} })("relaunch");
+    assert.deepEqual(seen, ["1"]);
+  } finally {
+    if (saved === undefined) delete process.env[key];
+    else process.env[key] = saved;
+  }
+  const env = { XDG_SESSION_TYPE: "wayland", DISPLAY: ":0" };
+  const seen = [];
+  relaunchForOzonePlatform({ relaunch: () => seen.push(env[key]), exit: () => {} }, { platform: "linux", env, argv: ["x"] });
+  assert.deepEqual(seen, ["1"]);
+});
+
+test("output for a console the launcher closed is dropped, never thrown", () => {
+  const { EventEmitter } = require("node:events");
+  const { consoleEcho } = require("../src/launcher.js");
+  const stream = Object.assign(new EventEmitter(), { written: [], full: false, broken: false });
+  stream.write = (chunk) => {
+    if (stream.broken) throw Object.assign(new Error("write EIO"), { code: "EIO" });
+    stream.written.push(chunk);
+    return !stream.full;
+  };
+  const echo = consoleEcho(stream);
+  echo("a");
+  stream.full = true;
+  echo("b");
+  echo("c");
+  assert.deepEqual(stream.written, ["a", "b"], "a backed-up console kept queueing");
+  stream.emit("drain");
+  stream.full = false;
+  echo("d");
+  stream.emit("error", Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
+  echo("e");
+  assert.deepEqual(stream.written, ["a", "b", "d"], "a failed console was written to again");
+
+  const sync = Object.assign(new EventEmitter(), { broken: true, calls: 0 });
+  sync.write = () => {
+    sync.calls++;
+    throw Object.assign(new Error("write EIO"), { code: "EIO" });
+  };
+  const echoSync = consoleEcho(sync);
+  assert.doesNotThrow(() => echoSync("x"));
+  echoSync("y");
+  assert.equal(sync.calls, 1);
+});
+
+test("a shell whose console pipe was closed keeps running", async () => {
+  const { spawn } = require("node:child_process");
+  const script = `
+    const { consoleEcho } = require(${JSON.stringify(require.resolve("../src/launcher.js"))});
+    const echo = consoleEcho(process.stderr);
+    process.stdin.once("data", () => {
+      let n = 0;
+      const timer = setInterval(() => {
+        echo("x".repeat(512) + "\\n");
+        if (++n === 50) { clearInterval(timer); process.stdout.write("survived\\n"); }
+      }, 2);
+    });`;
+  const child = spawn(process.execPath, ["-e", script], { stdio: ["pipe", "pipe", "pipe"] });
+  child.stderr.destroy();
+  let out = "";
+  child.stdout.on("data", (chunk) => { out += chunk; });
+  child.stdin.end("go\n");
+  const code = await new Promise((resolve) => child.on("exit", resolve));
+  assert.equal(code, 0);
+  assert.equal(out, "survived\n");
+});
+
 test("the launch credential cookie is put back when something removes it, and only then", async () => {
   const { keepCredential } = require("../src/credential.js");
   const { EventEmitter } = require("node:events");
@@ -2515,6 +2644,109 @@ test("CUA embedded control stops the old service before admitting a fresh one", 
   assert.equal(fs.existsSync(owned.socket), false);
   assert.equal(fs.existsSync(owned.abortSocket), false);
 });
+
+test("CUA waits for socket permissions on initial launch and abort restart", { skip: process.platform === "win32" }, async (t) => {
+  const { spawn } = require("node:child_process");
+  const net = require("node:net");
+  const promises = require("node:fs/promises");
+  const { startEmbedded, metadata, stopProcess } = require("../src/cua");
+  const fake = path.join(path.dirname(require("node:url").fileURLToPath(import.meta.url)), "cua-service-fixture.js");
+  const children = [];
+  const observed = new Set();
+  const ready = new Set();
+  let owned;
+  t.after(async () => {
+    await owned?.stop();
+    for (const child of children) await stopProcess(child);
+  });
+  const lstat = promises.lstat;
+  t.mock.method(promises, "lstat", async (...args) => {
+    const current = await lstat(...args);
+    if (path.basename(args[0]) === "driver.sock" && (current.mode & 0o777) !== 0o600) {
+      const child = children.at(-1);
+      if (!observed.has(child.pid)) {
+        observed.add(child.pid);
+        child.send("secure");
+      }
+    } else if (path.basename(args[0]) === "driver.sock") {
+      ready.add(children.at(-1).pid);
+    }
+    return current;
+  });
+  const connect = net.createConnection;
+  t.mock.method(net, "createConnection", (...args) => {
+    if (path.basename(args[0]) === "driver.sock") assert.ok(ready.has(children.at(-1).pid), "metadata was requested before private permissions were observed");
+    return connect(...args);
+  });
+  owned = await startEmbedded(process.execPath, cuaContract, () => {}, (_exe, args, options) => {
+    const child = spawn(process.execPath, [fake, ...args, "--defer-permissions"], { ...options, stdio: [...options.stdio, "ipc"] });
+    children.push(child);
+    return child;
+  });
+  const before = await metadata(owned.socket);
+  const reply = await new Promise((resolve, reject) => {
+    const peer = net.createConnection(owned.abortSocket);
+    let text = "";
+    peer.once("error", reject);
+    peer.on("connect", () => peer.write('{"op":"abort"}\n'));
+    peer.on("data", bytes => { text += bytes; if (text.includes("\n")) { peer.destroy(); resolve(JSON.parse(text)); } });
+  });
+  assert.equal(reply.ok, true);
+  const after = await metadata(owned.socket);
+  assert.notEqual(after.result.pid, before.result.pid);
+  assert.deepEqual([...observed], [before.result.pid, after.result.pid]);
+  assert.equal((await lstat(owned.socket)).mode & 0o777, 0o600);
+  assert.throws(() => process.kill(before.result.pid, 0));
+});
+
+test("CUA permission readiness remains bounded without connecting to a non-private socket", { skip: process.platform === "win32" }, async (t) => {
+  const { spawn } = require("node:child_process");
+  const promises = require("node:fs/promises");
+  const { startEmbedded, stopProcess } = require("../src/cua");
+  const fake = path.join(path.dirname(require("node:url").fileURLToPath(import.meta.url)), "cua-service-fixture.js");
+  let child;
+  t.after(async () => { if (child) await stopProcess(child); });
+  const now = Date.now();
+  let expired = false;
+  t.mock.method(Date, "now", () => now + (expired ? 10001 : 0));
+  const lstat = promises.lstat;
+  t.mock.method(promises, "lstat", async (...args) => {
+    const current = await lstat(...args);
+    if (path.basename(args[0]) === "driver.sock" && (current.mode & 0o777) !== 0o600) expired = true;
+    return current;
+  });
+  await assert.rejects(startEmbedded(process.execPath, cuaContract, () => {}, (_exe, args, options) => {
+    child = spawn(process.execPath, [fake, ...args, "--defer-permissions"], options);
+    return child;
+  }), /Embedded CUA failed readiness/);
+  assert.equal(expired, true);
+  assert.equal(child.exitCode, 0);
+});
+
+for (const kind of ["file", "symlink"]) {
+  test(`CUA readiness rejects a ${kind} instead of waiting for permissions`, { skip: process.platform === "win32" }, async (t) => {
+    const { spawn } = require("node:child_process");
+    const { startEmbedded, stopProcess } = require("../src/cua");
+    let child, socket;
+    t.after(async () => {
+      if (child) await stopProcess(child);
+      if (socket) fs.rmSync(path.dirname(socket), { recursive: true, force: true });
+    });
+    const script = `
+      const fs = require("node:fs");
+      const socket = process.argv[1];
+      if (process.argv[2] === "symlink") fs.symlinkSync("missing-target", socket);
+      else fs.writeFileSync(socket, "", { mode: 0o600 });
+      process.stdin.resume();
+      process.stdin.on("end", () => process.exit(0));`;
+    await assert.rejects(startEmbedded(process.execPath, cuaContract, () => {}, (_exe, args, options) => {
+      socket = args[args.indexOf("--socket") + 1];
+      child = spawn(process.execPath, ["-e", script, socket, kind], options);
+      return child;
+    }), /Invalid private CUA socket/);
+    assert.equal(child.exitCode, 0);
+  });
+}
 
 
 test("CUA repeated quit waits for owned driver cleanup", async () => {

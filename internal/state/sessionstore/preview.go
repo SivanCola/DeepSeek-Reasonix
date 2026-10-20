@@ -27,6 +27,7 @@ var TransientUserBlockTags = []string{
 	"hook-context",
 	"available-skills",
 	"current-date",
+	"session-scratch",
 	"project-instructions",
 	"project-rules",
 	"scoped-rules",

@@ -4,6 +4,7 @@ import "./testkit";
 import userEvent from "@testing-library/user-event";
 import {afterEach,beforeEach,expect,it,vi} from "vitest";
 import {MockPort} from "../port/mock";
+import {HttpError} from "../port/port";
 import {AgentCompositionPicker} from "./AgentCompositionPicker";
 import {CompositionNewContext} from "./CompositionNewContext";
 import {RunLine} from "./RunLine";
@@ -125,6 +126,28 @@ it("keeps a failed selection unchanged and prevents duplicate submissions while 
   await waitFor(()=>expect(error).toHaveBeenCalledOnce());
   expect(picker.textContent).toContain("日常搭档");
   expect(changed).not.toHaveBeenCalled();
+});
+
+it("reports the failed MCP dependency and lets the user retry without changing selection", async () => {
+  const port = new MockPort();
+  const error = vi.fn();
+  const changed = vi.fn();
+  vi.spyOn(port, "selectAgentComposition").mockRejectedValueOnce(new HttpError(409, "fallback", {
+    code: "agent_composition.mcp_unavailable",
+    params: { module: "docs", detail: "http 401" },
+  }));
+  const user = userEvent.setup();
+  render(<AgentCompositionPicker port={port} running={false} onChanged={changed} onSettings={()=>{}} onError={error}/>);
+  const picker = await screen.findByRole("button", { name: /^Agent 组合/ });
+  await user.click(picker);
+  await user.click(screen.getByRole("menuitem", { name: /轻装搭档/ }));
+  await waitFor(() => expect(error).toHaveBeenCalledWith(expect.stringContaining("MCP 服务 docs")));
+  expect(error.mock.calls[0][0]).toContain("http 401");
+  expect(picker.textContent).toContain("日常搭档");
+  expect(changed).not.toHaveBeenCalled();
+  await user.click(picker);
+  await user.click(screen.getByRole("menuitem", { name: /轻装搭档/ }));
+  await waitFor(() => expect(changed).toHaveBeenCalledOnce());
 });
 
 it("keeps management accessible when a locked host cannot create conversations",async()=>{

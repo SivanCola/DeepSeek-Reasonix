@@ -25,6 +25,7 @@ type SessionInfo struct {
 	Pinned         bool
 	ManualRank     float64
 	Unread         bool
+	ViewedAt       time.Time
 	Recovered      bool
 	RecoveryReason string
 	RecoveryDigest string
@@ -49,6 +50,7 @@ type SessionOrderInfo struct {
 	Pinned         bool
 	ManualRank     float64
 	Unread         bool
+	ViewedAt       time.Time
 	Recovered      bool
 	RecoveryReason string
 	RecoveryDigest string
@@ -85,6 +87,7 @@ func sessionInfoFromOrder(session SessionOrderInfo, preview string, turns int, c
 		Pinned:         session.Pinned,
 		ManualRank:     session.ManualRank,
 		Unread:         session.Unread,
+		ViewedAt:       session.ViewedAt,
 		Recovered:      session.Recovered,
 		RecoveryReason: session.RecoveryReason,
 		RecoveryDigest: session.RecoveryDigest,

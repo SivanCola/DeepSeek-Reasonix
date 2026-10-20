@@ -37,7 +37,7 @@ func TestMarkedTurnsStayWithinTheirBudgetAndTheNewestSurvive(t *testing.T) {
 	for i := range 20 {
 		region = append(region, markedTurn(i, 40_000))
 	}
-	kept, fold, retention, _ := a.window().partitionFoldWith(region, a.keepPolicy)
+	kept, fold, retention, _ := a.window().partitionFoldWith(region, nil, a.keepPolicy)
 	tokens, turns := keptMarkedTokens(kept)
 	if tokens > budget {
 		t.Fatalf("%d tokens of [[keep]] turns kept, budget %d", tokens, budget)
@@ -56,7 +56,7 @@ func TestMarkedTurnsUnderTheirBudgetAllStay(t *testing.T) {
 	for i := range 4 {
 		region = append(region, markedTurn(i, 2_000))
 	}
-	kept, fold, retention, _ := a.window().partitionFoldWith(region, a.keepPolicy)
+	kept, fold, retention, _ := a.window().partitionFoldWith(region, nil, a.keepPolicy)
 	if _, turns := keptMarkedTokens(kept); len(turns) != 4 || len(fold) != 0 || retention.MarkedDropped != 0 {
 		t.Fatalf("kept %v, fold %d, dropped %d; want all four kept", turns, len(fold), retention.MarkedDropped)
 	}
@@ -76,7 +76,7 @@ func TestMarkedTurnsCarriedThroughFoldsDoNotAccumulate(t *testing.T) {
 			region = append(region, markedTurn(next, 40_000))
 			next++
 		}
-		kept, _, _, _ := a.window().partitionFoldWith(region, a.keepPolicy)
+		kept, _, _, _ := a.window().partitionFoldWith(region, nil, a.keepPolicy)
 		if tokens, _ := keptMarkedTokens(kept); tokens > budget {
 			t.Fatalf("round %d: %d tokens kept, budget %d", round, tokens, budget)
 		}

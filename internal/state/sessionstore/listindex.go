@@ -17,7 +17,7 @@ const listIndexName = ".list-index.json"
 // listIndexFormat changes whenever SessionOrderInfo or the way a row is read
 // from the files changes, so an index written by another build is not trusted.
 // TestListIndexFormatTracksTheRowShape holds it to the row's shape.
-const listIndexFormat = 2
+const listIndexFormat = 3
 
 // listIndexMin is the folder size from which an index is kept. A small folder
 // reads in milliseconds and is not worth a file of its own.

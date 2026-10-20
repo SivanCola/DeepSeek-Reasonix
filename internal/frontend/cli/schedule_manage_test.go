@@ -50,7 +50,18 @@ api_key_env = "REASONIX_TEST_KEY"
 		t.Fatal(err)
 	}
 	_ = home
-	return &schedWorld{t: t, ws: t.TempDir(), now: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), human: true}
+	w := &schedWorld{t: t, ws: t.TempDir(), now: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), human: true}
+	w.trust(w.ws)
+	t.Chdir(w.ws)
+	return w
+}
+
+// trust marks dir a trusted project, which is the only kind a schedule may read.
+func (w *schedWorld) trust(dir string) {
+	w.t.Helper()
+	if err := config.NewProjectGrantStore(config.RootsForHome("").Home()).SetTrust(dir, config.WorkspaceTrusted); err != nil {
+		w.t.Fatal(err)
+	}
 }
 
 func (w *schedWorld) run(args ...string) int {
@@ -265,5 +276,37 @@ func TestScheduleUsageErrors(t *testing.T) {
 		if code := w.run(args...); code != scheduleExitUsage {
 			t.Errorf("%v = %d", args, code)
 		}
+	}
+}
+
+// A schedule reads one of the trusted projects and nothing else; every other
+// spelling of a folder is refused before anything about it is looked at.
+func TestScheduleAddOnlyAcceptsATrustedProject(t *testing.T) {
+	w := newSchedWorld(t)
+	parent := filepath.Dir(w.ws)
+	untrusted := t.TempDir()
+	missing := filepath.Join(w.ws, "no-such-folder")
+	for name, folder := range map[string]string{
+		"its parent directory":       parent,
+		"a path through ..":          filepath.Join(w.ws, "sub", ".."+string(filepath.Separator)+".."),
+		"a folder that is not there": missing,
+		"a relative path":            ".",
+		"a project nobody trusted":   untrusted,
+		"the filesystem root":        string(filepath.Separator),
+	} {
+		w.input = "CONFIRM"
+		w.run("add", "--every", "2h", "--prompt", "x", "--workspace", folder)
+		if got := w.schedules(); len(got) != 0 {
+			t.Errorf("%s: a schedule was created: %+v", name, got)
+		}
+		if !strings.Contains(w.err.String(), "not a trusted project") {
+			t.Errorf("%s: the refusal does not say why: %q", name, w.err.String())
+		}
+	}
+	w.trust(untrusted)
+	t.Chdir(untrusted)
+	w.input = "CONFIRM"
+	if code := w.run("add", "--every", "2h", "--prompt", "x", "--workspace", untrusted); code != 0 || len(w.schedules()) != 1 {
+		t.Fatalf("a project trusted after the fact was refused: %d %s", code, w.err.String())
 	}
 }
