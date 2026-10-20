@@ -24,8 +24,19 @@ steps that depend on it; plan the rest.
 
 ## 1. The manifest is the state
 
-Keep one manifest per production at `video/<production_id>/manifest.json`
-(format: `docs/VIDEO_MANIFEST.md`). Rules:
+Keep one manifest per production at `video/<production_id>/manifest.json`,
+a JSON object with these fields:
+
+- `version` (1), `production_id`, `revision`, `script_revision`;
+- `brief`: `revision`, duration, aspect_ratio, width, height, audio, budget, `required_reviews`;
+- `shots[]`: `shot_id`, `start`, `end`, `prompt_revision`, `prompt`, `references`, `depends_on`;
+- `jobs[]`: `shot_id`, `tool`, `job_id`, `task_id`, `idempotency_key`, `state`, `result_ref`;
+- `artifacts[]`: `artifact_id`, `version`, `shot_id`, `path`, `receipt`, `sha256`, `bytes`, `superseded_by`;
+- `reviews[]`: `artifact_id`, `version`, `sha256`, `brief_revision`, `scope`, `ranges`, `reviewer`, `verdict` (pass|fail|unverified|not_applicable), `evidence`;
+- `delivery`: `artifact_id`, `version`, `limitations`, `provisional`, `user_accepted`.
+
+`jobs[].state` is one of planned, submission_unknown, generating, generated,
+downloaded, review_pending, rework_required, accepted, delivered. Rules:
 
 - Read it first on every turn of the production. If it exists, you are resuming.
 - `version` must be `1`. On any other version, stop and tell the user; do not rewrite it.

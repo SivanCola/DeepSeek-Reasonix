@@ -26,6 +26,20 @@ func TestVideoProductionBuiltinRegisteredInline(t *testing.T) {
 	}
 }
 
+// An embedded skill ships as one file: a path into the Reasonix repo names
+// nothing in the user's workspace, and the model spends turns looking for it.
+func TestVideoProductionNamesNoFileItDoesNotShip(t *testing.T) {
+	sk, _ := skill.New(skill.Options{HomeDir: testenv.TempDir(t)}).Read("video-production")
+	if strings.Contains(sk.Body, "docs/") {
+		t.Fatal("the skill body points at a repo document the workspace does not have")
+	}
+	for _, field := range []string{"production_id", "artifact_id", "superseded_by", "brief_revision", "required_reviews"} {
+		if !strings.Contains(sk.Body, field) {
+			t.Errorf("the manifest field %q is not spelled out in the skill", field)
+		}
+	}
+}
+
 func TestVideoProductionIndexCarriesOnlyItsLine(t *testing.T) {
 	store := skill.New(skill.Options{HomeDir: testenv.TempDir(t)})
 	idx := skill.IndexBlock(store.List())
