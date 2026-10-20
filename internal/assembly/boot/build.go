@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -639,6 +640,7 @@ func (b *builder) controllerOptions(runner agent.Runner, executor *agent.Agent, 
 		Tariff:                func(at time.Time) (pricing.Tariff, bool) { return b.cfg.LiveTariff(b.model.ref, at) },
 		Feedback:              control.FeedbackOptions{Service: feedbackService(b.roots.Home(), b.proxy, opts.AccountsURL), ProviderKind: feedbackProviderKind(entry), Surface: opts.FeedbackSurface},
 		Jobs:                  b.session.jobs,
+		RemoteTaskResumer:     remoteTaskResumer(t.host, append(slices.Clone(t.mcp.configured), t.mcp.extra...), t.policy),
 		TaskStore:             opts.TaskStore,
 		WorkspaceLease:        b.session.lease,
 		Registry:              t.reg,
