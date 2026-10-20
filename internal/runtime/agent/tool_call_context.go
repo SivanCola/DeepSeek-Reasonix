@@ -51,7 +51,11 @@ func (a *Agent) toolCallContext(ctx context.Context, plan *toolCallPlan) context
 		session, manager := jobs.SessionFromContext(cctx), a.svc.jobs
 		cctx = tool.WithResultReader(cctx, func(ref string) (io.ReadCloser, error) { return manager.OpenToolResultForSession(session, ref) })
 		cctx = tool.WithResultRecorder(cctx, func(raw json.RawMessage) (string, error) {
-			return manager.SaveToolResultForSession(session, plan.call.ID, raw)
+			ref, err := manager.SaveToolResultForSession(session, plan.call.ID, raw)
+			if err == nil {
+				plan.resultRef = ref
+			}
+			return ref, err
 		})
 		cctx = tool.WithRemoteTaskStarter(cctx, func(task tool.RemoteTask, run tool.RemoteTaskRun) (tool.RemoteTaskHandle, error) {
 			return manager.StartRemoteForSession(session, task, run)
