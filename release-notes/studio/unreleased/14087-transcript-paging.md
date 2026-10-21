@@ -1,0 +1,2 @@
+- 改进：长会话先显示最近 200 条消息，按需加载更早内容；会话内查找会继续读取较早页面，模型仍使用完整会话。关联 #14087。
+- Improved: long chats load the latest 200 messages first, then earlier pages on demand or during find. The model still uses the full conversation. Refs #14087.
