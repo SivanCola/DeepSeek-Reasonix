@@ -15,7 +15,7 @@
 }
 .document-controls button, .document-controls select {
   color: var(--text);
-  background: var(--bg);
+  background: var(--raised);
   border: 1px solid var(--border);
   padding: 4px 8px;
   border-radius: 6px;
@@ -51,7 +51,7 @@
 .document-table th {
   position: sticky;
   left: 0;
-  background: var(--bg);
+  background: var(--surface);
 }
 .document-table tr[aria-hidden] td {
   padding: 0;

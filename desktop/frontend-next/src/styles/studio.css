@@ -4070,7 +4070,7 @@ button, input, select, textarea { font-size: calc(13.3333px * var(--fs-scale, 1)
 }
 :root[data-theme="light"] .refine-card,
 :root[data-theme="light"] .commit-card:not([data-phase="idle"]) { background: var(--page); }
-:root[data-theme="light"] .commit-message { background: var(--bg); }
+:root[data-theme="light"] .commit-message { background: var(--raised); }
 @media (hover: none) {
   .flow .user-acts,
   .wsdel,
