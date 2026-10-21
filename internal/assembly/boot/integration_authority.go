@@ -16,8 +16,13 @@ import (
 func integrationAuthorizer(source, owner string, posture *isolationPosture, gate *control.SharedHeadlessGate, access tool.TargetAccessCheck, grant writeclaim.WritePathSet) isolation.SourceAuthorizer {
 	controller := posture.ctrl.Load()
 	validateExecution := controller.MutationExecutionValidator(owner)
+	return integrationAuthorizerWithExecution(source, posture, gate, access, grant, validateExecution)
+}
+
+func integrationAuthorizerWithExecution(source string, posture *isolationPosture, gate *control.SharedHeadlessGate, access tool.TargetAccessCheck, grant writeclaim.WritePathSet, validateExecution func(context.Context) error) isolation.SourceAuthorizer {
+	controller := posture.ctrl.Load()
 	return func(ctx context.Context, paths []string) error {
-		if controller == nil || posture.ctrl.Load() != controller {
+		if controller == nil || validateExecution == nil || posture.ctrl.Load() != controller {
 			return tool.Refusal{Code: isolation.CodeStaleExecution, Message: "source runtime generation changed"}
 		}
 		if err := validateExecution(ctx); err != nil {

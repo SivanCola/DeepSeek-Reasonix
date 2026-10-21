@@ -83,6 +83,7 @@ type Options struct {
 	SessionEnvironmentPath string
 	// RootEnvironment is borrowed; a successful build owns its own retained reference.
 	RootEnvironment *rootenv.Environment
+	isolatedParent  *isolatedParent
 	// Home states where this build's config, credentials, state and hooks live;
 	// empty follows the environment. It binds this assembly only — a
 	// Controller's later re-reads and the history index still read the process.

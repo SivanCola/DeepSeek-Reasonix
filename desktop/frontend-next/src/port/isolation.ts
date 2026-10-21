@@ -16,6 +16,7 @@ export interface IsolationResult {
   cleanupComplete: boolean;
   reason?: string;
   actions: string[];
+  recovery?: IsolationRecoveryTarget;
 }
 
 export interface IsolationDiagnostic {
@@ -59,6 +60,7 @@ export interface RootSceneRequest {
 }
 
 export interface IsolationRecoveryTarget {
+  resultId?: string;
   workspace: string;
   runtime: string;
   revision: string;
@@ -66,6 +68,7 @@ export interface IsolationRecoveryTarget {
 }
 
 export interface IsolationRecoveryRequest {
+  resultId?: string;
   workspace: string;
   runtime: string;
   revision: string;

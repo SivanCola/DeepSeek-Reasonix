@@ -36,6 +36,26 @@ func TestNestedEnvironmentUsesCurrentCandidate(t *testing.T) {
 	}
 }
 
+func TestNestedEnvironmentUsesRegisteredFactoryWithoutChangingSharedOrReadonly(t *testing.T) {
+	task := &TaskTool{environmentID: "iso_current", environment: &environmentPolicy{mode: "auto", prepare: func(context.Context, ProfileExecSpec, string) (*ExecutionEnvironment, error) {
+		return nil, nil
+	}}}
+	for _, mode := range []string{"auto", "shared", "worktree", "isolated"} {
+		want := mode
+		if mode == "isolated" {
+			want = "worktree"
+		}
+		got, err := task.executionEnvironment(ProfileExecSpec{Sched: SchedulerPolicy{Environment: mode}})
+		if err != nil || got != want {
+			t.Fatalf("nested factory %s: %s %v", mode, got, err)
+		}
+		readonly, err := task.executionEnvironment(ProfileExecSpec{Grant: CapabilityGrant{ReadOnly: true}, Sched: SchedulerPolicy{Environment: mode}})
+		if err != nil || readonly != "shared" {
+			t.Fatalf("readonly task prepared a candidate: %s %v", readonly, err)
+		}
+	}
+}
+
 func testEnvironmentEvidence(t *testing.T, background, panicAfterWrite bool) {
 	t.Helper()
 	root := t.TempDir()

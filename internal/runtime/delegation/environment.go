@@ -114,7 +114,7 @@ func (t *TaskTool) executionEnvironment(spec ProfileExecSpec) (string, error) {
 	if spec.Grant.ReadOnly {
 		return "shared", nil
 	}
-	if t.environmentID != "" {
+	if t.environmentID != "" && (t.environment == nil || t.environment.prepare == nil) {
 		if spec.Sched.Environment == "worktree" || spec.Sched.Environment == "isolated" {
 			return "", tool.Refusal{Code: isolation.CodeUnavailable, Message: "a nested task already runs in an isolated environment; creating another environment requires a nested integration route"}
 		}

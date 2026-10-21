@@ -15,6 +15,31 @@ const fixture = () => new MockPort() as unknown as AgentPort;
 const openResult = async () => userEvent.click(await screen.findByText("iso_55bb1122"));
 
 describe("retained isolated results", () => {
+  it("recovers the displayed descendant's journal and ignores completion after a workspace change", async () => {
+    const port = fixture();
+    const catalog = await port.isolatedResults();
+    const recovery = { resultId: "iso_55bb1122", workspace: "/parent/candidate", runtime: "current", revision: "journal", paths: ["/parent/candidate/child.txt"] };
+    catalog.results[0] = { ...catalog.results[0], parentId: "iso_parent", state: "applying", actions: ["recover"], recovery };
+    port.isolatedResults = vi.fn(async () => catalog);
+    let finish!: () => void;
+    const recover = vi.spyOn(port, "recoverIsolatedIntegration").mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
+    let receive!: (event: WireEvent) => void;
+    vi.spyOn(port, "subscribe").mockImplementation((listener) => { receive = listener; return () => {}; });
+    render(<IsolationResults port={port} />);
+    await openResult();
+    expect(screen.getByText("/parent/candidate/child.txt")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "恢复未完成的整合" }));
+    expect(recover).toHaveBeenCalledExactlyOnceWith({ resultId: recovery.resultId, workspace: recovery.workspace, runtime: recovery.runtime, revision: recovery.revision });
+    expect(screen.getByRole("button", { name: "恢复未完成的整合" })).toHaveProperty("disabled", true);
+    const next = { ...catalog, results: [] };
+    port.isolatedResults = vi.fn(async () => next);
+    act(() => receive({ kind: "workspace_changed" } as WireEvent));
+    await screen.findByText("没有待处理的隔离成果。");
+    const calls = vi.mocked(port.isolatedResults).mock.calls.length;
+    await act(async () => finish());
+    expect(vi.mocked(port.isolatedResults).mock.calls.length).toBe(calls);
+    expect(screen.queryByText("/parent/candidate/child.txt")).toBeNull();
+  });
   it("shows the direct parent and actual integration target for a retained descendant", async () => {
     const port = fixture();
     const catalog = await port.isolatedResults();

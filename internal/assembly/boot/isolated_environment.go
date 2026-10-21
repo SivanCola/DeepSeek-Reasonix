@@ -33,12 +33,7 @@ func newIsolatedEnvironmentFactory(parent Options, store *isolation.Store, postu
 		if err != nil {
 			return nil, err
 		}
-		var entry *isolation.Entry
-		if resumeID == "" {
-			entry, err = store.BeginOwned(ctx, source, agent.ParentSession(ctx))
-		} else {
-			entry, err = store.Resume(ctx, resumeID, agent.ParentSession(ctx))
-		}
+		entry, err := prepareIsolatedEntry(ctx, parent.isolatedParent, store, source, resumeID, agent.ParentSession(ctx))
 		if err != nil {
 			return nil, err
 		}
@@ -56,6 +51,7 @@ func newIsolatedEnvironmentFactory(parent Options, store *isolation.Store, postu
 			return nil, err
 		}
 		defer releasePreparation()
+		opts.isolatedParent = &isolatedParent{store: store, entry: entry, source: source, authorize: authorize}
 		task, mapped, closeRuntime, err := buildIsolatedCandidate(ctx, parent, opts, source, entry.Cand, spec)
 		if err != nil {
 			return nil, err
@@ -104,6 +100,7 @@ func buildIsolatedCandidate(ctx context.Context, parent, opts Options, source st
 	if err != nil {
 		return nil, spec, nil, err
 	}
+	built.Controller.ApplyHeadlessApprovalMode(opts.HeadlessApprovalMode)
 	if child.tools.taskTool == nil {
 		built.Controller.Close()
 		return nil, spec, nil, tool.Refusal{Code: isolation.CodeUnavailable, Message: "isolated runtime cannot execute delegated tasks"}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"slices"
 
 	"reasonix/internal/contract/tool"
 	"reasonix/internal/platform/worktree"
@@ -33,6 +34,11 @@ type isolationRecoveryOwner interface {
 	RecoverExpected(context.Context, string, isolation.SourceAuthorizer) error
 }
 
+type isolationResultRecoveryOwner interface {
+	PreviewResultRecovery(context.Context, string) (*isolation.RecoveryTarget, error)
+	RecoverResultExpected(context.Context, string, string, string, isolation.SourceAuthorizer) error
+}
+
 func (c *Controller) previewIsolationRecovery(ctx context.Context) (*worktree.RecoveryPreview, error) {
 	if owner, ok := c.isolatedResults.owner.(isolationRecoveryOwner); ok {
 		return owner.PreviewRecovery(ctx)
@@ -52,6 +58,16 @@ func (c *Controller) IsolationResults(ctx context.Context) (isolation.Catalog, e
 	}
 	out, err := c.isolatedResults.owner.Catalog(ctx)
 	out = c.withRootScene(ctx, out)
+	if err == nil && c.mutations != nil && c.isolatedResults.access != nil {
+		out.Results = slices.Clone(out.Results)
+		for index := range out.Results {
+			if target := out.Results[index].Recovery; target != nil {
+				bound := *target
+				bound.Runtime = c.isolatedResults.identity
+				out.Results[index].Recovery = &bound
+			}
+		}
+	}
 	if err != nil || !out.RecoveryRequired {
 		return out, err
 	}
@@ -97,8 +113,18 @@ func (c *Controller) PrepareIsolatedRecovery(ctx context.Context, target isolati
 	if c.mutations == nil || c.isolatedResults.access == nil {
 		return tool.Refusal{Code: isolation.CodeUnavailable, Message: "integration recovery requires the new coordination strategy"}
 	}
-	if target.Runtime != c.isolatedResults.identity || target.Workspace != c.WorkspaceRoot() || target.Revision == "" {
+	if target.Runtime != c.isolatedResults.identity || target.Revision == "" {
 		return tool.Refusal{Code: isolation.CodeStaleExecution, Message: "recovery preview belongs to another runtime or workspace; refresh before continuing"}
+	}
+	if target.ResultID != "" {
+		if _, ok := c.isolatedResults.owner.(isolationResultRecoveryOwner); !ok {
+			return tool.Refusal{Code: isolation.CodeUnavailable, Message: "descendant integration recovery is unavailable"}
+		}
+		if target.Workspace == "" {
+			return staleRecoveryPreview()
+		}
+	} else if target.Workspace != c.WorkspaceRoot() {
+		return staleRecoveryPreview()
 	}
 	if err := c.CheckMutationExecution(ctx); err != nil {
 		return err
@@ -108,6 +134,9 @@ func (c *Controller) PrepareIsolatedRecovery(ctx context.Context, target isolati
 }
 
 func (c *Controller) recoverIsolatedIntegration(ctx context.Context, target isolation.RecoveryRequest, validate func(context.Context) error) error {
+	if target.ResultID != "" {
+		return c.recoverIsolatedResult(ctx, target, validate)
+	}
 	repo := c.WorkspaceRepo()
 	preview, err := c.previewIsolationRecovery(ctx)
 	if err != nil {
@@ -151,4 +180,44 @@ func (c *Controller) recoverIsolatedIntegration(ctx context.Context, target isol
 		return tool.Refusal{Code: isolation.CodeStaleExecution, Message: "integration journal changed after preview; files retained"}
 	}
 	return err
+}
+
+func staleRecoveryPreview() error {
+	return tool.Refusal{Code: isolation.CodeStaleExecution, Message: "integration recovery target changed after preview; refresh before recovering"}
+}
+
+func (c *Controller) resultRecoveryOwner(ctx context.Context, target isolation.RecoveryRequest) (isolationResultRecoveryOwner, error) {
+	owner, ok := c.isolatedResults.owner.(isolationResultRecoveryOwner)
+	if !ok {
+		return nil, tool.Refusal{Code: isolation.CodeUnavailable, Message: "descendant integration recovery is unavailable"}
+	}
+	preview, err := owner.PreviewResultRecovery(ctx, target.ResultID)
+	if err != nil {
+		return nil, err
+	}
+	if preview == nil || preview.ResultID != target.ResultID || preview.Workspace != target.Workspace || preview.Revision != target.Revision {
+		return nil, staleRecoveryPreview()
+	}
+	return owner, nil
+}
+
+func (c *Controller) recoverIsolatedResult(ctx context.Context, target isolation.RecoveryRequest, validate func(context.Context) error) error {
+	activity, err := c.holdWorkspaceActivity(ctx)
+	if err != nil {
+		return err
+	}
+	defer activity.release()
+	owner, err := c.resultRecoveryOwner(ctx, target)
+	if err != nil {
+		return err
+	}
+	if err := validate(ctx); err != nil {
+		return err
+	}
+	return owner.RecoverResultExpected(ctx, target.ResultID, target.Workspace, target.Revision, func(ctx context.Context, paths []string) error {
+		if err := validate(ctx); err != nil {
+			return err
+		}
+		return c.isolatedResults.access(ctx, paths)
+	})
 }

@@ -32,6 +32,7 @@ type ResultSummary struct {
 	CleanupComplete bool              `json:"cleanupComplete"`
 	Reason          string            `json:"reason,omitempty"`
 	Actions         []string          `json:"actions"`
+	Recovery        *RecoveryTarget   `json:"recovery,omitempty"`
 }
 
 type CatalogDiagnostic struct {
@@ -75,6 +76,7 @@ type RootSceneRequest struct {
 }
 
 type RecoveryTarget struct {
+	ResultID  string   `json:"resultId,omitempty"`
 	Workspace string   `json:"workspace"`
 	Runtime   string   `json:"runtime"`
 	Revision  string   `json:"revision"`
@@ -82,13 +84,14 @@ type RecoveryTarget struct {
 }
 
 type RecoveryRequest struct {
+	ResultID  string `json:"resultId,omitempty"`
 	Workspace string `json:"workspace"`
 	Runtime   string `json:"runtime"`
 	Revision  string `json:"revision"`
 }
 
 func (t RecoveryTarget) Request() RecoveryRequest {
-	return RecoveryRequest{Workspace: t.Workspace, Runtime: t.Runtime, Revision: t.Revision}
+	return RecoveryRequest{ResultID: t.ResultID, Workspace: t.Workspace, Runtime: t.Runtime, Revision: t.Revision}
 }
 
 // Catalog reads retained decisions without pruning, rewriting or materializing

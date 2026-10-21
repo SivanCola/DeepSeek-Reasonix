@@ -559,7 +559,11 @@ func claimViolations(summary evidence.ChildEvidenceSummary, claims writeclaim.Wr
 	}
 	var out []string
 	for _, p := range summary.MutationPaths() {
-		if !claims.AllowsPath(p) {
+		target := p
+		if !filepath.IsAbs(target) && claims.WorkspaceRoot != "" {
+			target = filepath.Join(claims.WorkspaceRoot, target)
+		}
+		if !claims.AllowsPath(target) {
 			out = append(out, p)
 		}
 	}

@@ -230,8 +230,9 @@ Git 快照及 worktree 创建将准备额度与相关路径联合申请；内核
 无修改环境仍可能清理。每次运行记录新的 generation，旧回调不能结束或删除
 新运行。恢复中断会话要求同一环境的新 generation，仍检查 persona、工具和模型。
 
-跨聊天 fork 和完整崩溃续跑链路尚待验收。当前候选内的嵌套任务默认共享该候选；
-显式新建嵌套 worktree 会明确拒绝，完整嵌套整合路由仍待实现。
+跨聊天 fork 和完整崩溃续跑链路尚待验收。具有宿主环境工厂的新版运行时支持嵌套
+worktree，目标始终是直接父环境；共享及只读选择不变。登记、授权、保留和恢复
+规则见[嵌套成果说明](CONCURRENT_MUTATIONS_NESTED.md)。
 
 隔离写入任务的每次执行拥有独立的后台作业管理器及执行身份；不会借用父任务或
 兄弟任务的作业表。工具白名单允许时，可以使用后台 Bash、`wait`、`bash_output`
@@ -333,8 +334,8 @@ CLI/TUI 使用 `/isolated root recheck`、`retry`、`recover`；恢复需确认�
 整合已有实现。新安装默认 `auto` 仍关闭；最终平台、兼容、故障和性能验收未全部
 完成前不能切换。
 
-macOS/Windows 本地受控验证仍不支持；嵌套任务共用当前候选，
-显式嵌套 worktree 因缺少父子整合及保留协议而拒绝，不能静默应用到最外层源。
+macOS/Windows 本地受控验证仍不支持；未获得可靠验证的嵌套成果保留在各自候选中，
+不能静默应用到最外层源。无宿主环境工厂的旧运行时仍拒绝显式嵌套 worktree。
 `Outcome.Unverified` 为空不构成正向凭据，不能据此自动应用结果。
 
 worktree 隔离代码副本，不隔离数据库、端口、网络服务或全部 Git 共享元数据。
@@ -703,9 +704,10 @@ Each execution persists a new generation. Old callbacks cannot finish or delete
 a successor. Interrupted transcript recovery requires a new generation in the
 same environment, with persona, tools and model identity checks retained.
 
-Nested tasks currently share their existing candidate by default. Explicit
-nested worktree creation is refused until a complete nested integration route
-is available.
+New runtimes with a host environment factory support nested worktrees targeting
+their direct parent. Shared and read-only choices retain their existing behavior.
+See the [nested result guide](CONCURRENT_MUTATIONS_NESTED.md) for registration,
+authorization, retention and recovery.
 
 Each isolated writer execution owns a separate background-job manager and
 execution identity. It never borrows a parent's or sibling's job table. When
@@ -852,9 +854,9 @@ budgets, recovery UI and Linux controlled integration are implemented. New-insta
 `auto` remains disabled until final platform, compatibility, fault and performance
 qualification completes.
 
-macOS/Windows lack a local controlled verifier. Nested
-tasks share the current candidate; explicit nested worktrees are refused until
-parent-target integration and durable retention are supported.
+macOS/Windows lack a local controlled verifier. Unverified nested results remain
+in their own candidates without being applied to the outermost source. Legacy
+runtimes without a host environment factory still refuse explicit nested worktrees.
 
 An empty `Outcome.Unverified` is not positive verification evidence and must not
 authorize automatic integration.

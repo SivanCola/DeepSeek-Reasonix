@@ -3,7 +3,7 @@ import { t } from "../i18n";
 import { reason } from "../i18n/kernel";
 import { HttpError } from "../port/http_error";
 import type { AgentPort } from "../port/port";
-import type { IsolationCatalog, IsolatedDiscardPreview } from "../port/isolation";
+import type { IsolationCatalog, IsolatedDiscardPreview, IsolationRecoveryTarget } from "../port/isolation";
 import { DiscardIsolatedDialog } from "./DiscardIsolatedDialog";
 import "../styles/isolation-results.css";
 
@@ -63,10 +63,8 @@ export function IsolationResults({ port }: { port: AgentPort }) {
       if (epoch.current === current) { setPreview(null); setAgain((n) => n + 1); }
     });
   };
-  const recover = () => {
-    if (!catalog?.recovery) return;
-    const { workspace, runtime, revision } = catalog.recovery;
-    const target = { workspace, runtime, revision };
+  const recover = ({ resultId, workspace, runtime, revision }: IsolationRecoveryTarget) => {
+    const target = { workspace, runtime, revision, ...(resultId ? { resultId } : {}) };
     const current = epoch.current;
     void act(async () => {
       await port.recoverIsolatedIntegration(target);
@@ -91,7 +89,7 @@ export function IsolationResults({ port }: { port: AgentPort }) {
   return <div className="box isolation-results">
     <div className="result-actions">
       <button type="button" className="btn btn--small" data-action="isolation.refresh" disabled={busy} onClick={() => setAgain((n) => n + 1)}>{t("刷新")}</button>
-      {catalog?.recoveryRequired && <button type="button" className="btn btn--small" data-action="isolation.recover" disabled={busy || !catalog.recovery} onClick={recover}>{t("恢复未完成的整合")}</button>}
+      {catalog?.recoveryRequired && <button type="button" className="btn btn--small" data-action="isolation.recover" disabled={busy || !catalog.recovery} onClick={() => { if (catalog.recovery) recover(catalog.recovery); }}>{t("恢复未完成的整合")}</button>}
     </div>
     {!catalog && !error && <p role="status">{t("正在读取隔离成果…")}</p>}
     {catalog && !catalog.enabled && <p>{t("当前内核未开放隔离成果管理。")}</p>}
@@ -126,6 +124,10 @@ export function IsolationResults({ port }: { port: AgentPort }) {
       {row.reason && <p className="why">{row.reason}</p>}
       {row.changes.length > 0 && <ul>{row.changes.slice(0, 100).map((change) => <li key={change.Path}><code>{change.Status} {change.Path}</code></li>)}</ul>}
       {row.changes.length > 100 && <p>{t("另有 {n} 项变更，请在候选目录中查看。", { n: row.changes.length - 100 })}</p>}
+      {row.recovery && <>
+        <ul>{row.recovery.paths.map((path) => <li key={path}><code>{path}</code></li>)}</ul>
+        <button type="button" className="btn btn--small" data-action="isolation.recover-result" data-target={row.id} disabled={busy || !row.actions?.includes("recover")} onClick={() => { if (row.recovery) recover(row.recovery); }}>{t("恢复未完成的整合")}</button>
+      </>}
       {!row.kind.startsWith("root_") && <button type="button" className="btn btn--small" data-action="isolation.discard-preview" data-target={row.id} disabled={busy || row.activity === "active" || !row.actions?.includes("discard_preview")} onClick={() => askDiscard(row.id)}>{t("预览丢弃")}</button>}
     </details>)}
     {catalog?.diagnostics.map((diagnostic) => <p className="why" key={diagnostic.record}><code>{diagnostic.record}</code> {diagnostic.reason}</p>)}

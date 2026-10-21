@@ -42,9 +42,11 @@ type ChildResult struct {
 // BeginChild registers the dependency before reading the parent's snapshot.
 // Failed preparation retains its registration whenever a child record exists.
 func (s *Store) BeginChild(ctx context.Context, parent *Entry, children *Store, owner string) (*Entry, error) {
-	if s == nil || parent == nil || children == nil || owner == "" ||
-		!sameDir(children.workspace, parent.Cand.WorkspaceRoot) || children.repo != parent.Cand.Repo {
-		return nil, tool.Refusal{Code: CodeOwnerMismatch, Message: "child environment must target its running direct parent"}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := s.validateChildTarget(parent, children, owner); err != nil {
+		return nil, err
 	}
 	id, err := newID()
 	if err != nil {
@@ -76,30 +78,13 @@ func (s *Store) registerChild(ctx context.Context, parent *Entry, child ChildRes
 		return err
 	}
 	defer unlock()
-	release, err := filelock.TryAcquire(s.runLock(parent.ID))
-	if err == nil {
-		release()
-		return tool.Refusal{Code: CodeStaleExecution, Message: "parent execution no longer owns its run"}
-	}
-	if !errors.Is(err, filelock.ErrHeld) {
-		return err
-	}
-	if err := s.checkRunGeneration(parent); err != nil {
-		return err
-	}
-	d, raw, err := readLineageRecord(entryRecordPath(parent))
+	d, raw, err := s.childAdmission(parent)
 	if err != nil {
 		return err
-	}
-	if d.State != Running {
-		return dependentResults("parent execution no longer accepts children")
 	}
 	lineage := d.Lineage
 	if lineage == nil {
 		lineage = &ResultLineage{Admission: "open"}
-	}
-	if lineage.Admission != "open" {
-		return dependentResults("parent child admission is sealed")
 	}
 	if lineage.Children == nil {
 		lineage.Children = map[string]ChildResult{}

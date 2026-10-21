@@ -8,6 +8,13 @@ import (
 )
 
 func (s *Store) Resume(ctx context.Context, id, owner string) (*Entry, error) {
+	return s.resume(ctx, id, owner, nil)
+}
+
+func (s *Store) resume(ctx context.Context, id, owner string, admission func(context.Context) (func(), error)) (*Entry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	before, err := s.operationSnapshot(ctx, id)
 	if err != nil {
 		return nil, err
@@ -34,7 +41,17 @@ func (s *Store) Resume(ctx context.Context, id, owner string) (*Entry, error) {
 	if err := s.requireSettledIntegrations(e); err != nil {
 		return nil, err
 	}
+	if admission != nil {
+		release, err := admission(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+	}
 	if err := s.reopenChildren(e); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	e.State = Running

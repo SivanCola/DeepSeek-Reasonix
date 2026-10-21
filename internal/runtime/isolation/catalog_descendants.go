@@ -44,6 +44,9 @@ func (s *Store) Catalog(ctx context.Context) (Catalog, error) {
 		row.ParentID, row.TargetWorkspace = route.parent, route.store.workspace
 		out.Results = append(out.Results, row)
 	}
+	if err := addDescendantRecoveries(ctx, routes, &out); err != nil {
+		return out, err
+	}
 	slices.SortFunc(out.Results, func(a, b ResultSummary) int { return strings.Compare(a.ID, b.ID) })
 	return out, nil
 }

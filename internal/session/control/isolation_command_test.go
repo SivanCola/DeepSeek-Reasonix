@@ -27,6 +27,26 @@ func TestIsolationCommandShowsDescendantDirectTarget(t *testing.T) {
 	}
 }
 
+func TestIsolationCommandPreviewsAndConfirmsRegisteredDescendantRecovery(t *testing.T) {
+	target := &isolation.RecoveryTarget{ResultID: "iso_child", Workspace: "/direct-parent", Runtime: "current", Revision: "journal", Paths: []string{"/direct-parent/file"}}
+	api := &commandResults{catalog: &isolation.Catalog{Enabled: true, Results: []isolation.ResultSummary{{ID: "int_child", ResultID: "iso_child", Recovery: target}}}}
+	text, err := IsolationCommandText(t.Context(), api, "recover int_child")
+	if err != nil || !strings.Contains(text, "/direct-parent/file") || api.recovered.Runtime != "" {
+		t.Fatalf("descendant preview: %q %v", text, err)
+	}
+	command := strings.TrimPrefix(text[strings.LastIndex(text, "\n")+1:], "/isolated ")
+	if _, err := IsolationCommandText(t.Context(), api, command); err != nil {
+		t.Fatal(err)
+	}
+	if api.recovered != target.Request() {
+		t.Fatalf("confirmation lost descendant identity: %+v", api.recovered)
+	}
+	api.recovered = isolation.RecoveryRequest{}
+	if _, err := IsolationCommandText(t.Context(), api, "recover iso_unregistered"); err == nil || api.recovered.Runtime != "" {
+		t.Fatal("unregistered descendant accepted")
+	}
+}
+
 func (f *commandResults) IsolationResults(context.Context) (isolation.Catalog, error) {
 	if f.catalog != nil {
 		return *f.catalog, nil

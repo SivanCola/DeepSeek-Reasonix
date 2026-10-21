@@ -75,25 +75,37 @@ func IsolationCommandText(ctx context.Context, api IsolationResultsAPI, args str
 			err = api.RecoverIsolatedIntegration(ctx, target)
 			return "Source journal recovery completed. Candidate results are retained.", err
 		}
-		if len(fields) == 1 {
+		if len(fields) <= 2 {
 			catalog, err := api.IsolationResults(ctx)
 			if err != nil {
 				return "", err
 			}
-			if !catalog.RecoveryRequired {
+			target := catalog.Recovery
+			if len(fields) == 2 {
+				target = isolatedRowRecovery(catalog, fields[1])
+			} else if !catalog.RecoveryRequired {
 				return "No source integration requires recovery.", nil
 			}
-			if catalog.Recovery == nil {
+			if target == nil {
 				return "", tool.Refusal{Code: isolation.CodeRecoveryRequired, Message: "recovery target is unavailable; journal retained: " + catalog.RecoveryReason}
 			}
-			raw, err := json.Marshal(catalog.Recovery.Request())
+			raw, err := json.Marshal(target.Request())
 			if err != nil {
 				return "", err
 			}
-			return "Recovery preview: " + catalog.Recovery.Workspace + "\n" + strings.Join(catalog.Recovery.Paths, "\n") + "\nOnly unchanged integration postimages may be restored. To confirm this exact journal:\n/isolated recover --confirm " + base64.RawURLEncoding.EncodeToString(raw), nil
+			return "Recovery preview: " + target.Workspace + "\n" + strings.Join(target.Paths, "\n") + "\nOnly unchanged integration postimages may be restored. To confirm this exact journal:\n/isolated recover --confirm " + base64.RawURLEncoding.EncodeToString(raw), nil
 		}
 	}
-	return "Usage: /isolated [list] | discard <id> [--confirm <revision>] | recover [--confirm <preview>]", nil
+	return "Usage: /isolated [list] | discard <id> [--confirm <revision>] | recover [<id>] | recover --confirm <preview>", nil
+}
+
+func isolatedRowRecovery(catalog isolation.Catalog, id string) *isolation.RecoveryTarget {
+	for _, row := range catalog.Results {
+		if row.ID == id {
+			return row.Recovery
+		}
+	}
+	return nil
 }
 
 func writeIsolatedResultSummary(text *strings.Builder, row isolation.ResultSummary) {
@@ -103,5 +115,8 @@ func writeIsolatedResultSummary(text *strings.Builder, row isolation.ResultSumma
 	}
 	if row.Reason != "" {
 		fmt.Fprintln(text, "  "+row.Reason)
+	}
+	if row.Recovery != nil {
+		fmt.Fprintf(text, "  Preview recovery with /isolated recover %s\n", row.ID)
 	}
 }
