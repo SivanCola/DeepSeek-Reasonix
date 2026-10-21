@@ -30,6 +30,9 @@ func (s *Store) operationManifest(id string) (*Entry, error) {
 		if !supportedResultVersion(d) || !supportedLifecycle(d) {
 			return nil, tool.Refusal{Code: CodeUnsupportedState, Message: "isolated result was written by a newer protocol"}
 		}
+		if err := s.requireSettledChildren(d.entry()); err != nil {
+			return nil, err
+		}
 		release, err := filelock.TryAcquire(s.runLock(id))
 		if errors.Is(err, filelock.ErrHeld) {
 			return nil, tool.Refusal{Code: CodeBusy, Message: "isolated task is still running"}

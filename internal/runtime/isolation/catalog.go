@@ -139,7 +139,11 @@ func (s *Store) Catalog(ctx context.Context) (Catalog, error) {
 			row.Activity, row.Reason = s.resultActivity(d.ID)
 		}
 		if supportedResultVersion(d) && supportedLifecycle(d) && row.Activity != "active" && row.State != Applying && row.State != Integrated && !row.CleanupComplete {
-			row.Actions = []string{"discard_preview"}
+			if err := s.requireSettledChildren(d.entry()); err != nil {
+				row.Reason = err.Error()
+			} else {
+				row.Actions = []string{"discard_preview"}
+			}
 		}
 		seen[d.ID] = len(out.Results)
 		out.Results = append(out.Results, row)

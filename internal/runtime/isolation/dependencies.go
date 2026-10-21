@@ -1,0 +1,317 @@
+package isolation
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
+
+	"reasonix/internal/base/filelock"
+	"reasonix/internal/base/fileutil"
+	"reasonix/internal/contract/tool"
+)
+
+const CodeDependentResults = "isolation.dependent_results"
+
+// ResultLineage pins a direct parent until every registered child is settled.
+// Its owner updates the durable record under the parent's entry lock.
+type ResultLineage struct {
+	Parent    *ParentResult          `json:"parent,omitempty"`
+	Admission string                 `json:"admission"`
+	Children  map[string]ChildResult `json:"children,omitempty"`
+}
+
+type ParentResult struct {
+	ID         string `json:"id"`
+	Generation string `json:"generation"`
+	Record     string `json:"record"`
+	Token      string `json:"token"`
+}
+
+type ChildResult struct {
+	ID        string `json:"id"`
+	Root      string `json:"root"`
+	Workspace string `json:"workspace"`
+	Token     string `json:"token"`
+}
+
+// BeginChild registers the dependency before reading the parent's snapshot.
+// Failed preparation retains its registration whenever a child record exists.
+func (s *Store) BeginChild(ctx context.Context, parent *Entry, children *Store, owner string) (*Entry, error) {
+	if s == nil || parent == nil || children == nil || owner == "" ||
+		!sameDir(children.workspace, parent.Cand.WorkspaceRoot) || children.repo != parent.Cand.Repo {
+		return nil, tool.Refusal{Code: CodeOwnerMismatch, Message: "child environment must target its running direct parent"}
+	}
+	id, err := newID()
+	if err != nil {
+		return nil, err
+	}
+	link := &ParentResult{ID: parent.ID, Generation: parent.RunGeneration, Record: entryRecordPath(parent), Token: rand.Text()}
+	if err := s.registerChild(ctx, parent, ChildResult{ID: id, Root: children.managedRoot, Workspace: children.workspace, Token: link.Token}); err != nil {
+		return nil, err
+	}
+	child, err := children.beginOwned(ctx, children.workspace, owner, id, &ResultLineage{Parent: link, Admission: "open"})
+	if err != nil {
+		err = errors.Join(err, s.retractUnpreparedChild(context.WithoutCancel(ctx), parent, children, id, link.Token))
+	}
+	return child, err
+}
+
+func (s *Store) registerChild(ctx context.Context, parent *Entry, child ChildResult) error {
+	unlock, err := s.lockEntry(ctx, parent.ID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	release, err := filelock.TryAcquire(s.runLock(parent.ID))
+	if err == nil {
+		release()
+		return tool.Refusal{Code: CodeStaleExecution, Message: "parent execution no longer owns its run"}
+	}
+	if !errors.Is(err, filelock.ErrHeld) {
+		return err
+	}
+	if err := checkRunGeneration(parent); err != nil {
+		return err
+	}
+	d, raw, err := readLineageRecord(entryRecordPath(parent))
+	if err != nil {
+		return err
+	}
+	if d.State != Running {
+		return dependentResults("parent execution no longer accepts children")
+	}
+	lineage := d.Lineage
+	if lineage == nil {
+		lineage = &ResultLineage{Admission: "open"}
+	}
+	if lineage.Admission != "open" {
+		return dependentResults("parent child admission is sealed")
+	}
+	if lineage.Children == nil {
+		lineage.Children = map[string]ChildResult{}
+	}
+	if _, exists := lineage.Children[child.ID]; exists {
+		return tool.Refusal{Code: CodeOwnerMismatch, Message: "child identity is already registered; original dependency retained"}
+	}
+	lineage.Children[child.ID] = child
+	return saveLineage(entryRecordPath(parent), raw, lineage)
+}
+
+func (s *Store) retractUnpreparedChild(ctx context.Context, parent *Entry, children *Store, id, token string) error {
+	unlock, err := s.lockEntry(ctx, parent.ID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	d, raw, err := readLineageRecord(entryRecordPath(parent))
+	if err != nil {
+		return err
+	}
+	if d.RunGeneration != parent.RunGeneration || d.Lineage == nil || d.Lineage.Children[id].Token != token {
+		return tool.Refusal{Code: CodeStaleExecution, Message: "child reservation changed; dependency retained"}
+	}
+	for _, mark := range children.resultMarkers() {
+		body, err := os.ReadFile(mark)
+		if err != nil {
+			return err
+		}
+		var header struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(body, &header); err != nil {
+			return err
+		}
+		if header.ID == id {
+			return nil
+		}
+	}
+	delete(d.Lineage.Children, id)
+	return saveLineage(entryRecordPath(parent), raw, d.Lineage)
+}
+
+// SealChildren closes admission before the parent tries to publish a manifest.
+// Unsettled results retain the parent's files and generation for recovery.
+func (s *Store) SealChildren(ctx context.Context, parent *Entry) error {
+	unlock, err := s.lockEntry(ctx, parent.ID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if err := checkRunGeneration(parent); err != nil {
+		return err
+	}
+	return s.sealChildrenLocked(parent)
+}
+
+func (s *Store) sealChildrenLocked(parent *Entry) error {
+	d, raw, err := readLineageRecord(entryRecordPath(parent))
+	if err != nil {
+		return err
+	}
+	lineage := d.Lineage
+	if lineage == nil {
+		lineage = &ResultLineage{}
+	}
+	lineage.Admission = "sealed"
+	if err := saveLineage(entryRecordPath(parent), raw, lineage); err != nil {
+		return err
+	}
+	parent.Lineage = lineage
+	return s.requireSettledChildren(parent)
+}
+
+func (s *Store) requireSettledChildren(parent *Entry) error {
+	if parent.Lineage == nil {
+		return nil
+	}
+	for id, child := range parent.Lineage.Children {
+		marks, err := filepath.Glob(filepath.Join(child.Root, "*", entryFile))
+		if err != nil {
+			return err
+		}
+		found := false
+		for _, mark := range marks {
+			d, _, err := readLineageRecord(mark)
+			if err != nil {
+				return err
+			}
+			if d.ID != id {
+				continue
+			}
+			found = true
+			want := &ParentResult{ID: parent.ID, Generation: parent.RunGeneration, Record: entryRecordPath(parent), Token: child.Token}
+			if d.Workspace != child.Workspace || d.Lineage == nil || !reflect.DeepEqual(d.Lineage.Parent, want) || !terminalState(d.State) || !d.CleanupComplete {
+				return dependentResults(fmt.Sprintf("child result %s is not settled; parent retained", id))
+			}
+			release, err := filelock.TryAcquire(filepath.Join(child.Root, "."+id+".run.lock"))
+			if err != nil {
+				return dependentResults("child execution is still active; parent retained")
+			}
+			release()
+		}
+		if !found {
+			return dependentResults(fmt.Sprintf("child reservation %s needs recovery; parent retained", id))
+		}
+	}
+	return nil
+}
+
+func dependentResults(message string) error {
+	return tool.Refusal{Code: CodeDependentResults, Message: message}
+}
+
+func readLineageRecord(path string) (durableEntry, []byte, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return durableEntry{}, nil, err
+	}
+	var d durableEntry
+	if err := json.Unmarshal(raw, &d); err != nil {
+		return d, raw, err
+	}
+	if !supportedResultVersion(d) || !supportedLifecycle(d) {
+		return d, raw, tool.Refusal{Code: CodeUnsupportedState, Message: "unsupported child dependency protocol; record retained"}
+	}
+	return d, raw, nil
+}
+
+func saveLineage(path string, raw []byte, lineage *ResultLineage) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return err
+	}
+	next, err := json.Marshal(lineage)
+	if err != nil {
+		return err
+	}
+	if previous := fields["lineage"]; len(previous) != 0 {
+		var oldFields map[string]json.RawMessage
+		if err := json.Unmarshal(previous, &oldFields); err != nil {
+			return err
+		}
+		next, err = mergeIdentityFields(previous, next)
+		if err != nil {
+			return err
+		}
+		var merged map[string]json.RawMessage
+		if err := json.Unmarshal(next, &merged); err != nil {
+			return err
+		}
+		var children map[string]json.RawMessage
+		if old := oldFields["children"]; len(old) != 0 {
+			if err := json.Unmarshal(old, &children); err != nil {
+				return err
+			}
+		}
+		retained := map[string]json.RawMessage{}
+		for id, child := range lineage.Children {
+			body, err := json.Marshal(child)
+			if err != nil {
+				return err
+			}
+			if previous := children[id]; len(previous) != 0 {
+				body, err = mergeIdentityFields(previous, body)
+				if err != nil {
+					return err
+				}
+			}
+			retained[id] = body
+		}
+		merged["children"], err = json.Marshal(retained)
+		if err != nil {
+			return err
+		}
+		next, err = json.Marshal(merged)
+		if err != nil {
+			return err
+		}
+	}
+	fields["version"], fields["lineage"] = json.RawMessage("4"), next
+	body, err := json.Marshal(fields)
+	if err != nil {
+		return err
+	}
+	return fileutil.AtomicWriteFileStrict(path, body, 0600)
+}
+
+func (s *Store) reopenChildren(parent *Entry) error {
+	if parent.Lineage == nil {
+		return nil
+	}
+	d, raw, err := readLineageRecord(entryRecordPath(parent))
+	if err != nil {
+		return err
+	}
+	if err := s.requireSettledChildren(d.entry()); err != nil {
+		return err
+	}
+	d.Lineage.Children, d.Lineage.Admission = nil, "open"
+	if err := saveLineage(entryRecordPath(parent), raw, d.Lineage); err != nil {
+		return err
+	}
+	parent.Lineage = d.Lineage
+	return nil
+}
+
+func supportedLineage(lineage *ResultLineage) bool {
+	if lineage == nil {
+		return true
+	}
+	if lineage.Admission != "open" && lineage.Admission != "sealed" {
+		return false
+	}
+	if p := lineage.Parent; p != nil && (!validID(p.ID) || p.Generation == "" || p.Token == "" || !filepath.IsAbs(p.Record)) {
+		return false
+	}
+	for id, child := range lineage.Children {
+		if !validID(id) || child.ID != id || !filepath.IsAbs(child.Root) || !filepath.IsAbs(child.Workspace) || child.Token == "" {
+			return false
+		}
+	}
+	return true
+}

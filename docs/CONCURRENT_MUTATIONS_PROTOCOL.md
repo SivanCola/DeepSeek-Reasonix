@@ -23,7 +23,8 @@ See [the user and implementation guide](CONCURRENT_MUTATIONS.md).
 | mutation 资源记录 | 校验版本、身份、路径及 OS 所有权；未知/损坏记录保留并拒绝绕过 | 旧 workspace claim 保持互斥 | 兼容长锁仍可能阻塞短事务 |
 | 无版本 iso_ 结果 | 保留身份并重新观察候选 | 仍可能使用旧清理规则 | 不能把缺失的旧证据视为通过 |
 | v2 iso_ 结果 | 独立 marker、封存清单、保留未知字段 | 仅支持旧格式的程序拒绝该版本 | 候选变化需恢复；终态记录保留 |
-| v3 根导入结果 | 记录基线、不可变根快照、依赖副本和来源身份 | 已发布的 v2 reader 拒绝 v3 | 活动根现场不会成为可删除候选 |
+| v3 根导入结果 | 记录基线、不可变根快照、依赖副本和来源身份 | 本实现先前的 v2 reader 拒绝 v3；未版本化旧程序不发现独立 marker | 活动根现场不会成为可删除候选 |
+| v4 父子依赖记录 | 子快照前登记直接父关系；封口后拒绝新增；待处理孩子阻止父封存、换代和清理 | v2/v3 reader 拒绝 v4 | 基础 owner 已实现；生产嵌套任务尚未启用 |
 | publication revocation v1 | 同一 entry 锁内撤销、应用及提交；先持久撤销再更新根记录 | 不支持撤销的早期实验 v3 reader 可忽略 sidecar | 早期实验 v3 不属于安全降级范围 |
 | int_ 尝试 v1 | 独立候选及精确快照检查；恢复保持成果身份 | 旧程序不读取该目录 | 历史验证不代表当前工作区仍有效 |
 | 根环境 v1 | 可重开现场；无冻结检查契约时不从现场补取检查 | 实验 v1 reader 不能理解新的安全规则 | 不授予自动验证发布资格 |
@@ -37,6 +38,10 @@ See [the user and implementation guide](CONCURRENT_MUTATIONS.md).
 
 验证平台及性能报告必须绑定具体源码快照。源码审计、受影响包测试、原生平台测试、
 浏览器模拟界面、托管 CI 和发布验收是不同证据，不能互相替代。
+
+v4 并存回归使用本分支先前的 v2 实现编译独立写入进程，不代表该实现已经发布。
+验收记录应同时保存旧源码提交、测试 helper、构建命令和二进制摘要；环境变量提供
+一个二进制路径本身不能证明其版本。已发布的未版本化读写器另受 marker 发现边界约束。
 
 环境绑定先在会话保存锁内以严格原子替换发布 v6 envelope，再写派生 sidecar。
 Clear、Fork 和恢复副本均在消息发布前绑定目标身份；恢复使用保存 owner 发出的
@@ -66,7 +71,8 @@ ACL 授权、hook 启动及 Bash 逃逸审批之前拒绝。源保护路径按�
 | Mutation resources | Validate version, identity, paths and OS ownership; retain unsupported records | Exclusion through legacy workspace claims | Legacy long holds can still block short transactions |
 | Unversioned iso_ | Retain identity and observe current candidate | May retain old cleanup behavior | Missing evidence is unknown |
 | v2 iso_ | Separate marker, sealed manifest, unknown-field preservation | Older-format-only readers refuse | Content drift requires recovery; terminal records remain |
-| v3 root imports | Baseline, immutable root snapshot, frozen dependencies and origin | Published v2 readers refuse v3 | Persistent live scenes never become disposable candidates |
+| v3 root imports | Baseline, immutable root snapshot, frozen dependencies and origin | Earlier v2 implementation readers refuse v3; unversioned legacy readers do not discover the separate marker | Persistent live scenes never become disposable candidates |
+| v4 parent/child dependencies | Register the direct parent before a child snapshot; seal admission; unsettled children block parent sealing, generation changes and cleanup | v2/v3 readers refuse v4 | Foundational owner implemented; production nested tasks remain disabled |
 | Revocation v1 | Revoke, Apply and Commit fence at the same entry lock; revocation persists first | Early experimental v3 readers can ignore the sidecar | Those experimental readers are outside the safe downgrade scope |
 | int_ v1 | Separate candidate and snapshot-bound checks; recover same identity | Does not read this directory | Historical verification does not prove current source validity |
 | Root environment v1 | Reopen retained scene; never refill missing contracts from mutable instructions | Experimental v1 lacks new guarantees | No automatic verification publication authority |
@@ -81,6 +87,12 @@ ACL 授权、hook 启动及 Bash 逃逸审批之前拒绝。源保护路径按�
 Bind platform and performance reports to a specific source snapshot. Source
 review, owning-package tests, native platform execution, mocked browser flows,
 hosted CI and release qualification are distinct evidence classes.
+
+The v4 coexistence regression compiles an independent writer from this branch's
+earlier v2 implementation; it does not establish that implementation was released.
+Retain its source commit, helper, build command and binary digest. An environment
+variable naming a binary cannot prove its version. Released unversioned readers
+have the separate marker-discovery boundary.
 
 Binding publishes the v6 envelope with strict atomic replacement under the
 session save lock before creating the derived sidecar. Clear, Fork and recovery

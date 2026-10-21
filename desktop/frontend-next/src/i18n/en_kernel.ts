@@ -66,6 +66,7 @@ export const EN_KERNEL: Record<string, string> = {
   "文件版本发生变化，已停止继续应用。请重新读取并确认新的变更预览": "The file version changed and further application stopped. Read it again and review the updated preview",
   "该命令不能脱离任务继续写入。请直接运行服务并使用 run_in_background，以便显示状态、协调写入和取消": "This command cannot detach and continue writing. Run the service directly with run_in_background so its status, writes and cancellation remain managed",
   "隔离任务仍在运行，请等待完成或取消任务后再处理结果": "The isolated task is still running. Wait for completion or cancel it before settling its result",
+  "子任务仍在运行或有待处理成果，父隔离环境会保留至子任务处理完成": "A child is still running or has an unsettled result. Its parent environment is retained until the child is settled",
   "宿主选定的验证命令被替换，未执行验证；请检查扩展配置后重试": "The host-selected verification command was replaced and did not run. Check extension settings before retrying",
   "隔离结果或整合事务需要恢复，已有文件和结果已保留。请处理恢复状态后再继续写入": "The isolated result or integration requires recovery. Files and results are retained; resolve recovery before continuing writes",
   "隔离结果使用了不支持的状态版本，原文件已保留。请使用兼容版本处理": "The isolated result uses an unsupported state version. Its files are retained; use a compatible version to continue",

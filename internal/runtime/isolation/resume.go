@@ -31,6 +31,9 @@ func (s *Store) Resume(ctx context.Context, id, owner string) (*Entry, error) {
 	if !settleable(e.State) && e.State != Interrupted {
 		return nil, tool.Refusal{Code: CodeRecoveryRequired, Message: "isolated result cannot resume while integration or recovery is pending"}
 	}
+	if err := s.reopenChildren(e); err != nil {
+		return nil, err
+	}
 	e.State = Running
 	if e.Evidence != nil {
 		e.Evidence.Checks = nil

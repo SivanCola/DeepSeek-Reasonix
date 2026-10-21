@@ -28,6 +28,9 @@ type SnapshotImport struct {
 }
 
 func resultVersion(e *Entry) int {
+	if e.Lineage != nil {
+		return 4
+	}
 	if e.Origin != nil {
 		return 3
 	}
@@ -35,10 +38,13 @@ func resultVersion(e *Entry) int {
 }
 
 func supportedResultVersion(d durableEntry) bool {
-	if d.Origin == nil {
-		return d.Version == 0 || d.Version == 2
+	if !supportedLineage(d.Lineage) || (d.Lineage != nil && d.Version != 4) || (d.Version == 4 && d.Lineage == nil) {
+		return false
 	}
-	return d.Version == 3 && validSnapshotOrigin(*d.Origin) &&
+	if d.Origin == nil {
+		return d.Version == 0 || d.Version == 2 || d.Version == 4
+	}
+	return (d.Version == 3 || d.Version == 4) && validSnapshotOrigin(*d.Origin) &&
 		d.Origin.Materialization.Repo.CommonDir == d.Snap.Repo.CommonDir && d.Origin.Materialization.Prefix == d.Snap.Prefix
 }
 

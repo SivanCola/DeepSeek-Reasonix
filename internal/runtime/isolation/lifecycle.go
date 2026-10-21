@@ -116,6 +116,7 @@ func checkRunGeneration(e *Entry) error {
 	if e.RunGeneration == "" || d.RunGeneration != e.RunGeneration || d.ID != e.ID || d.Snap != e.Snap || d.Cand != e.Cand || d.ResumeOwner != e.ResumeOwner || !reflect.DeepEqual(d.Origin, e.Origin) {
 		return tool.Refusal{Code: CodeStaleExecution, Message: "isolated execution generation changed; result retained"}
 	}
+	e.Lineage = d.Lineage
 	return nil
 }
 

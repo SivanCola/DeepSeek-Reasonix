@@ -54,6 +54,7 @@ type Entry struct {
 	DiscardApproval string
 	DiscardPolicy   string
 	Origin          *SnapshotOrigin
+	Lineage         *ResultLineage
 	legacy          bool
 	releaseRun      func()
 }
@@ -96,6 +97,14 @@ func (s *Store) Begin(ctx context.Context, workspaceRoot string) (*Entry, error)
 }
 
 func (s *Store) BeginOwned(ctx context.Context, workspaceRoot, owner string) (*Entry, error) {
+	id, err := newID()
+	if err != nil {
+		return nil, err
+	}
+	return s.beginOwned(ctx, workspaceRoot, owner, id, nil)
+}
+
+func (s *Store) beginOwned(ctx context.Context, workspaceRoot, owner, id string, lineage *ResultLineage) (*Entry, error) {
 	if s == nil {
 		return nil, errUnavailable
 	}
@@ -103,15 +112,11 @@ func (s *Store) BeginOwned(ctx context.Context, workspaceRoot, owner string) (*E
 	if err != nil {
 		return nil, err
 	}
-	id, err := newID()
-	if err != nil {
-		return nil, err
-	}
 	cand, err := worktree.PlanCandidate(snap, s.managedRoot)
 	if err != nil {
 		return nil, err
 	}
-	e := &Entry{ID: id, Workspace: workspaceRoot, Snap: snap, Cand: cand, State: Preparing, ResumeOwner: owner}
+	e := &Entry{ID: id, Workspace: workspaceRoot, Snap: snap, Cand: cand, State: Preparing, ResumeOwner: owner, Lineage: lineage}
 	if s.mutations != nil {
 		e.DiscardPolicy = hostDiscardPolicy
 	}
@@ -146,6 +151,11 @@ func (s *Store) finishState(ctx context.Context, e *Entry, state State) (bool, e
 	defer unlock()
 	if err := checkRunGeneration(e); err != nil {
 		return false, err
+	}
+	if e.Lineage != nil {
+		if err := s.sealChildrenLocked(e); err != nil {
+			return false, err
+		}
 	}
 	if e.releaseRun == nil {
 		return false, tool.Refusal{Code: CodeBusy, Message: "isolated execution no longer owns this run"}
@@ -360,6 +370,9 @@ func (s *Store) lookup(id string) (*Entry, error) {
 }
 
 func (s *Store) remove(ctx context.Context, e *Entry) error {
+	if err := s.requireSettledChildren(e); err != nil {
+		return err
+	}
 	if terminalState(e.State) && e.CleanupComplete {
 		return nil
 	}

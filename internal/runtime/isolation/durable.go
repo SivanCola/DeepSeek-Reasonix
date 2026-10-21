@@ -47,6 +47,7 @@ type durableEntry struct {
 	ResumeOwner     string                       `json:"resume_owner,omitempty"`
 	RunGeneration   string                       `json:"run_generation,omitempty"`
 	Origin          *SnapshotOrigin              `json:"snapshot_origin,omitempty"`
+	Lineage         *ResultLineage               `json:"lineage,omitempty"`
 }
 
 func entryPath(cand worktree.Candidate) string {
@@ -61,13 +62,10 @@ func entryRecordPath(e *Entry) string {
 }
 
 func persist(e *Entry) error {
-	raw, err := json.Marshal(durableEntry{Version: resultVersion(e), State: e.State, CleanupComplete: e.CleanupComplete, Tree: e.Tree, Changes: e.Changes, Stats: e.Stats, ID: e.ID, Workspace: e.Workspace, Snap: e.Snap, Cand: e.Cand, Evidence: e.Evidence, Environment: e.Environment, Baseline: e.Baseline, DiscardContent: e.DiscardContent, DiscardApproval: e.DiscardApproval, DiscardPolicy: e.DiscardPolicy, ResumeOwner: e.ResumeOwner, RunGeneration: e.RunGeneration, Origin: e.Origin})
-	if err != nil {
-		return err
-	}
 	path := entryRecordPath(e)
 	fields := map[string]json.RawMessage{}
 	var previousEntry *durableEntry
+	var err error
 	pinning := false
 	if previous, readErr := os.ReadFile(path); readErr == nil {
 		if err := json.Unmarshal(previous, &fields); err != nil {
@@ -77,6 +75,9 @@ func persist(e *Entry) error {
 		if err := json.Unmarshal(previous, &header); err != nil {
 			return err
 		}
+		// Dependency registration is independently serialized by this entry lock.
+		// A runtime's older view cannot remove children or reopen admission.
+		e.Lineage = header.Lineage
 		pinning, err = checkPersistentTransition(header, e)
 		if err != nil {
 			return err
@@ -84,6 +85,10 @@ func persist(e *Entry) error {
 		previousEntry = &header
 	} else if !errors.Is(readErr, os.ErrNotExist) {
 		return readErr
+	}
+	raw, err := json.Marshal(durableEntry{Version: resultVersion(e), State: e.State, CleanupComplete: e.CleanupComplete, Tree: e.Tree, Changes: e.Changes, Stats: e.Stats, ID: e.ID, Workspace: e.Workspace, Snap: e.Snap, Cand: e.Cand, Evidence: e.Evidence, Environment: e.Environment, Baseline: e.Baseline, DiscardContent: e.DiscardContent, DiscardApproval: e.DiscardApproval, DiscardPolicy: e.DiscardPolicy, ResumeOwner: e.ResumeOwner, RunGeneration: e.RunGeneration, Origin: e.Origin, Lineage: e.Lineage})
+	if err != nil {
+		return err
 	}
 	updates := map[string]json.RawMessage{}
 	if err := json.Unmarshal(raw, &updates); err != nil {
@@ -99,7 +104,7 @@ func persist(e *Entry) error {
 		if reflect.DeepEqual(previousEntry.DiscardContent, e.DiscardContent) {
 			delete(updates, "discard_content")
 		}
-		for _, key := range []string{"id", "workspace", "snap", "resume_owner", "discard_policy", "snapshot_origin"} {
+		for _, key := range []string{"id", "workspace", "snap", "resume_owner", "discard_policy", "snapshot_origin", "lineage"} {
 			delete(updates, key)
 		}
 		if pinning {
@@ -129,6 +134,9 @@ func persist(e *Entry) error {
 	raw, err = json.Marshal(fields)
 	if err != nil {
 		return err
+	}
+	if e.Lineage != nil {
+		return fileutil.AtomicWriteFileStrict(path, raw, 0o600)
 	}
 	return fileutil.AtomicWriteFile(path, raw, 0o600)
 }
@@ -190,6 +198,9 @@ func (s *Store) recover(id string) (*Entry, error) {
 		}
 		defer release()
 		e := d.entry()
+		if err := s.requireSettledChildren(e); err != nil {
+			return nil, err
+		}
 		if terminalState(e.State) {
 			return e, nil
 		}
@@ -222,7 +233,7 @@ func (s *Store) recover(id string) (*Entry, error) {
 func (d durableEntry) entry() *Entry {
 	return &Entry{ID: d.ID, Workspace: d.Workspace, Snap: d.Snap, Cand: d.Cand, Tree: d.Tree, Changes: d.Changes,
 		Stats: d.Stats, State: d.State, CleanupComplete: d.CleanupComplete, Evidence: d.Evidence, Environment: d.Environment, Baseline: d.Baseline,
-		DiscardContent: d.DiscardContent, DiscardApproval: d.DiscardApproval, DiscardPolicy: d.DiscardPolicy, ResumeOwner: d.ResumeOwner, RunGeneration: d.RunGeneration, Origin: d.Origin, legacy: d.legacy}
+		DiscardContent: d.DiscardContent, DiscardApproval: d.DiscardApproval, DiscardPolicy: d.DiscardPolicy, ResumeOwner: d.ResumeOwner, RunGeneration: d.RunGeneration, Origin: d.Origin, Lineage: d.Lineage, legacy: d.legacy}
 }
 
 // SweepExpired only removes idle candidates proved to contain no changes.
