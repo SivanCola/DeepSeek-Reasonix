@@ -27,6 +27,8 @@ export const SAVED_NOT_APPLIED: readonly string[] = ["provider.saved_while_runni
 export const savedNotApplied = (e: unknown): boolean => e instanceof HttpError && SAVED_NOT_APPLIED.includes(e.reason?.code ?? "");
 
 const SAID: Record<string, string> = {
+  "history.snapshot_changed": "历史内容已改变，正在重新读取最近的消息",
+  "history.pagination_unsupported": "当前内核不支持历史分页",
   "agent_composition.invalid": "预设内容无效，请检查标识、模块和参数",
   "agent_composition.unavailable": "组合所需模块 {module} 当前不可用：{detail}",
   "agent_composition.mcp_unavailable": "MCP 服务 {module} 不可用：{detail}。请在 MCP 设置中检查连接或认证，或在预设中取消选择该服务后重试。",

@@ -27,6 +27,13 @@ import { EN_SPONSOR } from "./en_sponsor";
 export const EN: Record<string, string> = {
 	...EN_COMPOSITION,
   ...EN_DOCUMENT,
+  "正在读取历史消息…": "Reading history messages…",
+  "历史加载失败 · 重试": "History could not be loaded · Retry",
+  "加载更早的消息": "Load earlier messages",
+  "正在查找较早消息…": "Searching earlier messages…",
+  "部分历史尚未读取": "Some history has not been read",
+  "历史内容已改变，正在重新读取最近的消息": "History changed. Reloading the latest messages.",
+  "当前内核不支持历史分页": "This kernel does not support history paging.",
   "此检查点不包含文件快照": "This checkpoint contains no file snapshots",
   ...EN_SURFACES,
   "重命名聊天": "Rename chat",

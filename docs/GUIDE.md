@@ -1005,6 +1005,15 @@ Removing the project closes its idle panes and retains every directory and
 transcript. Existing transcripts stay in place and group on restart without migration.
 Worktrees added separately outside Reasonix-managed storage remain independent projects.
 
+Long conversations initially display the latest 200 messages. Scroll upward or
+choose Load earlier messages to read more.
+
+In-conversation find reads earlier pages as needed and indicates incomplete
+coverage; clearing the query stops further prefetching. Rewind, compaction and
+session changes reload recent content.
+
+Paging affects presentation only, not the full conversation used by the model.
+
 The list holds up to 32 projects; adding another requires removing one first. `serve-workspaces.json` now stores an object with `paths` and `launch`. Older binaries read only arrays and cannot preserve this format: do not share the same state home with an older binary after reordering.
 
 Menus and controls:

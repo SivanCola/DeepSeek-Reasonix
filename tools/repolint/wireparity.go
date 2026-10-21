@@ -120,6 +120,8 @@ var mirroredWireTypes = []wireMirror{
 	// use_capability where the live one drew what it reached.
 	{"internal/frontend/serve/history.go", "historyToolCall", tsSessionFile, "HistoryToolCall"},
 	{"internal/frontend/serve/history.go", "historyMessage", tsSessionFile, "HistoryMessage"},
+	{"internal/frontend/serve/history_page.go", "historyPageResponse", tsSessionFile, "HistoryPage"},
+	{"internal/frontend/serve/history_page.go", "historyPageToolContext", tsSessionFile, "HistoryToolContext"},
 	// Who can reach this window from another device. A device the page cannot
 	// list is one the person at the window cannot see to disconnect.
 	{"internal/frontend/serve/device_share.go", "ShareStatus", tsShareFile, "ShareStatus"},
