@@ -21,15 +21,26 @@ const protocolCompatibilityLimit = 256
 var protocolCompatibilityHints = &protocolHints{entries: make(map[[32]byte]*protocolHint)}
 
 type protocolHint struct {
-	since  time.Time // when the entry was recorded; only a later request confirms it
-	until  time.Time
-	reason string
-	mode   string // observed, pending, probing, active, disabled
+	observedThrough uint64 // requests already started when this failure was recorded
+	until           time.Time
+	reason          string
+	mode            string // observed, pending, probing, active, disabled
 }
 
 type protocolHints struct {
-	mu      sync.Mutex
-	entries map[[32]byte]*protocolHint
+	mu       sync.Mutex
+	entries  map[[32]byte]*protocolHint
+	requests uint64
+}
+
+// beginRequest provides ordering independent of the host clock's resolution.
+// A failure records the highest request sequence already issued, so failures
+// from in-flight siblings cannot confirm the same INTERNAL_ERROR episode.
+func (s *protocolHints) beginRequest() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.requests++
+	return s.requests
 }
 
 func (s *protocolHints) selectHTTP1(key [32]byte, now time.Time) *protocolHint {
@@ -53,10 +64,10 @@ func (s *protocolHints) selectHTTP1(key [32]byte, now time.Time) *protocolHint {
 	return h
 }
 
-// failedHTTP2 records a trigger code from a request that started at started.
+// failedHTTP2 records a trigger code from request sequence started.
 // INTERNAL_ERROR is also a server's generic stream reset, so it only observes
 // a route until a request started after that observation fails again.
-func (s *protocolHints) failedHTTP2(key [32]byte, code string, started, now time.Time) {
+func (s *protocolHints) failedHTTP2(key [32]byte, code string, started uint64, now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for k, h := range s.entries {
@@ -65,8 +76,8 @@ func (s *protocolHints) failedHTTP2(key [32]byte, code string, started, now time
 		}
 	}
 	if h := s.entries[key]; h != nil {
-		if h.mode == "observed" && (code != "INTERNAL_ERROR" || started.After(h.since)) {
-			h.since, h.until, h.reason, h.mode = now, now.Add(protocolCompatibilityTTL), code, "pending"
+		if h.mode == "observed" && (code != "INTERNAL_ERROR" || started > h.observedThrough) {
+			h.until, h.reason, h.mode = now.Add(protocolCompatibilityTTL), code, "pending"
 		}
 		return // late failures cannot reset a newer decision or extend its TTL
 	}
@@ -77,7 +88,7 @@ func (s *protocolHints) failedHTTP2(key [32]byte, code string, started, now time
 	if code == "INTERNAL_ERROR" {
 		mode = "observed"
 	}
-	s.entries[key] = &protocolHint{since: now, until: now.Add(protocolCompatibilityTTL), reason: code, mode: mode}
+	s.entries[key] = &protocolHint{observedThrough: s.requests, until: now.Add(protocolCompatibilityTTL), reason: code, mode: mode}
 }
 
 func (s *protocolHints) settle(key [32]byte, h *protocolHint, mode string) {
@@ -148,7 +159,7 @@ func (t *protocolTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	key := sha256.Sum256([]byte(t.scope + "\x00" + req.URL.String() + "\x00" + proxyPath))
 	ctx := context.WithValue(req.Context(), protocolProxyKey{}, protocolProxy{proxy})
 	req = req.WithContext(ctx)
-	started := time.Now()
+	started := t.hints.beginRequest()
 	var hint *protocolHint
 	if req.URL.Scheme == "https" && ctx.Err() == nil {
 		hint = t.hints.selectHTTP1(key, time.Now())
@@ -174,7 +185,7 @@ func (t *protocolTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	return resp, nil
 }
 
-func (t *protocolTransport) failed(ctx context.Context, key [32]byte, hint *protocolHint, started time.Time, err error) {
+func (t *protocolTransport) failed(ctx context.Context, key [32]byte, hint *protocolHint, started uint64, err error) {
 	if ctx.Err() != nil && !errors.As(context.Cause(ctx), new(*RequestSendTimeoutError)) {
 		if hint != nil {
 			t.hints.settle(key, hint, "pending")
