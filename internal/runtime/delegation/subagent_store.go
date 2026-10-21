@@ -64,8 +64,7 @@ type SubagentStore struct {
 
 	mu     sync.Mutex
 	locked map[string]bool
-	// live holds the conversation of every run this process is executing, so a
-	// reader sees a child while it works: its file is written only at the end.
+	// live exposes changes since the last durable admission or terminal save.
 	live  map[string]*liveRun
 	steer steerState
 }
@@ -547,11 +546,21 @@ func (s *SubagentStore) MarkRunning(run *SubagentRun) error {
 	if s.parentDestroyed(run) {
 		return nil
 	}
-	s.setLive(run.Ref, run.Session)
+	if err := s.ensureBranchCreatedAt(run); err != nil {
+		return err
+	}
+	if err := run.Session.Save(s.sessionPath(run.Ref)); err != nil {
+		return err
+	}
 	meta := run.Meta
 	meta.Status = sessionstore.SubagentRunning
 	meta.UpdatedAt = time.Now().UTC()
-	return s.saveMeta(meta)
+	if err := s.saveMeta(meta); err != nil {
+		return err
+	}
+	run.Meta = meta
+	s.setLive(run.Ref, run.Session)
+	return nil
 }
 
 func (s *SubagentStore) SaveCompleted(run *SubagentRun) error {
@@ -578,10 +587,8 @@ func (s *SubagentStore) SaveFailed(run *SubagentRun) error {
 	return s.saveTerminal(run, sessionstore.SubagentFailed, "")
 }
 
-// ensureBranchCreatedAt seeds the session list sidecar before the first
-// transcript save. Subagent transcripts are written only on completion, so
-// Session.Save would otherwise backfill BranchMeta.CreatedAt with the save
-// moment (completion time). The real start time already lives on run.Meta.
+// ensureBranchCreatedAt preserves the execution's actual start time when its
+// first durable save occurs after preparation.
 func (s *SubagentStore) ensureBranchCreatedAt(run *SubagentRun) error {
 	if s == nil || run == nil || run.Ref == "" {
 		return nil

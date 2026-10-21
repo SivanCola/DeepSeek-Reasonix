@@ -29,6 +29,12 @@ reviewed: 2026-10-22
 父执行结束、换代或封口后不能继续准入；等待资源期间父封口同样会拒绝续跑。
 未结算后代仍会保留父环境；父已结束时，先通过根成果管理处理后代，再继续父任务。
 
+父执行结束但后代尚未结算时，父记录保留 generation 和文件并标记中断，清除未封存的验证声明。
+崩溃遗留的 running 记录若已无物理 run owner，列表只在读取结果中显示中断，不改写原文件。
+
+源会话的 `list_subagents` 按同一来源工作区及会话所有权规则发现隔离任务，
+可以找到失败父任务的引用；显式处理后代后，可在重建的运行时继续原父候选。
+
 父记录终态迁移时允许同一候选目录的旧 marker 别名，保持子成果的不可变反向关联。
 ID、generation 和 token 仍须匹配；运行中的父记录不接受该迁移别名。
 
@@ -94,6 +100,15 @@ sealing while continuation waits for resources.
 Unsettled descendants retain
 their parent; settle them through root management before resuming a stopped parent.
 
+A stopped parent with unsettled descendants retains its generation and files as
+interrupted, clearing unsealed verification claims. Catalogs project an unowned
+running crash record as interrupted without rewriting the original record.
+
+The source conversation's list_subagents uses the same origin-workspace and
+conversation ownership rule as read and continue. Failed parent references remain
+discoverable; after explicitly settling descendants, a rebuilt runtime can
+continue the retained parent candidate.
+
 Terminal marker promotion accepts only the old marker in the same candidate
 directory, preserving immutable child backlinks. ID, generation and token must
 still match. Running parents do not accept this promotion alias.
@@ -134,3 +149,19 @@ to the root for current authorization. Recovery handles the direct-source journa
 without applying child changes into the root or restoring verification claims.
 
 External changes to postimages retain the scene instead of being overwritten.
+
+### Durable task admission / 任务准入持久化
+
+The transcript is saved before a delegated run is published as running. Its
+actual admitted task message is saved before the first provider request. A failed
+delegated admission save refuses execution.
+
+A process crash retains the original task prompt and candidate files. Continuing
+requires a new execution generation and settling unfinished descendants.
+In-flight assistant and tool messages after admission may be lost until the
+terminal save.
+
+子代理发布运行状态前保存初始会话，首次模型请求前保存实际准入的任务消息。
+子代理的准入保存失败会阻止执行。进程崩溃后保留原任务文本和候选文件；续跑仍
+需要新的执行代次，并先处理未结算的后代。准入之后尚未完成保存的模型和工具消息
+可能丢失，不承诺完整恢复进行中的回合。

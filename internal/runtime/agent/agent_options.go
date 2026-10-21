@@ -143,6 +143,8 @@ type Options struct {
 	// runs, so the host can reach it while it works. Nothing else about the run
 	// changes: the guidance it admits is read at the next tool boundary.
 	OnStart func(Steerer)
+	// AdmissionSaver may refuse execution if its admitted prompt is not durable.
+	AdmissionSaver AdmissionSaver
 	// ObserveRoot is where an unclassified call's effect is observed by walking
 	// the workspace before and after it. Set it only for an agent no other
 	// foreground writer runs beside; empty falls back to WriteWorkspaceRoot.

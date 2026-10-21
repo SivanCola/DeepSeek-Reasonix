@@ -157,7 +157,7 @@ func (s *Store) finishState(ctx context.Context, e *Entry, state State) (bool, e
 	}
 	if e.Lineage != nil {
 		if err := s.sealChildrenLocked(e); err != nil {
-			return false, err
+			return false, interruptFinishedParent(e, err)
 		}
 	}
 	if e.releaseRun == nil {

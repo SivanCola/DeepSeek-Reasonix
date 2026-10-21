@@ -92,6 +92,9 @@ func TestEffectNestedExecutionRetainsRegisteredDescendantAtItsDirectSource(t *te
 		defer p.mu.Unlock()
 		t.Fatalf("real nested task lost its registered direct source: %+v; results=%v", catalog, p.results)
 	}
+	if parent.State != isolation.Interrupted || parent.Activity != "inactive" {
+		t.Fatalf("returned parent still appears to execute: %+v", parent)
+	}
 	if raw, err := os.ReadFile(filepath.Join(child.CandidateRoot, "child.txt")); err != nil || string(raw) != "nested candidate\n" {
 		p.mu.Lock()
 		defer p.mu.Unlock()
@@ -104,7 +107,20 @@ func TestEffectNestedExecutionRetainsRegisteredDescendantAtItsDirectSource(t *te
 	}
 }
 
-func nestedExecutionFixture(t *testing.T, p *nestedExecutionProvider, runtime, checks string, sink event.Sink) (*control.Controller, string) {
+func nestedExecutionFixture(t *testing.T, p provider.Provider, runtime, checks string, sink event.Sink) (*control.Controller, string) {
+	t.Helper()
+	opts := nestedExecutionOptions(t, p, runtime, checks, sink)
+	ctrl, err := Build(t.Context(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(ctrl.Close)
+	bindPresenceSession(t, ctrl)
+	ctrl.SetToolApprovalMode(control.ToolApprovalYolo)
+	return ctrl, opts.WorkspaceRoot
+}
+
+func nestedExecutionOptions(t *testing.T, p provider.Provider, runtime, checks string, sink event.Sink) Options {
 	t.Helper()
 	home, root := statedBootHome(t), t.TempDir()
 	kind := "nested-execution-" + strings.ToLower(t.Name())
@@ -131,12 +147,5 @@ model="fixture"
 	gitInDir(t, root, "config", "core.autocrlf", "false")
 	gitInDir(t, root, "add", "-A")
 	gitInDir(t, root, "commit", "-qm", "fixture")
-	ctrl, err := Build(t.Context(), Options{Home: home, WorkspaceRoot: root, Sink: sink})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(ctrl.Close)
-	bindPresenceSession(t, ctrl)
-	ctrl.SetToolApprovalMode(control.ToolApprovalYolo)
-	return ctrl, root
+	return Options{Home: home, WorkspaceRoot: root, Sink: sink}
 }

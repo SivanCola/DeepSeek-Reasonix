@@ -163,6 +163,9 @@ func (s *Store) resultSummary(d durableEntry) ResultSummary {
 		row.Reason = "unsupported isolation state retained; a compatible reader is required"
 	} else if d.Version != 0 {
 		row.Activity, row.Reason = s.resultActivity(d.ID)
+		if row.State == Running && row.Activity == "inactive" {
+			row.State = Interrupted
+		}
 	}
 	if supportedResultVersion(d) && supportedLifecycle(d) && row.Activity != "active" && row.State != Applying && row.State != Integrated && !row.CleanupComplete {
 		if err := s.requireSettledChildren(d.entry()); err != nil && !s.dependenciesRecoverable(d.entry()) {

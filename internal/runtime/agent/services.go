@@ -118,6 +118,7 @@ func newAgentServices(
 ) agentServices {
 	return agentServices{
 		prov:              prov,
+		admissionSaver:    opts.AdmissionSaver,
 		triage:            opts.TriageProvider,
 		triageRef:         opts.TriageModelRef,
 		triagePricing:     opts.TriagePricing,

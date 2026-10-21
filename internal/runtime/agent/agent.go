@@ -901,7 +901,10 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 		return err
 	}
 
-	_, state := a.beginRunTurn(ctx, input)
+	_, state, admissionErr := a.beginRunTurn(ctx, input)
+	if admissionErr != nil {
+		return admissionErr
+	}
 	state.runMaxSteps = runMaxSteps
 	state.runMaxStepsKey = runMaxStepsKey
 	state.runLimitHostOwned = runLimitHostOwned

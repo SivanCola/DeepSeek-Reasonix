@@ -86,3 +86,13 @@ func (s *Store) failedFinish(ctx context.Context, e *Entry, cause error) error {
 	e.State = RecoveryRequired
 	return errors.Join(cause, persist(e))
 }
+
+func interruptFinishedParent(e *Entry, cause error) error {
+	e.State = Interrupted
+	if e.Evidence != nil {
+		e.Evidence.Verification = "unknown"
+		e.Evidence.Checks = nil
+		e.Evidence.FinishedContent = nil
+	}
+	return errors.Join(cause, persist(e))
+}

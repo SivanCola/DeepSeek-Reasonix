@@ -65,13 +65,14 @@ func init() { midTurnSnapshotInterval.Store(int64(30 * time.Second)) }
 // SaveAdmittedMessage implements agent.AdmissionSaver. The next save is the
 // autosave tick or turn end, so without this one a kill in between leaves the
 // prompt in memory only. A failed save is logged and does not refuse the turn.
-func (c *Controller) SaveAdmittedMessage(context.Context) {
+func (c *Controller) SaveAdmittedMessage(context.Context) error {
 	if c.SessionPath() == "" {
-		return
+		return nil
 	}
 	if err := c.snapshot(false, false, false); err != nil {
 		slog.Warn("controller: save admitted user message", "err", err)
 	}
+	return nil
 }
 
 // autosaveWhileRunning snapshots the session periodically while a turn runs,
