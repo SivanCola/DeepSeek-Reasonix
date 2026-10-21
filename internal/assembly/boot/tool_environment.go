@@ -60,16 +60,13 @@ func resolveToolEnvironment(opts Options, cfg *config.Config, roots config.Roots
 		_ = os.MkdirAll(dir, 0o700)
 	}
 	env := toolEnvironment{
-		forbidReadRoots: RuntimeForbidReadRoots(cfg, root),
+		forbidReadRoots: appendUniquePaths(RuntimeForbidReadRoots(cfg, root), opts.inheritedReadDenies...),
 		network:         cfg.Sandbox.Network,
 		bashTimeout:     time.Duration(cfg.BashTimeoutSeconds()) * time.Second,
 		readPaths:       builtin.NewPathResolver(),
 		sessionTemp:     opts.SessionTemp,
 	}
-	env.writeRoots = appendUniquePaths(cfg.WriteRootsForRoot(root), additionalDirs...)
-	if opts.WorkspaceOnly {
-		env.writeRoots = []string{root}
-	}
+	env.writeRoots = runtimeWriteRoots(opts, cfg, root, additionalDirs)
 	if opts.Observe != nil {
 		env.readRoots = []string{root}
 	}
@@ -104,6 +101,13 @@ func resolveToolEnvironment(opts Options, cfg *config.Config, roots config.Roots
 		env.sessionTemp = sessiontemp.New()
 	}
 	return env
+}
+
+func runtimeWriteRoots(opts Options, cfg *config.Config, root string, additionalDirs []string) []string {
+	if opts.WorkspaceOnly {
+		return []string{root}
+	}
+	return appendUniquePaths(cfg.WriteRootsForRoot(root), additionalDirs...)
 }
 
 var _ sandbox.EgressRoute = (*egress.Proxy)(nil)

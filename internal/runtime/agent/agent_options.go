@@ -13,6 +13,7 @@ import (
 	"reasonix/internal/state/checkpoint"
 	"reasonix/internal/state/instruction"
 	"reasonix/internal/state/memory"
+	"reasonix/internal/state/mutation"
 	"reasonix/internal/state/workspacelease"
 	"reasonix/internal/tools/jobs"
 	"strings"
@@ -164,7 +165,9 @@ type Options struct {
 	// WorkspaceLease serializes Delivery mutations across sessions that target
 	// the same workspace. nil preserves source compatibility for direct Agent
 	// construction; boot always supplies it for Delivery sessions.
-	WorkspaceLease *workspacelease.Owner
+	WorkspaceLease      *workspacelease.Owner
+	MutationCoordinator *mutation.Coordinator
+	ExecutionCapacity   writeclaim.PhaseCapacity
 
 	// ProjectChecks are host-observable structured checks extracted during boot.
 	ProjectChecks         []instruction.VerifyCheck

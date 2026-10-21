@@ -189,7 +189,7 @@ func (f *FleetTool) Execute(ctx context.Context, args json.RawMessage) (result s
 				writerRegistered = true
 			}
 		}
-		job := jm.StartForSession(jobs.SessionFromContext(ctx), "fleet", label, func(jobCtx context.Context, _ io.Writer) (string, error) {
+		job, startErr := jm.StartOwnedForSession(jobs.SessionFromContext(ctx), "fleet", label, func(jobCtx context.Context, _ io.Writer) (string, error) {
 			// Execute returns as soon as the job is registered, so the job owns
 			// the handed-off merger until every child preview and terminal has
 			// flushed. Closing it in Execute would strand child cards at running.
@@ -205,6 +205,10 @@ func (f *FleetTool) Execute(ctx context.Context, args json.RawMessage) (result s
 			jobCtx = withSubagentProgressMerger(jobCtx, merger)
 			return f.runFleet(jobCtx, groupSink, specs, plan, adopted, parentID)
 		})
+		if startErr != nil {
+			releaseUnstartedRun(nil, observer, writerRegistered, writerID)
+			return "", startErr
+		}
 		// runFleet (inside the job) owns the terminal and merger close from
 		// here on. Foreground runFleet hands off only the terminal; Execute
 		// still closes the merger after the synchronous call returns.

@@ -21,6 +21,7 @@ import (
 	"reasonix/internal/contract/provider"
 	"reasonix/internal/contract/tool"
 	"reasonix/internal/safety/evidence"
+	"reasonix/internal/safety/sandbox"
 	"reasonix/internal/state/memory"
 	"reasonix/internal/tools/jobs"
 )
@@ -41,6 +42,8 @@ func RunSubAgentWithSession(ctx context.Context, prov provider.Provider, reg *to
 		return "", err
 	}
 	restrictChildComposition(ctx, reg)
+	ctx = tool.WithoutHostExecutionCapabilities(ctx)
+	ctx = sandbox.WithoutEscapeApprover(ctx)
 	// Isolate temporary files for this run before any tool execution.
 	ctx = tool.WithoutGoalTurnRecorder(ctx)
 	if opts.MemoryQueue != nil {
@@ -79,11 +82,19 @@ func RunSubAgentWithSession(ctx context.Context, prov provider.Provider, reg *to
 	sub := newDelegatedAgent(ctx, prov, reg, sess, opts, sink)
 	// One defer: this returns from a salvage, a review failure, a provider
 	// error and a clean answer, and per-path calls would miss one.
-	defer func() { observeSubagentHandoff(sink, sub, sess, opts, answer, err) }()
+	defer func() {
+		p := recover()
+		if p != nil {
+			err = fmt.Errorf("sub-agent panic: %v", p)
+		}
+		mergeChildEvidence(ctx, sub)
+		observeSubagentHandoff(sink, sub, sess, opts, answer, err)
+		if p != nil {
+			panic(p)
+		}
+	}()
 	sub.SetPlanMode(planWorkflow)
 	if err := sub.Run(ctx, prompt); err != nil {
-		// Still merge any partial child evidence so parent gates see real writes.
-		mergeChildEvidence(ctx, sub)
 		if answer, ok := salvageReadinessExhaustedAnswer(sub, sess, opts, err); ok {
 			return composeSubagentAnswer(ctx, answer, sub, writeclaim.SubagentWriteClaim(ctx), opts.ClassifierTaskText), nil
 		}
@@ -98,14 +109,12 @@ func RunSubAgentWithSession(ctx context.Context, prov provider.Provider, reg *to
 			nudges++
 			sub.pending.preserveEvidence = true
 			if err := sub.Run(ctx, reviewReportNudgePrompt(kind)); err != nil {
-				mergeChildEvidence(ctx, sub)
 				// A retry that fails still keeps local parent mutations; the
 				// parent turns this into Partial/Unverified rather than rolling back.
 				return "", fmt.Errorf("sub-agent: %w", err)
 			}
 		}
 		if !sub.HasSuccessfulReviewReport(kind) {
-			mergeChildEvidence(ctx, sub)
 			// Nudging pays at every role setting: a verdict the host can read is
 			// how a block reaches the gate. Failing over its absence does not —
 			// no report is no block, the state a killed run leaves anyway.
@@ -124,7 +133,6 @@ func RunSubAgentWithSession(ctx context.Context, prov provider.Provider, reg *to
 			}
 		}
 	}
-	mergeChildEvidence(ctx, sub)
 	if answer := latestAssistantAnswer(sess); answer != "" {
 		return composeSubagentAnswer(ctx, answer, sub, writeclaim.SubagentWriteClaim(ctx), opts.ClassifierTaskText), nil
 	}

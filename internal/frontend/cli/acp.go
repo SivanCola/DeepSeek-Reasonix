@@ -199,6 +199,8 @@ func (f *acpFactory) sessionBootOptions(p acp.SessionParams) (boot.Options, erro
 		EffortOverride:           p.EffortOverride,
 		Stderr:                   os.Stderr,
 		WorkspaceRoot:            root,
+		SessionEnvironmentPath:   p.SessionEnvironmentPath,
+		RootEnvironment:          p.RootEnvironment,
 		ExtraPlugins:             p.MCPServers,
 		AdditionalDirs:           p.AdditionalDirs,
 		CleanupPendingReconciler: acp.ReconcileCleanupPending,

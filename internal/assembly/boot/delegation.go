@@ -61,11 +61,16 @@ func (w roleWiring) delegation(in delegationInputs) (*delegation.TaskTool, *skil
 }
 
 func (w roleWiring) taskTool(in delegationInputs) *delegation.TaskTool {
+	retries := 0
+	if mode, _ := w.cfg.CollaborationMode(); mode != "legacy" {
+		retries = agent.ProviderRetriesFromConfig(w.cfg.Agent.MaxProviderRetries)
+	}
 	return delegation.NewTaskToolWithOptions(delegation.TaskToolOptions{
 		Provider:          in.exec,
 		Pricing:           in.entry.Price,
 		ParentRegistry:    w.reg,
 		MaxSteps:          in.maxSteps,
+		ProviderRetries:   retries,
 		ContextWindow:     in.entry.ContextWindow,
 		RecentKeep:        w.cfg.Agent.RecentKeep,
 		CompactionBudgets: compactionBudgets(w.cfg),
@@ -90,6 +95,9 @@ func (w roleWiring) taskTool(in delegationInputs) *delegation.TaskTool {
 		WithDeliveryProfile(in.delivery).
 		WithAblation(in.opts.Ablation).
 		WithWorkspaceLease(in.session.lease).
+		WithMutationCoordinator(in.session.mutations).
+		WithExecutionPresence(in.session.presence).
+		WithCheckEnvironment(w.verificationEnvironment(in)).
 		WithScheduler(in.sub.scheduler).
 		WithProfileLookup(in.sub.profileLookup).
 		WithProfileConfigResolvers(in.sub.profileModel, in.sub.profileEffort).
@@ -124,6 +132,7 @@ func (w roleWiring) skillRunOptions(in delegationInputs) func(context.Context, i
 			DeliveryProfile:     in.delivery,
 			Ablation:            in.opts.Ablation,
 			WorkspaceLease:      in.session.lease,
+			MutationCoordinator: in.session.mutations,
 			ExtraWorkspaceRoots: in.extraRoots,
 			Hooks:               w.hooks.ForRole(skillSubagentRole(sctx)),
 		}

@@ -8,7 +8,7 @@ import (
 // launchJob runs j in its own goroutine. Joining the wait group and seeing the
 // root cancelled happen under m.mu, the lock Close cancels under, so a job
 // either joins before Close waits or is interrupted without ever running.
-func (m *Manager) launchJob(ctx context.Context, j *Job, run func(context.Context, io.Writer) (string, error)) {
+func (m *Manager) launchJob(ctx context.Context, j *Job, run func(context.Context, io.Writer) (string, error)) error {
 	parentSession, id, kind, label := j.SessionID, j.ID, j.Kind, j.Label
 	m.mu.Lock()
 	if err := m.root.Err(); err != nil {
@@ -27,7 +27,7 @@ func (m *Manager) launchJob(ctx context.Context, j *Job, run func(context.Contex
 		j.mu.Unlock()
 		close(j.done)
 		m.publishCompletion(ev)
-		return
+		return err
 	}
 	m.wg.Add(1)
 	if m.stalledWarning > 0 {
@@ -101,4 +101,5 @@ func (m *Manager) launchJob(ctx context.Context, j *Job, run func(context.Contex
 		// Only now would a woken turn's first question get "terminal".
 		m.publishCompletion(ev)
 	}()
+	return nil
 }

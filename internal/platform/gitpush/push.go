@@ -43,33 +43,26 @@ const pushTimeout = 2 * time.Minute
 type Result struct {
 	Plan Plan `json:"plan"`
 	// New is true when the branch did not exist on the remote before.
-	New bool `json:"new"`
+	New            bool   `json:"new"`
+	TrackingStatus string `json:"trackingStatus,omitempty"`
 }
 
 // Push sends the confirmed plan's branch to its upstream. It re-reads the plan
 // and refuses, with ErrPlanChanged, anything that differs from what was
 // confirmed. It never forces, and it names exactly one ref.
 func Push(ctx context.Context, repo gitcmd.Repo, confirmed Plan) (Result, error) {
-	plan, raw, err := preview(ctx, repo)
-	if err != nil {
-		return Result{}, err
-	}
-	if !plan.sameAs(confirmed) {
-		return Result{}, ErrPlanChanged
-	}
-	if plan.Ahead == 0 {
-		return Result{}, ErrNothingToPush
-	}
+	return PushWithScope(ctx, repo, confirmed, nil)
+}
+
+func PushWithScope(ctx context.Context, repo gitcmd.Repo, confirmed Plan, scope SourceScope) (Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, pushTimeout)
 	defer cancel()
-	sc, cleanup, err := newScratch(ctx, repo)
+	prepared, cleanup, err := preparePush(ctx, repo, confirmed, scope)
 	if err != nil {
 		return Result{}, err
 	}
 	defer cleanup()
-	if out, err := sc.repo.Command(ctx, "update-ref", "refs/heads/push", plan.Head).CombinedOutput(); err != nil {
-		return Result{}, fmt.Errorf("%w: %s", ErrPushFailed, strings.TrimSpace(string(out)))
-	}
+	sc, plan, raw := prepared.scratch, prepared.plan, prepared.raw
 	mark, err := writeAskpass(sc.dir)
 	if err != nil {
 		return Result{}, err
@@ -97,10 +90,7 @@ func Push(ctx context.Context, repo gitcmd.Repo, confirmed Plan) (Result, error)
 		}
 		return Result{}, fmt.Errorf("%w: %s", ErrPushFailed, tail(stderr.String()))
 	}
-	// The real repository learns where the remote's branch now stands, as git push
-	// run inside it would have recorded.
-	_ = repo.Top().Command(ctx, "update-ref", "refs/remotes/"+plan.Remote+"/"+plan.UpstreamBranch, plan.Head).Run()
-	return Result{Plan: plan, New: status == '*'}, nil
+	return Result{Plan: plan, New: status == '*', TrackingStatus: settlePush(ctx, repo, prepared, scope)}, nil
 }
 
 // refStatus is the one-character flag git --porcelain gives the ref's line: ' '

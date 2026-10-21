@@ -253,6 +253,9 @@ func (s *Server) rebuildOptions(cur control.SessionAPI, ref string) boot.Options
 		opts.SessionTemp = ctrl.SessionTemp()
 		opts.WorkspaceRepo = ctrl.WorkspaceRepo()
 		opts.BrowserSession = ctrl.BrowserSession()
+		opts.RootEnvironment = ctrl.RootEnvironment()
+		opts.SessionEnvironmentPath = ctrl.SessionPath()
+		opts.DelegationScheduler = ctrl.DelegationScheduler()
 	}
 	opts.RuntimeReload = s.reuseFromLastBuild()
 	return opts

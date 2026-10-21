@@ -7,6 +7,7 @@ import "strings"
 // underlying target tool after resolution (use_capability call).
 var nonMutationMetaTools = map[string]bool{
 	"run_skill":           true,
+	"run_script":          true,
 	"read_skill":          true,
 	"read_only_skill":     true,
 	"task":                true,

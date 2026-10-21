@@ -75,7 +75,8 @@ export type * from "./look";
 // accepted item replaces. Offsets are UTF-16 code units — the units a string
 // index uses here, converted from the kernel's bytes at the boundary.
 export type * from "./boundary";
-
+export type * from "./isolation";
+import type { IsolationPort } from "./isolation";
 export type * from "./provider";
 
 /** A skill chip as the kernel takes it; offset only orders chips in a line. */
@@ -185,7 +186,7 @@ export interface TrayPrefs {
   closeToTray: boolean;
 }
 
-export interface AgentPort extends WorkspacePreviewPort {
+export interface AgentPort extends WorkspacePreviewPort, IsolationPort {
   providerSetup(): Promise<ProviderSetup | null>;
   saveProviderKey(apiKey: string): Promise<void>;
   // The models that answer the job asked about; "chat" when none is named.
@@ -312,7 +313,7 @@ export interface AgentPort extends WorkspacePreviewPort {
   toolSettings(): Promise<ToolSettings>;
   saveToolDisabled(name: string, disabled: boolean): Promise<ToolSettings>;
   writeLease(): Promise<WriteLeaseSettings>;
-  saveWriteLease(edit: { optimistic?: boolean; maxWaitMinutes?: number }): Promise<WriteLeaseSettings>;
+  saveWriteLease(edit: { optimistic?: boolean; maxWaitMinutes?: number; collaboration?: string; autoIntegrate?: boolean }): Promise<WriteLeaseSettings>;
   schedules(): Promise<ScheduleBoard>;
   previewSchedule(draft: ScheduleDraft): Promise<SchedulePreview>;
   createSchedule(draft: ScheduleDraft, confirm: string): Promise<ScheduleView>;

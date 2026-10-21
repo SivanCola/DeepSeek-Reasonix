@@ -371,16 +371,16 @@ func (m *Manager) startInvalid(parentSession, kind, label string, validationErr 
 	return j
 }
 
-// StartForSession launches a job owned by parentSession. Session-scoped readers
-// only see jobs whose owner matches the active session.
-func (m *Manager) StartForSession(parentSession, kind, label string, run func(ctx context.Context, out io.Writer) (string, error), opts ...StartOption) *Job {
+// StartOwnedForSession transfers execution ownership only on a nil error.
+// Otherwise run will never be called and the caller must release its resources.
+func (m *Manager) StartOwnedForSession(parentSession, kind, label string, run func(ctx context.Context, out io.Writer) (string, error), opts ...StartOption) (*Job, error) {
 	parentSession = strings.TrimSpace(parentSession)
 	kind = strings.TrimSpace(kind)
 	if err := validatePathSegment(parentSession, "parentSession"); err != nil {
-		return m.startInvalid(parentSession, kind, label, err)
+		return m.startInvalid(parentSession, kind, label, err), err
 	}
 	if err := validatePathSegment(kind, "kind"); err != nil {
-		return m.startInvalid(parentSession, kind, label, err)
+		return m.startInvalid(parentSession, kind, label, err), err
 	}
 	m.mu.Lock()
 	m.seq++
@@ -418,8 +418,7 @@ func (m *Manager) StartForSession(parentSession, kind, label string, run func(ct
 		m.taskRecorder.RecordStart(id, kind, label)
 	}
 
-	m.launchJob(ctx, j, run)
-	return j
+	return j, m.launchJob(ctx, j, run)
 }
 
 func runRecovered(ctx context.Context, out io.Writer, run func(context.Context, io.Writer) (string, error)) (result string, err error) {

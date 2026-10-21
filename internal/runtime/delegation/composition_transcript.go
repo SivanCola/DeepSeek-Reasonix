@@ -41,19 +41,22 @@ func (t *TaskTool) prepareTranscriptRunWithPrompt(ctx context.Context, subReg *t
 	}
 	identityModel, identityEffort := t.effectiveIdentity(modelRef, effortRef)
 	spec := SubagentSpec{
-		Kind:             kind,
-		Name:             name,
-		WorkspaceRoot:    t.workspaceRoot,
-		ParentSession:    parentSession,
-		ExecutionID:      execution,
-		ParentToolCallID: parentID,
-		SystemPrompt:     systemPrompt,
-		Registry:         subReg,
-		ToolContext:      childToolIdentityContext(ctx),
-		Model:            identityModel,
-		Effort:           identityEffort,
-		ResumedFrom:      firstNonEmpty(continueFrom, legacyForkFrom),
-		UpstreamFrom:     upstreamSources(upstreamFromContext(ctx)),
+		Kind:                  kind,
+		Name:                  name,
+		WorkspaceRoot:         t.workspaceRoot,
+		ParentSession:         parentSession,
+		ExecutionID:           execution,
+		EnvironmentID:         t.environmentID,
+		EnvironmentGeneration: t.environmentGeneration,
+		OriginWorkspace:       t.environmentSource,
+		ParentToolCallID:      parentID,
+		SystemPrompt:          systemPrompt,
+		Registry:              subReg,
+		ToolContext:           childToolIdentityContext(ctx),
+		Model:                 identityModel,
+		Effort:                identityEffort,
+		ResumedFrom:           firstNonEmpty(continueFrom, legacyForkFrom),
+		UpstreamFrom:          upstreamSources(upstreamFromContext(ctx)),
 	}
 	if continueFrom != "" {
 		return t.transcripts.PrepareContinue(continueFrom, spec)

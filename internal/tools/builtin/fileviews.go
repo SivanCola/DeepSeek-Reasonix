@@ -1,11 +1,11 @@
 package builtin
 
 import (
-	"context"
+	"bytes"
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"os"
+	"io"
 	"path/filepath"
 	"sync"
 
@@ -21,8 +21,9 @@ var ErrFileChangedSinceSeen = errors.New("file changed since the agent last saw 
 // it so a whole-file overwrite cannot discard a change made since. A nil
 // *FileViews records and checks nothing.
 type FileViews struct {
-	mu   sync.Mutex
-	seen map[string][sha256.Size]byte
+	mu     sync.Mutex
+	seen   map[string][sha256.Size]byte
+	strict bool
 }
 
 // NewFileViews returns an empty record.
@@ -43,20 +44,31 @@ func (v *FileViews) saw(path, content string) {
 // rather than paid for with a second whole-file read.
 const maxViewBytes = 8 << 20
 
-// sawFile records the file's current content, as the edit tools would read it.
-func (v *FileViews) sawFile(ctx context.Context, overlay FileOverlay, path string) {
+func (v *FileViews) captureRead(path string, emit func(io.Reader, int, int) (string, error)) func(io.Reader, int, int) (string, error) {
 	if v == nil {
-		return
+		return emit
 	}
-	if info, err := os.Stat(path); err == nil && info.Size() <= maxViewBytes {
-		if src, err := readEditSource(ctx, overlay, path); err == nil {
-			v.saw(path, src.content)
-			return
+	return func(src io.Reader, offset, limit int) (string, error) {
+		data, err := io.ReadAll(io.LimitReader(src, maxViewBytes+1))
+		if err != nil {
+			return "", err
 		}
+		out, err := emit(io.MultiReader(bytes.NewReader(data), src), offset, limit)
+		if err == nil && len(data) <= maxViewBytes {
+			lines := bytes.Count(data, []byte{'\n'})
+			if len(data) > 0 && data[len(data)-1] != '\n' {
+				lines++
+			}
+			if offset == 0 && (limit <= 0 || lines <= limit) {
+				v.saw(path, string(data))
+			}
+		} else {
+			v.mu.Lock()
+			delete(v.seen, filepath.Clean(path))
+			v.mu.Unlock()
+		}
+		return out, err
 	}
-	v.mu.Lock()
-	delete(v.seen, filepath.Clean(path))
-	v.mu.Unlock()
 }
 
 // checkOverwrite refuses replacing current when the agent saw different
@@ -69,6 +81,9 @@ func (v *FileViews) checkOverwrite(path, current string) error {
 	v.mu.Lock()
 	want, ok := v.seen[filepath.Clean(path)]
 	v.mu.Unlock()
+	if !ok && v.strict {
+		return fmt.Errorf("%w: read %s before replacing an existing file", ErrFileChangedSinceSeen, path)
+	}
 	if !ok || want == sha256.Sum256([]byte(current)) {
 		return nil
 	}

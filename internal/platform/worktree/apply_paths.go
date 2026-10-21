@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -44,8 +43,12 @@ type FileStat struct {
 	Binary  bool
 }
 
-// absent is the blob id a path has when it does not exist on that side.
-const absent = ""
+type gitFileVersion struct {
+	Mode string
+	Blob string
+}
+
+var absent gitFileVersion
 
 // ApplyPaths brings tree's version of changes into the source workspace, judged
 // path by path: the rest of the workspace may have moved on since snap. A path
@@ -53,6 +56,19 @@ const absent = ""
 // and one conflict writes nothing. A path already holding the candidate's
 // version is left as it is.
 func ApplyPaths(ctx context.Context, snap Snapshot, tree string, changes []Change) error {
+	source, err := snap.repo(ctx)
+	if err != nil {
+		return err
+	}
+	release, err := lockApply(ctx, source)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return applyPaths(ctx, snap, tree, changes)
+}
+
+func applyPaths(ctx context.Context, snap Snapshot, tree string, changes []Change) error {
 	if len(changes) == 0 {
 		return nil
 	}
@@ -93,7 +109,7 @@ func ApplyPaths(ctx context.Context, snap Snapshot, tree string, changes []Chang
 	if len(conflicts) > 0 {
 		return &ConflictError{Paths: conflicts}
 	}
-	return writeChanges(ctx, source, tree, pending)
+	return writeChanges(ctx, source, tree, pending, live)
 }
 
 // ChangePaths is where each change lands in the source workspace, refusing any
@@ -103,9 +119,14 @@ func ChangePaths(snap Snapshot, changes []Change) ([]string, error) {
 	out := make([]string, 0, len(changes))
 	for _, ch := range changes {
 		rel := filepath.ToSlash(filepath.Clean(filepath.FromSlash(ch.Path)))
-		if rel == ".." || strings.HasPrefix(rel, "../") || filepath.IsAbs(ch.Path) ||
+		if rel == "." || rel != ch.Path || rel == ".." || strings.HasPrefix(rel, "../") || filepath.IsAbs(ch.Path) ||
 			(prefix != "" && rel != prefix && !strings.HasPrefix(rel, prefix+"/")) {
 			return nil, fmt.Errorf("%w: %s", ErrOutsideWorkspace, ch.Path)
+		}
+		for component := range strings.SplitSeq(rel, "/") {
+			if strings.EqualFold(component, ".git") || strings.ContainsAny(component, ":\\\x00") || strings.TrimRight(component, ". ") != component {
+				return nil, fmt.Errorf("%w: %s", ErrOutsideWorkspace, ch.Path)
+			}
 		}
 		out = append(out, filepath.Join(snap.RepoRoot, filepath.FromSlash(rel)))
 	}
@@ -147,23 +168,23 @@ func DiffStat(ctx context.Context, snap Snapshot, tree string, changes []Change)
 }
 
 // treeBlobs maps each path to its blob in tree, or to absent.
-func treeBlobs(ctx context.Context, repo gitcmd.Repo, tree string, paths []string) (map[string]string, error) {
+func treeBlobs(ctx context.Context, repo gitcmd.Repo, tree string, paths []string) (map[string]gitFileVersion, error) {
 	args := append([]string{"ls-tree", "-z", "--full-tree", tree, "--"}, paths...)
 	out, stderr, err := runGit(ctx, repo, args...)
 	if err != nil {
 		return nil, fmt.Errorf("read candidate tree: %w%s", err, stderrSuffix(stderr))
 	}
-	blobs := make(map[string]string, len(paths))
+	blobs := make(map[string]gitFileVersion, len(paths))
 	for _, p := range paths {
 		blobs[p] = absent
 	}
 	for record := range strings.SplitSeq(strings.TrimSuffix(out, "\x00"), "\x00") {
 		meta, path, ok := strings.Cut(record, "\t")
 		fields := strings.Fields(meta)
-		if !ok || len(fields) != 3 || fields[1] != "blob" {
+		if !ok || len(fields) != 3 {
 			continue
 		}
-		blobs[path] = fields[2]
+		blobs[path] = gitFileVersion{Mode: fields[0], Blob: fields[2]}
 	}
 	return blobs, nil
 }
@@ -171,9 +192,13 @@ func treeBlobs(ctx context.Context, repo gitcmd.Repo, tree string, paths []strin
 // liveBlobs hashes each path as it stands in the workspace, through the same
 // filters a snapshot stages it with, so an unchanged file hashes to its blob. A
 // symlink hashes as its target text, which is how git stores one.
-func liveBlobs(ctx context.Context, repo gitcmd.Repo, paths []string) (map[string]string, error) {
+func liveBlobs(ctx context.Context, repo gitcmd.Repo, paths []string) (map[string]gitFileVersion, error) {
 	repoRoot := repo.WorkTree
-	blobs := make(map[string]string, len(paths))
+	blobs := make(map[string]gitFileVersion, len(paths))
+	modes, err := indexModesWhenUntrusted(ctx, repo, paths)
+	if err != nil {
+		return nil, err
+	}
 	var regular []string
 	for _, p := range paths {
 		info, err := os.Lstat(filepath.Join(repoRoot, filepath.FromSlash(p)))
@@ -191,10 +216,19 @@ func liveBlobs(ctx context.Context, repo gitcmd.Repo, paths []string) (map[strin
 			if err != nil {
 				return nil, err
 			}
-			blobs[p] = id
+			blobs[p] = gitFileVersion{Mode: "120000", Blob: id}
 		case info.IsDir():
-			blobs[p] = "dir"
+			blobs[p] = gitFileVersion{Mode: "040000"}
 		default:
+			mode := "100644"
+			if modes != nil {
+				if m := modes[p]; m != "" {
+					mode = m
+				}
+			} else if info.Mode().Perm()&0111 != 0 {
+				mode = "100755"
+			}
+			blobs[p] = gitFileVersion{Mode: mode}
 			regular = append(regular, p)
 		}
 	}
@@ -210,7 +244,9 @@ func liveBlobs(ctx context.Context, repo gitcmd.Repo, paths []string) (map[strin
 		return nil, fmt.Errorf("hash workspace files: got %d ids for %d paths", len(ids), len(regular))
 	}
 	for i, p := range regular {
-		blobs[p] = ids[i]
+		v := blobs[p]
+		v.Blob = ids[i]
+		blobs[p] = v
 	}
 	return blobs, nil
 }
@@ -221,30 +257,6 @@ func hashText(ctx context.Context, repo gitcmd.Repo, text string) (string, error
 		return "", fmt.Errorf("hash link target: %w%s", err, stderrSuffix(stderr))
 	}
 	return strings.TrimSpace(out), nil
-}
-
-// writeChanges writes tree's version of each change into repo's files.
-func writeChanges(ctx context.Context, repo gitcmd.Repo, tree string, changes []Change) error {
-	repoRoot := repo.WorkTree
-	var restore []string
-	for _, ch := range changes {
-		if ch.Status == "D" {
-			if err := os.Remove(filepath.Join(repoRoot, filepath.FromSlash(ch.Path))); err != nil && !os.IsNotExist(err) {
-				return fmt.Errorf("apply deletion of %s: %w", ch.Path, err)
-			}
-			continue
-		}
-		restore = append(restore, ch.Path)
-	}
-	if len(restore) == 0 {
-		return nil
-	}
-	slices.Sort(restore)
-	args := append([]string{"restore", "--source=" + tree, "--worktree", "--"}, restore...)
-	if _, stderr, err := runGit(ctx, repo, args...); err != nil {
-		return fmt.Errorf("apply candidate files: %w%s", err, stderrSuffix(stderr))
-	}
-	return nil
 }
 
 func runGitInput(parent context.Context, repo gitcmd.Repo, input string, args ...string) (string, string, error) {

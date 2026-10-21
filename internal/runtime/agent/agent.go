@@ -820,7 +820,7 @@ func missingReasoningWarnStateFor(dir string) *missingReasoningWarnState {
 // (subagent, read-only, no scheduler, or non-write tool).
 func (a *Agent) reserveParentWrite(runTool tool.Tool, args json.RawMessage, readOnly bool, declared []string) (release func(), err error) {
 	noop := func() {}
-	if a == nil || a.svc.writeScheduler == nil || a.subagentDepth > 0 || readOnly || runTool == nil {
+	if a == nil || a.svc.mutations != nil || a.svc.writeScheduler == nil || a.subagentDepth > 0 || readOnly || runTool == nil {
 		return noop, nil
 	}
 	if len(declared) > 0 {
@@ -843,6 +843,8 @@ func (a *Agent) reserveParentWrite(runTool tool.Tool, args json.RawMessage, read
 // in hours or tokens rather than a round count, and every such budget ships off.
 // Turn policy lives in beginRunTurn / runToolLoop / handleFinalResponse.
 func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
+	ctx = beginExecutionContext(ctx)
+	ctx = a.bindModelAdmission(ctx)
 	ctx = a.compositionContext(ctx)
 	ctx, report := takeRunTimeSink(ctx)
 	runMaxSteps := a.maxSteps

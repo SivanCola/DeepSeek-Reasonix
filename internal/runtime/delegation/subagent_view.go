@@ -99,10 +99,16 @@ func (s *SubagentStore) checkOwner(ref string, meta sessionstore.SubagentMeta, p
 			return fmt.Errorf("%w: %q is outside the current conversation lineage", ErrSubagentNotOwned, ref)
 		}
 	}
-	if want := strings.TrimSpace(workspaceRoot); want != "" && strings.TrimSpace(meta.WorkspaceRoot) != want {
+	if !transcriptInWorkspace(meta, workspaceRoot) {
 		return fmt.Errorf("%w: %q belongs to a different workspace", ErrSubagentNotOwned, ref)
 	}
 	return nil
+}
+
+func transcriptInWorkspace(meta sessionstore.SubagentMeta, root string) bool {
+	root = strings.TrimSpace(root)
+	return root == "" || strings.TrimSpace(meta.WorkspaceRoot) == root ||
+		(meta.EnvironmentID != "" && strings.TrimSpace(meta.OriginWorkspace) == root)
 }
 
 func (s *SubagentStore) infoOf(meta sessionstore.SubagentMeta) RunInfo {
@@ -127,7 +133,7 @@ func (s *SubagentStore) Runs(parentSession, workspaceRoot string) ([]RunInfo, er
 	}
 	out := make([]RunInfo, 0, len(artifacts))
 	for _, a := range artifacts {
-		if want := strings.TrimSpace(workspaceRoot); want != "" && strings.TrimSpace(a.Meta.WorkspaceRoot) != want {
+		if !transcriptInWorkspace(a.Meta, workspaceRoot) {
 			continue
 		}
 		meta := a.Meta

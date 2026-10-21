@@ -350,6 +350,7 @@ func (h *Hub) openBound(ctx context.Context, req OpenRequest, inherited *agentco
 			Model:                    strings.TrimSpace(model),
 			AgentPreset:              preset,
 			WorkspaceRoot:            root,
+			SessionEnvironmentPath:   req.SessionPath,
 			SessionDir:               SessionDirFor(root),
 			Sink:                     paneSink,
 			NativeSurfaces:           h.opts.NativeSurfaces,

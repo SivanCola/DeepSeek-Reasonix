@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"reasonix/internal/contract/event"
+	"reasonix/internal/runtime/agent"
 	"reasonix/internal/runtime/isolation"
+	"reasonix/internal/runtime/writeclaim"
 	"reasonix/internal/session/control"
 )
 
@@ -32,7 +34,7 @@ func (p *isolationPosture) mode() string {
 	return control.ToolApprovalAsk
 }
 
-// isolatedResultTTL is how long a result nobody applied or discarded is kept.
+// isolatedResultTTL is when idle results become eligible for no-change cleanup.
 const isolatedResultTTL = 14 * 24 * time.Hour
 
 // isolationWiring is what a session offering worktree isolation holds.
@@ -41,33 +43,66 @@ type isolationWiring struct {
 	posture *isolationPosture
 }
 
-// addIsolation offers task's worktree isolation, and the tools that settle its
-// results, when [agent] worktree_isolation is on. An unattended child never
-// offers it, so isolated runs cannot fan out again.
-func (b *builder) addIsolation() {
-	if !b.cfg.Agent.WorktreeIsolation || b.opts.UnattendedChild || b.tools.taskTool == nil {
-		return
+// addIsolation installs the selected task environment policy and result tools.
+// Legacy runtimes retain the worktree_isolation opt-in and unattended boundary.
+func (b *builder) addIsolation() error {
+	var store *isolation.Store
+	if b.session.mutations != nil && b.repo.Valid() {
+		store = isolation.NewStore(filepath.Join(b.roots.DeliveryWorktreeDir(), "isolated"), b.root, b.repo).
+			WithMutationCoordinator(b.session.mutations).
+			WithEnvironmentCopies(b.cfg.Agent.IsolationCopyPaths, appendUniquePaths(RuntimeForbidReadRoots(b.cfg, b.root), b.opts.inheritedReadDenies...)...)
+		b.tools.isolation = &isolationWiring{store: store, posture: &isolationPosture{}}
+		b.tools.reg.Add(isolation.NewRecoverTool(b.repo).WithStore(store))
 	}
-	store := isolation.NewStore(filepath.Join(b.roots.DeliveryWorktreeDir(), "isolated"), b.root, b.repo)
+	if b.tools.taskTool == nil || (b.session.mutations == nil && (!b.cfg.Agent.WorktreeIsolation || b.opts.UnattendedChild)) {
+		return nil
+	}
+	if store == nil {
+		store = isolation.NewStore(filepath.Join(b.roots.DeliveryWorktreeDir(), "isolated"), b.root, b.repo).
+			WithMutationCoordinator(b.session.mutations).
+			WithEnvironmentCopies(b.cfg.Agent.IsolationCopyPaths, appendUniquePaths(RuntimeForbidReadRoots(b.cfg, b.root), b.opts.inheritedReadDenies...)...)
+	}
 	go store.SweepExpired(context.WithoutCancel(b.ctx), isolatedResultTTL)
 	posture := &isolationPosture{}
 	b.tools.isolation = &isolationWiring{store: store, posture: posture}
 	b.tools.reg.Add(isolation.NewApplyTool(store))
 	b.tools.reg.Add(isolation.NewDiscardTool(store))
 	parent, sink := b.opts, b.sink
-	b.tools.taskTool.SetIsolation(store, b.root, func(ctx context.Context, run isolation.Run) (isolation.Outcome, error) {
-		answer, unverified, err := runUnattended(ctx, parent, isolatedUsage{sink}, posture.mode(), run.WorkspaceRoot, run.Prompt, run.Model)
-		return isolation.Outcome{Answer: answer, Unverified: unverified}, err
-	})
+	if b.session.mutations != nil {
+		frozen, err := b.cfg.CloneResolved()
+		if err != nil {
+			return err
+		}
+		parent.frozenConfig = frozen
+		parent.DelegationScheduler = b.tools.taskTool.Scheduler()
+		parent.SessionDir = b.session.dir
+		authority := func(ctx context.Context, grant writeclaim.WritePathSet) isolation.SourceAuthorizer {
+			return integrationAuthorizer(b.root, agent.ParentSession(ctx), posture, b.tools.gate, b.tools.env.targetAccessCheck(), grant)
+		}
+		b.tools.taskTool.WithEnvironmentFactory(b.cfg.Agent.Collaboration, newIsolatedEnvironmentFactory(parent, store, posture, b.root, sink, authority, b.prompt.projectChecks...))
+	} else {
+		b.tools.taskTool.SetIsolation(store, b.root, func(ctx context.Context, run isolation.Run) (isolation.Outcome, error) {
+			answer, unverified, err := runUnattended(ctx, parent, isolatedUsage{sink}, posture.mode(), run.WorkspaceRoot, run.Prompt, run.Model)
+			return isolation.Outcome{Answer: answer, Unverified: unverified}, err
+		})
+	}
 	// The registry canonicalizes a schema when a tool is added, and task was
 	// added before it could offer isolation.
 	b.tools.reg.Add(b.tools.taskTool)
+	return nil
 }
 
 func (w *isolationWiring) bind(ctrl *control.Controller) {
 	if w != nil {
 		w.posture.bind(ctrl)
 	}
+}
+
+func (b *builder) isolatedResultsOwner() control.IsolatedResultsOwner {
+	if b.tools.isolation == nil {
+		return nil
+	}
+	return b.tools.isolation.store
 }
 
 // isolatedUsage forwards an isolated run's billable usage to the parent session

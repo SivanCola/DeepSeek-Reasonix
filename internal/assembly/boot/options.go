@@ -18,7 +18,9 @@ import (
 	"reasonix/internal/ext/plugin"
 	"reasonix/internal/model/billing"
 	"reasonix/internal/platform/computer"
+	"reasonix/internal/runtime/rootenv"
 	"reasonix/internal/runtime/taskmonitor"
+	"reasonix/internal/runtime/writeclaim"
 	"reasonix/internal/safety/sandbox"
 	"reasonix/internal/session/control"
 	"reasonix/internal/state/sessiontemp"
@@ -33,9 +35,13 @@ import (
 // run/serve pass true so a missing key fails fast, chat/desktop false so the UI
 // is reachable before one is set.
 type Options struct {
-	AgentComposition string
-	Composition      *agentcomposition.Binding
-	ComputerDriver   *computer.Driver
+	frozenConfig        *config.Config
+	inheritedReadDenies []string
+	readPolicyRoot      string
+	DelegationScheduler *writeclaim.SubagentScheduler
+	AgentComposition    string
+	Composition         *agentcomposition.Binding
+	ComputerDriver      *computer.Driver
 	// Version is the host declaring a real installation, which is what lets an
 	// assembly record the last-known-good config snapshot recovery reads back.
 	Version        string
@@ -72,6 +78,10 @@ type Options struct {
 	// confinement; empty means the process cwd. Per-tab roots are what let
 	// concurrent sessions load different projects without a chdir.
 	WorkspaceRoot string
+	// SessionEnvironmentPath resolves an immutable binding before starting runtime processes.
+	SessionEnvironmentPath string
+	// RootEnvironment is borrowed; a successful build owns its own retained reference.
+	RootEnvironment *rootenv.Environment
 	// Home states where this build's config, credentials, state and hooks live;
 	// empty follows the environment. It binds this assembly only — a
 	// Controller's later re-reads and the history index still read the process.

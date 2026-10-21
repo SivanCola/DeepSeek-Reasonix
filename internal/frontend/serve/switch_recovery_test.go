@@ -2,6 +2,7 @@ package serve
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reasonix/internal/state/sessionstore"
@@ -390,8 +391,9 @@ func TestSwitchModelSnapshotFailureKeepsOldController(t *testing.T) {
 	}
 
 	err := s.switchModel(context.Background(), "next-model")
-	if err == nil || !strings.Contains(err.Error(), "snapshot adopted history") {
-		t.Fatalf("switchModel error = %v, want snapshot adopted history failure", err)
+	var pathErr *os.PathError
+	if !errors.As(err, &pathErr) || filepath.Base(filepath.Dir(pathErr.Path)) != filepath.Base(invalidSessionDir) {
+		t.Fatalf("switchModel error = %v, want invalid session directory refusal", err)
 	}
 	if got := s.ctl(); got != old {
 		t.Fatalf("active controller changed after persistence failure: got %T %p, want outgoing %p", got, got, old)
