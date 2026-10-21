@@ -75,6 +75,21 @@ func persist(e *Entry) error {
 		if err := json.Unmarshal(previous, &header); err != nil {
 			return err
 		}
+		store := NewStore(filepath.Dir(filepath.Dir(path)), e.Workspace, e.Snap.Repo)
+		identity, err := store.managedResultMetadata(e.ID)
+		if err != nil {
+			return err
+		}
+		if entryRecordPath(identity.entry()) != path {
+			return tool.Refusal{Code: CodeUnsupportedState, Message: "isolated identity points to another record; original retained"}
+		}
+		if terminalState(header.State) {
+			if err := store.promoteSettled(identity.entry()); err != nil {
+				return err
+			}
+			e.legacy = false
+			path = entryPath(e.Cand)
+		}
 		// Dependency registration is independently serialized by this entry lock.
 		// A runtime's older view cannot remove children or reopen admission.
 		e.Lineage = header.Lineage
@@ -163,9 +178,8 @@ func (s *Store) durable() []durableEntry {
 }
 
 func (s *Store) resultMarkers() []string {
-	marks, _ := filepath.Glob(filepath.Join(s.managedRoot, "*", entryFile))
-	legacy, _ := filepath.Glob(filepath.Join(s.managedRoot, "*", legacyEntryFile))
-	return append(marks, legacy...)
+	paths, _ := s.markerPaths()
+	return paths
 }
 
 func (s *Store) durableIDs() []string {
@@ -181,53 +195,51 @@ func (s *Store) durableIDs() []string {
 // recover rebuilds a result from its worktree. One whose worktree no longer
 // holds a change is removed rather than offered.
 func (s *Store) recover(id string) (*Entry, error) {
-	for _, d := range s.durable() {
-		if d.ID != id {
-			continue
+	d, err := s.scopedResultMetadata(id)
+	if err != nil {
+		return nil, err
+	}
+	ctx := context.Background()
+	if !supportedResultVersion(d) || !supportedLifecycle(d) {
+		return nil, tool.Refusal{Code: CodeUnsupportedState, Message: "isolated result was written by a newer protocol"}
+	}
+	release, err := filelock.TryAcquire(s.runLock(d.ID))
+	if err != nil {
+		if errors.Is(err, filelock.ErrHeld) {
+			return nil, tool.Refusal{Code: CodeBusy, Message: "isolated task is still running"}
 		}
-		ctx := context.Background()
-		if !supportedResultVersion(d) || !supportedLifecycle(d) {
-			return nil, tool.Refusal{Code: CodeUnsupportedState, Message: "isolated result was written by a newer protocol"}
-		}
-		release, err := filelock.TryAcquire(s.runLock(d.ID))
-		if err != nil {
-			if errors.Is(err, filelock.ErrHeld) {
-				return nil, tool.Refusal{Code: CodeBusy, Message: "isolated task is still running"}
-			}
-			return nil, err
-		}
-		defer release()
-		e := d.entry()
-		if err := s.requireSettledChildren(e); err != nil {
-			return nil, err
-		}
-		if terminalState(e.State) {
-			return e, nil
-		}
-		if e.State == Preparing || (e.State == RecoveryRequired && d.Tree == "") {
-			e.State = RecoveryRequired
-			return e, nil
-		}
-		tree, changes, err := worktree.CandidateTree(ctx, e.Snap, e.Cand)
-		if err == nil && len(changes) > 0 {
-			e.Stats, err = worktree.DiffStat(ctx, e.Snap, tree, changes)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("read isolated result %s; files retained: %w", id, err)
-		}
-		if d.Tree != "" && d.Tree != tree && d.State != Running && d.State != Interrupted {
-			e.State = RecoveryRequired
-		}
-		if e.State == Running {
-			e.State = Interrupted
-		}
-		if e.State == "" {
-			e.State = Pending
-		}
-		e.Tree, e.Changes = tree, changes
+		return nil, err
+	}
+	defer release()
+	e := d.entry()
+	if err := s.requireSettledChildren(e); err != nil {
+		return nil, err
+	}
+	if terminalState(e.State) {
 		return e, nil
 	}
-	return nil, tool.Refusal{Code: CodeUnknownID, Message: "no isolated result " + id}
+	if e.State == Preparing || (e.State == RecoveryRequired && d.Tree == "") {
+		e.State = RecoveryRequired
+		return e, nil
+	}
+	tree, changes, err := worktree.CandidateTree(ctx, e.Snap, e.Cand)
+	if err == nil && len(changes) > 0 {
+		e.Stats, err = worktree.DiffStat(ctx, e.Snap, tree, changes)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read isolated result %s; files retained: %w", id, err)
+	}
+	if d.Tree != "" && d.Tree != tree && d.State != Running && d.State != Interrupted {
+		e.State = RecoveryRequired
+	}
+	if e.State == Running {
+		e.State = Interrupted
+	}
+	if e.State == "" {
+		e.State = Pending
+	}
+	e.Tree, e.Changes = tree, changes
+	return e, nil
 }
 
 func (d durableEntry) entry() *Entry {

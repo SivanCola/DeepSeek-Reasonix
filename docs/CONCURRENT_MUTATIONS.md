@@ -14,6 +14,9 @@ reviewed: 2026-10-22
 `[agent] collaboration = "shared"`。`auto` 与 `isolated` 已接入 CLI、serve、
 ACP 的首次执行及持久环境恢复，但完整验收仍未完成。默认切换必须等待整体验收。
 
+固定负载的协调器层对照及 P95 回退见[性能证据](CONCURRENT_MUTATIONS_PERFORMANCE.md)。
+这份记录不替代完整产品性能验收。
+
 ### 权限与事务
 
 - `CapabilityGrant` 决定允许写哪里；任务分工不再代替执行互斥。
@@ -351,6 +354,9 @@ The currently testable new path is `[agent] collaboration = "shared"`.
 `auto` and `isolated` now reach first-execution selection and persistent
 restoration through CLI, serve and ACP. Full acceptance remains unfinished;
 changing installation defaults requires all acceptance gates.
+
+See the [fixed-load coordination evidence](CONCURRENT_MUTATIONS_PERFORMANCE.md)
+for paired results and P95 regressions. It does not qualify product performance.
 
 ### Authorization and transactions
 

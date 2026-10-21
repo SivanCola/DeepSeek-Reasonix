@@ -16,37 +16,38 @@ func (s *Store) operationSnapshot(ctx context.Context, id string) (*Entry, error
 		return nil, err
 	}
 	defer unlock()
+	if err := s.recoverChildReservationsLocked(id); err != nil {
+		return nil, err
+	}
 	return s.operationManifest(id)
 }
 
 func (s *Store) operationManifest(id string) (*Entry, error) {
-	for _, d := range s.durable() {
-		if d.ID != id {
-			continue
-		}
-		if d.Version == 0 {
-			return s.lookup(id)
-		}
-		if !supportedResultVersion(d) || !supportedLifecycle(d) {
-			return nil, tool.Refusal{Code: CodeUnsupportedState, Message: "isolated result was written by a newer protocol"}
-		}
-		if err := s.requireSettledChildren(d.entry()); err != nil {
-			return nil, err
-		}
-		release, err := filelock.TryAcquire(s.runLock(id))
-		if errors.Is(err, filelock.ErrHeld) {
-			return nil, tool.Refusal{Code: CodeBusy, Message: "isolated task is still running"}
-		}
-		if err != nil {
-			return nil, err
-		}
-		release()
-		if settleable(d.State) && d.Tree == "" {
-			return nil, tool.Refusal{Code: CodeRecoveryRequired, Message: "isolated result has no sealed manifest; original record retained"}
-		}
-		return d.entry(), nil
+	d, err := s.scopedResultMetadata(id)
+	if err != nil {
+		return nil, err
 	}
-	return nil, tool.Refusal{Code: CodeUnknownID, Message: "no isolated result " + id}
+	if d.Version == 0 {
+		return s.lookup(id)
+	}
+	if !supportedResultVersion(d) || !supportedLifecycle(d) {
+		return nil, tool.Refusal{Code: CodeUnsupportedState, Message: "isolated result was written by a newer protocol"}
+	}
+	if err := s.requireSettledChildren(d.entry()); err != nil {
+		return nil, err
+	}
+	release, err := filelock.TryAcquire(s.runLock(id))
+	if errors.Is(err, filelock.ErrHeld) {
+		return nil, tool.Refusal{Code: CodeBusy, Message: "isolated task is still running"}
+	}
+	if err != nil {
+		return nil, err
+	}
+	release()
+	if settleable(d.State) && d.Tree == "" {
+		return nil, tool.Refusal{Code: CodeRecoveryRequired, Message: "isolated result has no sealed manifest; original record retained"}
+	}
+	return d.entry(), nil
 }
 
 // Resources precede this lock. Generation and environment identity are checked
@@ -79,7 +80,7 @@ func (s *Store) failedFinish(ctx context.Context, e *Entry, cause error) error {
 		return errors.Join(cause, err)
 	}
 	defer unlock()
-	if err := checkRunGeneration(e); err != nil {
+	if err := s.checkRunGeneration(e); err != nil {
 		return errors.Join(cause, err)
 	}
 	e.State = RecoveryRequired

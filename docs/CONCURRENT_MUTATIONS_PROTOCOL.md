@@ -25,6 +25,7 @@ See [the user and implementation guide](CONCURRENT_MUTATIONS.md).
 | v2 iso_ 结果 | 独立 marker、封存清单、保留未知字段 | 仅支持旧格式的程序拒绝该版本 | 候选变化需恢复；终态记录保留 |
 | v3 根导入结果 | 记录基线、不可变根快照、依赖副本和来源身份 | 本实现先前的 v2 reader 拒绝 v3；未版本化旧程序不发现独立 marker | 活动根现场不会成为可删除候选 |
 | v4 父子依赖记录 | 子快照前登记直接父关系；封口后拒绝新增；待处理孩子阻止父封存、换代和清理 | v2/v3 reader 拒绝 v4 | 基础 owner 已实现；生产嵌套任务尚未启用 |
+| v4 preparation-lock-v1 | 登记前持准备 OS 锁；无记录、准备者及 run 都已结束才回收登记 | 先前 v4 写者保留未知字段但不回收；未标记的旧登记保留 | 不按超时撤销活准备者；扫描错误不能证明不存在 |
 | publication revocation v1 | 同一 entry 锁内撤销、应用及提交；先持久撤销再更新根记录 | 不支持撤销的早期实验 v3 reader 可忽略 sidecar | 早期实验 v3 不属于安全降级范围 |
 | int_ 尝试 v1 | 独立候选及精确快照检查；恢复保持成果身份 | 旧程序不读取该目录 | 历史验证不代表当前工作区仍有效 |
 | 根环境 v1 | 可重开现场；无冻结检查契约时不从现场补取检查 | 实验 v1 reader 不能理解新的安全规则 | 不授予自动验证发布资格 |
@@ -33,6 +34,7 @@ See [the user and implementation guide](CONCURRENT_MUTATIONS.md).
 | 环境绑定 v1 + 会话事件 envelope v6 | 首条日志持久绑定；sidecar 缺失从日志恢复，冲突拒绝；绑定不改变原始消息日志、revision 或摘要 | 已验证的前版 reader/writer 将 schema 6 作为未来格式拒绝；不能忽略日志回落 checkpoint | 追加、压缩及修复保留屏障；旧 sidecar-only 实验会话须由当前会话 authority 在执行前升级 |
 | 检查进程崩溃 | 取得 run 锁后核验封存内容，同 ResultID 重检 | 不共享过程内受控凭据 | 重启后证据保持未知，不能反序列化为有效 |
 | 终态收据 | 清理后重复同操作幂等；相反操作拒绝 | 按其理解的格式读取 | 应用成功和当前验证有效是两个事实 |
+| 结果身份及迁移 | 工作区过滤前严格扫描同 ID；仅允许同目录完全相同的终态迁移对，并先归一化再更新 | 宽松旧 reader 没有全域去重保证 | 重复、不可读或无法归因的记录拒绝执行并保留 |
 | 等待事件 | 可选事务、会话、执行及原因字段 | 旧事件继续读取 | 无身份的结束事件仅闭合无身份的旧等待 |
 | 未完成源整合日志 | 当前程序所有策略均阻止普通写入；覆盖最终写根及重建复用的旧 owner；按预览条件恢复 | 不理解日志的旧程序仍可能忽略它；独立旧会话不受新会话 envelope 保护 | 当前程序不能切换 legacy 绕过；不能据此承诺任意旧程序的降级写入安全 |
 
@@ -73,6 +75,7 @@ ACL 授权、hook 启动及 Bash 逃逸审批之前拒绝。源保护路径按�
 | v2 iso_ | Separate marker, sealed manifest, unknown-field preservation | Older-format-only readers refuse | Content drift requires recovery; terminal records remain |
 | v3 root imports | Baseline, immutable root snapshot, frozen dependencies and origin | Earlier v2 implementation readers refuse v3; unversioned legacy readers do not discover the separate marker | Persistent live scenes never become disposable candidates |
 | v4 parent/child dependencies | Register the direct parent before a child snapshot; seal admission; unsettled children block parent sealing, generation changes and cleanup | v2/v3 readers refuse v4 | Foundational owner implemented; production nested tasks remain disabled |
+| v4 preparation-lock-v1 | Own preparation OS lock before registration; reclaim an absent record only after preparation and run end | Earlier v4 writers preserve unknown fields without reclaiming; untagged registrations remain | Timeouts do not revoke active preparers; scan errors do not prove absence |
 | Revocation v1 | Revoke, Apply and Commit fence at the same entry lock; revocation persists first | Early experimental v3 readers can ignore the sidecar | Those experimental readers are outside the safe downgrade scope |
 | int_ v1 | Separate candidate and snapshot-bound checks; recover same identity | Does not read this directory | Historical verification does not prove current source validity |
 | Root environment v1 | Reopen retained scene; never refill missing contracts from mutable instructions | Experimental v1 lacks new guarantees | No automatic verification publication authority |
@@ -81,6 +84,7 @@ ACL 授权、hook 启动及 Bash 逃逸审批之前拒绝。源保护路径按�
 | Environment binding v1 + session-event envelope v6 | Durable first-record binding; recover absent sidecar from WAL, refuse conflicts; preserve original message WAL, revision and digest | Qualified previous reader/writer refuses schema 6 as a future format, without checkpoint fallback | Append, compact and repair retain the fence; live session authority upgrades experimental sidecar-only sessions before execution |
 | Check-process crash | Acquire run owner, verify sealed content and recheck same ResultID | No reusable process-owned receipts | Restart leaves verification unknown |
 | Terminal receipts | Same-action retries idempotent after cleanup; opposite action refuses | Reads supported formats | Publication and current verification validity remain separate facts |
+| Result identity and migration | Strict global ID scan before workspace filtering; only identical terminal markers in one directory may normalize before updates | Permissive old readers lack global deduplication | Duplicate, unreadable and unidentified records refuse execution and remain retained |
 | Wait events | Optional transaction/session/execution identity and reason | Legacy events remain readable | Identity-free closure matches only identity-free waits |
 | Source integration journals | Every strategy in the current program blocks ordinary writes; cover final write roots and reused owners after rebuild; preview-bound recovery | Unaware older programs can ignore journals; independent old sessions have no new session envelope | Switching the current program to legacy cannot bypass recovery; arbitrary old-program downgrade writing is outside this guarantee |
 
@@ -90,6 +94,7 @@ hosted CI and release qualification are distinct evidence classes.
 
 The v4 coexistence regression compiles an independent writer from this branch's
 earlier v2 implementation; it does not establish that implementation was released.
+
 Retain its source commit, helper, build command and binary digest. An environment
 variable naming a binary cannot prove its version. Released unversioned readers
 have the separate marker-discovery boundary.

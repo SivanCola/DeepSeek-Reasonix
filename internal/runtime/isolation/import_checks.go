@@ -88,7 +88,7 @@ func (s *Store) finishImportedChecks(ctx context.Context, e *Entry, checks []Che
 		return err
 	}
 	defer unlock()
-	if err := checkRunGeneration(e); err != nil {
+	if err := s.checkRunGeneration(e); err != nil {
 		return err
 	}
 	e.State = Pending

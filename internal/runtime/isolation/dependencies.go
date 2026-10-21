@@ -33,10 +33,11 @@ type ParentResult struct {
 }
 
 type ChildResult struct {
-	ID        string `json:"id"`
-	Root      string `json:"root"`
-	Workspace string `json:"workspace"`
-	Token     string `json:"token"`
+	ID          string `json:"id"`
+	Root        string `json:"root"`
+	Workspace   string `json:"workspace"`
+	Token       string `json:"token"`
+	Preparation string `json:"preparation,omitempty"`
 }
 
 // BeginChild registers the dependency before reading the parent's snapshot.
@@ -50,9 +51,18 @@ func (s *Store) BeginChild(ctx context.Context, parent *Entry, children *Store, 
 	if err != nil {
 		return nil, err
 	}
-	link := &ParentResult{ID: parent.ID, Generation: parent.RunGeneration, Record: entryRecordPath(parent), Token: rand.Text()}
-	if err := s.registerChild(ctx, parent, ChildResult{ID: id, Root: children.managedRoot, Workspace: children.workspace, Token: link.Token}); err != nil {
+	release, err := children.holdChildPreparation(ctx, id)
+	if err != nil {
 		return nil, err
+	}
+	defer release()
+	link := &ParentResult{ID: parent.ID, Generation: parent.RunGeneration, Record: entryRecordPath(parent), Token: rand.Text()}
+	registration := ChildResult{ID: id, Root: children.managedRoot, Workspace: children.workspace, Token: link.Token, Preparation: childPreparationV1}
+	if err := s.registerChild(ctx, parent, registration); err != nil {
+		return nil, err
+	}
+	if s.childRegistrationProbe != nil {
+		s.childRegistrationProbe(parent, registration)
 	}
 	child, err := children.beginOwned(ctx, children.workspace, owner, id, &ResultLineage{Parent: link, Admission: "open"})
 	if err != nil {
@@ -75,7 +85,7 @@ func (s *Store) registerChild(ctx context.Context, parent *Entry, child ChildRes
 	if !errors.Is(err, filelock.ErrHeld) {
 		return err
 	}
-	if err := checkRunGeneration(parent); err != nil {
+	if err := s.checkRunGeneration(parent); err != nil {
 		return err
 	}
 	d, raw, err := readLineageRecord(entryRecordPath(parent))
@@ -115,20 +125,9 @@ func (s *Store) retractUnpreparedChild(ctx context.Context, parent *Entry, child
 	if d.RunGeneration != parent.RunGeneration || d.Lineage == nil || d.Lineage.Children[id].Token != token {
 		return tool.Refusal{Code: CodeStaleExecution, Message: "child reservation changed; dependency retained"}
 	}
-	for _, mark := range children.resultMarkers() {
-		body, err := os.ReadFile(mark)
-		if err != nil {
-			return err
-		}
-		var header struct {
-			ID string `json:"id"`
-		}
-		if err := json.Unmarshal(body, &header); err != nil {
-			return err
-		}
-		if header.ID == id {
-			return nil
-		}
+	present, err := children.containsResultID(id)
+	if err != nil || present {
+		return err
 	}
 	delete(d.Lineage.Children, id)
 	return saveLineage(entryRecordPath(parent), raw, d.Lineage)
@@ -142,7 +141,7 @@ func (s *Store) SealChildren(ctx context.Context, parent *Entry) error {
 		return err
 	}
 	defer unlock()
-	if err := checkRunGeneration(parent); err != nil {
+	if err := s.checkRunGeneration(parent); err != nil {
 		return err
 	}
 	return s.sealChildrenLocked(parent)
@@ -170,33 +169,24 @@ func (s *Store) requireSettledChildren(parent *Entry) error {
 		return nil
 	}
 	for id, child := range parent.Lineage.Children {
-		marks, err := filepath.Glob(filepath.Join(child.Root, "*", entryFile))
+		children := NewStore(child.Root, child.Workspace, s.repo)
+		d, err := children.managedResultMetadata(id)
+		var refusal tool.Refusal
+		if errors.As(err, &refusal) && refusal.Code == CodeUnknownID {
+			return dependentResults(fmt.Sprintf("child reservation %s needs recovery; parent retained", id))
+		}
 		if err != nil {
 			return err
 		}
-		found := false
-		for _, mark := range marks {
-			d, _, err := readLineageRecord(mark)
-			if err != nil {
-				return err
-			}
-			if d.ID != id {
-				continue
-			}
-			found = true
-			want := &ParentResult{ID: parent.ID, Generation: parent.RunGeneration, Record: entryRecordPath(parent), Token: child.Token}
-			if d.Workspace != child.Workspace || d.Lineage == nil || !reflect.DeepEqual(d.Lineage.Parent, want) || !terminalState(d.State) || !d.CleanupComplete {
-				return dependentResults(fmt.Sprintf("child result %s is not settled; parent retained", id))
-			}
-			release, err := filelock.TryAcquire(filepath.Join(child.Root, "."+id+".run.lock"))
-			if err != nil {
-				return dependentResults("child execution is still active; parent retained")
-			}
-			release()
+		want := &ParentResult{ID: parent.ID, Generation: parent.RunGeneration, Record: entryRecordPath(parent), Token: child.Token}
+		if d.Workspace != child.Workspace || d.Lineage == nil || !reflect.DeepEqual(d.Lineage.Parent, want) || !terminalState(d.State) || !d.CleanupComplete {
+			return dependentResults(fmt.Sprintf("child result %s is not settled; parent retained", id))
 		}
-		if !found {
-			return dependentResults(fmt.Sprintf("child reservation %s needs recovery; parent retained", id))
+		release, err := filelock.TryAcquire(children.runLock(id))
+		if err != nil {
+			return dependentResults("child execution is still active; parent retained")
 		}
+		release()
 	}
 	return nil
 }
@@ -309,7 +299,8 @@ func supportedLineage(lineage *ResultLineage) bool {
 		return false
 	}
 	for id, child := range lineage.Children {
-		if !validID(id) || child.ID != id || !filepath.IsAbs(child.Root) || !filepath.IsAbs(child.Workspace) || child.Token == "" {
+		if !validID(id) || child.ID != id || !filepath.IsAbs(child.Root) || !filepath.IsAbs(child.Workspace) || child.Token == "" ||
+			(child.Preparation != "" && child.Preparation != childPreparationV1) {
 			return false
 		}
 	}

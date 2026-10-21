@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -98,13 +97,9 @@ func (s *Store) startEntry(e *Entry) error {
 	return nil
 }
 
-func checkRunGeneration(e *Entry) error {
-	raw, err := os.ReadFile(entryRecordPath(e))
+func (s *Store) checkRunGeneration(e *Entry) error {
+	d, err := s.managedResultMetadata(e.ID)
 	if err != nil {
-		return err
-	}
-	var d durableEntry
-	if err := json.Unmarshal(raw, &d); err != nil {
 		return err
 	}
 	if !supportedResultVersion(d) || d.Version == 0 || !supportedLifecycle(d) {

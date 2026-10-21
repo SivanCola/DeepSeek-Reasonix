@@ -41,12 +41,17 @@ func (s *Store) recoveryPlan(ctx context.Context) (*recoveryPlan, error) {
 	plan := &recoveryPlan{journal: journal}
 	identities := map[string]string{}
 	originals := map[string]bool{}
-	for _, d := range s.durable() {
-		if d.State == Applying {
+	records, err := s.resultRecords()
+	if err != nil {
+		return nil, err
+	}
+	for _, record := range records {
+		d := record.entry
+		if d.State == Applying && sameDir(d.Workspace, s.workspace) {
 			originals[d.ID] = true
 		}
 	}
-	paths, err := filepath.Glob(filepath.Join(s.integrationRoot(), "int_*.json"))
+	paths, err := s.integrationRecordPaths()
 	if err != nil {
 		return nil, err
 	}
@@ -57,12 +62,10 @@ func (s *Store) recoveryPlan(ctx context.Context) (*recoveryPlan, error) {
 		id := strings.TrimSuffix(filepath.Base(path), ".json")
 		attempt, raw, err := s.readIntegration(id)
 		if err != nil {
-			// Unreadable attempts are retained as catalog diagnostics. An
-			// identified Applying record cannot be silently excluded.
-			if attempt.State == Applying && sameDir(attempt.Source.RepoRoot, s.repo.WorkTree) {
-				return nil, err
+			if attempt.Source.RepoRoot != "" && !sameDir(attempt.Source.RepoRoot, s.repo.WorkTree) {
+				continue
 			}
-			continue
+			return nil, err
 		}
 		if attempt.State != Applying {
 			continue

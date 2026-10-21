@@ -18,6 +18,9 @@ func (s *Store) discardSnapshot(ctx context.Context, id string) (*Entry, error) 
 		return nil, err
 	}
 	defer unlock()
+	if err := s.recoverChildReservationsLocked(id); err != nil {
+		return nil, err
+	}
 	return s.discardManifest(id)
 }
 

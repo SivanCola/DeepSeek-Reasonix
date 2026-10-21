@@ -107,8 +107,12 @@ func (s *Store) Catalog(ctx context.Context) (Catalog, error) {
 			out.RecoveryReason = "interrupted publication records require recovery; candidate results are retained"
 		}
 	}
-	markers := s.resultMarkers()
+	markers, err := s.markerPaths()
+	if err != nil {
+		return out, err
+	}
 	seen := map[string]int{}
+	counts := map[string]int{}
 	for _, marker := range markers {
 		if err := ctx.Err(); err != nil {
 			return out, err
@@ -122,12 +126,13 @@ func (s *Store) Catalog(ctx context.Context) (Catalog, error) {
 			out.Diagnostics = append(out.Diagnostics, CatalogDiagnostic{Record: filepath.Join(filepath.Base(filepath.Dir(marker)), filepath.Base(marker)), Reason: "unreadable or unidentified isolation record retained"})
 			continue
 		}
-		if !sameDir(d.Workspace, s.workspace) {
-			continue
-		}
+		counts[d.ID]++
 		if position, ok := seen[d.ID]; ok {
 			out.Results[position].Reason = "duplicate isolation records retained; resolve the record identity before continuing"
 			out.Results[position].Actions = []string{}
+			continue
+		}
+		if !sameDir(d.Workspace, s.workspace) {
 			continue
 		}
 		row := ResultSummary{ID: d.ID, Kind: "result", Owner: d.ResumeOwner, Generation: d.RunGeneration, State: d.State,
@@ -139,16 +144,22 @@ func (s *Store) Catalog(ctx context.Context) (Catalog, error) {
 			row.Activity, row.Reason = s.resultActivity(d.ID)
 		}
 		if supportedResultVersion(d) && supportedLifecycle(d) && row.Activity != "active" && row.State != Applying && row.State != Integrated && !row.CleanupComplete {
-			if err := s.requireSettledChildren(d.entry()); err != nil {
+			if err := s.requireSettledChildren(d.entry()); err != nil && !s.dependenciesRecoverable(d.entry()) {
 				row.Reason = err.Error()
 			} else {
 				row.Actions = []string{"discard_preview"}
 			}
 		}
+		if counts[d.ID] > 1 {
+			row.Reason = "duplicate isolation records retained; resolve the record identity before continuing"
+			row.Actions = []string{}
+		}
 		seen[d.ID] = len(out.Results)
 		out.Results = append(out.Results, row)
 	}
-	out.Results = append(out.Results, s.integrationSummaries()...)
+	summaries, diagnostics := s.integrationSummaries()
+	out.Results = append(out.Results, summaries...)
+	out.Diagnostics = append(out.Diagnostics, diagnostics...)
 	slices.SortFunc(out.Results, func(a, b ResultSummary) int { return strings.Compare(a.ID, b.ID) })
 	return out, nil
 }
@@ -173,9 +184,12 @@ func (s *Store) resultActivity(id string) (string, string) {
 	return "inactive", ""
 }
 
-func (s *Store) integrationSummaries() []ResultSummary {
+func (s *Store) integrationSummaries() ([]ResultSummary, []CatalogDiagnostic) {
 	rows := []ResultSummary{}
-	paths, _ := filepath.Glob(filepath.Join(s.integrationRoot(), "int_*.json"))
+	paths, err := s.integrationRecordPaths()
+	if err != nil {
+		return rows, []CatalogDiagnostic{{Record: filepath.Base(s.integrationRoot()), Reason: err.Error()}}
+	}
 	for _, path := range paths {
 		id := strings.TrimSuffix(filepath.Base(path), ".json")
 		attempt, _, err := s.readIntegration(id)
@@ -208,5 +222,5 @@ func (s *Store) integrationSummaries() []ResultSummary {
 		}
 		rows = append(rows, row)
 	}
-	return rows
+	return rows, nil
 }

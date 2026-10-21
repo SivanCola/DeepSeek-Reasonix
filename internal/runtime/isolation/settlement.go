@@ -45,6 +45,11 @@ func (s *Store) promoteSettled(e *Entry) error {
 		if !bytes.Equal(raw, current) {
 			return tool.Refusal{Code: CodeUnsupportedState, Message: "legacy receipt changed during migration; both records retained"}
 		}
+		if s.promotionProbe != nil {
+			if err := s.promotionProbe(e); err != nil {
+				return err
+			}
+		}
 		if err := os.Remove(legacyPath); err != nil {
 			return err
 		}

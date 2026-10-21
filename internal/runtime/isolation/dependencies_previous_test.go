@@ -13,6 +13,16 @@ import (
 
 func TestPreviousWriterCannotRewriteRegisteredChildDependencies(t *testing.T) {
 	binary := os.Getenv("REASONIX_PREVIOUS_ISOLATION_WRITER")
+	testPreviousDependencyWriter(t, binary, "", CodeUnsupportedState, Running)
+}
+
+func TestPreviousV4WriterRetainsGuardedChildPreparation(t *testing.T) {
+	binary := os.Getenv("REASONIX_PREVIOUS_V4_ISOLATION_WRITER")
+	testPreviousDependencyWriter(t, binary, childPreparationV1, "", Running)
+}
+
+func testPreviousDependencyWriter(t *testing.T, binary, preparation, expectedCode string, state State) {
+	t.Helper()
 	if binary == "" {
 		t.Skip("previous protocol writer binary not supplied")
 	}
@@ -48,7 +58,7 @@ func TestPreviousWriterCannotRewriteRegisteredChildDependencies(t *testing.T) {
 	}
 	s := NewStore(managed, repo, opened(t, repo))
 	parent := before.entry()
-	child := ChildResult{ID: "iso_12345678", Root: t.TempDir(), Workspace: parent.Cand.WorkspaceRoot, Token: "registered-with-previous-writer-active"}
+	child := ChildResult{ID: "iso_12345678", Root: t.TempDir(), Workspace: parent.Cand.WorkspaceRoot, Token: "registered-with-previous-writer-active", Preparation: preparation}
 	if err := s.registerChild(ctx, parent, child); err != nil {
 		t.Fatal(err)
 	}
@@ -70,8 +80,8 @@ func TestPreviousWriterCannotRewriteRegisteredChildDependencies(t *testing.T) {
 	if err := json.Unmarshal(line, &result); err != nil {
 		t.Fatalf("previous writer result: %v %s", err, line)
 	}
-	if result.Code != CodeUnsupportedState {
-		t.Fatalf("previous writer overwrote v4: %s", line)
+	if result.Code != expectedCode {
+		t.Fatalf("previous writer answered %q, want %q: %s", result.Code, expectedCode, line)
 	}
 	if err := cmd.Wait(); err != nil {
 		t.Fatal(err)
@@ -80,17 +90,25 @@ func TestPreviousWriterCannotRewriteRegisteredChildDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if current.Version != 4 || current.State != Running || current.Lineage == nil || current.Lineage.Children[child.ID] != child {
+	if current.Version != 4 || current.State != state || current.Lineage == nil || current.Lineage.Children[child.ID] != child {
 		t.Fatalf("previous writer removed dependency barrier: %+v", current)
 	}
 	after, err := os.ReadFile(entryRecordPath(parent))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(registered, after) {
+	if expectedCode != "" && !bytes.Equal(registered, after) {
 		t.Fatal("refused previous writer changed registered dependency bytes")
 	}
-	if _, err := s.Resume(ctx, parent.ID, "owner"); refusalCodeOf(err) != CodeDependentResults {
-		t.Fatalf("current reader lost child reservation: %v", err)
+	if preparation == "" {
+		if _, err := s.Resume(ctx, parent.ID, "owner"); refusalCodeOf(err) != CodeDependentResults {
+			t.Fatalf("current reader lost child reservation: %v", err)
+		}
+	} else {
+		resumed, err := s.Resume(ctx, parent.ID, "owner")
+		if err != nil {
+			t.Fatalf("guarded reservation cannot recover after previous writer exit: %v", err)
+		}
+		t.Cleanup(func() { s.Abort(context.Background(), resumed) })
 	}
 }

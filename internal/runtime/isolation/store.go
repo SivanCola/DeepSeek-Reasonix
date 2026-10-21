@@ -62,15 +62,17 @@ type Entry struct {
 // Store reads the durable lifecycle and settlement records of one workspace.
 // Candidate files remain until settlement; terminal receipts survive cleanup.
 type Store struct {
-	managedRoot       string
-	workspace         string
-	repo              gitcmd.Repo
-	mutations         *mutation.Coordinator
-	environmentPaths  []string
-	environmentDenied []string
-	preparationProbe  func(State, *Entry)
-	cleanupProbe      func(*Entry) error
-	checkVerifier     func(evidence.CheckInputs, string) bool
+	managedRoot            string
+	workspace              string
+	repo                   gitcmd.Repo
+	mutations              *mutation.Coordinator
+	environmentPaths       []string
+	environmentDenied      []string
+	preparationProbe       func(State, *Entry)
+	cleanupProbe           func(*Entry) error
+	promotionProbe         func(*Entry) error
+	childRegistrationProbe func(*Entry, ChildResult)
+	checkVerifier          func(evidence.CheckInputs, string) bool
 }
 
 // NewStore keeps worktrees under managedRoot and answers for results taken
@@ -149,7 +151,7 @@ func (s *Store) finishState(ctx context.Context, e *Entry, state State) (bool, e
 		return false, err
 	}
 	defer unlock()
-	if err := checkRunGeneration(e); err != nil {
+	if err := s.checkRunGeneration(e); err != nil {
 		return false, err
 	}
 	if e.Lineage != nil {
@@ -194,7 +196,7 @@ func (s *Store) Abort(ctx context.Context, e *Entry) {
 		return
 	}
 	defer unlock()
-	if err := checkRunGeneration(e); err != nil {
+	if err := s.checkRunGeneration(e); err != nil {
 		return
 	}
 	s.endRun(e)
