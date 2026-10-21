@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,31 +30,20 @@ func TestMCPCommandsDoNotPrintOperationalCredentials(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workspace, ".mcp.json"), raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	previous := os.Stdout
-	os.Stdout = writer
-	t.Cleanup(func() { os.Stdout = previous; reader.Close(); writer.Close() })
-	if mcpList() != 0 {
-		t.Fatal("list failed")
-	}
-	for _, entry := range entries {
-		if mcpGetCLI([]string{entry.Name}) != 0 {
-			t.Fatal("get failed")
+	out := captureStdout(t, func() {
+		if mcpList() != 0 {
+			t.Fatal("list failed")
 		}
-	}
-	writer.Close()
-	os.Stdout = previous
-	out, err := io.ReadAll(reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(out), "fixture-secret") {
+		for _, entry := range entries {
+			if mcpGetCLI([]string{entry.Name}) != 0 {
+				t.Fatal("get failed")
+			}
+		}
+	})
+	if strings.Contains(out, "fixture-secret") {
 		t.Fatalf("CLI leaked: %s", out)
 	}
-	if !strings.Contains(string(out), "author=neutral") {
+	if !strings.Contains(out, "author=neutral") {
 		t.Fatalf("ordinary env hidden: %s", out)
 	}
 }

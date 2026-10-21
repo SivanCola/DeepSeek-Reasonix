@@ -1477,6 +1477,10 @@ start failure); `2` is bad flags. This is separate from `reasonix doctor`
 
 ## Plugins (MCP)
 
+When a cached resource capability is available before its server connects,
+`read_mcp_resource` waits within the normal startup budget. Cancelling that read
+does not cancel the session's background connection attempt.
+
 Reasonix is an MCP client. A `[[plugins]]` entry's `type` selects the transport:
 `stdio` (default) launches a local subprocess (`command`/`args`/`env`); `http`
 (Streamable HTTP) connects to a remote `url` with optional static `headers`

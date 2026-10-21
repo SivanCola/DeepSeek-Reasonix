@@ -16,6 +16,7 @@ import (
 	"reasonix/internal/contract/config"
 	"reasonix/internal/contract/event"
 	"reasonix/internal/contract/provider"
+	"reasonix/internal/contract/tool"
 	"reasonix/internal/session/control"
 )
 
@@ -29,8 +30,9 @@ const (
 // listed, so a test can tell a refusal at the host from a refusal by the server.
 type resourceMCPServer struct {
 	*httptest.Server
-	mu    sync.Mutex
-	reads []string
+	mu             sync.Mutex
+	reads          []string
+	initializeGate <-chan struct{}
 }
 
 func newResourceMCPServer(t *testing.T, declares bool) *resourceMCPServer {
@@ -53,6 +55,16 @@ func newResourceMCPServer(t *testing.T, declares bool) *resourceMCPServer {
 		var result any
 		switch req.Method {
 		case "initialize":
+			s.mu.Lock()
+			gate := s.initializeGate
+			s.mu.Unlock()
+			if gate != nil {
+				select {
+				case <-gate:
+				case <-r.Context().Done():
+					return
+				}
+			}
 			result = map[string]any{"protocolVersion": "2024-11-05", "serverInfo": map[string]any{"name": "res", "version": "1"}, "capabilities": caps}
 		case "tools/list":
 			result = map[string]any{"tools": []map[string]any{{"name": "ping", "description": "Ping.", "inputSchema": map[string]any{"type": "object"}}}}
@@ -163,9 +175,10 @@ type resourceSession struct {
 	server    *resourceMCPServer
 	mu        sync.Mutex
 	approvals []event.Approval
+	registry  *tool.Registry
 }
 
-func buildResourceSession(t *testing.T, userOn, declares bool, projectOn bool, uri string) *resourceSession {
+func buildResourceSession(t *testing.T, userOn, declares bool, projectOn bool, uri string, beforeBuild ...func(*resourceMCPServer)) *resourceSession {
 	t.Helper()
 	home := isolateConfigHome(t)
 	reasonixHome := filepath.Join(home, ".reasonix")
@@ -173,7 +186,7 @@ func buildResourceSession(t *testing.T, userOn, declares bool, projectOn bool, u
 	workspace := robustTempDir(t)
 	t.Chdir(workspace)
 	s := &resourceSession{rec: &resourceToolProvider{uri: uri}, server: newResourceMCPServer(t, declares)}
-	kind := "boot-mcp-resource-" + strings.NewReplacer("/", "-", " ", "-").Replace(t.Name())
+	kind := uniqueKind("boot-mcp-resource-" + strings.NewReplacer("/", "-", " ", "-").Replace(t.Name()))
 	provider.Register(kind, func(provider.Config) (provider.Provider, error) { return s.rec, nil })
 	extra := ""
 	if projectOn {
@@ -218,10 +231,15 @@ load = "always"
 		t.Fatal(err)
 	}
 	warm.Close()
-	ctrl, err := Build(t.Context(), Options{Sink: sink, Home: reasonixHome, WorkspaceRoot: workspace})
+	for _, prepare := range beforeBuild {
+		prepare(s.server)
+	}
+	result, err := BuildRuntime(t.Context(), Options{Sink: sink, Home: reasonixHome, WorkspaceRoot: workspace})
 	if err != nil {
 		t.Fatal(err)
 	}
+	ctrl := result.Controller
+	s.registry = result.Assembly.Registry
 	t.Cleanup(ctrl.Close)
 	s.ctrl = ctrl
 	ctrl.SetToolApprovalMode(control.ToolApprovalAsk)

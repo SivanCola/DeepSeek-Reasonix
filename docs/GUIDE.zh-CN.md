@@ -1097,6 +1097,9 @@ reasonix doctor capabilities --live --timeout 5s
 
 ## 插件（MCP）
 
+缓存已声明资源能力、但服务器尚未连接时，`read_mcp_resource` 会在正常启动等待预算内等待连接。
+取消这次读取不会取消会话的后台连接尝试。
+
 Reasonix 是一个 MCP 客户端。`[[plugins]]` 的 `type` 选择传输：`stdio`（默认）启动本地子进
 程（`command`/`args`/`env`）；`http`（Streamable HTTP）连接远程 `url`，可带静态
 `headers`（`${VAR}` / `${VAR:-default}` 从环境展开，密钥不入文件）。

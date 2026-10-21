@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,18 +67,14 @@ func mustAppend(t *testing.T, s *taskmonitor.InMemoryStore, proj string, ev task
 }
 
 // captureOut runs fn and returns (exitCode, capturedStdout).
-func captureOut(fn func() int) (int, string) {
+func captureOut(t *testing.T, fn func() int) (int, string) {
+	t.Helper()
 	orig := taskStore
 	defer func() { taskStore = orig }()
 
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-	ec := fn()
-	w.Close()
-	os.Stdout = old
-	data, _ := io.ReadAll(r)
-	return ec, string(data)
+	var code int
+	out := captureStdout(t, func() { code = fn() })
+	return code, out
 }
 
 // JSON schema tests
@@ -88,7 +83,7 @@ func TestTaskList_JSON_SchemaVersion(t *testing.T) {
 	s := testStore(t)
 	taskStore = s
 
-	exit, out := captureOut(func() int {
+	exit, out := captureOut(t, func() int {
 		return taskListCmd(s, []string{"--json"})
 	})
 	if exit != 0 {
@@ -109,7 +104,7 @@ func TestTaskList_JSON_Empty(t *testing.T) {
 	s := taskmonitor.NewInMemoryStore()
 	taskStore = s
 
-	exit, out := captureOut(func() int {
+	exit, out := captureOut(t, func() int {
 		return taskListCmd(s, []string{"--json", "--dir", "/no-such"})
 	})
 	if exit != 0 {
@@ -130,7 +125,7 @@ func TestTaskList_JSON_FieldsPresent(t *testing.T) {
 	s := testStore(t)
 	taskStore = s
 
-	exit, out := captureOut(func() int {
+	exit, out := captureOut(t, func() int {
 		return taskListCmd(s, []string{"--json"})
 	})
 	if exit != 0 {
@@ -156,7 +151,7 @@ func TestTaskList_JSON_ProjectIsolation(t *testing.T) {
 	s := testStore(t)
 	taskStore = s
 
-	exit, out := captureOut(func() int {
+	exit, out := captureOut(t, func() int {
 		return taskListCmd(s, []string{"--json", "--dir", "/proj-a"})
 	})
 	if exit != 0 {
@@ -179,7 +174,7 @@ func TestTaskStatus_JSON_Found(t *testing.T) {
 	s := testStore(t)
 	taskStore = s
 
-	exit, out := captureOut(func() int {
+	exit, out := captureOut(t, func() int {
 		return taskStatusCmd(s, []string{"--json", "a1"})
 	})
 	if exit != 0 {
@@ -200,7 +195,7 @@ func TestTaskStatus_JSON_NotFound(t *testing.T) {
 	s := testStore(t)
 	taskStore = s
 
-	exit, out := captureOut(func() int {
+	exit, out := captureOut(t, func() int {
 		return taskStatusCmd(s, []string{"--json", "ghost"})
 	})
 	if exit != 0 {
@@ -221,7 +216,7 @@ func TestTaskStatus_JSON_SchemaVersion(t *testing.T) {
 	s := testStore(t)
 	taskStore = s
 
-	exit, out := captureOut(func() int {
+	exit, out := captureOut(t, func() int {
 		return taskStatusCmd(s, []string{"--json", "a1"})
 	})
 	if exit != 0 {
@@ -242,7 +237,7 @@ func TestTaskEvents_JSON_SchemaVersion(t *testing.T) {
 	s := testStore(t)
 	taskStore = s
 
-	exit, out := captureOut(func() int {
+	exit, out := captureOut(t, func() int {
 		return taskEventsCmd(s, []string{"--json", "a1"})
 	})
 	if exit != 0 {
@@ -261,7 +256,7 @@ func TestTaskEvents_JSON_FieldsPresent(t *testing.T) {
 	s := testStore(t)
 	taskStore = s
 
-	exit, out := captureOut(func() int {
+	exit, out := captureOut(t, func() int {
 		return taskEventsCmd(s, []string{"--json", "a1"})
 	})
 	if exit != 0 {
@@ -291,7 +286,7 @@ func TestTaskEvents_JSON_AfterCursor(t *testing.T) {
 	s := testStore(t)
 	taskStore = s
 
-	exit, out := captureOut(func() int {
+	exit, out := captureOut(t, func() int {
 		return taskEventsCmd(s, []string{"--json", "--after", "1", "a1"})
 	})
 	if exit != 0 {
@@ -313,7 +308,7 @@ func TestTaskEvents_JSONL_Format(t *testing.T) {
 	s := testStore(t)
 	taskStore = s
 
-	exit, out := captureOut(func() int {
+	exit, out := captureOut(t, func() int {
 		return taskEventsCmd(s, []string{"--jsonl", "a1"})
 	})
 	if exit != 0 {
@@ -335,7 +330,7 @@ func TestTaskEvents_JSON_NoSensitiveFields(t *testing.T) {
 	s := testStore(t)
 	taskStore = s
 
-	exit, out := captureOut(func() int {
+	exit, out := captureOut(t, func() int {
 		return taskEventsCmd(s, []string{"--json", "a1"})
 	})
 	if exit != 0 {
@@ -362,7 +357,7 @@ func TestTaskMonitorOutputsOmitLegacyErrorSummary(t *testing.T) {
 	}
 	for _, command := range commands {
 		t.Run(command.name, func(t *testing.T) {
-			exit, out := captureOut(command.run)
+			exit, out := captureOut(t, command.run)
 			if exit != 0 {
 				t.Fatalf("exit=%d", exit)
 			}
@@ -377,7 +372,7 @@ func TestTaskEvents_JSON_EmptyForUnknownTask(t *testing.T) {
 	s := testStore(t)
 	taskStore = s
 
-	exit, out := captureOut(func() int {
+	exit, out := captureOut(t, func() int {
 		return taskEventsCmd(s, []string{"--json", "ghost"})
 	})
 	if exit != 0 {
@@ -394,7 +389,7 @@ func TestTaskEvents_JSON_EmptyForUnknownTask(t *testing.T) {
 
 func TestTaskList_NoFlagErrors(t *testing.T) {
 	s := taskmonitor.NewInMemoryStore()
-	exit, _ := captureOut(func() int {
+	exit, _ := captureOut(t, func() int {
 		return taskListCmd(s, []string{})
 	})
 	if exit == 0 {
@@ -404,7 +399,7 @@ func TestTaskList_NoFlagErrors(t *testing.T) {
 
 func TestTaskStatus_MissingID(t *testing.T) {
 	s := taskmonitor.NewInMemoryStore()
-	exit, _ := captureOut(func() int {
+	exit, _ := captureOut(t, func() int {
 		return taskStatusCmd(s, []string{"--json"})
 	})
 	if exit == 0 {
@@ -414,7 +409,7 @@ func TestTaskStatus_MissingID(t *testing.T) {
 
 func TestTaskEvents_NoFlag(t *testing.T) {
 	s := taskmonitor.NewInMemoryStore()
-	exit, _ := captureOut(func() int {
+	exit, _ := captureOut(t, func() int {
 		return taskEventsCmd(s, []string{"a1"})
 	})
 	if exit == 0 {
@@ -429,7 +424,7 @@ func TestTaskCommand_Dispatch(t *testing.T) {
 	taskStore = s
 
 	// monitor list
-	exit, out := captureOut(func() int {
+	exit, out := captureOut(t, func() int {
 		return taskCommand([]string{"monitor", "list", "--json"})
 	})
 	if exit != 0 || !strings.Contains(out, "task_id") {
@@ -437,7 +432,7 @@ func TestTaskCommand_Dispatch(t *testing.T) {
 	}
 
 	// monitor status
-	exit, out = captureOut(func() int {
+	exit, out = captureOut(t, func() int {
 		return taskCommand([]string{"monitor", "status", "--json", "a1"})
 	})
 	if exit != 0 || !strings.Contains(out, "a1") {
@@ -445,7 +440,7 @@ func TestTaskCommand_Dispatch(t *testing.T) {
 	}
 
 	// monitor events
-	exit, out = captureOut(func() int {
+	exit, out = captureOut(t, func() int {
 		return taskCommand([]string{"monitor", "events", "--json", "a1"})
 	})
 	if exit != 0 || !strings.Contains(out, "event_type") {
@@ -453,7 +448,7 @@ func TestTaskCommand_Dispatch(t *testing.T) {
 	}
 
 	// unknown subcommand
-	exit, _ = captureOut(func() int {
+	exit, _ = captureOut(t, func() int {
 		return taskCommand([]string{"unknown"})
 	})
 	if exit == 0 {
@@ -462,7 +457,7 @@ func TestTaskCommand_Dispatch(t *testing.T) {
 }
 
 func TestTaskCommand_PreservesMachineShowRoute(t *testing.T) {
-	exit, out := captureOut(func() int {
+	exit, out := captureOut(t, func() int {
 		return taskCommand([]string{"show", "--json"})
 	})
 	if exit == 0 || !strings.Contains(out, `"command":"task.show"`) {
@@ -471,7 +466,7 @@ func TestTaskCommand_PreservesMachineShowRoute(t *testing.T) {
 }
 
 func TestTaskCommand_UnknownSubcommand(t *testing.T) {
-	exit, _ := captureOut(func() int {
+	exit, _ := captureOut(t, func() int {
 		return taskCommand([]string{"bogus"})
 	})
 	if exit != 2 {
@@ -514,7 +509,7 @@ func TestFileStoreIntegration_ListTasks(t *testing.T) {
 	dir := testenv.TempDir(t)
 	writeTaskData(t, dir)
 
-	exit, out := captureOut(func() int {
+	exit, out := captureOut(t, func() int {
 		return taskCommand([]string{"monitor", "list", "--json", "--dir", dir})
 	})
 	if exit != 0 {
@@ -535,7 +530,7 @@ func TestFileStoreIntegration_Status(t *testing.T) {
 	dir := testenv.TempDir(t)
 	writeTaskData(t, dir)
 
-	exit, out := captureOut(func() int {
+	exit, out := captureOut(t, func() int {
 		return taskCommand([]string{"monitor", "status", "task-1", "--json", "--dir", dir})
 	})
 	if exit != 0 {
@@ -552,7 +547,7 @@ func TestFileStoreIntegration_Status(t *testing.T) {
 func TestFileStoreIntegration_Status_NotFound(t *testing.T) {
 	dir := testenv.TempDir(t)
 
-	exit, out := captureOut(func() int {
+	exit, out := captureOut(t, func() int {
 		return taskCommand([]string{"monitor", "status", "--json", "--dir", dir, "ghost"})
 	})
 	if exit != 0 {
@@ -567,7 +562,7 @@ func TestFileStoreIntegration_Events_JSON(t *testing.T) {
 	dir := testenv.TempDir(t)
 	writeTaskData(t, dir)
 
-	exit, out := captureOut(func() int {
+	exit, out := captureOut(t, func() int {
 		return taskCommand([]string{"monitor", "events", "--json", "--dir", dir, "task-1"})
 	})
 	if exit != 0 {
@@ -591,7 +586,7 @@ func TestFileStoreIntegration_Events_JSONL(t *testing.T) {
 	dir := testenv.TempDir(t)
 	writeTaskData(t, dir)
 
-	exit, out := captureOut(func() int {
+	exit, out := captureOut(t, func() int {
 		return taskCommand([]string{"monitor", "events", "--jsonl", "--dir", dir, "task-1"})
 	})
 	if exit != 0 {
@@ -613,7 +608,7 @@ func TestFileStoreIntegration_Events_AfterCursor(t *testing.T) {
 	dir := testenv.TempDir(t)
 	writeTaskData(t, dir)
 
-	exit, out := captureOut(func() int {
+	exit, out := captureOut(t, func() int {
 		return taskCommand([]string{"monitor", "events", "task-1", "--json", "--dir", dir, "--after", "1"})
 	})
 	if exit != 0 {
@@ -632,7 +627,7 @@ func TestFileStoreIntegration_ListTasks_Empty(t *testing.T) {
 	dir := testenv.TempDir(t)
 	taskStore = nil
 
-	exit, out := captureOut(func() int {
+	exit, out := captureOut(t, func() int {
 		return taskCommand([]string{"monitor", "list", "--json", "--dir", dir})
 	})
 	if exit != 0 {
@@ -671,7 +666,7 @@ func TestCLI_StopCallsKill(t *testing.T) {
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	})
 
-	exit, out := captureOut(func() int {
+	exit, out := captureOut(t, func() int {
 		ec := taskCommand([]string{"stop", "t1", "--json", "--expected-version", "1"})
 		return ec
 	})
@@ -696,7 +691,7 @@ func TestCLI_CancelCallsKill(t *testing.T) {
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	})
 
-	exit, out := captureOut(func() int {
+	exit, out := captureOut(t, func() int {
 		return taskCommand([]string{"cancel", "t1", "--json", "--expected-version", "1"})
 	})
 	if exit != 0 {
@@ -717,7 +712,7 @@ func TestCLI_RequeueReportsQueuedButExited(t *testing.T) {
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	})
 
-	exit, out := captureOut(func() int {
+	exit, out := captureOut(t, func() int {
 		return taskCommand([]string{"requeue", "failed", "--json", "--expected-version", "2", "--dir", "/p"})
 	})
 	if exit != 0 {
@@ -741,7 +736,7 @@ func TestCLI_OpenSessionAcceptsDocumentedIDBeforeFlags(t *testing.T) {
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	})
 
-	exit, out := captureOut(func() int {
+	exit, out := captureOut(t, func() int {
 		return taskCommand([]string{"open-session", "t1", "--json", "--dir", "/p"})
 	})
 	if exit != 0 {
@@ -757,7 +752,7 @@ func TestCLI_OpenSessionAcceptsDocumentedIDBeforeFlags(t *testing.T) {
 }
 
 func TestCLI_ResumeIsNotATaskCommand(t *testing.T) {
-	exit, _ := captureOut(func() int { return taskCommand([]string{"resume"}) })
+	exit, _ := captureOut(t, func() int { return taskCommand([]string{"resume"}) })
 	if exit != 2 {
 		t.Fatalf("legacy task resume exit=%d, want usage error 2", exit)
 	}

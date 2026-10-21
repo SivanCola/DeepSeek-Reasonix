@@ -447,9 +447,9 @@ func (b *builder) wireTools() error {
 		t.caps.runtime.ConfigureComposition(opts.Composition.Resolved)
 		t.caps.runtime.ConfigureInventorySource(b.liveMCPInventory())
 		t.reg.BindMCPRuntime(t.caps.runtime.BindRegisteredTool)
-		if _, ok := t.reg.Get(plugin.ResourceReadToolName); ok {
-			t.reg.Add(t.caps.runtime.ResourceReadTool())
-		}
+	}
+	if _, ok := t.reg.Get(plugin.ResourceReadToolName); ok {
+		t.reg.Add(t.caps.runtime.ResourceReadTool())
 	}
 	t.skillRun.capRuntime = t.caps.runtime
 	addExtensionTools(t.reg, b.ext.mgr, b.ext.warn)
