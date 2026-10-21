@@ -32,9 +32,12 @@ describe("reading the machine's tree", () => {
     expect(k.calls).toHaveBeenCalledTimes(1);
     void result.current.retryTree();
     expect(k.calls).toHaveBeenCalledTimes(2);
+    expect(k.calls).toHaveBeenNthCalledWith(2, expect.objectContaining({ retryMetadata: true }));
     await act(async () => k.settle(1, [ws("/new")]));
     expect(result.current.treeRead).toBe(true);
     expect(result.current.tree.map((w) => w.root)).toEqual(["/new"]);
+    void result.current.reloadTree();
+    expect(k.calls).toHaveBeenNthCalledWith(3, expect.not.objectContaining({ retryMetadata: true }));
   });
 
   it("drops the old request's late answer instead of overwriting the new one", async () => {

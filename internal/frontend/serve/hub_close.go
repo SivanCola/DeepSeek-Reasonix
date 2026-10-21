@@ -55,6 +55,7 @@ func (h *Hub) Close(id string) error {
 
 // Shutdown closes every runtime, newest first.
 func (h *Hub) Shutdown() {
+	defer h.closeLegacyListings()
 	for _, view := range h.List() {
 		if err := h.Close(view.ID); err != nil {
 			slog.Warn("serve: close runtime", "id", view.ID, "err", err)

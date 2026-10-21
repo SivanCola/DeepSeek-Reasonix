@@ -2,6 +2,7 @@ package sessionstore
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -80,6 +81,7 @@ func (e *SessionReplayLimitError) Unwrap() error {
 }
 
 type sessionReplayLimits struct {
+	ctx                context.Context
 	maxBytes           int64
 	maxRecords         int
 	maxMessages        int
@@ -236,11 +238,17 @@ func replaySessionEventRecords(path string, limits sessionReplayLimits) (session
 	}
 	// Stat and read are not atomic across processes. LimitReader keeps a log
 	// that grows after Stat inside the same byte budget.
-	limited := &io.LimitedReader{R: f, N: limits.maxBytes + 1}
+	limited := &io.LimitedReader{R: limits.reader(f), N: limits.maxBytes + 1}
 	dec := json.NewDecoder(limited)
 	for {
+		if err := limits.err(); err != nil {
+			return replay, err
+		}
 		var rec sessionEventWireRecord
 		if err := dec.Decode(&rec); err != nil {
+			if err := limits.err(); err != nil {
+				return replay, err
+			}
 			if limited.N == 0 {
 				return replay, sessionReplayLimitError(path, "encoded_bytes", limits.maxBytes+1, limits.maxBytes)
 			}
@@ -263,7 +271,7 @@ func replaySessionEventRecords(path string, limits sessionReplayLimits) (session
 				collectionItems, err = resolveSessionEventImages(path, msgs, rec.ImageBlobs, collectionItems, limits)
 			}
 			if err != nil {
-				if errors.Is(err, ErrSessionReplayLimitExceeded) {
+				if errors.Is(err, ErrSessionReplayLimitExceeded) || limits.err() != nil {
 					return replay, err
 				}
 				replay.damaged = true
@@ -284,7 +292,7 @@ func replaySessionEventRecords(path string, limits sessionReplayLimits) (session
 				collectionItems, err = resolveSessionEventImages(path, msgs, rec.ImageBlobs, collectionItems, limits)
 			}
 			if err != nil {
-				if errors.Is(err, ErrSessionReplayLimitExceeded) {
+				if errors.Is(err, ErrSessionReplayLimitExceeded) || limits.err() != nil {
 					return replay, err
 				}
 				replay.damaged = true
@@ -323,7 +331,7 @@ func decodeSessionEventMessages(
 	if err != nil {
 		return nil, existingCollectionItems, err
 	}
-	dec := json.NewDecoder(bytes.NewReader(trimmed))
+	dec := json.NewDecoder(limits.reader(bytes.NewReader(trimmed)))
 	tok, err := dec.Token()
 	if err != nil {
 		return nil, existingCollectionItems, err
@@ -333,6 +341,9 @@ func decodeSessionEventMessages(
 	}
 	msgs := make([]provider.Message, 0, messageCount)
 	for dec.More() {
+		if err := limits.err(); err != nil {
+			return nil, existingCollectionItems, err
+		}
 		var msg provider.Message
 		if err := dec.Decode(&msg); err != nil {
 			return nil, existingCollectionItems, err
@@ -368,7 +379,7 @@ func preflightSessionEventMessages(
 	existingMessages, existingCollectionItems int,
 	limits sessionReplayLimits,
 ) (messageCount, collectionItems int, err error) {
-	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec := json.NewDecoder(limits.reader(bytes.NewReader(raw)))
 	tok, err := dec.Token()
 	if err != nil {
 		return 0, existingCollectionItems, err
@@ -467,6 +478,9 @@ func loadSessionMessages(sessionPath string) (msgs []provider.Message, fromEvent
 }
 
 func loadSessionMessagesWithLimits(sessionPath string, limits sessionReplayLimits) (msgs []provider.Message, fromEvents, damaged bool, err error) {
+	if err := limits.err(); err != nil {
+		return nil, false, false, err
+	}
 	probe, err := probeSessionEventLogWithLimits(sessionPath, limits)
 	if err != nil {
 		return nil, false, false, err
@@ -481,37 +495,15 @@ func loadSessionMessagesWithLimits(sessionPath string, limits sessionReplayLimit
 			return nil, true, false, replayErr
 		}
 		if replay.records > 0 {
-			return resolveReplayedMessages(sessionPath, replay)
+			return resolveReplayedMessagesWithLimits(sessionPath, replay, limits)
 		}
 		// Defensive: the probe saw a native head but nothing replayed; fall
 		// back to the checkpoint and let the next save rebuild the log.
-		msgs, err = loadSessionMessagesFromJSONL(sessionPath)
+		msgs, err = loadSessionMessagesFromJSONLWithLimits(sessionPath, limits)
 		return msgs, false, true, err
 	}
-	msgs, err = loadSessionMessagesFromJSONL(sessionPath)
+	msgs, err = loadSessionMessagesFromJSONLWithLimits(sessionPath, limits)
 	return msgs, false, false, err
-}
-
-func loadSessionMessagesFromJSONL(path string) ([]provider.Message, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	var msgs []provider.Message
-	dec := json.NewDecoder(f)
-	for {
-		var m provider.Message
-		if err := dec.Decode(&m); err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			return nil, fmt.Errorf("decode %s: %w", path, err)
-		}
-		msgs = append(msgs, m)
-	}
-	return msgs, nil
 }
 
 // repairSessionEventLogTail truncates undecodable bytes left by a crash or

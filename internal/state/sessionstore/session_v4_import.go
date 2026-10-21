@@ -1,6 +1,7 @@
 package sessionstore
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -9,7 +10,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"reasonix/internal/state/sessionv4"
@@ -192,45 +192,20 @@ func withV4Sessions(dir string, out []SessionInfo) []SessionInfo {
 	if root == "" {
 		return out
 	}
-	added := false
-	remembered := loadV4Listings(dir)
-	defer remembered.save(dir)
-	for _, s := range sessionv4.List(root) {
-		id := s.Manifest.SessionID
-		path := v4ImportPath(dir, id)
-		if !isV4SessionID(id) || sessionArtifactExists(path) {
+	r := resolverFor(dir)
+	defer r.flush(context.Background(), dir, false)
+	for _, source := range sessionv4.List(root) {
+		id := source.Manifest.SessionID
+		if !isV4SessionID(id) || sessionArtifactExists(v4ImportPath(dir, id)) {
 			continue
 		}
-		listing, ok := s.CachedListing()
-		if !ok {
-			listing, ok = remembered.get(s)
-		}
-		if !ok {
-			t, err := s.Transcript()
-			if err != nil {
-				continue
-			}
-			listing.Title, listing.ModelRef = t.Title, t.ModelRef
-			listing.Preview, listing.Turns = SessionPreviewFromMessages(t.Messages)
-			remembered.put(s, listing)
-		}
-		if listing.Turns == 0 {
+		listing, err := r.resolve(context.Background(), dir, source, readLegacyTranscript)
+		if err != nil || listing.Turns == 0 {
 			continue
 		}
-		out = append(out, SessionInfo{
-			Path: path, CreatedAt: s.Manifest.CreatedAt, LastActivityAt: s.UpdatedAt(), ModTime: s.UpdatedAt(),
-			Preview: listing.Preview, Turns: listing.Turns, CountsKnown: true, CustomTitle: listing.Title,
-		})
-		added = true
+		out = append(out, legacySessionInfo(dir, source, listing, true))
 	}
-	if added {
-		sort.SliceStable(out, func(i, j int) bool {
-			if out[i].LastActivityAt.Equal(out[j].LastActivityAt) {
-				return out[i].Path < out[j].Path
-			}
-			return out[i].LastActivityAt.After(out[j].LastActivityAt)
-		})
-	}
+	sortLegacyRows(out)
 	return out
 }
 

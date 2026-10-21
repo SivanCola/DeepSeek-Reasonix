@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reasonix/internal/base/backgroundwork"
 	"reasonix/internal/state/sessionstore"
 	"strings"
 
@@ -43,6 +44,7 @@ func (s *Server) resume(w http.ResponseWriter, r *http.Request) {
 // status a refusal deserves so both the HTTP handler and a hub opening a
 // session in a new pane refuse for the same reasons.
 func (s *Server) resumeInto(path string) (int, error) {
+	defer backgroundwork.Shared.Foreground()()
 	dir := s.ctl().SessionDir()
 	if dir == "" {
 		return http.StatusBadRequest, refusal(http.StatusBadRequest, "session.disabled", errors.New("sessions disabled"), nil)

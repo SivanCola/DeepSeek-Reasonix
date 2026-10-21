@@ -120,6 +120,8 @@ var mirroredWireTypes = []wireMirror{
 	// use_capability where the live one drew what it reached.
 	{"internal/frontend/serve/history.go", "historyToolCall", tsSessionFile, "HistoryToolCall"},
 	{"internal/frontend/serve/history.go", "historyMessage", tsSessionFile, "HistoryMessage"},
+	{"internal/frontend/serve/history_page.go", "historyPageResponse", tsSessionFile, "HistoryPage"},
+	{"internal/frontend/serve/history_page.go", "historyPageToolContext", tsSessionFile, "HistoryToolContext"},
 	// Who can reach this window from another device. A device the page cannot
 	// list is one the person at the window cannot see to disconnect.
 	{"internal/frontend/serve/device_share.go", "ShareStatus", tsShareFile, "ShareStatus"},
@@ -215,10 +217,10 @@ var mirroredWireTypes = []wireMirror{
 	{"internal/frontend/serve/hub_mux.go", "muxOpened", tsMuxFile, "MuxOpened"},
 	{"internal/frontend/serve/hub_mux.go", "muxAttachRequest", tsMuxFile, "MuxAttachRequest"},
 	{"internal/frontend/serve/hub_mux.go", "muxEnvelopeView", tsMuxFile, "MuxEnvelope"},
-	{"internal/frontend/serve/hub_tree.go", "treeSession", tsHubFile, "TreeSession"},
+	{"internal/frontend/serve/hub_tree_types.go", "treeSession", tsHubFile, "TreeSession"},
 	// The folder's true size beside the rows loaded. A window that cannot read
 	// the total labels a truncated list as the whole history.
-	{"internal/frontend/serve/hub_tree.go", "treeWorkspace", tsHubFile, "TreeWorkspace"},
+	{"internal/frontend/serve/hub_tree_types.go", "treeWorkspace", tsHubFile, "TreeWorkspace"},
 	// A session the import left in place. The reason code is what the window
 	// words the explanation from; a code it cannot read is a skipped session
 	// reported as nothing more than a count.

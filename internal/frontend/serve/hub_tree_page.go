@@ -12,6 +12,7 @@ import (
 
 // sessionPage is the newest rows of one folder plus the counts of the whole.
 type sessionPage struct {
+	Status                     *sessionstore.ListingStatus
 	Sessions                   []treeSession
 	Total, Archived, Remaining int
 	// Said is whether any conversation here has had a turn, or a first turn is
@@ -28,6 +29,7 @@ func (h *Hub) workspacePage(root, name string, open map[string]string, window tr
 }
 
 func (h *Hub) projectPage(roots []string, name string, open map[string]string, window treeWindow, limit int) sessionPage {
+	status := listingStatusFor(window.progressive)
 	listed := []sessionstore.SessionInfo{}
 	titlesByDir := map[string]titleSnapshot{}
 	byDir := map[string]map[string]sessionstore.SessionInfo{}
@@ -36,7 +38,7 @@ func (h *Hub) projectPage(roots []string, name string, open map[string]string, w
 		if _, seen := byDir[dir]; seen {
 			continue
 		}
-		infos, _ := sessionstore.ListSessions(dir)
+		infos := h.listTreeSessions(dir, status, window.retryMetadata)
 		listed = append(listed, infos...)
 		titlesByDir[dir] = h.titleCacheFor(dir).snapshot()
 		byDir[dir] = make(map[string]sessionstore.SessionInfo, len(infos))
@@ -100,9 +102,14 @@ func (h *Hub) projectPage(roots []string, name string, open map[string]string, w
 		if folds {
 			lead[lineage] = len(out)
 		}
-		out = append(out, treeSession{
+		row := treeSession{
 			Path: si.Path, Name: name, Title: title, Turns: si.Turns, RuntimeID: runtimeID, Archived: si.Archived, Unread: si.Unread, ViewedAt: unreadSinceMs(si), LastActiveAt: activeAtMs(si), Legacy: sessionstore.IsForeignSessionLog(si.Path),
-		})
+		}
+		if window.progressive {
+			known := si.CountsKnown
+			row.CountsKnown, row.MetadataState = &known, si.MetadataState
+		}
+		out = append(out, row)
 		decorateArchiveState(&out[len(out)-1], si.Path)
 	}
 	unlisted := []treeSession{}
@@ -119,7 +126,10 @@ func (h *Hub) projectPage(roots []string, name string, open map[string]string, w
 	for _, si := range listed {
 		said = said || si.Turns > 0
 	}
-	return sessionPage{Sessions: rows, Total: total + len(unlisted), Archived: archived, Remaining: remaining, Said: said}
+	if window.progressive {
+		h.prioritizeTreeRows(byDir, rows)
+	}
+	return sessionPage{Sessions: rows, Total: total + len(unlisted), Archived: archived, Remaining: remaining, Said: said, Status: status}
 }
 
 func decorateWorkingDirectory(rows []treeSession, root string) {

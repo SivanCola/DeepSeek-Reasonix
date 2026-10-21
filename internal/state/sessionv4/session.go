@@ -1,13 +1,13 @@
 package sessionv4
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
 	"path"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -22,6 +22,12 @@ type Manifest struct {
 	ContentRoot     string    `json:"contentRoot"`
 	SessionID       string    `json:"sessionId"`
 	CreatedAt       time.Time `json:"createdAt"`
+}
+
+func (m Manifest) Equal(other Manifest) bool {
+	return m.SchemaVersion == other.SchemaVersion && m.Codec == other.Codec &&
+		m.StorageRevision == other.StorageRevision && m.ContentRoot == other.ContentRoot &&
+		m.SessionID == other.SessionID && m.CreatedAt.Equal(other.CreatedAt)
 }
 
 // Session is one conversation under a sessions-v4 root.
@@ -98,14 +104,25 @@ type messagesPayload struct {
 // conversation it shows: complete appends, upsert replaces by id or appends,
 // retract removes, and a history replace or legacy import starts over.
 func (s Session) Transcript() (Transcript, error) {
+	return s.TranscriptContext(context.Background())
+}
+
+// TranscriptContext allows background readers to yield without publishing partial history.
+func (s Session) TranscriptContext(ctx context.Context) (Transcript, error) {
+	if err := ctx.Err(); err != nil {
+		return Transcript{}, err
+	}
 	pool := poolFor(s.store, s.name, s.Manifest.ContentRoot)
-	var msgs []message
+	msgs := newMessageFold()
 	var t Transcript
 	if s.LogSize == 0 {
 		return t, nil
 	}
-	err := scanCommits(s.store, s.logPath(), pool, func(events []event) error {
+	err := scanCommitsContext(ctx, s.store, s.logPath(), pool, func(events []event) error {
 		for _, ev := range events {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if !messageKinds[ev.Kind] {
 				continue
 			}
@@ -113,8 +130,7 @@ func (s Session) Transcript() (Transcript, error) {
 			if err := json.Unmarshal(ev.resolved, &body); err != nil {
 				return fmt.Errorf("%w: event %s: %w", ErrDamaged, ev.ID, err)
 			}
-			var err error
-			if msgs, err = apply(msgs, ev.Kind, body, pool); err != nil {
+			if err := msgs.apply(ev.Kind, body, pool); err != nil {
 				return fmt.Errorf("%w: event %s: %w", ErrDamaged, ev.ID, err)
 			}
 			switch ev.Kind {
@@ -131,9 +147,11 @@ func (s Session) Transcript() (Transcript, error) {
 	if err != nil {
 		return Transcript{}, err
 	}
-	t.Messages = make([]provider.Message, len(msgs))
-	for i, m := range msgs {
-		t.Messages[i] = m.msg
+	t.Messages = make([]provider.Message, 0, len(msgs.slots))
+	for _, slot := range msgs.slots {
+		if slot != nil {
+			t.Messages = append(t.Messages, slot.msg)
+		}
 	}
 	return t, nil
 }
@@ -143,40 +161,63 @@ var messageKinds = map[string]bool{
 	"history/replace": true, "legacy/import": true, "session/title": true, "session/config": true,
 }
 
-func apply(msgs []message, kind string, body messagesPayload, pool contentPool) ([]message, error) {
+type messageFold struct {
+	slots []*message
+	ids   map[string]int
+	empty []int
+}
+
+func newMessageFold() *messageFold { return &messageFold{ids: make(map[string]int)} }
+
+func (f *messageFold) append(m message) {
+	if m.id == "" {
+		f.empty = append(f.empty, len(f.slots))
+	} else {
+		f.ids[m.id] = len(f.slots)
+	}
+	f.slots = append(f.slots, &m)
+}
+
+func (f *messageFold) apply(kind string, body messagesPayload, pool contentPool) error {
 	switch kind {
 	case "message/complete", "message/upsert":
 		m, err := decodeMessage(body.Message, pool)
 		if err != nil {
-			return msgs, err
+			return err
 		}
-		if i := indexOf(msgs, m.id); i >= 0 && m.id != "" {
+		if i, ok := f.ids[m.id]; ok && m.id != "" {
 			if kind == "message/upsert" {
-				msgs[i] = m
+				f.slots[i] = &m
 			}
-			return msgs, nil
+			return nil
 		}
-		return append(msgs, m), nil
+		f.append(m)
 	case "message/retract":
-		return slices.DeleteFunc(msgs, func(m message) bool { return slices.Contains(body.IDs, m.id) }), nil
+		for _, id := range body.IDs {
+			if id == "" {
+				for _, i := range f.empty {
+					f.slots[i] = nil
+				}
+				f.empty = nil
+			} else if i, ok := f.ids[id]; ok {
+				f.slots[i] = nil
+				delete(f.ids, id)
+			}
+		}
 	case "history/replace", "legacy/import":
-		out := make([]message, 0, len(body.Messages))
+		next := newMessageFold()
 		for _, raw := range body.Messages {
 			m, err := decodeMessage(raw, pool)
 			if err != nil {
-				return msgs, err
+				return err
 			}
-			if m.id == "" || indexOf(out, m.id) < 0 {
-				out = append(out, m)
+			if _, found := next.ids[m.id]; m.id == "" || !found {
+				next.append(m)
 			}
 		}
-		return out, nil
+		*f = *next
 	}
-	return msgs, nil
-}
-
-func indexOf(msgs []message, id string) int {
-	return slices.IndexFunc(msgs, func(m message) bool { return m.id == id })
+	return nil
 }
 
 // List returns the sessions directly under root. Entries 1.x keeps beside them

@@ -12,6 +12,7 @@ import { useRailQuery } from "./railsearch";
 import { StudioIcon } from "./StudioIcon";
 import { TreeEmpty, TreeReading } from "./TreeReading";
 import { RowCount } from "./RowCount";
+import { ListingProgress } from "./ListingProgress";
 import { Cross } from "./glyphs";
 import { copyText } from "./CopyButton";
 import { sessionInfoText } from "./sessionInfo";
@@ -169,7 +170,6 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
       setPaged((prev) => ({ ...prev, [root]: "failed" }));
     }
   };
-  // Conversations whose conflict copies the reader asked to see.
   const [spread, setSpread] = useState<Set<string>>(new Set());
   // Two folders can share a name — a worktree copy carries the project's own.
   // Only then is the extra word worth the room it takes.
@@ -316,15 +316,12 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
     }
   };
 
-  // Filtering is client-side because the tree is already here: the kernel has no
-  // search route, and a round trip to re-derive what the window is holding would
-  // be slower than the typing. A hit on the folder keeps all of its sessions.
   const hit = (ws: TreeWorkspace) => {
     if (!needle) return ws;
     const named = (x: TreeSession) => (x.title || x.name || "").toLowerCase().includes(needle);
     if (ws.name.toLowerCase().includes(needle)) return ws;
     const sessions = ws.sessions.filter(named);
-    return sessions.length ? { ...ws, sessions } : null;
+    return sessions.length || ws.countsComplete === false ? { ...ws, sessions } : null;
   };
   const searchedTree = needle ? (tree.map(hit).filter(Boolean) as TreeWorkspace[]) : tree;
   const shownTree = searchedTree
@@ -333,7 +330,7 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
       sessions: pinnedFirst(ws.sessions.filter((session) =>
         inScope(session, scope, !!needle, !!session.runtimeId && listedIds([session.runtimeId]).length > 0, pinned.has(session.path), hideLegacy)), pinned),
     }))
-    .filter((ws) => scope === "all" || ws.sessions.length > 0);
+    .filter((ws) => scope === "all" || ws.sessions.length > 0 || ws.countsComplete === false);
   // A fold is a resting-state preference: while a word is being typed it would
   // hide the very rows that word just found.
   const searching = !!needle;
@@ -375,7 +372,7 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
           {shownTree.map((ws) => {
             // A fold is a resting-state preference; while a query is on it would hide
             // the very rows the query just found.
-            const hasChildren = ws.sessions.length > 0 || (pagedScope && unloaded(ws, loadedRows(ws.root)) > 0);
+            const hasChildren = ws.sessions.length > 0 || ws.countsComplete === false || ws.listingState === "degraded" || (pagedScope && unloaded(ws, loadedRows(ws.root)) > 0);
             const visible = visibleSessions(ws);
             const hidden = ws.sessions.length - visible.length;
             const shut = hasChildren && !needle && folded.has(ws.root);
@@ -446,7 +443,7 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
                     <span className="wsacts">
                       {shut && <UnreadCount n={ws.sessions.filter((x) => x.unread).length} />}
                       <span className="rowswap">
-                      <RowCount c={pagedScope ? sessionCount(ws, ws.sessions.length) : { shown: ws.sessions.length }} />
+                      {ws.countsComplete !== false && <RowCount c={pagedScope ? sessionCount(ws, ws.sessions.length) : { shown: ws.sessions.length }} />}
                       <span className="rowbtns">
                       <button
                         data-action="session.new"
@@ -614,6 +611,8 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
                         ) : (
                           <span className="sesstitle" title={rowLabel(session)}>
                             <span>{rowLabel(session)}</span>{session.isolated && <em className="sessarch" title={session.workspaceRoot}>{t("隔离")}</em>}{session.archived && <em className="sessarch">{t("已归档")}</em>}
+                            {session.metadataState === "pending" && <em className="sessarch">{t("正在读取摘要")}</em>}
+                            {session.metadataState === "error" && <em className="sessarch">{t("摘要暂不可用")}</em>}
                           </span>
                         )}
                         <PeerThreadMark path={session.path} />
@@ -739,9 +738,10 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
                     );
                   })}
 
+                <ListingProgress workspace={ws} searching={searching} onRetry={retry} />
                 {pagedScope && (hidden > 0 || unloaded(ws, loadedRows(ws.root)) > 0) && (
                   hidden === 0 && atCap(loadedRows(ws.root)) ? (
-                    <small className="sessnote">{t("还有 {n} 个较早的会话 · 用搜索查找", { n: unloaded(ws, loadedRows(ws.root)) })}</small>
+                    <small className="sessnote">{ws.countsComplete === false ? t("用搜索查找更多会话") : t("还有 {n} 个较早的会话 · 用搜索查找", { n: unloaded(ws, loadedRows(ws.root)) })}</small>
                   ) : (
                     <button
                       className="sessmore"
@@ -756,7 +756,7 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
                         ? t("正在加载…")
                         : paged[ws.root] === "failed"
                           ? t("加载失败 · 重试")
-                          : t("显示更多（还有 {n} 个）", { n: hidden + unloaded(ws, loadedRows(ws.root)) })}
+                          : ws.countsComplete === false ? t("显示更多") : t("显示更多（还有 {n} 个）", { n: hidden + unloaded(ws, loadedRows(ws.root)) })}
                     </button>
                   )
                 )}
@@ -765,7 +765,7 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
               </div>
             );
           })}
-          {!otherRows && shownTree.length === 0 && (tree.length > 0 || treeRead && (!!needle || scope !== "all")) && <TreeEmpty settled={answers(answered, { scope: kernelScope, q: asked })} onRetry={retry} />}
+          {!otherRows && shownTree.length === 0 && (tree.length > 0 || treeRead && (!!needle || scope !== "all")) && <TreeEmpty settled={tree.every((ws) => ws.countsComplete !== false) && answers(answered, { scope: kernelScope, q: asked })} onRetry={retry} />}
           {tree.length === 0 && (!treeRead || !otherRows && !needle && scope === "all") && (treeRead ? (
             <div className="ws-empty">{t("尚无文件夹")}<button className="projects-open" data-action="workspace.add"
               disabled={adder.busy} onClick={() => adder.add()}><StudioIcon name="folder" />{t("打开第一个项目")}</button></div>

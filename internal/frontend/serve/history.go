@@ -2,6 +2,7 @@ package serve
 
 import (
 	"net/http"
+	"reasonix/internal/base/backgroundwork"
 	"reasonix/internal/state/sessionstore"
 	"strconv"
 	"unicode/utf8"
@@ -83,6 +84,10 @@ func historyMessages(msgs []provider.Message) []historyMessage {
 // historyMessagesWith also names the stored attachments each user message
 // references, through the host's resolver.
 func historyMessagesWith(msgs []provider.Message, attachments func(string) []event.Attachment) []historyMessage {
+	return historyMessageWindow(msgs, attachments, 0, sessionstore.TurnWorkMs(msgs), make(map[string]provider.ToolCall))
+}
+
+func historyMessageWindow(msgs []provider.Message, attachments func(string) []event.Attachment, offset int, worked []int64, calls map[string]provider.ToolCall) []historyMessage {
 	attached := func(text string) []eventwire.Attachment {
 		if attachments == nil {
 			return nil
@@ -90,8 +95,6 @@ func historyMessagesWith(msgs []provider.Message, attachments func(string) []eve
 		return eventwire.ToWireAttachments(attachments(text))
 	}
 	out := make([]historyMessage, 0, len(msgs))
-	calls := make(map[string]provider.ToolCall)
-	worked := sessionstore.TurnWorkMs(msgs)
 	for i, m := range msgs {
 		if m.LocalOnly && m.Name == surfacespec.ActionMessageName {
 			continue
@@ -106,7 +109,7 @@ func historyMessagesWith(msgs []provider.Message, attachments func(string) []eve
 				}
 				out = append(out, historyMessage{
 					Role: string(provider.RoleUser), Content: steerText, Steer: true,
-					HostAuthored: host || m.HostAuthored, MsgIndex: i, Via: eventwire.ToWireVia(m.Via),
+					HostAuthored: host || m.HostAuthored, MsgIndex: offset + i, Via: eventwire.ToWireVia(m.Via),
 				})
 				if !host && !m.HostAuthored {
 					out[len(out)-1].Attachments = attached(steerText)
@@ -114,7 +117,7 @@ func historyMessagesWith(msgs []provider.Message, attachments func(string) []eve
 				continue
 			}
 		}
-		hm := historyMessage{Role: string(m.Role), Content: m.Content, MsgIndex: i, HostAuthored: m.HostAuthored}
+		hm := historyMessage{Role: string(m.Role), Content: m.Content, MsgIndex: offset + i, HostAuthored: m.HostAuthored}
 		if m.Role == provider.RoleUser {
 			// Content is what the model saw, and one @-reference expands into a
 			// whole file. A reopened session has to show what was typed.
@@ -135,11 +138,7 @@ func historyMessagesWith(msgs []provider.Message, attachments func(string) []eve
 				hm.ToolCalls = make([]historyToolCall, len(m.ToolCalls))
 				for i, tc := range m.ToolCalls {
 					calls[tc.ID] = tc
-					hm.ToolCalls[i] = historyToolCall{
-						ID: tc.ID, Name: tc.Name, Arguments: eventwire.SurfaceArgs(tc.Name, tc.ResolvedName, tc.ExecutionArguments()),
-						ArgumentNormalization: eventwire.SurfaceArgumentNormalization(tc.Name, tc.ResolvedName, tc.ArgumentNormalization),
-						ResolvedName:          tc.ResolvedName, CapabilityID: tc.CapabilityID,
-					}
+					hm.ToolCalls[i] = projectHistoryToolCall(tc)
 				}
 			}
 		}
@@ -167,6 +166,7 @@ func historyMessagesWith(msgs []provider.Message, attachments func(string) []eve
 // if the client sends If-None-Match with the current ETag, the server returns
 // 304 Not Modified with no body, saving bandwidth on reconnects.
 func (s *Server) history(w http.ResponseWriter, r *http.Request) {
+	defer backgroundwork.Shared.Foreground()()
 	writeJSONCached(w, r, s.projectedHistory())
 }
 
@@ -181,6 +181,7 @@ func (s *Server) projectedHistory() []historyMessage {
 
 func (s *Server) registerHistoryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /history", s.history)
+	mux.HandleFunc("GET /history/page", s.historyPage)
 	mux.HandleFunc("GET /history/tool/{id}", s.historyToolOutput)
 }
 
@@ -204,19 +205,14 @@ const (
 // kept only the ends of it. It reads the same projection /history does and the
 // id is only a lookup key into it: nothing from the request names a file.
 func (s *Server) historyToolOutput(w http.ResponseWriter, r *http.Request) {
+	defer backgroundwork.Shared.Foreground()()
 	offset, limit, ok := toolOutputWindow(r)
 	if !ok {
 		refuse(w, http.StatusBadRequest, "tool.output_range", "offset and limit must be whole numbers, limit above zero", nil)
 		return
 	}
 	id := r.PathValue("id")
-	var text string
-	found := false
-	for _, m := range s.projectedHistory() {
-		if m.Role == string(provider.RoleTool) && m.ToolCallID == id {
-			text, found = m.Content, true
-		}
-	}
+	text, found := s.readHistoryToolOutput(id)
 	if !found {
 		refuse(w, http.StatusNotFound, "tool.output_unknown", "no tool call with this id in this session", nil)
 		return

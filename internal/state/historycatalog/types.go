@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"reasonix/internal/base/backgroundwork"
 	"reasonix/internal/contract/config"
 	"reasonix/internal/state/projectiondb"
 )
@@ -33,6 +34,7 @@ type Status struct {
 }
 
 type Options struct {
+	Work              *backgroundwork.Scheduler
 	Path              string
 	InMemory          bool
 	QueueCapacity     int

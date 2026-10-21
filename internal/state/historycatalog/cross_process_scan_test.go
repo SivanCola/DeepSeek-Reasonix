@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"reasonix/internal/base/backgroundwork"
 	"reasonix/internal/base/testenv"
 	"reasonix/internal/contract/provider"
 	"reasonix/internal/state/sessionstore"
@@ -24,7 +25,7 @@ import (
 // cross-connection write serialized by SQLite, and neither catalog can see the
 func openSharedCatalog(t *testing.T, path string) *Catalog {
 	t.Helper()
-	catalog, err := Open(context.Background(), Options{Path: path, ReconcileInterval: time.Hour})
+	catalog, err := Open(context.Background(), Options{Path: path, ReconcileInterval: time.Hour, Work: backgroundwork.New(backgroundwork.Options{})})
 	if err != nil {
 		t.Fatal(err)
 	}

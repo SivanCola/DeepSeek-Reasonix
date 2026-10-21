@@ -1001,6 +1001,27 @@ Reopening history uses that chat's working directory, while starting a chat
 from the project uses the original directory. Ordering, search, paging, pins
 and archives span the project.
 
+When reading legacy history for the first time, the sidebar shows discovered
+conversations while summaries and turn counts are filled in the background.
+Conversations marked as reading their summary can already be opened.
+
+Search indicates incomplete coverage instead of reporting a definitive empty result.
+Failed summaries can be retried without blocking other conversations. Summary
+caches live in the current version's directory; legacy history is not rewritten.
+
+History search index rebuilds after an upgrade run in the background. Background
+reads yield when a conversation is opened or read, then continue after the
+foreground operation. Search results may remain incomplete until indexing finishes.
+
+Long conversations initially display the latest 200 messages. Scroll upward or
+choose Load earlier messages to read more.
+
+In-conversation find reads earlier
+pages as needed and indicates incomplete coverage; clearing the query stops
+further prefetching. Rewind, compaction and session changes reload recent content.
+
+Paging affects presentation only, not the full conversation used by the model.
+
 Removing the project closes its idle panes and retains every directory and
 transcript. Existing transcripts stay in place and group on restart without migration.
 Worktrees added separately outside Reasonix-managed storage remain independent projects.

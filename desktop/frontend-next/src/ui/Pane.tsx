@@ -12,7 +12,7 @@ import { hasPendingDecision, posture, runState } from "./decisions";
 import { createPortal } from "react-dom";
 import type { Checkpoint, ContextBreakdown, JobEntry, McpEntry, SessionStatus, WorkspaceChanges, WorkspaceGit } from "../port/port";
 import type { TrajectoryRead } from "../port/wire";
-import { chipLabel, fromHistory, initialState, quoteAmount, reduce } from "../state/session";
+import { chipLabel, initialState, quoteAmount, reduce } from "../state/session";
 import { pairCheckpoints } from "../state/checkpoints";
 import { useReplyActions } from "./reply";
 import { useGateActions } from "./gates";
@@ -22,6 +22,7 @@ import { ReloadNotice } from "./RestoreNotice";
 import { RewindNotice } from "./RewindNotice";
 import { initialTraj, reduceTraj } from "../state/trajectory";
 import { Transcript } from "./Transcript";
+import { useHistoryPages, useHistorySearch } from "./useHistoryPages";
 import { useBackgroundDeltas } from "./deltas";
 import { PaneShown } from "./shown";
 import { Composer } from "./Composer";
@@ -154,6 +155,7 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFoc
   const { pacer, shown } = useBackgroundDeltas(visible, dispatch, trajDispatch);
 
   const surfaceReplay = useSurfaceReplay(port, dispatch);
+  const { load: readHistory, paging: historyPaging } = useHistoryPages(port, dispatch);
 
   const reloadMcp = useCallback(() => {
     void port.mcp().then((c) => setMcp(c.servers)).catch(() => setMcp([]));
@@ -164,14 +166,8 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFoc
   // is how a hole gets filled rather than rendered as a quiet turn.
   const rebuild = useCallback(() => {
     void surfaceReplay.refresh();
-    port
-      .history()
-      .then((msgs) => {
-        const restored = fromHistory(msgs);
-        dispatch({ kind: "__restore", ...restored });
-      })
-      .catch(() => {});
-  }, [port, surfaceReplay.refresh]);
+    void readHistory().catch(() => {});
+  }, [readHistory, surfaceReplay.refresh]);
 
   // /status is polled four times a second while a turn runs, and most of those
   // answers are word-for-word the previous one. Swapping in an equal object
@@ -260,11 +256,7 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFoc
     // to the network — the provider's wallet endpoint rides it — and pairing the
     // two made the conversation wait on a round trip that has nothing to do with
     // it. Whichever lands first shows what it knows.
-    port.history().then((msgs) => {
-      if (!alive) return;
-      const restored = fromHistory(msgs);
-      dispatch({ kind: "__restore", ...restored });
-    });
+    void readHistory(() => alive).catch(() => {});
     port.status().then((st) => {
       if (!alive) return;
       applyStatus(st);
@@ -275,7 +267,7 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFoc
     return () => {
       alive = false;
     };
-  }, [port, applyStatus]);
+  }, [port, applyStatus, readHistory, replayTrajectory]);
 
   useEffect(() => {
     if (!running) {
@@ -301,11 +293,7 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFoc
     port.checkpoints().then((cps) => { if (current()) setCheckpoints(cps); }).catch(() => { if (current()) setCheckpoints([]); });
     // Two reads, the same way the first mount takes them: the record does not
     // wait behind the numbers over it.
-    const history = port.history().then((msgs) => {
-      if (!current()) return;
-      const r = fromHistory(msgs);
-      dispatch({ kind: "__restore", ...r });
-    });
+    const history = readHistory(current);
     port.status().then((st) => {
       if (!current()) return;
       applyStatus(st);
@@ -315,7 +303,7 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFoc
     refreshWallet();
     onSessionChanged();
     return history;
-  }, [port, applyStatus, statusRead, refreshWallet, onSessionChanged, replayTrajectory, fail, surfaceReplay.refresh]);
+  }, [port, applyStatus, statusRead, refreshWallet, onSessionChanged, replayTrajectory, fail, surfaceReplay.refresh, readHistory]);
 
   // Both of these read only the user and tool cards, so they key off the
   // revision rather than the items array: a streamed answer leaves every card
@@ -427,6 +415,7 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFoc
 
   const receiptPref = receiptPrefOf(port);
   const find = useFind(s.items, findPulse, active, useCallback(() => showView("flow"), [showView]), receiptPref, findTogglePulse);
+  useHistorySearch(historyPaging, find.open, find.query);
 
   const onRunDetail = useCallback(() => showView("analysis"), [showView]);
   const previewScope = JSON.stringify([rt.id, rt.root, status?.sessionPath ?? rt.sessionPath]);
@@ -496,7 +485,7 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFoc
       onMouseDownCapture={active ? undefined : onFocus}
       onFocusCapture={active ? undefined : onFocus}
     >
-      <Find find={find} />
+      <Find find={find} pending={historyPaging.hasMore || historyPaging.busy || historyPaging.failed} failed={historyPaging.failed} />
 
       <div className="pbody rewind-notice-host" data-dock={tab === "flow" ? "" : undefined} data-full={tab === "browser" ? "" : undefined}>
       <RewindNotice key={JSON.stringify([rt.id, rt.root, status?.sessionPath ?? rt.sessionPath])} readUndo={onReadUndo} onUndo={onUndoAvailable} busy={!!restoreNotice?.working || !!reloadFailure?.working} refreshKey={checkpoints} moved={s.rewindMoved} running={running} shown={visible && tab === "flow" && !rt.readOnly} />
@@ -507,7 +496,7 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFoc
       <PaneShown.Provider value={shown}>
       <LiveWork.Provider value={live}>
       <NewAnswerAnchor.Provider value={marker ? newAnswerAt : null}>
-      <Transcript port={port}
+      <Transcript port={port} historyPaging={historyPaging}
         onSettings={onSettings}
         brought={brought}
         foldWork={foldWork}
@@ -638,7 +627,7 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFoc
         {alert && <div className="cmpalert">{alert}</div>}
         <RootMissingBanner items={s.items} onPick={onOpenProject} />
         {pill && <ChangedFilesPill changes={tree?.changes ?? []} onOpen={openChanges} />}
-        <Composer worktreeTarget={worktreeTarget} onWorktreePhase={setWorktreePhase} port={port} fresh={ready && !rt.host && s.items.length === 0} status={status} running={running} quote={quote} restore={restored} inject={inserted} focus={askFocus} onSubmit={submit} onChanged={refreshStatus} onError={notify} onSettings={onSettings} side={sideAsk} onSide={() => setSideAsk((on) => !on)} sidePanel={sideAsk ? <SidePanel port={port} onClose={() => setSideAsk(false)} /> : null} changeCount={changeCount} countElsewhere={pill} git={git} onTreeChanged={refreshTree} pulse={pulse} draftKey={draftKey(rt.host ?? "", rt.root, rt.sessionPath || status?.sessionPath || "")} />
+        <Composer worktreeTarget={worktreeTarget} onWorktreePhase={setWorktreePhase} port={port} fresh={ready && !historyPaging.hasMore && !historyPaging.busy && !historyPaging.failed && !rt.host && s.items.length === 0} status={status} running={running} quote={quote} restore={restored} inject={inserted} focus={askFocus} onSubmit={submit} onChanged={refreshStatus} onError={notify} onSettings={onSettings} side={sideAsk} onSide={() => setSideAsk((on) => !on)} sidePanel={sideAsk ? <SidePanel port={port} onClose={() => setSideAsk(false)} /> : null} changeCount={changeCount} countElsewhere={pill} git={git} onTreeChanged={refreshTree} pulse={pulse} draftKey={draftKey(rt.host ?? "", rt.root, rt.sessionPath || status?.sessionPath || "")} />
         <MeterRail
           tps={tps} trail={trail} running={running} speed={speed} metrics={s.metrics} ctx={ctx} mcp={mcp} compact={compact} cost={cost}
           wallet={wallet} hideAmounts={hideAmounts} tasks={rail.tasks} jobs={jobs} onSettings={onSettings}

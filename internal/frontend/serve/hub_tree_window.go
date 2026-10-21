@@ -14,8 +14,10 @@ const defaultTreeWindow = 50
 // treeWindow says how much of each workspace /tree builds. A window is a
 // request for the newest N rows; the counts beside them always cover all rows.
 type treeWindow struct {
-	limit  int
-	limits map[string]int
+	progressive   bool
+	retryMetadata bool
+	limit         int
+	limits        map[string]int
 	// scope picks which rows the window counts: every row, the active (not
 	// archived) ones, or only the archived. A pinned active conversation is
 	// always built, whatever the scope, so the pinned count never moves with it.
@@ -55,6 +57,8 @@ func (w treeWindow) limitFor(root string) int {
 func parseTreeWindow(w http.ResponseWriter, r *http.Request) (treeWindow, bool) {
 	window := treeWindow{limit: defaultTreeWindow}
 	q := r.URL.Query()
+	window.progressive = q.Get("progressive") == "1"
+	window.retryMetadata = q.Get("retryMetadata") == "1"
 	if raw := q.Get("limit"); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 0 {

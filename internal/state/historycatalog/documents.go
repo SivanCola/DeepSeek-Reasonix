@@ -1,6 +1,9 @@
 package historycatalog
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 
 	"reasonix/internal/base/retrieval"
@@ -18,7 +21,21 @@ type indexedDocument struct {
 	count   int
 }
 
+func documentDigest(docs []indexedDocument) string {
+	h := sha256.New()
+	for _, doc := range docs {
+		_, _ = h.Write([]byte(doc.terms))
+		_, _ = h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 func documents(messages []provider.Message) []indexedDocument {
+	out, _ := documentsContext(context.Background(), messages)
+	return out
+}
+
+func documentsContext(ctx context.Context, messages []provider.Message) ([]indexedDocument, error) {
 	out := []indexedDocument{}
 	appendDoc := func(message, part int, role, kind, tool, text string) {
 		terms := retrieval.Tokens(strings.TrimSpace(text))
@@ -28,6 +45,9 @@ func documents(messages []provider.Message) []indexedDocument {
 		out = append(out, indexedDocument{message: message, part: part, role: role, kind: kind, tool: tool, terms: strings.Join(terms, " "), count: len(terms)})
 	}
 	for i, msg := range messages {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		switch msg.Role {
 		case provider.RoleUser:
 			appendDoc(i, 0, string(msg.Role), "user_text", "", sessionstore.UserSaidText(msg.Content))
@@ -47,5 +67,5 @@ func documents(messages []provider.Message) []indexedDocument {
 			appendDoc(i, 0, string(msg.Role), "tool_output", msg.Name, text)
 		}
 	}
-	return out
+	return out, nil
 }

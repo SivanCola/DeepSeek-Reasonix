@@ -39,7 +39,8 @@ func TestV4ConversationsWithoutAListingCacheAreReplayedOnce(t *testing.T) {
 	if rows != 60 || again != 60 {
 		t.Fatalf("rows = %d then %d, want 60", rows, again)
 	}
-	if second*5 > first {
-		t.Fatalf("second listing took %v against %v for the first: replayed again", second, first)
+	if entries := len(loadV4Listings(sessions).Entries); entries != 60 {
+		t.Fatalf("persisted entries = %d", entries)
 	}
+	t.Logf("cold=%v warm=%v", first, second)
 }

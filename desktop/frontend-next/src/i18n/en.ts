@@ -25,6 +25,20 @@ import { EN_COMMUNITY } from "./en_community";
 import { EN_SPONSOR } from "./en_sponsor";
 
 export const EN: Record<string, string> = {
+  "正在读取历史消息…": "Reading history messages…",
+  "历史加载失败 · 重试": "History could not be loaded · Retry",
+  "加载更早的消息": "Load earlier messages",
+  "正在查找较早消息…": "Searching earlier messages…",
+  "部分历史尚未读取": "Some history has not been read",
+  "历史内容已改变，正在重新读取最近的消息": "History changed. Reloading the latest messages.",
+  "当前内核不支持历史分页": "This kernel does not support history paging.",
+  "部分历史摘要暂不可用，可继续打开会话": "Some history summaries are unavailable. You can still open conversations.",
+  "仍在搜索部分历史会话…": "Still searching some historical conversations…",
+  "正在读取历史摘要…": "Reading history summaries…",
+  "正在读取摘要": "Reading summary",
+  "摘要暂不可用": "Summary unavailable",
+  "用搜索查找更多会话": "Search to find more conversations",
+  "显示更多": "Show more",
 	...EN_COMPOSITION,
   ...EN_DOCUMENT,
   "此检查点不包含文件快照": "This checkpoint contains no file snapshots",

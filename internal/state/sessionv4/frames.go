@@ -1,6 +1,7 @@
 package sessionv4
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -55,10 +56,10 @@ type event struct {
 	resolved   json.RawMessage `json:"-"`
 }
 
-// scanCommits reads every complete batch of the log in order and hands its
+// scanCommitsContext reads every complete batch of the log in order and hands its
 // events to visit. A frame or batch cut short at the end is a write still in
 // progress and ends the scan without error.
-func scanCommits(store fs.FS, name string, pool contentPool, visit func([]event) error) error {
+func scanCommitsContext(ctx context.Context, store fs.FS, name string, pool contentPool, visit func([]event) error) error {
 	f, err := store.Open(name)
 	if err != nil {
 		return err
@@ -76,6 +77,9 @@ func scanCommits(store fs.FS, name string, pool contentPool, visit func([]event)
 		next    uint64 = 1
 	)
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		raw, complete, err := readFrame(f, dec)
 		if err != nil || !complete {
 			return err

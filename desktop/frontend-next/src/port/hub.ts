@@ -35,6 +35,8 @@ export interface RuntimeView {
 }
 
 export interface TreeSession {
+	metadataState?: "pending" | "ready" | "error";
+	countsKnown?: boolean;
   path: string;
   workspaceRoot?: string;
   isolated?: boolean;
@@ -102,6 +104,11 @@ export interface OpenWithTarget {
 }
 
 export interface TreeWorkspace {
+	listingState?: "discovering" | "indexing" | "ready" | "degraded";
+	listingRevision?: number;
+	countsComplete?: boolean;
+	pendingMetadata?: number;
+	failedMetadata?: number;
   root: string;
   name: string;
   workspaceRoots?: string[];
@@ -133,6 +140,7 @@ export type TreeScope = "" | "active" | "archived";
 // `scope` says which rows the window counts (active ones, only the archived, or
 // every row) and `q` keeps them to those whose title or name contains it.
 export interface TreeWindow {
+	retryMetadata?: boolean;
   limit?: number;
   limits?: Record<string, number>;
   scope?: TreeScope;
@@ -141,6 +149,7 @@ export interface TreeWindow {
 
 export function treeQuery(window: TreeWindow | undefined): string {
   const q = new URLSearchParams();
+  if (window?.retryMetadata) q.set("retryMetadata", "1");
   if (window?.limit !== undefined) q.set("limit", String(window.limit));
   if (window?.limits && Object.keys(window.limits).length > 0) q.set("limits", JSON.stringify(window.limits));
   if (window?.scope) q.set("scope", window.scope);
@@ -345,7 +354,8 @@ export class SseHub implements HubPort {
   }
 
   tree(window?: TreeWindow) {
-    return this.get<TreeWorkspace[]>("/tree" + treeQuery(window));
+    const query = treeQuery(window);
+    return this.get<TreeWorkspace[]>("/tree" + query + (query ? "&" : "?") + "progressive=1");
   }
 
   searchHistory(query: string) {

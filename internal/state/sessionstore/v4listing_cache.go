@@ -1,11 +1,14 @@
 package sessionstore
 
 import (
+	"context"
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
-	"sync"
 
+	"reasonix/internal/base/filelock"
+	"reasonix/internal/base/fileutil"
 	"reasonix/internal/state/sessionv4"
 )
 
@@ -14,21 +17,21 @@ import (
 // is read-only to us, so the answer is kept in the folder we own.
 const v4ListingName = ".v4-listing.json"
 
-const v4ListingFormat = 1
+const v4ListingFormat = 2
 
 type v4ListingEntry struct {
-	LogSize int64             `json:"s"`
-	LogMod  int64             `json:"m"`
-	Listing sessionv4.Listing `json:"l"`
+	Manifest sessionv4.Manifest `json:"identity"`
+	LogSize  int64              `json:"s"`
+	LogMod   int64              `json:"m"`
+	Listing  sessionv4.Listing  `json:"l"`
 }
 
 type v4ListingCache struct {
 	Format  int                       `json:"format"`
 	Entries map[string]v4ListingEntry `json:"entries"`
 	dirty   bool
+	changed map[string]v4ListingEntry
 }
-
-var v4ListingMu sync.Mutex
 
 func loadV4Listings(dir string) *v4ListingCache {
 	c := &v4ListingCache{Format: v4ListingFormat, Entries: map[string]v4ListingEntry{}}
@@ -46,34 +49,50 @@ func loadV4Listings(dir string) *v4ListingCache {
 
 func (c *v4ListingCache) get(s sessionv4.Session) (sessionv4.Listing, bool) {
 	e, ok := c.Entries[s.Manifest.SessionID]
-	if !ok || e.LogSize != s.LogSize || e.LogMod != s.LogModTime.UnixNano() {
+	if !ok || !e.Manifest.Equal(s.Manifest) || e.LogSize != s.LogSize || e.LogMod != s.LogModTime.UnixNano() {
 		return sessionv4.Listing{}, false
 	}
 	return e.Listing, true
 }
 
 func (c *v4ListingCache) put(s sessionv4.Session, l sessionv4.Listing) {
-	c.Entries[s.Manifest.SessionID] = v4ListingEntry{LogSize: s.LogSize, LogMod: s.LogModTime.UnixNano(), Listing: l}
+	e := v4ListingEntry{Manifest: s.Manifest, LogSize: s.LogSize, LogMod: s.LogModTime.UnixNano(), Listing: l}
+	c.Entries[s.Manifest.SessionID] = e
+	if c.changed == nil {
+		c.changed = map[string]v4ListingEntry{}
+	}
+	c.changed[s.Manifest.SessionID] = e
 	c.dirty = true
 }
 
-// save is best effort: a folder that cannot be written replays next time.
-func (c *v4ListingCache) save(dir string) {
+func (c *v4ListingCache) save(ctx context.Context, dir string) error {
 	if !c.dirty {
-		return
+		return nil
 	}
-	raw, err := json.Marshal(c)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	release, err := filelock.TryAcquire(filepath.Join(dir, v4ListingName+".lock"))
 	if err != nil {
-		return
+		return err
 	}
-	v4ListingMu.Lock()
-	defer v4ListingMu.Unlock()
-	tmp, err := os.CreateTemp(dir, v4ListingName+".*")
+	defer release()
+	merged := loadV4Listings(dir)
+	for id, e := range c.changed {
+		s, err := sessionv4.Open(filepath.Join(v4RootFor(dir), id))
+		if err == nil && e.Manifest.Equal(s.Manifest) && e.LogSize == s.LogSize && e.LogMod == s.LogModTime.UnixNano() {
+			merged.Entries[id] = e
+		}
+	}
+	raw, err := json.Marshal(merged)
 	if err != nil {
-		return
+		return err
 	}
-	_, werr := tmp.Write(raw)
-	if cerr := tmp.Close(); werr != nil || cerr != nil || os.Rename(tmp.Name(), filepath.Join(dir, v4ListingName)) != nil {
-		os.Remove(tmp.Name())
+	if err := fileutil.AtomicWriteFileStrictValidated(filepath.Join(dir, v4ListingName), raw, 0o600, ctx.Err); err != nil {
+		return err
 	}
+	maps.Copy(c.Entries, merged.Entries)
+	c.changed = nil
+	c.dirty = false
+	return nil
 }

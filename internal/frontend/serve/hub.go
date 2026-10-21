@@ -18,6 +18,7 @@ import (
 	"reasonix/internal/platform/computer"
 	"reasonix/internal/platform/wsl"
 
+	"reasonix/internal/base/backgroundwork"
 	"reasonix/internal/base/fileutil"
 	"reasonix/internal/contract/agentcomposition"
 	"reasonix/internal/contract/config"
@@ -50,6 +51,7 @@ const runtimePrefix = "/rt/"
 // published under /rt/{id}/; the hub owns only what they share — the auth gate,
 // the workspace tree, and the rule that one session file gets one runtime.
 type Hub struct {
+	legacy   *hubLegacyListings
 	currency control.DisplayCurrencyGroup
 	mu       sync.RWMutex
 	runtimes map[string]*Runtime
@@ -312,6 +314,7 @@ func (h *Hub) Open(ctx context.Context, req OpenRequest) (*Runtime, error) {
 }
 
 func (h *Hub) openBound(ctx context.Context, req OpenRequest, inherited *agentcomposition.Binding) (*Runtime, error) {
+	defer backgroundwork.Shared.Foreground()()
 	if rt := h.findSession(req.SessionPath); rt != nil {
 		return rt, nil
 	}

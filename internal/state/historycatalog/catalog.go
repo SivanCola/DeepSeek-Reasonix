@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"reasonix/internal/state/sessionstore"
 	"runtime"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,7 +18,6 @@ import (
 
 	"reasonix/internal/base/retrieval"
 	"reasonix/internal/state/projectiondb"
-	"reasonix/internal/state/store"
 )
 
 const defaultMissingGrace = 30 * time.Second
@@ -115,7 +113,7 @@ func (c *Catalog) recordTokenizerVersion(ctx context.Context) error {
 	return err
 }
 
-func (c *Catalog) ensureTokenizerVersion(ctx context.Context) error {
+func (c *Catalog) ensureTokenizerVersionOnce(ctx context.Context) error {
 	var version int
 	if err := c.db.QueryRowContext(ctx, `SELECT tokenizer_version FROM history_state WHERE id=1`).Scan(&version); err != nil {
 		return err
@@ -239,6 +237,12 @@ func (c *Catalog) worker() {
 	ticker := time.NewTicker(c.opts.ReconcileInterval)
 	defer ticker.Stop()
 	for {
+		if c.ctx.Err() != nil {
+			return
+		}
+		if c.indexPending(c.ctx, Root{}, 0) {
+			continue
+		}
 		if root, ok := c.takeDirtyRoot(); ok {
 			_ = c.reconcileRoot(c.ctx, root)
 			continue
@@ -364,112 +368,6 @@ func historyRootSignature(paths []string) string {
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
-func (c *Catalog) reconcileRoot(ctx context.Context, root Root) error {
-	entries, err := os.ReadDir(root.Path)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		c.setError(err)
-		return err
-	}
-	paths := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if entry.IsDir() || !store.IsSessionTranscriptName(entry.Name()) ||
-			store.IsSubagentTranscriptName(entry.Name()) {
-			continue
-		}
-		path := filepath.Join(root.Path, entry.Name())
-		if !root.Archive && !sessionstore.IsVisibleSession(path) {
-			continue
-		}
-		paths = append(paths, path)
-	}
-	slices.Sort(paths)
-	signature := historyRootSignature(paths)
-	var previousSig, previousState string
-	var previousIndexed, previousTotal int64
-	_ = c.db.QueryRowContext(ctx, `SELECT signature,state,indexed,total FROM history_roots WHERE path=?`, root.Path).
-		Scan(&previousSig, &previousState, &previousIndexed, &previousTotal)
-	// Skip a completed, fully healthy directory: a corrupt/stale/missing source
-	// is retry work the size/mtime signature cannot see. Healthy roots still
-	// short-circuit before any transcript is opened.
-	if previousState == "ready" && previousSig == signature && signature != "" &&
-		previousIndexed == previousTotal && c.rootProjectionHealthy(ctx, root.Path) {
-		return nil
-	}
-	now := c.opts.Now().UnixMilli()
-	tx, err := c.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	var generation int64
-	if err := tx.QueryRowContext(ctx, `INSERT INTO history_roots(path,source,scope,workspace_root,signature,scan_generation,state,total)
-        VALUES(?,?,?,?,?,1,'scanning',?) ON CONFLICT(path) DO UPDATE SET source=excluded.source,scope=excluded.scope,
-        workspace_root=excluded.workspace_root,signature=excluded.signature,scan_generation=history_roots.scan_generation+1,state='scanning',error='',total=excluded.total
-        RETURNING scan_generation`, root.Path, root.Source, root.Scope, root.WorkspaceRoot, signature, len(paths)).Scan(&generation); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	indexed := 0
-	for i, path := range paths {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err := c.indexPath(ctx, root, path, generation, -1); err == nil {
-			indexed++
-		}
-		if (i+1)%32 == 0 {
-			runtime.Gosched()
-		}
-	}
-	live, absent, err := c.measureUnseen(ctx, root, generation)
-	if err != nil {
-		return err
-	}
-	tx, err = c.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	if err := c.applyScanResult(ctx, tx, now, generation, live, absent); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	cutoff := now - c.opts.MissingGrace.Milliseconds()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM history_fts WHERE rowid IN (
-        SELECT d.id FROM history_documents d JOIN history_sources s ON s.path=d.source_path
-        WHERE s.root=? AND s.seen_generation<>? AND s.missing_since>0 AND s.missing_since<=?
-    )`, root.Path, generation, cutoff); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM history_documents WHERE source_path IN (
-        SELECT path FROM history_sources WHERE root=? AND seen_generation<>? AND missing_since>0 AND missing_since<=?
-    )`, root.Path, generation, cutoff); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM history_sources
-        WHERE root=? AND seen_generation<>? AND missing_since>0 AND missing_since<=?`, root.Path, generation, cutoff); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE history_roots SET state='ready',signature=?,indexed=?,completed_at=?,scan_cursor='' WHERE path=?`, signature, indexed, now, root.Path); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	revision, err := bump(ctx, tx)
-	if err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	c.publish(revision, []string{root.Path}, "reconcile")
-	return nil
-}
-
 func fileFingerprint(path string) string {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -478,7 +376,10 @@ func fileFingerprint(path string) string {
 	return fmt.Sprintf("%d:%d", info.Size(), info.ModTime().UnixNano())
 }
 
-func (c *Catalog) indexPath(ctx context.Context, root Root, path string, generation int64, appendFrom int) error {
+func (c *Catalog) indexPathOnce(ctx context.Context, root Root, path string, generation int64, appendFrom int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if !root.Archive && !sessionstore.IsVisibleSession(path) {
 		return c.Purge(ctx, path)
 	}
@@ -515,23 +416,17 @@ func (c *Catalog) indexPath(ctx context.Context, root Root, path string, generat
 			return nil
 		}
 	}
-	session, err := sessionstore.LoadSession(path)
+	session, err := sessionstore.LoadSessionContext(ctx, path)
 	if err != nil {
-		_, _ = c.db.ExecContext(ctx, `INSERT INTO history_sources(path,root,source,scope,workspace_root,content_fingerprint,meta_fingerprint,health,last_error,seen_generation)
-            VALUES(?,?,?,?,?,?,?,'corrupt',?,?) ON CONFLICT(path) DO UPDATE SET health='corrupt',last_error=excluded.last_error,
-            content_fingerprint=excluded.content_fingerprint,meta_fingerprint=excluded.meta_fingerprint,seen_generation=excluded.seen_generation`,
-			path, root.Path, root.Source, root.Scope, root.WorkspaceRoot, contentFingerprint, metaFingerprint, err.Error(), generation)
-		c.setError(err)
-		return err
+		return c.sourceReadError(ctx, root, path, generation, contentFingerprint, metaFingerprint, err)
 	}
 	messages := session.Snapshot()
+	docs, err := documentsContext(ctx, messages)
+	if err != nil {
+		return err
+	}
 	if digest == "" {
-		h := sha256.New()
-		for _, doc := range documents(messages) {
-			_, _ = h.Write([]byte(doc.terms))
-			_, _ = h.Write([]byte{0})
-		}
-		digest = hex.EncodeToString(h.Sum(nil))
+		digest = documentDigest(docs)
 	}
 	meta, _, _ := sessionstore.LoadBranchMeta(path)
 	lastActivity := max(int64(0), sessionstore.SessionContentModTime(path).UnixMilli())
@@ -567,7 +462,7 @@ func (c *Catalog) indexPath(ctx context.Context, root Root, path string, generat
 		_ = tx.Rollback()
 		return err
 	}
-	for _, doc := range documents(messages) {
+	for _, doc := range docs {
 		result, err := tx.ExecContext(ctx, `INSERT INTO history_documents(source_path,message_index,part_index,role,kind,tool_name,token_count)
             VALUES(?,?,?,?,?,?,?)`, path, doc.message, doc.part, doc.role, doc.kind, doc.tool, doc.count)
 		if err != nil {
