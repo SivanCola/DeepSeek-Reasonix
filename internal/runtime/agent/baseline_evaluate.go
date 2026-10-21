@@ -5,7 +5,6 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -60,8 +59,8 @@ func (a *Agent) runBaselineCriterion(ctx context.Context, store *evidence.Baseli
 	defer release()
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = a.writeWorkspaceRoot
-	var out bytes.Buffer
-	cmd.Stdout = &out
+	out := evidence.NewTestJSONObserver(names)
+	cmd.Stdout = out
 	tracked, runErr := proc.RunCommand(ctx, cmd, proc.RunOptions{Track: true, Source: "baseline_verification"})
 	if tracked != nil {
 		if done := tracked.WaitCompleted(); done != nil {
@@ -70,10 +69,10 @@ func (a *Agent) runBaselineCriterion(ctx context.Context, store *evidence.Baseli
 		tracked.Kill()
 	}
 	var exitErr *exec.ExitError
-	if ctx.Err() != nil || errors.Is(runErr, proc.ErrScopeCompletionUnknown) || errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) || (runErr != nil && !errors.As(runErr, &exitErr)) {
+	if ctx.Err() != nil || cmd.ProcessState == nil || !cmd.ProcessState.Exited() || errors.Is(runErr, proc.ErrScopeCompletionUnknown) || errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) || (runErr != nil && !errors.As(runErr, &exitErr)) {
 		return evidence.CriterionUnavailable, true
 	}
-	return evidence.BaselineOutcomeFromTestJSON(out.Bytes(), names), true
+	return out.Outcome(), true
 }
 
 // packagePathOf names the criterion's package as the toolchain expects it,

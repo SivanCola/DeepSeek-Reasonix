@@ -10,7 +10,9 @@ func TestCapturedJSONRequiresParentTerminalEvent(t *testing.T) {
 		"{\"Action\":\"pass\",\"Test\":\"TestEvict/child\"}\n",
 		"{\"Action\":\"pass\",\"Test\":\"TestEvict\"}",
 	} {
-		if got := BaselineOutcomeFromTestJSON([]byte(stream), []string{"TestEvict"}); got != CriterionUnavailable {
+		observer := NewTestJSONObserver([]string{"TestEvict"})
+		_, _ = observer.Write([]byte(stream))
+		if got := observer.Outcome(); got != CriterionUnavailable {
 			t.Fatalf("incomplete parent verdict: %s", got)
 		}
 	}

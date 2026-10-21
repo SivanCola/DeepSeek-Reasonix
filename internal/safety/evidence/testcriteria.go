@@ -208,13 +208,3 @@ func EvaluableCriterionNames(src []byte) []string {
 	slices.Sort(names)
 	return names
 }
-
-// BaselineOutcomeFromTestJSON reads a `go test -json` stream for a verdict about
-// the named criteria and nothing else. A package that failed while none of them
-// did is not a verdict about them — an unrelated test, or a build that never
-// produced one, must not be reported as the captured criterion failing.
-func BaselineOutcomeFromTestJSON(stream []byte, criteria []string) CriterionResult {
-	observer := NewTestJSONObserver(criteria)
-	_, _ = observer.Write(stream)
-	return observer.Outcome()
-}

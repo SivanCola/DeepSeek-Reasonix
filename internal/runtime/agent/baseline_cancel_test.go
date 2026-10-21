@@ -6,8 +6,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
@@ -35,31 +33,7 @@ func TestCanceledBaselineCannotSettleEarlierPartialPass(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer listener.Close()
-	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	dir := t.TempDir()
-	program := "go"
-	if runtime.GOOS == "windows" {
-		program += ".exe"
-	}
-	shim := filepath.Join(dir, program)
-	input, err := os.Open(self)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer input.Close()
-	output, err := os.OpenFile(shim, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0700)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, copyErr := io.Copy(output, input)
-	closeErr := output.Close()
-	if copyErr != nil || closeErr != nil {
-		t.Fatalf("prepare helper: %v %v", copyErr, closeErr)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	installBaselineTestCommand(t)
 	t.Setenv("REASONIX_TEST_BASELINE_CANCEL_HELPER", listener.Addr().String())
 	a := baselineWorkspace(t, "package spike\nfunc Evict(n int) int { return n - 1 }\n", assertsNothing)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
