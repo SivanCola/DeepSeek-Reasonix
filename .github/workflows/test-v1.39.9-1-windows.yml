@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: 081228b0d9638bbb366bd1942b25aae1e4e87d8d
+          ref: e0279ee079b0c6ccdcc985a24bb568e7290d16b0
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
@@ -41,7 +41,7 @@ jobs:
           go test ./internal/agent -run TestHTTP2FailureDoesNotReplayCommittedOrSpeculativeTools -count=1
       - name: Install NSIS
         run: pwsh -NoProfile -File scripts/install-nsis.ps1
-      - name: Build unsigned private test package
+      - name: Build unsigned test package
         run: scripts/desktop-build.sh windows/amd64 v1.39.9-1 canary
       - name: Verify package identity and contents
         run: |
@@ -69,8 +69,8 @@ jobs:
           $files = @(Get-ChildItem dist/Reasonix-v1.39.9-1-windows-x64*)
           $hashes = @($files | ForEach-Object { @{ file = $_.Name; sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(); bytes = $_.Length } })
           $build = Get-Content desktop/build/windows/signing-payload/app/resources/build.json -Raw | ConvertFrom-Json
-          if ($build.version -ne 'v1.39.9-1' -or $build.commit -ne '081228b0d9638bbb366bd1942b25aae1e4e87d8d') { throw 'Build provenance mismatch' }
-          @{ version = 'v1.39.9-1'; channel = 'canary'; sourceSha = $build.commit; mainV2Sha = '47d6f06ae1'; pullRequest = 14094; pullRequestSha = 'd558ac1f4e231253ec2756c6138afcd7d77dd800'; workflowSha = '${{ github.sha }}'; run = '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'; signing = 'unsigned test build'; files = $hashes } | ConvertTo-Json -Depth 6 | Set-Content dist/test-build.json -Encoding utf8
+          if ($build.version -ne 'v1.39.9-1' -or $build.commit -ne 'e0279ee079b0c6ccdcc985a24bb568e7290d16b0') { throw 'Build provenance mismatch' }
+          @{ version = 'v1.39.9-1'; channel = 'canary'; sourceSha = $build.commit; mainV2Sha = '47d6f06ae140d2ac642cd1a91050085d1282305f'; baseMergeSha = '081228b0d9638bbb366bd1942b25aae1e4e87d8d'; pullRequest = 14094; pullRequestSha = 'd558ac1f4e231253ec2756c6138afcd7d77dd800'; additionalFix = 'Use request sequence ordering for Windows clock resolution'; workflowSha = '${{ github.sha }}'; run = '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'; signing = 'unsigned test build'; files = $hashes } | ConvertTo-Json -Depth 6 | Set-Content dist/test-build.json -Encoding utf8
           $hashes | ForEach-Object { "$($_.sha256)  $($_.file)" } | Set-Content dist/SHA256SUMS.txt -Encoding ascii
       - name: Upload verified test packages
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
