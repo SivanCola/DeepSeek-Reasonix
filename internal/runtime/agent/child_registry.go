@@ -90,17 +90,29 @@ func SubagentToolRegistryForDepth(parent *tool.Registry, names []string, childDe
 // use_capability (for example Economy or legacy callers) but sub-agents still
 // need the proxy.
 func SubagentToolRegistryForDepthWithRuntime(parent *tool.Registry, names []string, childDepth, maxDepth int, runtime *usecap.MCPCapabilityRuntime) *tool.Registry {
+	return subagentExecutionRegistry(parent, names, childDepth, maxDepth, runtime, false)
+}
+
+// SubagentToolRegistryWithOwnedJobs requires a fresh run-owned job manager.
+// Its caller must seal admission and join jobs before releasing the environment.
+func SubagentToolRegistryWithOwnedJobs(parent *tool.Registry, names []string, childDepth, maxDepth int, runtime *usecap.MCPCapabilityRuntime) *tool.Registry {
+	return subagentExecutionRegistry(parent, names, childDepth, maxDepth, runtime, true)
+}
+
+func subagentExecutionRegistry(parent *tool.Registry, names []string, childDepth, maxDepth int, runtime *usecap.MCPCapabilityRuntime, ownedJobs bool) *tool.Registry {
 	exclude := append([]string(nil), subagentAlwaysHiddenTools...)
 	if childDepth >= NormalizeMaxSubagentDepth(maxDepth) {
 		exclude = append(exclude, subagentRecursiveTools...)
 	}
-	exclude = append(exclude, subagentJobTools...)
+	if !ownedJobs {
+		exclude = append(exclude, subagentJobTools...)
+	}
 	sub := FilterRegistry(parent, names, exclude...)
 	bindLocal := builtin.ForkFileViews(sub)
 	stripDirectMCPTools(sub)
 	AttachCompleteSubtaskTool(sub)
 	attachSubagentCapabilityProxy(parent, sub, names, runtime, bindLocal)
-	if bash, ok := sub.Get("bash"); ok {
+	if bash, ok := sub.Get("bash"); ok && !ownedJobs {
 		sub.Add(foregroundOnlyBash{inner: bash})
 	}
 	return sub

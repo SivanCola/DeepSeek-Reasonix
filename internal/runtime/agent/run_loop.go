@@ -186,7 +186,7 @@ func (a *Agent) beginRunTurn(ctx context.Context, input string) (rawInput string
 			if !a.task.ledger.NoteBackgroundLease(session, jobID) {
 				continue
 			}
-			a.task.ledger.MergeChild(summary)
+			a.task.ledger.MergeConcurrentChildren(summary)
 		}
 	}
 	a.turn.deliveryCriteriaEstablished = a.hasIncompleteCanonicalCriteria() ||

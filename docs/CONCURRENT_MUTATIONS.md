@@ -233,6 +233,25 @@ Git 快照及 worktree 创建将准备额度与相关路径联合申请；内核
 跨聊天 fork 和完整崩溃续跑链路尚待验收。当前候选内的嵌套任务默认共享该候选；
 显式新建嵌套 worktree 会明确拒绝，完整嵌套整合路由仍待实现。
 
+隔离写入任务的每次执行拥有独立的后台作业管理器及执行身份；不会借用父任务或
+兄弟任务的作业表。工具白名单允许时，可以使用后台 Bash、`wait`、`bash_output`
+和 `kill_shell`。只读子任务仍无后台能力。父任务返回前原子关闭新作业准入，等待
+所有已登记作业及受跟踪的进程等待完成。
+
+随后再释放临时目录、验证和封存候选。
+取消会停止所属作业，但不能用取消返回替代真实退出；未确认的进程等待继续保留
+环境。此规则不承诺约束任意自行脱离的外部进程。
+
+后台作业收尾后，证据先进入实际执行代理的账本，再生成完成说明。无法建立
+先后关系的并发检查不能证明这些修改已验证；需要在收齐修改后重新运行。
+
+后台结果收集只导入变更观察；没有共同快照身份的命令、读取和评审证明保留在
+原作业记录中，不成为收集方当前版本的证明。`wait`、`bash_output`、回合重租
+和执行收尾使用同一规则。
+
+完成报告拒绝引用最后一次修改之前的检查，交接文本显示同一命令的最新结果，
+并标记被后续修改使其失效的通过记录。
+
 前台和后台隔离执行使用候选独立证据账本，不能把候选检查合并为源工作区检查。
 候选记录保留工具、来源执行、路径、退出状态及输出摘要，不持久化原始参数和
 命令文本。当前这些观察的验证状态为 `unknown`，不能授权自动整合。
@@ -687,6 +706,32 @@ same environment, with persona, tools and model identity checks retained.
 Nested tasks currently share their existing candidate by default. Explicit
 nested worktree creation is refused until a complete nested integration route
 is available.
+
+Each isolated writer execution owns a separate background-job manager and
+execution identity. It never borrows a parent's or sibling's job table. When
+permitted by the tool whitelist, it can use background Bash, `wait`,
+`bash_output` and `kill_shell`; read-only children retain no background capability.
+
+Before returning, the parent atomically closes job admission and joins registered
+jobs and tracked OS waits before releasing temporary directories, verifying or
+sealing its candidate.
+
+Cancellation stops owned jobs but cannot substitute for
+physical completion; an unconfirmed OS wait retains the environment. This does
+not establish containment of arbitrary detached external processes.
+
+After background jobs join, their evidence enters the actual executing agent's
+ledger before the completion handoff is generated. Unordered concurrent checks
+cannot verify those mutations; rerun them after collecting all changes.
+
+Collection imports mutation observations only. Commands, reads and reviews
+without a shared snapshot identity remain in the original job record and cannot
+prove the collector's current version. `wait`, `bash_output`, turn-start
+recollection and execution teardown use the same rule.
+
+Completion reports reject checks predating the latest mutation. The handoff
+shows each command's latest outcome and marks passing checks invalidated by
+later changes.
 
 Foreground and background isolated execution use a candidate-local evidence
 ledger. Candidate checks never become source-workspace checks through child or

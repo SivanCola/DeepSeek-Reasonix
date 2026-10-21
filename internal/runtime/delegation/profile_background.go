@@ -75,6 +75,9 @@ func (t *TaskTool) reserveBackgroundStart(ctx context.Context, manager *jobs.Man
 	}
 	release, running, ok := manager.ReserveStartForSession(jobs.SessionFromContext(ctx), "task", maxConcurrentBackgroundTasks)
 	if !ok {
+		if err := manager.AdmissionError(jobs.SessionFromContext(ctx)); err != nil {
+			return nil, err
+		}
 		return nil, fmt.Errorf("%d background tasks are already running for this session (limit %d); collect their results with wait — or run this sub-task in the foreground — before starting more", running, maxConcurrentBackgroundTasks)
 	}
 	return release, nil
@@ -84,7 +87,7 @@ func (t *TaskTool) reserveBackgroundStart(ctx context.Context, manager *jobs.Man
 // Cancellation and job publication handles remain owned by the job context.
 func backgroundProfileContext(job, caller context.Context) context.Context {
 	id, sink, _, _ := agent.CallContext(caller)
-	ctx := agent.WithCallContext(job, id, sink, nil, agent.PlanModeFromContext(caller))
+	ctx := agent.WithCallContext(carryMutationExecution(job, caller), id, sink, nil, agent.PlanModeFromContext(caller))
 	ctx = agent.WithParentSession(ctx, agent.ParentSession(caller))
 	ctx = agent.CarryChildComposition(ctx, caller)
 	ctx = agent.WithSubagentDepth(ctx, agent.SubagentDepth(caller))

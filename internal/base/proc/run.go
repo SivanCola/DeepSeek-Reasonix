@@ -172,6 +172,7 @@ func waitForTrackedCommand(ctx context.Context, tracked *TrackedCommand, wait fu
 	tracked.mu.Lock()
 	tracked.waitDone = done
 	tracked.mu.Unlock()
+	observeCompletion(ctx, done)
 	go func() {
 		err := wait()
 		publishCompletedWait(done, waitCh, err)

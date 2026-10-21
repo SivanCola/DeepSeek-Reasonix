@@ -56,6 +56,7 @@ func RunSubAgentWithSession(ctx context.Context, prov provider.Provider, reg *to
 	}
 	ctx, releaseTemp := withSubagentSessionTemp(ctx)
 	defer releaseTemp()
+	defer jobs.JoinExecution(ctx, opts.Jobs, &err)
 	if opts.SubagentDepth > 0 {
 		ctx = WithSubagentDepth(ctx, opts.SubagentDepth)
 	}
@@ -87,6 +88,10 @@ func RunSubAgentWithSession(ctx context.Context, prov provider.Provider, reg *to
 		if p != nil {
 			err = fmt.Errorf("sub-agent panic: %v", p)
 		}
+		settleChildJobs(ctx, sub, opts.Jobs, &err)
+		if err == nil && answer != "" {
+			answer = composeSubagentAnswer(ctx, answer, sub, writeclaim.SubagentWriteClaim(ctx), opts.ClassifierTaskText)
+		}
 		mergeChildEvidence(ctx, sub)
 		observeSubagentHandoff(sink, sub, sess, opts, answer, err)
 		if p != nil {
@@ -96,7 +101,7 @@ func RunSubAgentWithSession(ctx context.Context, prov provider.Provider, reg *to
 	sub.SetPlanMode(planWorkflow)
 	if err := sub.Run(ctx, prompt); err != nil {
 		if answer, ok := salvageReadinessExhaustedAnswer(sub, sess, opts, err); ok {
-			return composeSubagentAnswer(ctx, answer, sub, writeclaim.SubagentWriteClaim(ctx), opts.ClassifierTaskText), nil
+			return answer, nil
 		}
 		return "", fmt.Errorf("sub-agent: %w", err)
 	}
@@ -120,7 +125,7 @@ func RunSubAgentWithSession(ctx context.Context, prov provider.Provider, reg *to
 			// no report is no block, the state a killed run leaves anyway.
 			if !opts.DeliveryProfile {
 				if answer := latestAssistantAnswer(sess); answer != "" {
-					return composeSubagentAnswer(ctx, reviewWithoutVerdictNote+answer, sub, writeclaim.SubagentWriteClaim(ctx), opts.ClassifierTaskText), nil
+					return reviewWithoutVerdictNote + answer, nil
 				}
 			}
 			dumpRef := dumpFailedSubagentSession(opts.ArchiveDir, string(kind), sess)
@@ -134,7 +139,7 @@ func RunSubAgentWithSession(ctx context.Context, prov provider.Provider, reg *to
 		}
 	}
 	if answer := latestAssistantAnswer(sess); answer != "" {
-		return composeSubagentAnswer(ctx, answer, sub, writeclaim.SubagentWriteClaim(ctx), opts.ClassifierTaskText), nil
+		return answer, nil
 	}
 	return "", fmt.Errorf("sub-agent finished without producing a final answer")
 }
@@ -612,15 +617,28 @@ func formatHostReceipts(summary evidence.ChildEvidenceSummary, claims writeclaim
 func hostReceiptCommands(summary evidence.ChildEvidenceSummary) []string {
 	var out []string
 	seen := map[string]bool{}
-	for _, r := range summary.Receipts {
+	latestMutation := -1
+	for i, r := range summary.Receipts {
+		if r.Success && r.Mutation {
+			latestMutation = i
+		}
+	}
+	for i, r := range slices.Backward(summary.Receipts) {
 		cmd := strings.TrimSpace(r.Command)
 		outcome := hostReceiptOutcome(r)
-		if cmd == "" || outcome == "" || seen[cmd] {
+		if cmd == "" || seen[cmd] {
 			continue
 		}
 		seen[cmd] = true
+		if outcome == "" {
+			continue
+		}
+		if r.Verification == evidence.VerificationPassed && i <= latestMutation {
+			outcome += " [invalidated by later changes]"
+		}
 		out = append(out, cmd+outcome)
 	}
+	slices.Reverse(out)
 	return out
 }
 

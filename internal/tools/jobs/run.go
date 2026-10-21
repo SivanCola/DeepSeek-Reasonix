@@ -3,6 +3,8 @@ package jobs
 import (
 	"context"
 	"io"
+
+	"reasonix/internal/base/proc"
 )
 
 // launchJob runs j in its own goroutine. Joining the wait group and seeing the
@@ -11,7 +13,7 @@ import (
 func (m *Manager) launchJob(ctx context.Context, j *Job, run func(context.Context, io.Writer) (string, error)) error {
 	parentSession, id, kind, label := j.SessionID, j.ID, j.Kind, j.Label
 	m.mu.Lock()
-	if err := m.root.Err(); err != nil {
+	if err := ctx.Err(); err != nil {
 		m.mu.Unlock()
 		j.mu.Lock()
 		j.times.finished = nowMs()
@@ -37,7 +39,18 @@ func (m *Manager) launchJob(ctx context.Context, j *Job, run func(context.Contex
 	m.mu.Unlock()
 	go func() {
 		defer m.wg.Done()
+		ctx := proc.WithCompletionObserver(ctx, func(done <-chan struct{}) {
+			j.mu.Lock()
+			j.waits = append(j.waits, done)
+			j.mu.Unlock()
+		})
 		result, err := runRecovered(ctx, jobWriter{j}, run)
+		j.mu.Lock()
+		waits := j.waits
+		j.mu.Unlock()
+		for _, done := range waits {
+			<-done
+		}
 		j.mu.Lock()
 		j.runReturned = true
 		j.mu.Unlock()

@@ -118,6 +118,7 @@ type Job struct {
 	runReturned bool
 	cancel      context.CancelFunc
 	done        chan struct{}
+	waits       []<-chan struct{}
 	stalled     bool
 
 	watches  []*outputWatch
@@ -152,6 +153,8 @@ type Manager struct {
 	loaded             map[string]bool
 	scratch            *scratch.Dir
 	reservations       map[string]int
+	admission          *admissionSeal
+	waits              []<-chan struct{}
 
 	stalledWarning time.Duration
 	teardownGrace  time.Duration
@@ -383,6 +386,10 @@ func (m *Manager) StartOwnedForSession(parentSession, kind, label string, run fu
 		return m.startInvalid(parentSession, kind, label, err), err
 	}
 	m.mu.Lock()
+	if m.admissionClosedLocked(parentSession) {
+		m.mu.Unlock()
+		return m.startInvalid(parentSession, kind, label, ErrAdmissionClosed), ErrAdmissionClosed
+	}
 	m.seq++
 	id := fmt.Sprintf("%s-%d", kind, m.seq)
 	ctx, cancel := context.WithCancel(m.root)
@@ -861,12 +868,17 @@ func (m *Manager) resolve(parentSession string, ids []string) []*Job {
 // job (or when setup fails). Running jobs and in-flight start reservations both
 // count toward limit, so concurrent callers cannot overshoot it.
 func (m *Manager) ReserveStartForSession(parentSession, kind string, limit int) (release func(), running int, ok bool) {
-	if limit <= 0 {
-		return func() {}, 0, true
-	}
 	parentSession = strings.TrimSpace(parentSession)
 	key := jobKey(parentSession, kind)
 	m.mu.Lock()
+	if m.admissionClosedLocked(parentSession) || m.root.Err() != nil {
+		m.mu.Unlock()
+		return func() {}, 0, false
+	}
+	if limit <= 0 {
+		m.mu.Unlock()
+		return func() {}, 0, true
+	}
 	for _, jobKey := range m.order {
 		j := m.jobs[jobKey]
 		if j == nil || !sessionMatches(parentSession, j.SessionID) || j.Kind != kind {

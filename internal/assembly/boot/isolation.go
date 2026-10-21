@@ -8,6 +8,7 @@ import (
 
 	"reasonix/internal/contract/event"
 	"reasonix/internal/runtime/agent"
+	"reasonix/internal/runtime/delegation"
 	"reasonix/internal/runtime/isolation"
 	"reasonix/internal/runtime/writeclaim"
 	"reasonix/internal/session/control"
@@ -77,7 +78,16 @@ func (b *builder) addIsolation() error {
 		parent.DelegationScheduler = b.tools.taskTool.Scheduler()
 		parent.SessionDir = b.session.dir
 		authority := func(ctx context.Context, grant writeclaim.WritePathSet) isolation.SourceAuthorizer {
-			return integrationAuthorizer(b.root, agent.ParentSession(ctx), posture, b.tools.gate, b.tools.env.targetAccessCheck(), grant)
+			authorize := integrationAuthorizer(b.root, agent.ParentSession(ctx), posture, b.tools.gate, b.tools.env.targetAccessCheck(), grant)
+			if validate, ok := delegation.MutationExecutionValidator(ctx); ok {
+				return func(ctx context.Context, paths []string) error {
+					if err := validate(ctx); err != nil {
+						return err
+					}
+					return authorize(ctx, paths)
+				}
+			}
+			return authorize
 		}
 		b.tools.taskTool.WithEnvironmentFactory(b.cfg.Agent.Collaboration, newIsolatedEnvironmentFactory(parent, store, posture, b.root, sink, authority, b.prompt.projectChecks...))
 	} else {

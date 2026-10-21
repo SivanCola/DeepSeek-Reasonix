@@ -199,7 +199,10 @@ func (p *profileExecution) capturePanic(result *string, err *error) {
 }
 
 func (p *profileExecution) runSession(ctx context.Context, sink event.Sink, terminal *environmentTerminal) (answer string, err error) {
+	ctx = p.task.withMutationExecution(ctx, p.run)
 	defer terminal.settleRun(ctx, &answer, &err)
+	ctx, joinJobs := p.ownExecutionJobs(ctx, sink)
+	defer joinJobs(&err)
 	id := subagentRecoveryTaskID(ctx, p.run.Ref)
 	s := p.spec
 	if s.Grant.ReadOnly {

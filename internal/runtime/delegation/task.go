@@ -47,7 +47,7 @@ processes, or delegate to writer-capable agents. If a read-only delegation tool 
 available and genuinely useful, you may use it within the configured depth limit.
 Return a concise, self-contained final answer with the evidence the parent needs.`
 
-const subagentToolBoundarySummary = "Recursive agent/skill tools are exposed only while max_subagent_depth leaves another delegation layer; unsupported background job tools (parallel_tasks, wait, bash_output, kill_shell) are excluded; bash is exposed as foreground-only inside subagents."
+const subagentToolBoundarySummary = "Recursive agent/skill tools are exposed only while max_subagent_depth leaves another delegation layer; parallel_tasks is excluded. Isolated writer runs own their background jobs and may expose wait, bash_output, kill_shell and background bash when allowed by the tool whitelist. Other subagents expose foreground-only bash and exclude job tools."
 
 // maxConcurrentBackgroundTasks is the legacy writer-background fallback used
 // only when a TaskTool has no session scheduler (tests). Production boots
@@ -666,6 +666,9 @@ func (t *TaskTool) effectiveEffortIdentity(effort string) string {
 // buildSubReg returns the sub-agent's tool set: the named whitelist (minus
 // unavailable sub-agent tools), or every parent tool except those tools.
 func (t *TaskTool) buildSubReg(names []string, childDepth int) *tool.Registry {
+	if t.environmentID != "" {
+		return agent.SubagentToolRegistryWithOwnedJobs(t.parentReg, names, childDepth, t.maxDepth(), t.capabilityRuntime)
+	}
 	return agent.SubagentToolRegistryForDepthWithRuntime(t.parentReg, names, childDepth, t.maxDepth(), t.capabilityRuntime)
 }
 

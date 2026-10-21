@@ -8,6 +8,7 @@ import (
 	"reasonix/internal/runtime/agent"
 	"reasonix/internal/runtime/langpref"
 	"reasonix/internal/state/checkpoint"
+	"reasonix/internal/tools/jobs"
 )
 
 // subagentOptions is the single construction point for the run options every
@@ -50,5 +51,6 @@ func (t *TaskTool) subagentOptions(ctx context.Context, maxSteps int, pricing *p
 	if t.mutations != nil {
 		opts.ExecutionCapacity = t.scheduler.PhaseCapacity()
 	}
+	opts.Jobs, _ = ctx.Value(executionJobsKey{}).(*jobs.Manager)
 	return t.withExtraRoots(opts)
 }
