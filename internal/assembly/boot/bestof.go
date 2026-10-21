@@ -94,6 +94,8 @@ func runUnattended(ctx context.Context, parent Options, sink event.Sink, mode, r
 	}
 	defer os.RemoveAll(sessDir)
 	opts.SessionDir = sessDir
+	opts.WorkspaceOnly, opts.SandboxBashOverride = true, "enforce"
+	opts.protectedMutationRoots = appendUniquePaths(parent.protectedMutationRoots, parent.WorkspaceRoot, parent.WorkspaceRepo.WorkTree)
 	ctrl, err := Build(ctx, opts)
 	if err != nil {
 		return "", "", err

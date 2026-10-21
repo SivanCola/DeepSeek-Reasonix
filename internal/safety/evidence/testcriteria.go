@@ -7,7 +7,6 @@ package evidence
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -215,46 +214,7 @@ func EvaluableCriterionNames(src []byte) []string {
 // did is not a verdict about them — an unrelated test, or a build that never
 // produced one, must not be reported as the captured criterion failing.
 func BaselineOutcomeFromTestJSON(stream []byte, criteria []string) CriterionResult {
-	if len(criteria) == 0 {
-		return CriterionUnavailable
-	}
-	seen := map[string]string{}
-	for line := range strings.SplitSeq(string(stream), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		var event struct {
-			Action string `json:"Action"`
-			Test   string `json:"Test"`
-		}
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			continue
-		}
-		// Subtests answer for their parent, and only the parent is a criterion.
-		name, _, _ := strings.Cut(event.Test, "/")
-		if name == "" || !slices.Contains(criteria, name) {
-			continue
-		}
-		switch event.Action {
-		case "pass", "fail", "skip":
-			if _, decided := seen[name]; !decided || event.Test == name {
-				seen[name] = event.Action
-			}
-		}
-	}
-	if len(seen) != len(criteria) {
-		// Something the criteria name never reported. The host has no verdict for
-		// them, whatever the package as a whole did.
-		return CriterionUnavailable
-	}
-	for _, action := range seen {
-		if action == "fail" {
-			return CriterionFail
-		}
-		if action != "pass" {
-			return CriterionUnavailable
-		}
-	}
-	return CriterionPass
+	observer := NewTestJSONObserver(criteria)
+	_, _ = observer.Write(stream)
+	return observer.Outcome()
 }

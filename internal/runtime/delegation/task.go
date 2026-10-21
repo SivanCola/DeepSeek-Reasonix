@@ -18,6 +18,7 @@ import (
 	"reasonix/internal/contract/planmode"
 	"reasonix/internal/contract/provider"
 	"reasonix/internal/contract/tool"
+	"reasonix/internal/safety/sandbox"
 	"reasonix/internal/state/checkpoint"
 	"reasonix/internal/state/memory"
 	"reasonix/internal/state/mutation"
@@ -92,6 +93,7 @@ type TaskTool struct {
 	mutations                     *mutation.Coordinator
 	executionPresence             func(context.Context, string, bool) (func(), error)
 	checkEnvironment              *checkenv.Spec
+	processSandbox                sandbox.Spec
 	// scheduler is the session-scoped concurrency + write-claim controller.
 	// nil falls back to the legacy jobs.ReserveStart cap for background tasks.
 	scheduler *writeclaim.SubagentScheduler
@@ -313,6 +315,11 @@ func (t *TaskTool) WithProfileConfigResolvers(model, effort func(profile string)
 // the same write roots under the OS sandbox.
 func (t *TaskTool) WithBashSandboxEnforced(fn func() bool) *TaskTool {
 	t.bashSandboxEnforced = fn
+	return t
+}
+
+func (t *TaskTool) WithProcessSandbox(spec sandbox.Spec) *TaskTool {
+	t.processSandbox = spec
 	return t
 }
 

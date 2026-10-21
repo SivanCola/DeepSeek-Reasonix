@@ -13,23 +13,25 @@ import (
 	"reasonix/internal/runtime/agent"
 	"reasonix/internal/runtime/delegation"
 	"reasonix/internal/runtime/langpref"
+	"reasonix/internal/safety/sandbox"
 )
 
 // delegationInputs is what a sub-agent inherits from the executor: its model,
 // its step ceiling, and the session resources it runs inside.
 type delegationInputs struct {
-	opts         Options
-	sub          subagentConfig
-	exec         provider.Provider
-	entry        *config.ProviderEntry
-	modelName    string
-	root         string
-	maxSteps     int
-	delivery     bool
-	store        *delegation.SubagentStore
-	session      sessionRuntime
-	bashEnforced func() bool
-	extraRoots   []string
+	opts           Options
+	sub            subagentConfig
+	exec           provider.Provider
+	entry          *config.ProviderEntry
+	modelName      string
+	root           string
+	maxSteps       int
+	delivery       bool
+	store          *delegation.SubagentStore
+	session        sessionRuntime
+	bashEnforced   func() bool
+	processSandbox sandbox.Spec
+	extraRoots     []string
 	// childTools names what a child gets from its own model beyond the parent's.
 	childTools func(modelRef string) []tool.Tool
 }
@@ -102,6 +104,7 @@ func (w roleWiring) taskTool(in delegationInputs) *delegation.TaskTool {
 		WithProfileLookup(in.sub.profileLookup).
 		WithProfileConfigResolvers(in.sub.profileModel, in.sub.profileEffort).
 		WithBashSandboxEnforced(in.bashEnforced).
+		WithProcessSandbox(in.processSandbox).
 		WithChildTools(in.childTools).
 		WithOptimisticClaims(w.cfg.SubagentClaimsOptimistic())
 }
@@ -111,6 +114,8 @@ func (w roleWiring) taskTool(in delegationInputs) *delegation.TaskTool {
 func (w roleWiring) skillRunOptions(in delegationInputs) func(context.Context, int, *provider.Pricing, int, int) agent.Options {
 	return func(sctx context.Context, steps int, price *provider.Pricing, ctxWin, childDepth int) agent.Options {
 		return agent.Options{
+			ProcessSandbox:      in.processSandbox,
+			CheckEnvironment:    w.verificationEnvironment(in),
 			MaxSteps:            steps,
 			Temperature:         w.cfg.Agent.Temperature,
 			Pricing:             price,

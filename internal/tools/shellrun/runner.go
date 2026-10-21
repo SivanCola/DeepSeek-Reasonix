@@ -114,6 +114,9 @@ func RunForeground(ctx context.Context, req Request) Result {
 	collector := newOutputCollector(combinedOutputMaxBytes, tool.OutputTailMaxBytes)
 	var writers []io.Writer
 	writers = append(writers, collector.combined, collector.tail)
+	if observer, ok := tool.ControlledShellFrom(ctx).(io.Writer); ok {
+		writers = append(writers, observer)
+	}
 	if req.Progress != nil {
 		pw := newProgressWriter(req.Progress, progressOutputMaxBytes, progressOutputTruncated)
 		pw.suppress = req.SuppressLine

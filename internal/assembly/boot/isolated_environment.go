@@ -91,6 +91,7 @@ func buildIsolatedCandidate(ctx context.Context, parent, opts Options, source st
 	opts.DelegationScheduler = parent.DelegationScheduler
 	opts.WorkspaceRoot, opts.WorkspaceRepo = candidate.WorkspaceRoot, candidate.Repo
 	opts.WorkspaceOnly, opts.SandboxBashOverride = true, "enforce"
+	opts.protectedMutationRoots = appendUniquePaths(parent.protectedMutationRoots, source, parent.WorkspaceRepo.WorkTree)
 	opts.SessionDir = parent.SessionDir
 	opts.MaxSteps = spec.Sched.MaxSteps
 	opts.EffortOverride = &spec.Worker.Effort

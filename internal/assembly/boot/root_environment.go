@@ -91,5 +91,6 @@ func (b *builder) restoreRootEnvironment() error {
 	b.opts.WorkspaceRepo = r.Candidate.Repo
 	b.opts.WorkspaceRepo.Dir = r.Candidate.WorkspaceRoot
 	b.opts.WorkspaceOnly, b.opts.SandboxBashOverride = true, "enforce"
+	b.opts.protectedMutationRoots = appendUniquePaths(b.opts.protectedMutationRoots, r.SourceWorkspace, r.Source.WorkTree)
 	return nil
 }

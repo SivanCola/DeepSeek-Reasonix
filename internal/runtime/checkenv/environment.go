@@ -17,6 +17,7 @@ type Spec struct {
 	StorageRoot string
 	SourceRoot  string
 	Directory   string
+	capture     *capturedInput
 }
 
 var _ tool.ControlledShell = (*Invocation)(nil)

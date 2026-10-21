@@ -53,7 +53,7 @@ func (i *Invocation) finish() {
 		return
 	}
 	original, err := scanTree(ctx, i.spec.SourceRoot, i.state.sourcePolicy)
-	if err != nil || digest(original) != i.state.sourceDigest {
+	if err != nil || digest(original) != i.state.originalDigest {
 		return
 	}
 	launcher, err := fileutil.ReadContentVersion(ctx, i.state.argv[0])

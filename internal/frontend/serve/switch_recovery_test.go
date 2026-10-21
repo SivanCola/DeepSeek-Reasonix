@@ -392,8 +392,12 @@ func TestSwitchModelSnapshotFailureKeepsOldController(t *testing.T) {
 
 	err := s.switchModel(context.Background(), "next-model")
 	var pathErr *os.PathError
-	if !errors.As(err, &pathErr) || filepath.Base(filepath.Dir(pathErr.Path)) != filepath.Base(invalidSessionDir) {
+	if !errors.As(err, &pathErr) {
 		t.Fatalf("switchModel error = %v, want invalid session directory refusal", err)
+	}
+	rel, relErr := filepath.Rel(invalidSessionDir, pathErr.Path)
+	if relErr != nil || !filepath.IsLocal(rel) {
+		t.Fatalf("persistence failure was outside the invalid directory: %v", err)
 	}
 	if got := s.ctl(); got != old {
 		t.Fatalf("active controller changed after persistence failure: got %T %p, want outgoing %p", got, got, old)

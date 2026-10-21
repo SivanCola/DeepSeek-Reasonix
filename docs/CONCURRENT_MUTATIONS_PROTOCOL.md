@@ -53,6 +53,10 @@ Linux 的显式离线验证运行时可以产生过程内所有的受控凭据�
 不支持该受控验证器；普通 Shell 观察不会被升级为完整输入证明。非执行位或目录
 权限变更无法由当前 Git 应用协议重现时，会拒绝发布并保留成果。
 
+候选完整性是执行环境要求，独立于审批。完整文件变更边界不受支持时，在 Windows
+ACL 授权、hook 启动及 Bash 逃逸审批之前拒绝。源保护路径按最终可写范围核验，
+包含实际私有临时目录。这是运行时策略，不迁移配置，也不扩大创建限制令牌的承诺。
+
 ## English
 
 | Format or protocol | Existing data and current reader/writer | Previous reader/writer | Conclusion |
@@ -98,3 +102,14 @@ The explicit Linux offline runtime can issue process-owned controlled receipts.
 macOS/Windows do not currently implement this verifier; ordinary shell
 observations remain unknown. Permission changes outside the Git apply protocol's
 representation refuse publication and retain the result.
+
+Candidate launch integrity is an execution requirement, separate from approval.
+Unsupported full mutation bounds refuse before Windows ACL grants, hook launch
+or Bash escape approval.
+
+Source protection is checked against the final writable
+surface, including private temporary storage.
+
+This runtime-only policy adds no
+persisted configuration migration and does not upgrade a creation-only token to
+a complete integrity claim.

@@ -105,12 +105,23 @@ func (b *builder) isolatedResultsOwner() control.IsolatedResultsOwner {
 	return b.tools.isolation.store
 }
 
-// isolatedUsage forwards an isolated run's billable usage to the parent session
-// as sub-agent spend and drops everything else it emits.
+// isolatedUsage forwards spend and host hook diagnostics without replaying the
+// candidate's model stream or tool transcript in the source conversation.
 type isolatedUsage struct{ parent event.Sink }
 
 func (s isolatedUsage) Emit(e event.Event) {
-	if e.Kind != event.Usage || s.parent == nil {
+	if s.parent == nil {
+		return
+	}
+	if e.Kind == event.Notice {
+		switch e.Code {
+		case event.NoticeCodeHookFailed, event.NoticeCodeHookBlocked, event.NoticeCodeHookWarned, event.NoticeCodeHookUnevaluable:
+			e.Source = event.UsageSourceSubagent
+			s.parent.Emit(e)
+		}
+		return
+	}
+	if e.Kind != event.Usage {
 		return
 	}
 	e.UsageSource, e.Source = event.UsageSourceSubagent, event.UsageSourceSubagent

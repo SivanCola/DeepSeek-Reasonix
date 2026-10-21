@@ -224,6 +224,7 @@ func (b *builder) load() error {
 		}
 	}
 	b.repo = workspaceRepo(b.ctx, opts.WorkspaceRepo, b.root)
+	b.opts.WorkspaceRoot, b.opts.WorkspaceRepo = b.root, b.repo
 	var err error
 	if b.additionalDirs, err = normalizeAdditionalDirs(b.root, opts.AdditionalDirs); err != nil {
 		return err
@@ -285,7 +286,6 @@ func (b *builder) load() error {
 	migrateLegacySources(opts, b.sink)
 	b.timer.mark("migrations")
 	b.reportModelNotices()
-	opts.WorkspaceRepo = b.repo
 	opts.AdditionalDirs = b.additionalDirs
 	if b.session, err = startSessionRuntime(b.ctx, opts, cfg, b.root, b.sink); err != nil {
 		return err
@@ -443,7 +443,7 @@ func (b *builder) wireTools() error {
 		WithAskOnOrigin(cfg.Permissions.AskOnExternalOrigin).
 		WithSessionAllow(opts.PermissionAllow)
 	t.gate = control.NewSharedHeadlessGate(t.policy, opts.HeadlessApprovalMode)
-	t.hooks, t.hookRunner, err = loadHooks(opts, b.roots, root, b.shell, b.sink)
+	t.hooks, t.hookRunner, err = loadHooks(opts, b.roots, root, b.shell, b.sink, env)
 	if err != nil {
 		return err
 	}
@@ -461,7 +461,7 @@ func (b *builder) wireTools() error {
 	}
 	t.taskTool, t.skillRun = t.roles.delegation(delegationInputs{opts: opts, sub: t.sub, exec: b.execProv, entry: b.model.entry,
 		modelName: b.model.name, root: root, maxSteps: t.maxSteps, delivery: b.model.delivery, store: subagentStore,
-		session: b.session, bashEnforced: env.bash.Enforce, extraRoots: b.workspaceExtraRoots(), childTools: childViewImage(cfg, env, root)})
+		session: b.session, bashEnforced: env.bash.Enforce, processSandbox: env.bash, extraRoots: b.workspaceExtraRoots(), childTools: childViewImage(cfg, env, root)})
 	if err := b.addIsolation(); err != nil {
 		return err
 	}
@@ -554,14 +554,16 @@ func (b *builder) executor() *agent.Agent {
 	cfg, entry, t := b.cfg, b.model.entry, &b.tools
 	triageProv, triageRef, triagePrice := resolveTriage(cfg, b.model.ref, b.proxy)
 	ag := agent.New(b.execProv, t.reg, newObservedSession(b.prompt.prompt), agent.Options{
-		MaxSteps:       t.maxSteps,
-		MaxStepsKey:    b.opts.MaxStepsKey,
-		Temperature:    cfg.Agent.Temperature,
-		TaskBudget:     taskBudgetFromConfig(cfg),
-		ProgressWatch:  control.ProgressWatchFromConfig(cfg),
-		Pricing:        entry.Price,
-		ModelRef:       b.model.ref,
-		TriageProvider: triageProv, TriageModelRef: triageRef, TriagePricing: triagePrice,
+		ProcessSandbox:   t.env.bash,
+		CheckEnvironment: t.roles.verificationEnvironment(delegationInputs{root: b.root, opts: b.opts}),
+		MaxSteps:         t.maxSteps,
+		MaxStepsKey:      b.opts.MaxStepsKey,
+		Temperature:      cfg.Agent.Temperature,
+		TaskBudget:       taskBudgetFromConfig(cfg),
+		ProgressWatch:    control.ProgressWatchFromConfig(cfg),
+		Pricing:          entry.Price,
+		ModelRef:         b.model.ref,
+		TriageProvider:   triageProv, TriageModelRef: triageRef, TriagePricing: triagePrice,
 		ScreenExternalContent:   cfg.Agent.ScreenExternalContent,
 		MaxPerseverationRetries: perseverationRetries(cfg, entry),
 		Gate:                    t.gate,

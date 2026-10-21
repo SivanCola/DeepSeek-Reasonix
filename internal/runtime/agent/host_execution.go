@@ -21,17 +21,18 @@ import (
 )
 
 type HostExecutionResult struct {
-	CallID        string
-	ExecutionID   string
-	Executed      bool
-	Blocked       bool
-	RefusalCode   string
-	Error         string
-	EffectiveName string
-	EffectiveArgs json.RawMessage
-	Execution     *tool.ShellExecution
-	Evidence      evidence.ChildEvidenceSummary
-	Inputs        []evidence.CheckInputs
+	CallID         string
+	ExecutionID    string
+	Executed       bool
+	Blocked        bool
+	RefusalCode    string
+	Error          string
+	EffectiveName  string
+	EffectiveArgs  json.RawMessage
+	Execution      *tool.ShellExecution
+	Evidence       evidence.ChildEvidenceSummary
+	Inputs         []evidence.CheckInputs
+	CapturedResult evidence.CriterionResult
 }
 
 func (r HostExecutionResult) VerificationSucceeded() bool {
@@ -93,6 +94,7 @@ func (h *HostExecutor) Execute(ctx context.Context, call provider.ToolCall) (res
 		}
 		if invocation != nil && invocation.environment != nil {
 			result.Inputs = invocation.environment.Inputs()
+			result.CapturedResult = invocation.environment.CapturedOutcome()
 			invocation.environment.Close()
 		}
 	}()

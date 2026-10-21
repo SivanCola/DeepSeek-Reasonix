@@ -323,6 +323,9 @@ func mergeRunInto(dst *tool.ShellExecution, src *tool.ShellExecution) {
 // builds the sandboxed argv, and applies sandbox-escape approval. The caller
 // owns the returned lease and must Release it after the process exits.
 func (b bash) prepareLaunch(ctx context.Context, sh sandbox.Shell, p bashParams, rawArgs json.RawMessage) (sandbox.Prepared, pipeStatusProbe, *sessiontemp.Lease, error) {
+	if err := sandbox.RequiredIntegrityFault(b.sb); err != nil {
+		return sandbox.Prepared{}, pipeStatusProbe{}, nil, tool.Refusal{Code: "sandbox.incomplete_integrity", Message: err.Error()}
+	}
 	// command is what the user and every approval prompt see; launch is what the
 	// shell actually runs, which the host may have appended a report to.
 	command := p.Command
@@ -349,11 +352,17 @@ func (b bash) prepareLaunch(ctx context.Context, sh sandbox.Shell, p bashParams,
 		Argv:           argv,
 		Wrapped:        wrapped,
 		SessionTemp:    sessionDir,
-		EnvOverrides:   sandbox.SessionTempEnv(sessionDir, linuxSB),
+		EnvOverrides:   sandbox.PrivateProcessEnv(spec, sessionDir, linuxSB),
 		LinuxSandboxed: linuxSB,
 	}
+	if b.sb.RequiredIntegrity != "" && !wrapped {
+		if lease != nil {
+			lease.Release()
+		}
+		return sandbox.Prepared{}, probe, nil, tool.Refusal{Code: "sandbox.incomplete_integrity", Message: sandbox.ErrIncompleteIntegrity.Error()}
+	}
 
-	if b.sb.Enforce() && bashSandboxEscapeSessionAllowed(ctx, command, rawArgs) {
+	if b.sb.RequiredIntegrity == "" && b.sb.Enforce() && bashSandboxEscapeSessionAllowed(ctx, command, rawArgs) {
 		prepared.Argv = unconfinedShellArgv(sh, launch)
 		prepared.Wrapped = false
 		// Escaped commands still inherit private temp env vars pointing at the

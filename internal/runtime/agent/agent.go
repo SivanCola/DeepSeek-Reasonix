@@ -690,6 +690,8 @@ func New(prov provider.Provider, tools *tool.Registry, session *sessionstore.Ses
 		svc: newAgentServices(prov, tools, sink, gate,
 			sandboxEscapeApprover, configWriteApprover, hooks, opts),
 		agentConfig: agentConfig{
+			processSandbox:          opts.ProcessSandbox,
+			checkEnvironment:        cloneCheckEnvironment(opts.CheckEnvironment),
 			maxSteps:                opts.MaxSteps,
 			maxStepsKey:             maxStepsKey,
 			reasoningByteLimit:      reasoningByteLimit,

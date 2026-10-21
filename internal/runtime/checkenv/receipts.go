@@ -21,16 +21,21 @@ var receipts = struct {
 type ownedReceipt struct {
 	input     evidence.CheckInputs
 	execution string
+	capture   string
 }
 
 func Verify(input evidence.CheckInputs, executionID string) bool {
+	return verifyReceipt(input, executionID, "")
+}
+
+func verifyReceipt(input evidence.CheckInputs, executionID, capture string) bool {
 	if input.EnvironmentReceipt == "" {
 		return false
 	}
 	receipts.Lock()
 	defer receipts.Unlock()
 	owned, exists := receipts.inputs[input.EnvironmentReceipt]
-	return exists && owned.execution == executionID && reflect.DeepEqual(owned.input, input)
+	return exists && owned.execution == executionID && owned.capture == capture && reflect.DeepEqual(owned.input, input)
 }
 
 func digest(value any) string {

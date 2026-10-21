@@ -710,6 +710,7 @@ const SAID: Record<string, string> = {
   "sandbox.win_record_exposed": "Windows 沙箱的授权记录放在了命令可写的文件夹里（例如工作区是你的整个用户文件夹），命令可能改写之后的授权；请打开更小的文件夹，或关闭 Windows 沙箱",
   "sandbox.win_launcher": "Windows 无法创建沙箱命令所用的受限令牌；关闭 Windows 沙箱可让命令不受限制地运行",
   "sandbox.win_not_prepared": "Windows 沙箱已开启，但这次启动没有完成准备；关闭 Windows 沙箱可让命令不受限制地运行",
+  "sandbox.incomplete_integrity": "当前后端不能约束全部文件变更，隔离命令已在启动前拒绝；请使用候选目录内的文件工具，或选择支持完整隔离的执行环境",
   "sandbox.unsupported_platform": "该平台尚无可用的沙箱后端，命令将不受限制地运行",
   "workspace_roots.busy": "当前还有任务在运行，结束后才能更改工作区文件夹",
   "workspace_roots.editing_disabled": "这台服务器没有开启工作区文件夹编辑",

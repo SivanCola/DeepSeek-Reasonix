@@ -74,6 +74,13 @@ type Lease struct {
 	completion    leaseCompletion
 }
 
+// TryAcquire preserves queue order but never waits for a conflicting resource.
+// Registry operations remain cancellable short critical sections.
+func (c *Coordinator) TryAcquire(ctx context.Context, intent Intent) (*Lease, error) {
+	intent.tryOnly = true
+	return c.Acquire(ctx, intent)
+}
+
 func (c *Coordinator) Acquire(ctx context.Context, intent Intent) (acquired *Lease, resultErr error) {
 	var owned *Lease
 	waiting := false
@@ -144,19 +151,10 @@ func (c *Coordinator) Acquire(ctx context.Context, intent Intent) (acquired *Lea
 			return nil, err
 		}
 		if held == nil {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			if err := c.validate(ctx, intent, paths); err != nil {
-				return nil, err
-			}
-			l.acquiredAt = time.Now()
-			if waiting {
-				if err := c.notice(l.record, "acquired", nil, NotExecuted); err != nil {
-					return nil, err
-				}
-			}
-			return l, nil
+			return c.finishAcquisition(ctx, l, intent, paths, waiting)
+		}
+		if intent.tryOnly {
+			return nil, ErrBusy
 		}
 		if !waiting {
 			waiting = true
@@ -172,6 +170,22 @@ func (c *Coordinator) Acquire(ctx context.Context, intent Intent) (acquired *Lea
 		case <-timer.C:
 		}
 	}
+}
+
+func (c *Coordinator) finishAcquisition(ctx context.Context, lease *Lease, intent Intent, paths []string, waiting bool) (*Lease, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := c.validate(ctx, intent, paths); err != nil {
+		return nil, err
+	}
+	lease.acquiredAt = time.Now()
+	if waiting {
+		if err := c.notice(lease.record, "acquired", nil, NotExecuted); err != nil {
+			return nil, err
+		}
+	}
+	return lease, nil
 }
 
 func (c *Coordinator) abandonAcquisition(owned, acquired *Lease, waiting bool, err error) error {

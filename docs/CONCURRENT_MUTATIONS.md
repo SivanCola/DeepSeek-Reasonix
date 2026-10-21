@@ -319,6 +319,29 @@ worktree 隔离代码副本，不隔离数据库、端口、网络服务或全�
 文件协调只约束遵守协议的写入者；外部写入仍存在检查与替换之间的竞争窗口。
 macOS 测试不替代 Windows 和 Linux 的实际运行记录。
 
+### 候选进程的文件变更边界
+
+task、持久根环境、旧隔离任务及 best-of 候选都要求完整的创建、覆盖、删除与
+重命名边界。候选只开放自身写根和独立临时目录，不继承宿主的广泛缓存写权限。
+默认 Go、npm、pip、uv 缓存放在候选的私有临时目录；用户显式设置的环境变量保留，
+但不能据此扩大写权限。启动时再次核对源保护路径，临时目录与源重叠也会拒绝。
+
+Windows 现有创建限制令牌无法提供这个完整边界，因此候选 Bash 和程序 hook
+在启动前明确拒绝；会话级逃逸批准不能绕过。候选的进程内文件工具继续按授权运行。
+程序 hook 的拒绝通过宿主诊断显示，不重放候选的模型流或工具轨迹。
+
+隔离环境的 Go 基线检查使用已声明的 Linux 离线验证运行环境，在冻结副本中恢复
+宿主持有的测试正文，经原工具、权限、扩展和 hook 管线执行。未配置受控运行环境、
+工具被禁用、权限拒绝或后端不支持时保留 unavailable，不直接在宿主启动候选代码。
+
+捕获测试凭据绑定正文与执行身份，不能代替普通整合凭据。判定独立消费完整输出流，
+只认父测试终态；展示裁剪、子测试通过及取消均不能制造通过。
+
+正向结算还要求整个命令与宿主收尾成功；收尾 hook 改动源码或后续输入变化会使凭据失效。
+
+共享环境保留旧 overlay 基线语义；取消、启动失败或完成未知不会用已有局部 pass
+结算该义务。普通进程 wait 不是任意后代都已结束的证明，不能代替 Linux 受控验证器的执行域凭据。
+
 ## English
 
 This document describes an implementation in progress, not completed automatic
@@ -789,3 +812,45 @@ Worktrees isolate code copies, not databases, ports, network services or all
 shared Git metadata. The protocol coordinates participating writers. External
 writers can still race the final check and replacement. Local macOS tests do
 not substitute for actual Windows and Linux evidence.
+
+Candidate processes require complete file mutation bounds for task, persistent
+root, legacy isolation and best-of execution. Only candidate write roots and
+private temporary storage remain writable.
+
+Default Go, npm, pip and uv caches use
+private temporary storage; explicit user environment choices remain unchanged
+without expanding write authority.
+
+Final launch preparation checks the protected
+source roots again, including the actual temporary directory.
+
+The existing Windows creation-only token cannot provide this boundary. Candidate
+Bash and program hooks refuse before launch, and session escape approval cannot
+override the requirement. In-process file tools retain their granted access.
+
+Host hook diagnostics reach the source without replaying the candidate's model
+stream or tool transcript.
+
+Isolated Go baseline checks restore host-held test bytes only in a frozen copy
+of the declared Linux offline verification runtime and source. They use the
+original tool, permission, extension and hook pipeline. Missing runtimes,
+disabled tools, denied access and unsupported backends remain unavailable.
+
+Candidate code never falls back to direct host execution. Captured-test receipts
+bind the bytes and execution identity and cannot authorize ordinary integration.
+
+An independent bounded streaming observer consumes the complete output and
+requires each parent test's terminal event. Display truncation, passing subtests
+and cancellation cannot establish a pass.
+
+Positive settlement also requires the
+whole command and host finalization to succeed. Post-hook source changes or
+later input changes invalidate the captured verdict.
+
+Shared execution
+retains legacy baseline semantics; cancellation, launch failure and unknown
+completion cannot settle an obligation from partial passing output.
+
+Ordinary
+process wait does not prove every descendant has ended and cannot replace the
+Linux controlled verifier's execution-scope receipt.

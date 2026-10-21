@@ -22,29 +22,49 @@ type Invocation struct {
 	callID      string
 	state       invocationState
 	scope       *namespaceScope
+	captured    *evidence.TestJSONObserver
 }
 
 type invocationState struct {
-	directory     string
-	runtimeRoot   string
-	sourceRoot    string
-	argv          []string
-	input         evidence.CheckInputs
-	runtimeDigest string
-	sourceDigest  string
-	status        *os.File
-	cmd           *exec.Cmd
-	ctx           context.Context
-	sourcePolicy  treePolicy
-	launcher      fileutil.ContentVersion
-	active        bool
-	closed        bool
+	directory      string
+	runtimeRoot    string
+	sourceRoot     string
+	argv           []string
+	input          evidence.CheckInputs
+	runtimeDigest  string
+	sourceDigest   string
+	originalDigest string
+	status         *os.File
+	cmd            *exec.Cmd
+	ctx            context.Context
+	sourcePolicy   treePolicy
+	launcher       fileutil.ContentVersion
+	active         bool
+	closed         bool
 }
 
 // New allocates no filesystem or process resources. Freezing happens only in
 // the exact call's execution phase, after permissions and pre-tool hooks.
 func New(spec Spec, command, executionID, callID string) *Invocation {
-	return &Invocation{spec: spec, command: command, executionID: executionID, callID: callID, identity: "venv_" + rand.Text(), scope: newNamespaceScope()}
+	i := &Invocation{spec: spec, command: command, executionID: executionID, callID: callID, identity: "venv_" + rand.Text(), scope: newNamespaceScope()}
+	if spec.capture != nil {
+		i.captured = evidence.NewTestJSONObserver(evidence.EvaluableCriterionNames(spec.capture.body))
+	}
+	return i
+}
+
+func (i *Invocation) Write(body []byte) (int, error) {
+	if i.captured != nil {
+		return i.captured.Write(body)
+	}
+	return len(body), nil
+}
+
+func (i *Invocation) CapturedOutcome() evidence.CriterionResult {
+	if i.captured != nil {
+		return i.captured.Outcome()
+	}
+	return evidence.CriterionUnavailable
 }
 
 func (i *Invocation) Inputs() []evidence.CheckInputs {

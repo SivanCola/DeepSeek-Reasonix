@@ -16,6 +16,8 @@ import (
 // must stay uniform across those paths — add new fields here, not at call sites.
 func (t *TaskTool) subagentOptions(ctx context.Context, maxSteps int, pricing *provider.Pricing, ctxWin, childDepth int, recoveryTaskID string, mutationObserver *checkpoint.MutationObserver) agent.Options {
 	opts := agent.Options{
+		ProcessSandbox:      t.processSandbox,
+		CheckEnvironment:    t.checkEnvironment,
 		MaxSteps:            maxSteps,
 		ProviderRetries:     t.providerRetries,
 		Temperature:         t.temperature,

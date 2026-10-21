@@ -722,13 +722,13 @@ func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) too
 	err = usecap.WithContractHint(err, runTool, runArgs)
 	origin := plan.provenanceOf(runTool, runArgs)
 	tool.NoteProvenance(ctx, origin)
-	owedBefore := a.obligations()
+	owedBefore := a.obligations(plan.cctx)
 	if hookErr := a.notifyToolHooks(plan.cctx, permName, permArgs, result, err); hookErr != nil {
 		err = errors.Join(err, hookErr)
 		plan.ranClean = false
 	}
 	a.recordToolReceipts(ctx, plan, result, execution, err)
-	result = a.withObligationNotice(result, owedBefore, execution, readOnly)
+	result = a.withObligationNotice(plan.cctx, result, owedBefore, execution, readOnly)
 	// Track skill/capability outcomes for Delivery gates.
 	a.noteCapabilityInvocation(plan.canonicalName, json.RawMessage(call.ExecutionArguments()), runTool, err)
 	// Always re-read after post hooks — partial writes and hook side effects can

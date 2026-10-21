@@ -102,7 +102,11 @@ func (i *Invocation) freeze(ctx context.Context, request tool.ControlledShellReq
 		return err
 	}
 	i.state.sourceRoot = filepath.Join(i.state.directory, "source")
-	i.state.sourceDigest, err = freezeTree(ctx, source, i.state.sourceRoot, i.state.sourcePolicy)
+	i.state.originalDigest, err = freezeTree(ctx, source, i.state.sourceRoot, i.state.sourcePolicy)
+	if err != nil {
+		return err
+	}
+	i.state.sourceDigest, err = i.spec.applyCapture(ctx, i.state.sourceRoot, i.state.sourcePolicy)
 	if err != nil {
 		return err
 	}

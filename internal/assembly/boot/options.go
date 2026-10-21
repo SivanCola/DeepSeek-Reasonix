@@ -35,13 +35,14 @@ import (
 // run/serve pass true so a missing key fails fast, chat/desktop false so the UI
 // is reachable before one is set.
 type Options struct {
-	frozenConfig        *config.Config
-	inheritedReadDenies []string
-	readPolicyRoot      string
-	DelegationScheduler *writeclaim.SubagentScheduler
-	AgentComposition    string
-	Composition         *agentcomposition.Binding
-	ComputerDriver      *computer.Driver
+	frozenConfig           *config.Config
+	inheritedReadDenies    []string
+	readPolicyRoot         string
+	protectedMutationRoots []string
+	DelegationScheduler    *writeclaim.SubagentScheduler
+	AgentComposition       string
+	Composition            *agentcomposition.Binding
+	ComputerDriver         *computer.Driver
 	// Version is the host declaring a real installation, which is what lets an
 	// assembly record the last-known-good config snapshot recovery reads back.
 	Version        string

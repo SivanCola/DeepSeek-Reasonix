@@ -24,9 +24,11 @@ var (
 	ErrCapacityWaitTimeout = errors.New("execution capacity wait exhausted")
 	ErrProtocol            = errors.New("unsupported mutation coordination record")
 	ErrCallback            = errors.New("mutation coordination callback failed")
+	ErrBusy                = errors.New("mutation resources are busy")
 )
 
 type Intent struct {
+	tryOnly     bool
 	Effect      Effect
 	Paths       []string
 	SessionID   string

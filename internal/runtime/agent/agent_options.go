@@ -7,6 +7,7 @@ import (
 	"reasonix/internal/contract/tool"
 	"reasonix/internal/ext/extension/dispatch"
 	"reasonix/internal/runtime/capability"
+	"reasonix/internal/runtime/checkenv"
 	"reasonix/internal/runtime/writeclaim"
 	"reasonix/internal/safety/evidence"
 	"reasonix/internal/safety/sandbox"
@@ -30,7 +31,9 @@ type Steerer interface {
 
 // Options configures an Agent.
 type Options struct {
-	MaxSteps int
+	ProcessSandbox   sandbox.Spec
+	CheckEnvironment *checkenv.Spec
+	MaxSteps         int
 	// MaxStepsKey names the explicit runtime control shown when the MaxSteps guard
 	// is hit. Empty defaults to the generic max_steps tool/runtime parameter.
 	MaxStepsKey string
