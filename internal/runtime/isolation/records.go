@@ -78,3 +78,22 @@ func (s *Store) resultRecords() ([]storedResult, error) {
 	}
 	return records, nil
 }
+
+func readIntegrationIdentity(path, id string) (IntegrationAttempt, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return IntegrationAttempt{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return IntegrationAttempt{}, tool.Refusal{Code: CodeUnsupportedState, Message: "non-regular integration marker retained"}
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return IntegrationAttempt{}, err
+	}
+	var attempt IntegrationAttempt
+	if json.Unmarshal(raw, &attempt) != nil || attempt.ID != id || !validID(attempt.ResultID) {
+		return attempt, tool.Refusal{Code: CodeUnsupportedState, Message: "unidentified integration attempt retained; dependency ownership cannot be established"}
+	}
+	return attempt, nil
+}

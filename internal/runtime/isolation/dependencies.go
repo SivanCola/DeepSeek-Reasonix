@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 
 	"reasonix/internal/base/filelock"
 	"reasonix/internal/base/fileutil"
@@ -169,7 +168,7 @@ func (s *Store) requireSettledChildren(parent *Entry) error {
 		return nil
 	}
 	for id, child := range parent.Lineage.Children {
-		children := NewStore(child.Root, child.Workspace, s.repo)
+		children := NewStore(child.Root, child.Workspace, parent.Cand.Repo)
 		d, err := children.managedResultMetadata(id)
 		var refusal tool.Refusal
 		if errors.As(err, &refusal) && refusal.Code == CodeUnknownID {
@@ -178,8 +177,7 @@ func (s *Store) requireSettledChildren(parent *Entry) error {
 		if err != nil {
 			return err
 		}
-		want := &ParentResult{ID: parent.ID, Generation: parent.RunGeneration, Record: entryRecordPath(parent), Token: child.Token}
-		if d.Workspace != child.Workspace || d.Lineage == nil || !reflect.DeepEqual(d.Lineage.Parent, want) || !terminalState(d.State) || !d.CleanupComplete {
+		if d.Workspace != child.Workspace || d.Lineage == nil || !matchesParentResult(d.Lineage.Parent, parent, child.Token) || !terminalState(d.State) || !d.CleanupComplete {
 			return dependentResults(fmt.Sprintf("child result %s is not settled; parent retained", id))
 		}
 		release, err := filelock.TryAcquire(children.runLock(id))
@@ -187,6 +185,9 @@ func (s *Store) requireSettledChildren(parent *Entry) error {
 			return dependentResults("child execution is still active; parent retained")
 		}
 		release()
+		if err := children.requireSettledIntegrations(d.entry()); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -261,7 +262,14 @@ func saveLineage(path string, raw []byte, lineage *ResultLineage) error {
 			return err
 		}
 	}
-	fields["version"], fields["lineage"] = json.RawMessage("4"), next
+	var version int
+	if err := json.Unmarshal(fields["version"], &version); err != nil {
+		return err
+	}
+	if version < 4 {
+		fields["version"] = json.RawMessage("4")
+	}
+	fields["lineage"] = next
 	body, err := json.Marshal(fields)
 	if err != nil {
 		return err

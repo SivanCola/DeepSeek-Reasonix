@@ -94,6 +94,7 @@ func (s *Store) PrepareIntegration(ctx context.Context, resultID, owner string) 
 	i := &Integration{store: s, release: release, attempt: IntegrationAttempt{Version: 1, ID: id,
 		ResultID: original.ID, ResultGeneration: original.RunGeneration, ResultTree: original.Tree,
 		Owner: owner, State: Preparing, Source: snap, SourceContent: content, SourceGit: gitInputs, Candidate: candidate, Verification: "unknown"}}
+	registered := false
 	defer func() {
 		if p := recover(); p != nil {
 			resultErr = fmt.Errorf("integration preparation panicked: %v", p)
@@ -102,6 +103,9 @@ func (s *Store) PrepareIntegration(ctx context.Context, resultID, owner string) 
 			defer i.Close()
 			if resultErr == nil {
 				resultErr = errors.New("integration preparation did not transfer execution ownership")
+			}
+			if !registered {
+				return
 			}
 			i.attempt.State, i.attempt.Reason = RecoveryRequired, resultErr.Error()
 			var conflict *worktree.ConflictError
@@ -112,9 +116,13 @@ func (s *Store) PrepareIntegration(ctx context.Context, resultID, owner string) 
 			resultErr = fmt.Errorf("integration attempt %s retained: %w", id, resultErr)
 		}
 	}()
-	if err := i.save(); err != nil {
+	if s.integrationRegistrationProbe != nil {
+		s.integrationRegistrationProbe(original)
+	}
+	if err := s.registerIntegration(ctx, original, i); err != nil {
 		return nil, err
 	}
+	registered = true
 	lease, err := s.mutations.Acquire(mutation.WithoutLease(ctx), mutation.Intent{Effect: mutation.NamedPaths,
 		Paths: []string{candidate.WorktreeRoot, snap.Repo.CommonDir, snap.RepoRoot}, ExecutionID: id, CallID: "isolation.integration.prepare",
 		Capacities: preparationCapacities(ctx)})

@@ -144,8 +144,12 @@ func TestRecoveryPreviewWithSettledSiblingAndLiteralManagedRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	catalog, err := s.Catalog(t.Context())
-	if err != nil || len(catalog.Results) != 1 || len(catalog.Results[0].Actions) != 1 {
-		t.Fatalf("settled sibling hides recoverable action: %+v %v", catalog, err)
+	rows := map[string]ResultSummary{}
+	for _, row := range catalog.Results {
+		rows[row.ID] = row
+	}
+	if err != nil || len(rows[parent.ID].Actions) != 1 || !rows[child.ID].CleanupComplete || rows[child.ID].ParentID != parent.ID {
+		t.Fatalf("settled sibling hides recoverable action or loses its parent identity: %+v %v", catalog, err)
 	}
 	after, err := os.ReadFile(entryPath(parent.Cand))
 	if err != nil || !bytes.Equal(before, after) {

@@ -38,13 +38,15 @@ func resultVersion(e *Entry) int {
 }
 
 func supportedResultVersion(d durableEntry) bool {
-	if !supportedLineage(d.Lineage) || (d.Lineage != nil && d.Version != 4) || (d.Version == 4 && d.Lineage == nil) {
+	if !supportedLineage(d.Lineage) || (d.Lineage != nil && d.Version != 4 && d.Version != 5) ||
+		((d.Version == 4 || d.Version == 5) && d.Lineage == nil) ||
+		(d.Version == 5 && d.Lineage.Parent == nil) {
 		return false
 	}
 	if d.Origin == nil {
-		return d.Version == 0 || d.Version == 2 || d.Version == 4
+		return d.Version == 0 || d.Version == 2 || d.Version == 4 || d.Version == 5
 	}
-	return (d.Version == 3 || d.Version == 4) && validSnapshotOrigin(*d.Origin) &&
+	return (d.Version == 3 || d.Version == 4 || d.Version == 5) && validSnapshotOrigin(*d.Origin) &&
 		d.Origin.Materialization.Repo.CommonDir == d.Snap.Repo.CommonDir && d.Origin.Materialization.Prefix == d.Snap.Prefix
 }
 

@@ -3,6 +3,8 @@ export interface IsolationResult {
   kind: string;
   resultId?: string;
   owner?: string;
+  parentId?: string;
+  targetWorkspace?: string;
   generation?: string;
   state: string;
   activity: string;

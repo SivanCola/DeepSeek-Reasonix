@@ -19,6 +19,8 @@ type ResultSummary struct {
 	Kind            string            `json:"kind"`
 	ResultID        string            `json:"resultId,omitempty"`
 	Owner           string            `json:"owner,omitempty"`
+	ParentID        string            `json:"parentId,omitempty"`
+	TargetWorkspace string            `json:"targetWorkspace,omitempty"`
 	Generation      string            `json:"generation,omitempty"`
 	State           State             `json:"state"`
 	Activity        string            `json:"activity"`
@@ -91,7 +93,7 @@ func (t RecoveryTarget) Request() RecoveryRequest {
 
 // Catalog reads retained decisions without pruning, rewriting or materializing
 // candidates. Activity is a momentary observation, never authority for an action.
-func (s *Store) Catalog(ctx context.Context) (Catalog, error) {
+func (s *Store) catalogLocal(ctx context.Context) (Catalog, error) {
 	out := Catalog{Enabled: s != nil, Results: []ResultSummary{}, Diagnostics: []CatalogDiagnostic{}}
 	if s == nil {
 		return out, nil
@@ -135,21 +137,7 @@ func (s *Store) Catalog(ctx context.Context) (Catalog, error) {
 		if !sameDir(d.Workspace, s.workspace) {
 			continue
 		}
-		row := ResultSummary{ID: d.ID, Kind: "result", Owner: d.ResumeOwner, Generation: d.RunGeneration, State: d.State,
-			CandidateRoot: d.Cand.WorktreeRoot, BaselineTree: d.Snap.Tree, Tree: d.Tree, Changes: append([]worktree.Change{}, d.Changes...),
-			Verification: "unknown", CleanupComplete: d.CleanupComplete, Activity: "unknown", Actions: []string{}}
-		if !supportedResultVersion(d) || !supportedLifecycle(d) {
-			row.Reason = "unsupported isolation state retained; a compatible reader is required"
-		} else if d.Version != 0 {
-			row.Activity, row.Reason = s.resultActivity(d.ID)
-		}
-		if supportedResultVersion(d) && supportedLifecycle(d) && row.Activity != "active" && row.State != Applying && row.State != Integrated && !row.CleanupComplete {
-			if err := s.requireSettledChildren(d.entry()); err != nil && !s.dependenciesRecoverable(d.entry()) {
-				row.Reason = err.Error()
-			} else {
-				row.Actions = []string{"discard_preview"}
-			}
-		}
+		row := s.resultSummary(d)
 		if counts[d.ID] > 1 {
 			row.Reason = "duplicate isolation records retained; resolve the record identity before continuing"
 			row.Actions = []string{}
@@ -162,6 +150,25 @@ func (s *Store) Catalog(ctx context.Context) (Catalog, error) {
 	out.Diagnostics = append(out.Diagnostics, diagnostics...)
 	slices.SortFunc(out.Results, func(a, b ResultSummary) int { return strings.Compare(a.ID, b.ID) })
 	return out, nil
+}
+
+func (s *Store) resultSummary(d durableEntry) ResultSummary {
+	row := ResultSummary{ID: d.ID, Kind: "result", Owner: d.ResumeOwner, Generation: d.RunGeneration, State: d.State,
+		CandidateRoot: d.Cand.WorktreeRoot, BaselineTree: d.Snap.Tree, Tree: d.Tree, Changes: append([]worktree.Change{}, d.Changes...),
+		Verification: "unknown", CleanupComplete: d.CleanupComplete, Activity: "unknown", Actions: []string{}}
+	if !supportedResultVersion(d) || !supportedLifecycle(d) {
+		row.Reason = "unsupported isolation state retained; a compatible reader is required"
+	} else if d.Version != 0 {
+		row.Activity, row.Reason = s.resultActivity(d.ID)
+	}
+	if supportedResultVersion(d) && supportedLifecycle(d) && row.Activity != "active" && row.State != Applying && row.State != Integrated && !row.CleanupComplete {
+		if err := s.requireSettledChildren(d.entry()); err != nil && !s.dependenciesRecoverable(d.entry()) {
+			row.Reason = err.Error()
+		} else {
+			row.Actions = []string{"discard_preview"}
+		}
+	}
+	return row
 }
 
 func (s *Store) resultActivity(id string) (string, string) {
@@ -210,17 +217,23 @@ func (s *Store) integrationSummaries() ([]ResultSummary, []CatalogDiagnostic) {
 		if err != nil {
 			row.State, row.Reason = RecoveryRequired, err.Error()
 		} else {
-			row.ResultID, row.Owner, row.State = attempt.ResultID, attempt.Owner, attempt.State
-			row.CandidateRoot, row.BaselineTree, row.Tree = attempt.Candidate.WorktreeRoot, attempt.Source.Tree, attempt.Tree
-			row.Changes, row.CleanupComplete, row.Reason = append(row.Changes, attempt.Changes...), attempt.CleanupComplete, attempt.Reason
-			if attempt.Verification == "invalid" {
-				row.Verification = "invalid"
-			}
-			if s.mutations != nil && row.State != Applying && row.State != Integrated && !row.CleanupComplete {
-				row.Actions = []string{"discard_preview"}
-			}
+			row = s.integrationSummary(attempt)
 		}
 		rows = append(rows, row)
 	}
 	return rows, nil
+}
+
+func (s *Store) integrationSummary(attempt IntegrationAttempt) ResultSummary {
+	row := ResultSummary{ID: attempt.ID, Kind: "integration", ResultID: attempt.ResultID, Owner: attempt.Owner,
+		State: attempt.State, Activity: "unknown", Verification: "unknown", CandidateRoot: attempt.Candidate.WorktreeRoot,
+		BaselineTree: attempt.Source.Tree, Tree: attempt.Tree, Changes: append([]worktree.Change{}, attempt.Changes...),
+		CleanupComplete: attempt.CleanupComplete, Reason: attempt.Reason, Actions: []string{}}
+	if attempt.Verification == "invalid" {
+		row.Verification = "invalid"
+	}
+	if s.mutations != nil && row.State != Applying && row.State != Integrated && !row.CleanupComplete {
+		row.Actions = []string{"discard_preview"}
+	}
+	return row
 }

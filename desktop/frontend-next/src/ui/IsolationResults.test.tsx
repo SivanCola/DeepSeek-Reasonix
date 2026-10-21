@@ -15,6 +15,16 @@ const fixture = () => new MockPort() as unknown as AgentPort;
 const openResult = async () => userEvent.click(await screen.findByText("iso_55bb1122"));
 
 describe("retained isolated results", () => {
+  it("shows the direct parent and actual integration target for a retained descendant", async () => {
+    const port = fixture();
+    const catalog = await port.isolatedResults();
+    catalog.results[0] = { ...catalog.results[0], parentId: "iso_parent", targetWorkspace: "/parent/candidate" };
+    port.isolatedResults = async () => catalog;
+    render(<IsolationResults port={port} />);
+    await openResult();
+    expect(screen.getByText("直接父任务：iso_parent")).toBeTruthy();
+    expect(screen.getByText("整合目标：/parent/candidate")).toBeTruthy();
+  });
   it("binds root actions to the displayed scene and exposes cancellation without discarding live files", async () => {
     const port = fixture();
     const rootScene = { environmentId: "env", generation: "generation", runtime: "runtime", owner: "session", sourceWorkspace: "/source", liveWorkspace: "/live", publicationId: "pub", resultId: "iso_root", state: "pending", verification: "unknown", actions: ["recheck", "retry"] };

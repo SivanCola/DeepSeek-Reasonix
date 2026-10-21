@@ -62,17 +62,18 @@ type Entry struct {
 // Store reads the durable lifecycle and settlement records of one workspace.
 // Candidate files remain until settlement; terminal receipts survive cleanup.
 type Store struct {
-	managedRoot            string
-	workspace              string
-	repo                   gitcmd.Repo
-	mutations              *mutation.Coordinator
-	environmentPaths       []string
-	environmentDenied      []string
-	preparationProbe       func(State, *Entry)
-	cleanupProbe           func(*Entry) error
-	promotionProbe         func(*Entry) error
-	childRegistrationProbe func(*Entry, ChildResult)
-	checkVerifier          func(evidence.CheckInputs, string) bool
+	managedRoot                  string
+	workspace                    string
+	repo                         gitcmd.Repo
+	mutations                    *mutation.Coordinator
+	environmentPaths             []string
+	environmentDenied            []string
+	preparationProbe             func(State, *Entry)
+	cleanupProbe                 func(*Entry) error
+	promotionProbe               func(*Entry) error
+	childRegistrationProbe       func(*Entry, ChildResult)
+	integrationRegistrationProbe func(*Entry)
+	checkVerifier                func(evidence.CheckInputs, string) bool
 }
 
 // NewStore keeps worktrees under managedRoot and answers for results taken

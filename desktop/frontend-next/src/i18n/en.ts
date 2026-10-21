@@ -1902,6 +1902,7 @@ export const EN: Record<string, string> = {
   "持久隔离现场：{id}": "Persistent isolated scene: {id}",
   "执行目录：{path}": "Execution directory: {path}",
   "整合目标：{path}": "Integration target: {path}",
+  "直接父任务：{id}": "Direct parent task: {id}",
   "继续聊天会保留当前现场。重新验证会检查封存成果并尝试整合；重新导出会保留旧成果，下一次冻结当前现场。": "Continuing the chat retains this scene. Recheck verifies the sealed export and attempts integration. Preparing a new export retains the old result and freezes the current scene next time.",
   "重新验证并整合": "Recheck and integrate",
   "准备重新导出": "Prepare a new export",

@@ -110,6 +110,9 @@ func persist(e *Entry) error {
 		return err
 	}
 	if previousEntry != nil {
+		if previousEntry.Version > resultVersion(e) {
+			updates["version"] = fields["version"]
+		}
 		if reflect.DeepEqual(previousEntry.Environment, e.Environment) {
 			delete(updates, "prepared_environment")
 		}

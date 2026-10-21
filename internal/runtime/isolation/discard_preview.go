@@ -30,8 +30,20 @@ type DiscardPreview struct {
 // It neither changes lifecycle nor assumes the original manifest is still current.
 func (s *Store) PreviewDiscard(ctx context.Context, id string) (DiscardPreview, error) {
 	if strings.HasPrefix(id, "int_") {
-		return s.previewIntegrationDiscard(ctx, id)
+		store, err := s.managementIntegrationStore(ctx, id)
+		if err != nil {
+			return DiscardPreview{}, err
+		}
+		return store.previewIntegrationDiscard(ctx, id)
 	}
+	store, err := s.managementStore(ctx, id)
+	if err != nil {
+		return DiscardPreview{}, err
+	}
+	return store.previewDiscardLocal(ctx, id)
+}
+
+func (s *Store) previewDiscardLocal(ctx context.Context, id string) (DiscardPreview, error) {
 	before, err := s.discardSnapshot(ctx, id)
 	if err != nil {
 		return DiscardPreview{}, err
@@ -125,8 +137,16 @@ func (s *Store) DiscardExpected(ctx context.Context, id, revision string) (*Entr
 
 func (s *Store) DiscardResultExpected(ctx context.Context, id, revision string) error {
 	if strings.HasPrefix(id, "int_") {
-		return s.discardIntegrationExpected(ctx, id, revision)
+		store, err := s.managementIntegrationStore(ctx, id)
+		if err != nil {
+			return err
+		}
+		return store.discardIntegrationExpected(ctx, id, revision)
 	}
-	_, err := s.DiscardExpected(ctx, id, revision)
+	store, err := s.managementStore(ctx, id)
+	if err != nil {
+		return err
+	}
+	_, err = store.DiscardExpected(ctx, id, revision)
 	return err
 }

@@ -39,10 +39,7 @@ func IsolationCommandText(ctx context.Context, api IsolationResultsAPI, args str
 			if row.CleanupComplete {
 				continue
 			}
-			fmt.Fprintf(&text, "%s  %s  %s  verification=%s\n  %s\n", row.ID, row.State, row.Activity, row.Verification, row.CandidateRoot)
-			if row.Reason != "" {
-				fmt.Fprintln(&text, "  "+row.Reason)
-			}
+			writeIsolatedResultSummary(&text, row)
 		}
 		for _, diagnostic := range catalog.Diagnostics {
 			fmt.Fprintf(&text, "%s: %s\n", diagnostic.Record, diagnostic.Reason)
@@ -97,4 +94,14 @@ func IsolationCommandText(ctx context.Context, api IsolationResultsAPI, args str
 		}
 	}
 	return "Usage: /isolated [list] | discard <id> [--confirm <revision>] | recover [--confirm <preview>]", nil
+}
+
+func writeIsolatedResultSummary(text *strings.Builder, row isolation.ResultSummary) {
+	fmt.Fprintf(text, "%s  %s  %s  verification=%s\n  %s\n", row.ID, row.State, row.Activity, row.Verification, row.CandidateRoot)
+	if row.ParentID != "" {
+		fmt.Fprintf(text, "  parent=%s target=%s\n", row.ParentID, row.TargetWorkspace)
+	}
+	if row.Reason != "" {
+		fmt.Fprintln(text, "  "+row.Reason)
+	}
 }

@@ -118,6 +118,8 @@ export function IsolationResults({ port }: { port: AgentPort }) {
       <summary><span className="fold"><code>{row.id}</code></span><span>{stateName(row.state)}</span><span>{row.activity === "active" ? t("仍在执行") : row.activity === "inactive" ? t("无活动运行") : t("活动状态待确认")}</span></summary>
       {row.resultId && <p>{t("原成果：{id}", { id: row.resultId })}</p>}
       {row.owner && <p>{t("来源会话：{owner}", { owner: row.owner })}</p>}
+      {row.parentId && <p>{t("直接父任务：{id}", { id: row.parentId })}</p>}
+      {row.targetWorkspace && <p>{t("整合目标：{path}", { path: row.targetWorkspace })}</p>}
       {row.candidateRoot && <p><code>{row.candidateRoot}</code></p>}
       {row.baselineTree && <p>{t("基线：{tree}", { tree: row.baselineTree })}</p>}
       <p>{row.verification === "invalid" ? t("验证证据已失效") : t("验证状态未知")}</p>

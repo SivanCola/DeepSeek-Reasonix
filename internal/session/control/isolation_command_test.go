@@ -17,6 +17,16 @@ type commandResults struct {
 	catalog   *isolation.Catalog
 }
 
+func TestIsolationCommandShowsDescendantDirectTarget(t *testing.T) {
+	api := &commandResults{catalog: &isolation.Catalog{Enabled: true, Results: []isolation.ResultSummary{{
+		ID: "iso_12345678", ParentID: "iso_87654321", TargetWorkspace: "/direct-parent", State: isolation.Pending,
+	}}}}
+	text, err := IsolationCommandText(t.Context(), api, "list")
+	if err != nil || !strings.Contains(text, "parent=iso_87654321 target=/direct-parent") {
+		t.Fatalf("descendant lost its direct integration target: %q %v", text, err)
+	}
+}
+
 func (f *commandResults) IsolationResults(context.Context) (isolation.Catalog, error) {
 	if f.catalog != nil {
 		return *f.catalog, nil
