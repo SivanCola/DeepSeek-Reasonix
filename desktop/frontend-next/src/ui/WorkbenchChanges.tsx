@@ -28,6 +28,10 @@ interface Props {
 // that is modified or deleted can be offered it.
 const discardable = (c: WorkspaceChange) => !c.oldPath && /^[MDT]+$/.test(c.status || "M");
 
+// The rows drawn at once. A workspace can carry a hundred thousand changes and
+// every row is DOM the page holds for as long as the panel is mounted, open or not.
+const ROW_PAGE = 500;
+
 const withRepo = (repo: string | undefined, req: StageRequest): StageRequest => (repo ? { ...req, repo } : req);
 
 // What differs as a folder tree, without opening anything, and which of it the next
@@ -38,6 +42,7 @@ export function WorkbenchChanges({ port, workspaceRoot, changes, repo, current, 
   const [failure, setFailure] = useState("");
   const [shut, setShut] = useState<Set<string>>(new Set());
   const [asking, setAsking] = useState("");
+  const [limit, setLimit] = useState(ROW_PAGE);
   const tree = useMemo(() => buildTree(changes), [changes]);
   const settled = changes.length > 0 && changes.every((c) => c.staged && !c.unstaged);
 
@@ -61,8 +66,11 @@ export function WorkbenchChanges({ port, workspaceRoot, changes, repo, current, 
     });
   const fold = (path: string) => setShut((s) => { const next = new Set(s); if (!next.delete(path)) next.add(path); return next; });
 
+  const drawn = { left: limit, files: 0 };
   const rows = (nodes: ChangeNode[], depth: number): ReactNode =>
     nodes.map((node) => {
+      if (drawn.left <= 0) return null;
+      drawn.left--;
       const inset = { paddingInlineStart: 6 + depth * 12 };
       if (node.kind === "folder") {
         const open = !shut.has(node.path);
@@ -91,6 +99,7 @@ export function WorkbenchChanges({ port, workspaceRoot, changes, repo, current, 
         );
       }
       const item = node.change;
+      drawn.files++;
       return (
         <div key={`c:${item.path}`}>
           <div className="workbench-change" data-staged={item.staged ? "" : undefined}>
@@ -150,6 +159,14 @@ export function WorkbenchChanges({ port, workspaceRoot, changes, repo, current, 
       {below}
       {failure && <p className="refine-error workbench-stage-error" role="alert">{failure}</p>}
       {rows(tree, 0)}
+      {drawn.left <= 0 && changes.length > drawn.files && (
+        <div className="workbench-change-more">
+          <span>{t("还有 {n} 项没有显示", { n: changes.length - drawn.files })}</span>
+          <button type="button" className="btn sm" data-weak="" data-action="workbench.more-changes" onClick={() => setLimit((n) => n + ROW_PAGE)}>
+            {t("再显示 {n} 项", { n: ROW_PAGE })}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

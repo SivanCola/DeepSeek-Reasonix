@@ -720,6 +720,7 @@ export const ACTIONS: UIAction[] = [
   { id: "write-lease.max-wait", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
   { id: "workbench.stage-folder", kind: "kernel-mutation", target: "entity", proof: "authority-effect" },
   { id: "workbench.change-folder", kind: "view", target: "entity", proof: "interaction" },
+  { id: "workbench.more-changes", kind: "view", target: "none", proof: "interaction" },
   { id: "workbench.discard", kind: "view", target: "entity", proof: "interaction" },
   { id: "workbench.discard-confirm", kind: "kernel-mutation", target: "entity", proof: "authority-effect" },
   { id: "workbench.discard-cancel", kind: "view", target: "none", proof: "interaction" },

@@ -103,6 +103,11 @@ class BenchPort extends MockPort {
   // ?mcpactions=1 adds a server whose tools are withheld and one that is followed.
   constructor() {
     super();
+    // ?changes=N starts the workspace with N changed files spread over folders.
+    const CHANGES = Number(query.get("changes") ?? 0);
+    if (CHANGES > 0) {
+      this.changeList = Array.from({ length: CHANGES }, (_, i) => ({ path: `pkg${i % 60}/dir${i % 9}/file${i}.go`, status: "??", unstaged: true }));
+    }
     // ?peerset=1 starts with session messages on and two projects already allowed through.
     if (query.has("peerset")) {
       this.peerSettings = {

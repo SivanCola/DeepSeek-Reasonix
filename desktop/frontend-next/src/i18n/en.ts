@@ -1758,6 +1758,8 @@ export const EN: Record<string, string> = {
   "这个文件已经不在改动列表里了，请刷新后再试": "That file is no longer in the changes list; refresh and try again",
   "暂存请求无法识别": "The stage request was not understood",
   "暂存 {path}": "Stage {path}",
+  "还有 {n} 项没有显示": "{n} more not shown",
+  "再显示 {n} 项": "Show {n} more",
   "暂存全部": "Stage all",
   "取消全部暂存": "Unstage all",
   "暂存失败，请重试": "Staging failed; try again",

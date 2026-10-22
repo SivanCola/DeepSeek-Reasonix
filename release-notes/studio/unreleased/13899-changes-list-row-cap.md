@@ -1,0 +1,2 @@
+- 修复：工作区有几万个未提交/未跟踪文件时，“改动”列表不再渲染每一项，页面节点数和内存大幅下降；超出部分显示“还有 N 项没有显示”，可按 500 项展开。关联 #13899。
+- Fixed: with tens of thousands of changed files the Changes list no longer draws every row, cutting DOM nodes and memory; the rest opens 500 at a time. Refs #13899.

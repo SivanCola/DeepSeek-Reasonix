@@ -34,3 +34,4 @@
 .workbench-repo-head span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-weight: 450; }
 .workbench-repo-head small { margin-left: auto; color: var(--faint); font-variant-numeric: tabular-nums; }
 .workbench-repo .workbench-changes { border-bottom: 0; }
+.workbench-change-more { display: flex; align-items: center; gap: 8px; padding: 8px 12px; color: var(--muted); font-size: calc(12px * var(--fs-scale, 1)); }

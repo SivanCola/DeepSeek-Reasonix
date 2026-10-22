@@ -183,6 +183,7 @@ jobs:
           node perf/web-access.mjs
           node perf/peers-settings.mjs
           node perf/output-cap.mjs
+          node perf/changes-cap.mjs
           node perf/progress-tail.mjs
           node perf/trust-wait.mjs
           node perf/nest-nodes.mjs
