@@ -13,6 +13,7 @@ import (
 // source comparison baseline. Version 3 results require an aware reader.
 type SnapshotOrigin struct {
 	Version               int                         `json:"version"`
+	Kind                  string                      `json:"kind,omitempty"`
 	PublicationID         string                      `json:"publication_id"`
 	EnvironmentID         string                      `json:"environment_id"`
 	EnvironmentGeneration string                      `json:"environment_generation"`
@@ -28,6 +29,9 @@ type SnapshotImport struct {
 }
 
 func resultVersion(e *Entry) int {
+	if e.Origin != nil && e.Origin.Kind == "ancestor_copy" {
+		return 6
+	}
 	if e.Lineage != nil {
 		return 4
 	}
@@ -38,6 +42,10 @@ func resultVersion(e *Entry) int {
 }
 
 func supportedResultVersion(d durableEntry) bool {
+	if d.Version == 6 {
+		return supportedLineage(d.Lineage) && d.Origin != nil && d.Origin.Version == 2 && d.Origin.Kind == "ancestor_copy" &&
+			validSnapshotOrigin(*d.Origin) && d.Origin.Materialization.Repo == d.Snap.Repo && d.Origin.Materialization.Prefix == d.Snap.Prefix
+	}
 	if !supportedLineage(d.Lineage) || (d.Lineage != nil && d.Version != 4 && d.Version != 5) ||
 		((d.Version == 4 || d.Version == 5) && d.Lineage == nil) ||
 		(d.Version == 5 && d.Lineage.Parent == nil) {
@@ -46,13 +54,13 @@ func supportedResultVersion(d durableEntry) bool {
 	if d.Origin == nil {
 		return d.Version == 0 || d.Version == 2 || d.Version == 4 || d.Version == 5
 	}
-	return (d.Version == 3 || d.Version == 4 || d.Version == 5) && validSnapshotOrigin(*d.Origin) &&
+	return (d.Version == 3 || d.Version == 4 || d.Version == 5) && d.Origin.Version == 1 && validSnapshotOrigin(*d.Origin) &&
 		d.Origin.Materialization.Repo.CommonDir == d.Snap.Repo.CommonDir && d.Origin.Materialization.Prefix == d.Snap.Prefix
 }
 
 func validSnapshotOrigin(origin SnapshotOrigin) bool {
 	return (origin.Environment == nil || (origin.Environment.Version == 1 && origin.Environment.Receipt.Version == 1)) &&
-		origin.Version == 1 && origin.PublicationID != "" && origin.EnvironmentID != "" && origin.EnvironmentGeneration != "" &&
+		((origin.Version == 1 && origin.Kind == "" && origin.PublicationID != "") || (origin.Version == 2 && origin.Kind == "ancestor_copy" && origin.PublicationID == "")) && origin.EnvironmentID != "" && origin.EnvironmentGeneration != "" &&
 		origin.Materialization.Commit != "" && origin.Materialization.Tree != "" && origin.Materialization.Repo.Valid()
 }
 
@@ -62,7 +70,7 @@ func (s *Store) ImportSnapshotResult(ctx context.Context, request SnapshotImport
 	if s == nil || s.mutations == nil {
 		return nil, errUnavailable
 	}
-	if !validID(request.ID) || request.Owner == "" || !validSnapshotOrigin(request.Origin) ||
+	if !validID(request.ID) || request.Owner == "" || request.Origin.Version != 1 || !validSnapshotOrigin(request.Origin) ||
 		request.Baseline.Repo != s.repo.Top() || !sameDir(request.Baseline.RepoRoot, s.repo.WorkTree) ||
 		request.Baseline.Tree == "" || request.Baseline.Commit == "" ||
 		request.Origin.Materialization.Repo.CommonDir != s.repo.CommonDir || request.Origin.Materialization.Prefix != request.Baseline.Prefix {

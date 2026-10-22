@@ -408,7 +408,7 @@ func (b *builder) wireTools() error {
 	addBuiltins(t.reg, cfg.Tools.Enabled, env.writeRoots, env.bash, env.bashTimeout, env.search, b.stderr, root, b.proxy, env.forbidReadRoots, env.readRoots, env.readPaths, env.sessionGuard, env.managedConfig, opts.FileOverlay, opts.TerminalRunner, env.sessionTemp, b.fileWriteReceipt)
 	addViewImage(t.reg, cfg, b.model.entry, env, root)
 	addPresentFiles(t.reg, cfg, env, root)
-	bindFileViews(t.reg, cfg.Tools.ChangedFilesProtected() || cfg.Agent.Collaboration != "", cfg.Agent.Collaboration != "")
+	bindFileViews(t.reg, cfg.Tools.ChangedFilesProtected() || cfg.UsesMutationTransactions(), cfg.UsesMutationTransactions())
 	t.peerLink, t.peerTools = peerTools(t.reg, cfg)
 	t.settingLink = addSettingTool(t.reg, cfg)
 	addSystemOne(t.reg, cfg.Tools.Enabled, cfg, b.keyedClient)

@@ -552,6 +552,11 @@ func (t *TaskTool) settleSpecPrompts(spec *ProfileExecSpec) error {
 func (t *TaskTool) runProfileSpec(ctx context.Context, spec ProfileExecSpec, environment *environmentRequest) (result string, err error) {
 	trk := newSubagentProgressTracker(ctx, subSink(ctx))
 	handoff := false
+	defer func() {
+		if !handoff {
+			environment.release()
+		}
+	}()
 	defer trk.finishReturning(ctx, &handoff, &err)
 	if err := t.settleSpecPrompts(&spec); err != nil {
 		return "", err
@@ -570,6 +575,7 @@ func (t *TaskTool) runProfileSpec(ctx context.Context, spec ProfileExecSpec, env
 	if err != nil {
 		return "", err
 	}
+	plan.environment = environment
 	req, err := t.acquireRequestFor(&spec)
 	if err != nil {
 		return "", err

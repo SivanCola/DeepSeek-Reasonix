@@ -18,7 +18,7 @@ func TestEnvironmentRejectedBackgroundStartReleasesRuntime(t *testing.T) {
 	p := &blockingProvider{started: make(chan struct{})}
 	parent := NewTaskToolWithOptions(TaskToolOptions{Provider: p, ParentRegistry: tool.NewRegistry(), MaxSteps: 20, SysPrompt: "sys"}).WithTranscripts(transcripts, root, "model", "high")
 	finished := 0
-	parent.WithEnvironmentFactory("shared", func(_ context.Context, spec ProfileExecSpec, _ string) (*ExecutionEnvironment, error) {
+	parent.WithEnvironmentFactory("shared", func(_ context.Context, spec ProfileExecSpec, _ *EnvironmentSource) (*ExecutionEnvironment, error) {
 		child := NewTaskToolWithOptions(TaskToolOptions{Provider: p, ParentRegistry: tool.NewRegistry(), MaxSteps: 20, SysPrompt: "sys"}).WithTranscripts(transcripts, root, "model", "high")
 		return &ExecutionEnvironment{ID: "iso_test", Task: child, Spec: spec, Finish: func(_ context.Context, answer string, err error) (string, error) { finished++; return answer, err }}, nil
 	})

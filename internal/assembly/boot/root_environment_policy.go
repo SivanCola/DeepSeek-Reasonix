@@ -19,6 +19,11 @@ func (b *builder) rootEnvironmentPolicy() *control.RootEnvironmentPolicy {
 		return nil
 	}
 	return &control.RootEnvironmentPolicy{Generation: b.ext.generation, Block: func() error {
+		if mode, _ := b.cfg.CollaborationMode(); mode == "auto" {
+			if err := automaticIsolationAvailability(b.opts, b.cfg); err != nil {
+				return err
+			}
+		}
 		if b.opts.FileOverlay != nil || b.opts.TerminalRunner != nil {
 			return errors.New("client file or terminal services cannot move automatically")
 		}

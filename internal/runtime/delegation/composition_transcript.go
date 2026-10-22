@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-func (t *TaskTool) prepareTranscriptRunWithPrompt(ctx context.Context, subReg *tool.Registry, modelRef, effortRef, parentSession, execution, parentID, continueFrom, legacyForkFrom, systemPrompt, kind, name string) (run *SubagentRun, err error) {
+func (t *TaskTool) prepareTranscriptRunWithPrompt(ctx context.Context, subReg *tool.Registry, modelRef, effortRef, parentSession, execution, parentID, continueFrom, legacyForkFrom, systemPrompt, kind, name string, source *EnvironmentSource) (run *SubagentRun, err error) {
 	defer func() {
 		if err == nil {
 			if bindErr := agent.BindChildComposition(ctx, run.Session, false); bindErr != nil {
@@ -57,6 +57,7 @@ func (t *TaskTool) prepareTranscriptRunWithPrompt(ctx context.Context, subReg *t
 		Effort:                identityEffort,
 		ResumedFrom:           firstNonEmpty(continueFrom, legacyForkFrom),
 		UpstreamFrom:          upstreamSources(upstreamFromContext(ctx)),
+		continuationSource:    source,
 	}
 	if continueFrom != "" {
 		return t.transcripts.PrepareContinue(continueFrom, spec)

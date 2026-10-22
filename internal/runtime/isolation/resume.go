@@ -22,7 +22,7 @@ func (s *Store) resume(ctx context.Context, id, owner string, admission func(con
 	if owner == "" || before.ResumeOwner != owner {
 		return nil, tool.Refusal{Code: CodeOwnerMismatch, Message: "isolated result is not owned by this continuing session"}
 	}
-	if before.Origin != nil {
+	if before.Origin != nil && before.Origin.Kind != "ancestor_copy" {
 		return nil, tool.Refusal{Code: CodeOwnerMismatch, Message: "exported root snapshots are immutable; continue the persistent root environment"}
 	}
 	lease, err := s.holdCandidate(ctx, before, "isolation.resume")

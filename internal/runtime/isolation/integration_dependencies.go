@@ -31,7 +31,9 @@ func (s *Store) registerIntegration(ctx context.Context, original *Entry, i *Int
 		}
 		// Older readers must retain the direct parent's environment even after
 		// the child settles, until its integration attempts are also settled.
-		fields["version"] = json.RawMessage("5")
+		if resultVersion(current) < 5 {
+			fields["version"] = json.RawMessage("5")
+		}
 		raw, err = json.Marshal(fields)
 		if err != nil {
 			return err

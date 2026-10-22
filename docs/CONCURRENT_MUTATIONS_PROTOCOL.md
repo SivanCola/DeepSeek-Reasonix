@@ -7,14 +7,14 @@ reviewed: 2026-10-22
 
 # Concurrent mutation protocol compatibility / 并发变更协议兼容
 
-This is an implementation and qualification record. It does not declare the
-complete concurrency plan accepted or enable a new installation default.
+This is an implementation and compatibility record. Qualification scopes and
+new-install activation are recorded in [acceptance](CONCURRENT_MUTATIONS_ACCEPTANCE.md).
 See [the user and implementation guide](CONCURRENT_MUTATIONS.md).
 
 Direct-parent management and retention are described in the
 [nested result guide](CONCURRENT_MUTATIONS_NESTED.md).
 
-本文记录实现及验收边界，不代表完整并发方案已验收，也不启用新安装默认策略。
+本文记录实现及兼容边界；验收范围及新安装默认策略见[验收记录](CONCURRENT_MUTATIONS_ACCEPTANCE.md)。
 操作方式见[使用与实现说明](CONCURRENT_MUTATIONS.md)。
 直接父子关系的管理与保留规则见[嵌套成果说明](CONCURRENT_MUTATIONS_NESTED.md)。
 
@@ -22,7 +22,8 @@ Direct-parent management and retention are described in the
 
 | 数据或协议 | 旧数据及新读写器 | 旧读写器 | 结论 |
 | --- | --- | --- | --- |
-| 未配置 collaboration | 沿用兼容模式；不重写旧开关 | 继续使用旧设置 | 不自动迁移活动运行 |
+| 已有配置未写 collaboration | 沿用兼容模式；不重写旧开关 | 继续使用旧设置 | 不自动迁移活动运行 |
+| collaboration-default-v1.json | 全新目录持久选择 auto；实际读到旧用户配置时仍按 legacy 解码；只读加载不写入 | 旧程序忽略选择文件，保留其原行为 | OS 锁协调首次初始化；未知 marker 保留拒绝，不删除旧值 |
 | auto_integrate | 未配置视为开启；用户配置可关闭；保存值和有效值分开 | 不认识该选项 | 新运行时生效；旧程序不能据此提供自动整合保障 |
 | mutation 资源记录 | 校验版本、身份、路径及 OS 所有权；未知/损坏记录保留并拒绝绕过 | 旧 workspace claim 保持互斥 | 兼容长锁仍可能阻塞短事务 |
 | 无版本 iso_ 结果 | 保留身份并重新观察候选 | 仍可能使用旧清理规则 | 不能把缺失的旧证据视为通过 |
@@ -31,6 +32,7 @@ Direct-parent management and retention are described in the
 | v4 父子依赖记录 | 子快照前登记直接父关系；封口后拒绝新增；待处理孩子阻止父封存、换代和清理 | v2/v3 reader 拒绝 v4 | 新版工厂统一 BeginChild/ResumeChild；子换代保持父准入锁至落盘 |
 | v4 preparation-lock-v1 | 登记前持准备 OS 锁；无记录、准备者及 run 都已结束才回收登记 | 先前 v4 写者保留未知字段但不回收；未标记的旧登记保留 | 不按超时撤销活准备者；扫描错误不能证明不存在 |
 | v5 嵌套整合依赖 | child 锁内先发布版本屏障再登记 int；父结算同时核对关联 int 的终态、清理和 OS owner；普通保存不降版本 | 先前 v4 reader/writer 拒绝 v5，不能删除仍被关联 int 引用的父环境 | 不追溯拦截已越过旧版快照阶段的在途直接 API 调用；旧生产 nested guard 未开放 |
+| v6 祖先任务副本 | origin v2/ancestor_copy 固定来源身份、物化快照及原整合基线；副本独立续跑 | 先前 v5 reader/writer 拒绝；不降版本 | 来源凭据不继承；origin v1 根导出保持不可变 |
 | publication revocation v1 | 同一 entry 锁内撤销、应用及提交；先持久撤销再更新根记录 | 不支持撤销的早期实验 v3 reader 可忽略 sidecar | 早期实验 v3 不属于安全降级范围 |
 | int_ 尝试 v1 | 独立候选及精确快照检查；恢复保持成果身份 | 旧程序不读取该目录 | 历史验证不代表当前工作区仍有效 |
 | recovery.resultId | 可选字段路由至登记的直接源，检查 runtime、revision 及当前根权限 | 缺字段保持根恢复；旧读者忽略新增的行级 recovery | 管理可发现性不授予整合权限；旧内核拒绝不属于根工作区的恢复目标 |
@@ -77,7 +79,8 @@ ACL 授权、hook 启动及 Bash 逃逸审批之前拒绝。源保护路径按�
 
 | Format or protocol | Existing data and current reader/writer | Previous reader/writer | Conclusion |
 | --- | --- | --- | --- |
-| Missing collaboration | Preserve compatibility mode and old switches | Keeps its settings | No migration during active execution |
+| Existing config missing collaboration | Preserve compatibility mode and old switches | Keeps its settings | No migration during active execution |
+| collaboration-default-v1.json | Persist auto only for fresh profiles; actual old config bytes still decode as legacy; read-only loading writes nothing | Ignores the marker and keeps previous behavior | OS initialization owner; retain and refuse unknown markers without deleting existing choices |
 | auto_integrate | Missing means enabled; user-only choice; saved/effective values separate | Ignores the unknown setting | Applies to new runtimes; does not establish old-program integration guarantees |
 | Mutation resources | Validate version, identity, paths and OS ownership; retain unsupported records | Exclusion through legacy workspace claims | Legacy long holds can still block short transactions |
 | Unversioned iso_ | Retain identity and observe current candidate | May retain old cleanup behavior | Missing evidence is unknown |
@@ -86,6 +89,7 @@ ACL 授权、hook 启动及 Bash 逃逸审批之前拒绝。源保护路径按�
 | v4 parent/child dependencies | Register the direct parent before a child snapshot; seal admission; unsettled children block parent sealing, generation changes and cleanup | v2/v3 readers refuse v4 | New factories use BeginChild/ResumeChild; child generation publication retains parent admission ownership |
 | v4 preparation-lock-v1 | Own preparation OS lock before registration; reclaim an absent record only after preparation and run end | Earlier v4 writers preserve unknown fields without reclaiming; untagged registrations remain | Timeouts do not revoke active preparers; scan errors do not prove absence |
 | v5 nested integration dependencies | Under the child lock, publish the version barrier before int registration; parent settlement checks associated int decisions, cleanup and OS ownership; saves never downgrade | Earlier v4 readers/writers refuse v5 and retain the source environment pinned by its integration attempt | Does not fence an old direct API preparer already past its snapshot; the previous production entry point did not allow nested worktrees |
+| v6 ancestor task copies | Origin v2/ancestor_copy pins source identity, materialization and original comparison baseline; copies resume independently | Previous v5 readers/writers refuse; saves never downgrade | Source receipts are not inherited; origin v1 root exports remain immutable |
 | Revocation v1 | Revoke, Apply and Commit fence at the same entry lock; revocation persists first | Early experimental v3 readers can ignore the sidecar | Those experimental readers are outside the safe downgrade scope |
 | int_ v1 | Separate candidate and snapshot-bound checks; recover same identity | Does not read this directory | Historical verification does not prove current source validity |
 | recovery.resultId | Optional direct-source routing rechecks registered identity, runtime, revision and current root permissions | Absent means legacy root recovery; older readers ignore added per-row recovery | Discoverability grants no integration authority; older kernels refuse foreign-workspace recovery targets |

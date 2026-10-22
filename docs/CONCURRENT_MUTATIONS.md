@@ -13,10 +13,10 @@ reviewed: 2026-10-22
 
 可选的跨平台受控验证入口见[受控容器验证](CONTROLLED_CONTAINER_VERIFICATION.md)。
 
-本文记录正在实施的协议及验收边界，不代表自动隔离和自动整合已交付。
-默认模式仍保持兼容行为。当前可验证的新版路径是用户配置中的
-`[agent] collaboration = "shared"`。`auto` 与 `isolated` 已接入 CLI、serve、
-ACP 的首次执行及持久环境恢复，但完整验收仍未完成。默认切换必须等待整体验收。
+本文记录已实现的协议及本地验收边界，详见[验收记录](CONCURRENT_MUTATIONS_ACCEPTANCE.md)。
+新安装默认 `auto`；已有配置缺少策略字段时继续使用兼容模式，不改写旧开关。
+`auto`、`shared` 和 `isolated` 覆盖 CLI、serve、ACP 的首次执行及持久环境恢复。
+托管 CI、上游合并和发布是独立动作。
 
 固定负载的协调器层对照及 P95 回退见[性能证据](CONCURRENT_MUTATIONS_PERFORMANCE.md)。
 这份记录不替代完整产品性能验收。
@@ -238,7 +238,11 @@ Git 快照及 worktree 创建将准备额度与相关路径联合申请；内核
 无修改环境仍可能清理。每次运行记录新的 generation，旧回调不能结束或删除
 新运行。恢复中断会话要求同一环境的新 generation，仍检查 persona、工具和模型。
 
-跨聊天 fork 和完整崩溃续跑链路尚待验收。具有宿主环境工厂的新版运行时支持嵌套
+根聊天 fork 独立重开，祖先 task 的 `continue_from` 创建并复用当前聊天自己的副本。
+中断执行保留文件，续跑要求新的 generation；未形成可执行现场的准备记录进入恢复。
+详见[续跑规则](CONCURRENT_MUTATIONS_CONTINUATION.md)。
+
+具有宿主环境工厂的新版运行时支持嵌套
 worktree，目标始终是直接父环境；共享及只读选择不变。登记、授权、保留和恢复
 规则见[嵌套成果说明](CONCURRENT_MUTATIONS_NESTED.md)。
 
@@ -336,11 +340,11 @@ CLI/TUI 使用 `/isolated root recheck`、`retry`、`recover`；恢复需确认�
 
 完整格式、旧读写器行为和保留边界见[协议兼容矩阵](CONCURRENT_MUTATIONS_PROTOCOL.md)。
 
-### 尚未完成的发布条件
+### 验收与保障边界
 
-短事务、根任务自动选择、task/fleet 生命周期与共享预算、恢复界面和受控
-整合已有实现。新安装默认 `auto` 仍关闭；最终平台、兼容、故障和性能验收未全部
-完成前不能切换。
+短事务、根任务自动选择、task/fleet 生命周期与共享预算、恢复界面、受控整合及
+配置迁移已完成分批源码、故障、兼容、三平台与性能验收。新安装启用 `auto`，
+已有配置保持原选择，活动运行不在中途切换。验收记录保留失败首轮及复验范围。
 
 macOS/Windows 可使用显式的本地 Linux 容器验证；这不改变候选任务自身 Bash/hook
 的写入边界。未获得可靠验证的嵌套成果保留在各自候选中，
@@ -376,13 +380,13 @@ Windows 现有创建限制令牌无法提供这个完整边界，因此候选 Ba
 
 ## English
 
-This document describes an implementation in progress, not completed automatic
-isolation or integration. Existing installations retain legacy behavior.
+This document describes the implemented protocol and its local qualification
+boundaries. See the [acceptance record](CONCURRENT_MUTATIONS_ACCEPTANCE.md).
 
-The currently testable new path is `[agent] collaboration = "shared"`.
-`auto` and `isolated` now reach first-execution selection and persistent
-restoration through CLI, serve and ACP. Full acceptance remains unfinished;
-changing installation defaults requires all acceptance gates.
+New installations default to `auto`. Existing configurations without a policy
+retain legacy behavior and old switches. The three strategies cover initial
+execution and persistent restoration through CLI, serve and ACP. Hosted CI,
+upstream merging and publication remain separate delivery actions.
 
 See the [fixed-load coordination evidence](CONCURRENT_MUTATIONS_PERFORMANCE.md)
 for paired results and P95 regressions. It does not qualify product performance.
@@ -708,9 +712,13 @@ Transcripts record their environment and origin workspace. The owning chat can
 continue a retained candidate with `continue_from`. Resume, apply and discard
 exclude each other.
 
-Unchanged resumable environments are retained, but remain
-eligible for idle expiry. Cross-chat forks and complete failed/crashed-run resume
-semantics have not passed acceptance.
+Unchanged resumable environments are retained, but remain eligible for idle
+expiry. Root conversation forks reopen independent scenes. Ancestor task
+continuation creates and reuses a conversation-owned copy.
+
+Interrupted runs retain files and require a new generation; preparation that
+never produced a runnable scene remains recovery-required. See the
+[continuation guide](CONCURRENT_MUTATIONS_CONTINUATION.md).
 
 Each execution persists a new generation. Old callbacks cannot finish or delete
 a successor. Interrupted transcript recovery requires a new generation in the
@@ -861,10 +869,13 @@ preserves it and interrupted sidecar publication is recoverable. Unaware old
 programs in independent sessions can still ignore source recovery journals;
 that downgrade is outside safe compatibility.
 
-Short transactions, root environment selection, task/fleet lifecycles and shared
-budgets, recovery UI and controlled integration are implemented. New-install
-`auto` remains disabled until final platform, compatibility, fault and performance
-qualification completes.
+Short transactions, root selection, task/fleet lifecycles and shared budgets,
+recovery UI, controlled integration and migration have fixed-source functional,
+fault, compatibility, native-platform and performance qualification.
+
+New installations use `auto`; existing choices and active executions retain
+their policy. Qualification records preserve failed first attempts and exact
+replacement scopes.
 
 macOS/Windows can use explicitly provisioned local Linux container verification.
 This does not change the candidate task's own Bash/hook mutation boundary.

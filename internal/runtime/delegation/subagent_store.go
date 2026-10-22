@@ -28,11 +28,15 @@ type SubagentRun struct {
 	Meta       sessionstore.SubagentMeta
 	ForkedFrom string
 
-	store   *SubagentStore
-	release func()
+	store       *SubagentStore
+	release     func()
+	preparation *continuationReservation
 }
 
 func (r *SubagentRun) Release() {
+	if r != nil {
+		r.preparation.close()
+	}
 	if r != nil && r.store != nil && r.Ref != "" {
 		r.store.setLive(r.Ref, nil)
 	}
@@ -353,7 +357,24 @@ func (s *SubagentStore) PrepareLegacyForkFrom(ref string, spec SubagentSpec) (*S
 	return s.PrepareContinue(ref, spec)
 }
 
-func (s *SubagentStore) prepareContinueFromAncestor(sourceRef string, spec SubagentSpec) (*SubagentRun, error) {
+func (s *SubagentStore) prepareContinueFromAncestor(sourceRef string, spec SubagentSpec) (run *SubagentRun, resultErr error) {
+	if spec.continuationSource == nil {
+		nearest, err := s.ancestorReference(sourceRef, spec.ParentSession)
+		if err != nil {
+			return nil, err
+		}
+		reservation, err := s.reserveContinuation(spec.ParentSession, nearest)
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			if resultErr != nil || run == nil {
+				reservation.close()
+			} else {
+				run.preparation = reservation
+			}
+		}()
+	}
 	sourceRef, err := s.nearestLineageSource(sourceRef, spec)
 	if err != nil {
 		return nil, err
@@ -378,32 +399,15 @@ func (s *SubagentStore) prepareContinueFromAncestor(sourceRef string, spec Subag
 }
 
 func (s *SubagentStore) nearestLineageSource(requestedRef string, spec SubagentSpec) (string, error) {
-	ancestors, err := s.sessionAncestors(spec.ParentSession)
+	ref, err := s.ancestorReference(requestedRef, spec.ParentSession)
 	if err != nil {
 		return "", err
 	}
-	for _, ancestor := range ancestors {
-		artifacts, err := sessionstore.ListSubagentsByParent(filepath.Dir(s.dir), ancestor)
-		if err != nil {
-			return "", err
-		}
-		var candidates []sessionstore.SubagentArtifact
-		for _, artifact := range artifacts {
-			if artifact.Ref == requestedRef || s.derivesFrom(artifact.Meta, requestedRef) {
-				candidates = append(candidates, artifact)
-			}
-		}
-		if len(candidates) > 1 {
-			return "", fmt.Errorf("subagent reference %q has multiple candidate transcripts in ancestor parent session %q", requestedRef, ancestor)
-		}
-		if len(candidates) == 1 {
-			if err := validateMeta(candidates[0].Meta, spec); err != nil {
-				return "", err
-			}
-			return candidates[0].Ref, nil
-		}
+	meta, err := s.LoadMeta(ref)
+	if err != nil {
+		return "", err
 	}
-	return "", fmt.Errorf("subagent reference %q is not in current parent session %q lineage", requestedRef, spec.ParentSession)
+	return ref, validateMeta(meta, spec)
 }
 
 func (s *SubagentStore) sessionAncestors(current string) ([]string, error) {
@@ -560,6 +564,7 @@ func (s *SubagentStore) MarkRunning(run *SubagentRun) error {
 	}
 	run.Meta = meta
 	s.setLive(run.Ref, run.Session)
+	run.preparation.close()
 	return nil
 }
 

@@ -31,7 +31,7 @@ func TestResidentRefusalPrecedesEnvironmentAndBackgroundCreation(t *testing.T) {
 	}
 	task := NewTaskToolWithOptions(TaskToolOptions{ParentRegistry: tool.NewRegistry(), SysPrompt: "sys"}).
 		WithTranscripts(NewSubagentStore(t.TempDir()), root, "model", "").WithScheduler(s).WithMutationCoordinator(c)
-	task.WithEnvironmentFactory("shared", func(context.Context, ProfileExecSpec, string) (*ExecutionEnvironment, error) {
+	task.WithEnvironmentFactory("shared", func(context.Context, ProfileExecSpec, *EnvironmentSource) (*ExecutionEnvironment, error) {
 		t.Fatal("resident refusal created an environment")
 		return nil, nil
 	})

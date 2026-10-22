@@ -30,7 +30,7 @@ func TestEnvironmentPreparationWaitsForRootCapacity(t *testing.T) {
 			p := &blockingProvider{started: make(chan struct{})}
 			parent := NewTaskToolWithOptions(TaskToolOptions{Provider: p, ParentRegistry: tool.NewRegistry(), MaxSteps: 20, SysPrompt: "sys"}).WithTranscripts(store, root, "model", "high").WithScheduler(scheduler)
 			var preparations, finishes atomic.Int32
-			parent.WithEnvironmentFactory("shared", func(_ context.Context, spec ProfileExecSpec, _ string) (*ExecutionEnvironment, error) {
+			parent.WithEnvironmentFactory("shared", func(_ context.Context, spec ProfileExecSpec, _ *EnvironmentSource) (*ExecutionEnvironment, error) {
 				preparations.Add(1)
 				child := NewTaskToolWithOptions(TaskToolOptions{Provider: p, ParentRegistry: tool.NewRegistry(), MaxSteps: 20, SysPrompt: "sys"}).WithTranscripts(store, root, "model", "high")
 				return &ExecutionEnvironment{ID: "iso_candidate", Task: child, Spec: spec, Finish: func(_ context.Context, out string, err error) (string, error) { finishes.Add(1); return out, err }}, nil

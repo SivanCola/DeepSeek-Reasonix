@@ -68,6 +68,11 @@ func ResolveExecutionIdentity(meta sessionstore.SubagentMeta, opened func(execut
 }
 
 func validateMeta(meta sessionstore.SubagentMeta, spec SubagentSpec) error {
+	var err error
+	spec, err = continuationSourceSpec(meta, spec)
+	if err != nil {
+		return err
+	}
 	recovered := resumedEnvironmentOwns(meta, spec)
 	if meta.Status == sessionstore.SubagentRunning && !recovered {
 		return fmt.Errorf("subagent reference %q is still in progress", meta.Ref)

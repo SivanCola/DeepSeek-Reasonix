@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"reasonix/internal/base/testenv"
+	"reasonix/internal/contract/config"
 	"reasonix/internal/contract/event"
 	"reasonix/internal/contract/provider"
 	"reasonix/internal/state/sessionstore"
@@ -68,6 +69,19 @@ model = "x"
 		t.Fatal(err)
 	}
 	defer prepared.Close()
+	cfg, err := config.RootsForHome(home).LoadForRootReadOnly(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if automaticIsolationAvailability(opts, cfg) != nil {
+		if prepared.Result != nil || prepared.Controller != second {
+			t.Fatal("unavailable automatic environment did not fall back before moving the chat")
+		}
+		if _, bound, err := sessionstore.LoadExecutionEnvironment(second.SessionPath()); err != nil || bound {
+			t.Fatalf("fallback bound an unusable environment: %v %v", bound, err)
+		}
+		return
+	}
 	if prepared.Result == nil || prepared.Controller.WorkspaceRepo().WorkTree == second.WorkspaceRepo().WorkTree {
 		t.Fatal("parallel auto execution retained source runtime")
 	}

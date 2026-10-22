@@ -13,7 +13,7 @@ import (
 	"reasonix/internal/safety/evidence"
 )
 
-type EnvironmentFactory func(context.Context, ProfileExecSpec, string) (*ExecutionEnvironment, error)
+type EnvironmentFactory func(context.Context, ProfileExecSpec, *EnvironmentSource) (*ExecutionEnvironment, error)
 
 type ExecutionEnvironment struct {
 	ID         string
@@ -38,22 +38,41 @@ func (t *TaskTool) RunProfileSpec(ctx context.Context, spec ProfileExecSpec) (st
 	if t == nil {
 		return "", fmt.Errorf("task tool is not configured")
 	}
-	resumeID, err := t.resumeEnvironment(ctx, spec)
+	source, err := t.resumeEnvironment(ctx, spec)
 	if err != nil {
 		return "", err
 	}
-	if resumeID != "" && resumeID == t.environmentID {
+	owned := true
+	defer func() {
+		if owned {
+			source.release()
+		}
+	}()
+	if source != nil {
+		spec.Context.ContinueFrom, spec.Context.ForkFrom = source.Reference, ""
+	}
+	if source != nil && source.Kind == EnvironmentResume && source.ID != "" && source.ID == t.environmentID {
+		owned = false
 		return t.runProfileSpec(ctx, spec, nil)
 	}
 	mode, err := t.executionEnvironment(spec)
 	if err != nil {
 		return "", err
 	}
-	if resumeID != "" {
+	if source != nil && source.ID == "" {
+		if spec.Sched.Environment == "worktree" || spec.Sched.Environment == "isolated" || (t.environment != nil && t.environment.mode == "isolated") {
+			return "", tool.Refusal{Code: codeIsolationUnsupported, Message: "an existing shared task cannot move to a new environment during continuation"}
+		}
+		mode = "shared"
+	} else if source != nil && source.ID != "" {
 		mode = "worktree"
 	}
 	if mode == "shared" {
-		return t.runProfileSpec(ctx, spec, nil)
+		if source == nil {
+			return t.runProfileSpec(ctx, spec, nil)
+		}
+		owned = false
+		return t.runProfileSpec(ctx, spec, &environmentRequest{mode: mode, source: source})
 	}
 	if t.environment == nil || t.environment.prepare == nil {
 		return "", tool.Refusal{Code: isolation.CodeUnavailable, Message: "isolated task execution is unavailable"}
@@ -63,24 +82,34 @@ func (t *TaskTool) RunProfileSpec(ctx context.Context, spec ProfileExecSpec) (st
 		spec.Worker.Effort = agent.RequestEffortFromContext(ctx)
 	}
 	spec.Worker.Model, spec.Worker.Effort = t.effectiveIdentity(spec.Worker.Model, spec.Worker.Effort)
-	return t.runProfileSpec(ctx, spec, &environmentRequest{mode: mode, resumeID: resumeID})
+	owned = false
+	return t.runProfileSpec(ctx, spec, &environmentRequest{mode: mode, source: source})
 }
 
 type environmentRequest struct {
-	mode     string
-	resumeID string
+	mode   string
+	source *EnvironmentSource
 }
 
-func (t *TaskTool) prepareEnvironment(ctx context.Context, spec ProfileExecSpec, request *environmentRequest) (*ExecutionEnvironment, error) {
+func (r *environmentRequest) release() {
+	if r != nil {
+		r.source.release()
+	}
+}
+
+func (t *TaskTool) prepareEnvironment(ctx context.Context, spec ProfileExecSpec, request *environmentRequest, progress event.Sink) (*ExecutionEnvironment, error) {
+	if request.mode == "shared" {
+		return nil, nil
+	}
 	if request.mode == "auto" && !spec.Sched.RunInBackground && !spec.Sched.BackgroundWriter && !spec.Sched.ParallelWriter && t.scheduler.ActiveWriters() <= 1 {
 		return nil, nil
 	}
-	prepared, err := t.environment.prepare(ctx, spec, request.resumeID)
+	prepared, err := t.environment.prepare(ctx, spec, request.source)
 	if err != nil {
 		if request.mode != "auto" || ctx.Err() != nil {
 			return nil, err
 		}
-		subSink(ctx).Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "Automatic isolation could not prepare this task; using shared transactions.", Detail: err.Error()})
+		progress.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "Automatic isolation could not prepare this task; using shared transactions. " + err.Error(), Detail: err.Error()})
 		return nil, nil
 	}
 	if prepared == nil || prepared.Task == nil {
