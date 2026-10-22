@@ -147,4 +147,3 @@ if __name__ == "__main__":
             args.output.write_text(body)
         else:
             print(body, end="")
-
