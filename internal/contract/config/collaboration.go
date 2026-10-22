@@ -14,7 +14,7 @@ func (c *Config) CollaborationMode() (string, error) {
 	switch mode {
 	case "":
 		return "legacy", nil
-	case "auto", "shared", "isolated":
+	case "legacy", "auto", "shared", "isolated":
 		return mode, nil
 	default:
 		return "", fmt.Errorf("unsupported agent.collaboration %q", c.Agent.Collaboration)
@@ -28,11 +28,19 @@ func (c *Config) AutoIntegrationEnabled() bool {
 func (c *Config) SetCollaborationMode(value string) error {
 	copy := *c
 	copy.Agent.Collaboration = strings.ToLower(strings.TrimSpace(value))
+	if copy.Agent.Collaboration == "" {
+		copy.Agent.Collaboration = "legacy"
+	}
 	if _, err := copy.CollaborationMode(); err != nil {
 		return err
 	}
 	c.Agent.Collaboration = copy.Agent.Collaboration
 	return nil
+}
+
+func (c *Config) UsesMutationTransactions() bool {
+	mode, err := c.CollaborationMode()
+	return err == nil && mode != "legacy"
 }
 
 func (h heldScope) narrowCollaboration(c *Config) {

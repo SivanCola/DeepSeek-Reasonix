@@ -16,9 +16,20 @@ func (c *Controller) acquireMutation(ctx context.Context, intent mutation.Intent
 	if c.mutations == nil {
 		return nil, nil
 	}
+	return c.mutations.Acquire(ctx, c.mutationIntent(intent))
+}
+
+func (c *Controller) tryAcquireMutation(ctx context.Context, intent mutation.Intent) (*mutation.Lease, error) {
+	if c.mutations == nil {
+		return nil, nil
+	}
+	return c.mutations.TryAcquire(ctx, c.mutationIntent(intent))
+}
+
+func (c *Controller) mutationIntent(intent mutation.Intent) mutation.Intent {
 	intent.SessionID = sessionstore.BranchID(c.SessionPath())
 	intent.ExecutionID = "control_" + rand.Text()
-	return c.mutations.Acquire(ctx, intent)
+	return intent
 }
 
 func (c *Controller) holdGitMutation(ctx context.Context, repo gitcmd.Repo, call string, all bool, paths ...string) (*mutation.Lease, error) {
@@ -26,6 +37,14 @@ func (c *Controller) holdGitMutation(ctx context.Context, repo gitcmd.Repo, call
 }
 
 func (c *Controller) holdGitMutationExpected(ctx context.Context, repo gitcmd.Repo, call string, all bool, expected map[string]mutation.ContentVersion, paths ...string) (*mutation.Lease, error) {
+	return c.holdGitMutationUsing(ctx, repo, call, all, expected, c.acquireMutation, paths...)
+}
+
+func (c *Controller) tryHoldGitMutation(ctx context.Context, repo gitcmd.Repo, call string, all bool, paths ...string) (*mutation.Lease, error) {
+	return c.holdGitMutationUsing(ctx, repo, call, all, nil, c.tryAcquireMutation, paths...)
+}
+
+func (c *Controller) holdGitMutationUsing(ctx context.Context, repo gitcmd.Repo, call string, all bool, expected map[string]mutation.ContentVersion, acquire func(context.Context, mutation.Intent) (*mutation.Lease, error), paths ...string) (*mutation.Lease, error) {
 	if c.mutations == nil {
 		return nil, nil
 	}
@@ -40,7 +59,7 @@ func (c *Controller) holdGitMutationExpected(ctx context.Context, repo gitcmd.Re
 			resources = append(resources, filepath.Join(repo.Dir, filepath.FromSlash(path)))
 		}
 	}
-	lease, err := c.acquireMutation(ctx, mutation.Intent{Effect: mutation.GitMetadata, Paths: resources, CallID: call, Expected: expected})
+	lease, err := acquire(ctx, mutation.Intent{Effect: mutation.GitMetadata, Paths: resources, CallID: call, Expected: expected})
 	if err != nil {
 		return nil, err
 	}

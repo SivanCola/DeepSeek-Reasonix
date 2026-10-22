@@ -21,6 +21,9 @@ import (
 func newIsolatedEnvironmentFactory(parent Options, store *isolation.Store, posture *isolationPosture, source string, sink event.Sink, authority func(context.Context, writeclaim.WritePathSet) isolation.SourceAuthorizer, checks ...instruction.VerifyCheck) delegation.EnvironmentFactory {
 	frozenChecks := slices.Clone(checks)
 	return func(ctx context.Context, spec delegation.ProfileExecSpec, resumeID string) (prepared *delegation.ExecutionEnvironment, resultErr error) {
+		if err := checkAutomaticTaskIsolation(parent, spec.Sched.Environment, resumeID); err != nil {
+			return nil, err
+		}
 		sourceSpec := spec
 		var authorize isolation.SourceAuthorizer
 		if authority != nil {

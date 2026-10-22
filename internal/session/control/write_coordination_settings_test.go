@@ -38,7 +38,8 @@ func TestWriteCoordinationKeepsSavedAndEffectiveValuesIndependent(t *testing.T) 
 		t.Fatal(err)
 	}
 	saved := config.LoadForEdit(path)
-	if saved.Agent.Collaboration != "" || !saved.WriteLeaseOptimistic() || saved.Agent.WriteLeaseMaxWaitMinutes != 17 {
+	savedMode, err := saved.CollaborationMode()
+	if err != nil || savedMode != "legacy" || !saved.WriteLeaseOptimistic() || saved.Agent.WriteLeaseMaxWaitMinutes != 17 {
 		t.Fatal("returning to compatibility mode rewrote legacy choices")
 	}
 	if _, ok := saved.Provider("deepseek-flash"); !ok {

@@ -60,11 +60,9 @@ func (c *Controller) acquireBranchWriteLease(ctx context.Context) (func(), error
 		return func() {}, nil
 	}
 	if c.mutations != nil {
-		leaseCtx, cancel := context.WithTimeout(ctx, workspaceBranchLeaseWait)
-		defer cancel()
-		lease, err := c.holdGitMutation(leaseCtx, c.WorkspaceRepo(), "git.checkout", true)
+		lease, err := c.tryHoldGitMutation(ctx, c.WorkspaceRepo(), "git.checkout", true)
 		if err != nil {
-			if ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+			if errors.Is(err, mutation.ErrBusy) {
 				return nil, fmt.Errorf("%w: %w", ErrWorkspaceBusy, err)
 			}
 			return nil, err

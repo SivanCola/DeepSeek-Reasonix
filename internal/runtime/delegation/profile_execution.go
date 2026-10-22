@@ -128,7 +128,7 @@ func (t *TaskTool) runAdmittedProfile(ctx context.Context, plan *profileExecutio
 		}
 	}()
 	if request != nil {
-		prepared, prepareErr := t.prepareEnvironment(t.environmentPreparationContext(ctx), plan.spec, request)
+		prepared, prepareErr := t.prepareEnvironment(t.environmentPreparationContext(ctx), plan.spec, request, trk.wrap())
 		if prepareErr != nil {
 			return "", prepareErr
 		}

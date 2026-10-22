@@ -110,7 +110,7 @@ func New(ctrl control.SessionAPI, bc *Broadcaster, serveCfg config.ServeConfig) 
 		fill:   newTitleFiller(),
 		auth:   newAuthGate(serveCfg),
 	}
-	if cfg, err := config.Load(); err == nil {
+	if cfg, err := config.LoadForRootReadOnly("."); err == nil {
 		bc.SetDisplayCurrency(cfg.ExplicitDisplayCurrency())
 	}
 	if err := s.initTitleProvider(); err != nil {

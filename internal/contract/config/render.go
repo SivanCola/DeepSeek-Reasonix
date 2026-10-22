@@ -208,7 +208,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	renderConcurrencyLimits(&b, c, defaults)
 	agentSetting(&b, "subagent_claims", c.Agent.SubagentClaims, defaults.Agent.SubagentClaims, "optimistic: a sub-agent that declared no write_paths holds only the path it is writing, not the whole workspace; user file only")
 	agentSetting(&b, "write_lease", c.Agent.WriteLease, defaults.Agent.WriteLease, "optimistic: a writer that declared no path does not hold the whole workspace against other sessions; user file only")
-	agentSetting(&b, "collaboration", c.Agent.Collaboration, defaults.Agent.Collaboration, "auto, shared or isolated; omitted preserves legacy coordination; user file only")
+	agentSetting(&b, "collaboration", c.Agent.Collaboration, defaults.Agent.Collaboration, "auto, shared, isolated or legacy; omitted in existing user files preserves compatibility; user file only")
 	if scope != RenderScopeProject && len(c.Agent.IsolationCopyPaths) > 0 {
 		fmt.Fprintf(&b, "isolation_copy_paths = %s   # independent copies of declared repository-local dependencies; user file only\n", renderStringArray(c.Agent.IsolationCopyPaths))
 	}

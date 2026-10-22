@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"reasonix/internal/contract/event"
 	"reasonix/internal/contract/provider"
 	"reasonix/internal/contract/tool"
+	"reasonix/internal/runtime/agent"
 	"reasonix/internal/tools/builtin"
 	"reasonix/internal/tools/jobs"
 )
@@ -36,6 +38,12 @@ func TestAutomaticEnvironmentFallbackPublishesSharedEvidence(t *testing.T) {
 	manager := jobs.NewManager(event.Discard)
 	defer manager.Close()
 	ctx := jobs.WithSession(jobs.WithManager(testTaskContext(), manager), "parent-session")
+	notices := make(chan event.Event, 8)
+	ctx = agent.WithCallContext(ctx, "automatic-writer", event.FuncSink(func(e event.Event) {
+		if e.Kind == event.ToolProgress && e.Tool.Name == event.SubagentProgressNoticeName {
+			notices <- e
+		}
+	}), nil, false)
 	out, err := task.Execute(ctx, json.RawMessage(`{"prompt":"write result","run_in_background":true}`))
 	if err != nil {
 		t.Fatal(err)
@@ -50,5 +58,13 @@ func TestAutomaticEnvironmentFallbackPublishesSharedEvidence(t *testing.T) {
 	}
 	if summary := manager.LeaseEvidenceForSession("parent-session", jobID); !summary.HasMutation() {
 		t.Fatalf("shared fallback lost evidence: %+v", summary)
+	}
+	select {
+	case notice := <-notices:
+		if !strings.Contains(notice.Tool.Output, "environment unavailable") {
+			t.Fatalf("fallback omitted its preparation cause: %+v", notice)
+		}
+	default:
+		t.Fatal("automatic fallback never reached parent progress")
 	}
 }

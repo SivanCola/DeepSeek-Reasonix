@@ -71,7 +71,7 @@ type environmentRequest struct {
 	resumeID string
 }
 
-func (t *TaskTool) prepareEnvironment(ctx context.Context, spec ProfileExecSpec, request *environmentRequest) (*ExecutionEnvironment, error) {
+func (t *TaskTool) prepareEnvironment(ctx context.Context, spec ProfileExecSpec, request *environmentRequest, progress event.Sink) (*ExecutionEnvironment, error) {
 	if request.mode == "auto" && !spec.Sched.RunInBackground && !spec.Sched.BackgroundWriter && !spec.Sched.ParallelWriter && t.scheduler.ActiveWriters() <= 1 {
 		return nil, nil
 	}
@@ -80,7 +80,7 @@ func (t *TaskTool) prepareEnvironment(ctx context.Context, spec ProfileExecSpec,
 		if request.mode != "auto" || ctx.Err() != nil {
 			return nil, err
 		}
-		subSink(ctx).Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "Automatic isolation could not prepare this task; using shared transactions.", Detail: err.Error()})
+		progress.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "Automatic isolation could not prepare this task; using shared transactions. " + err.Error(), Detail: err.Error()})
 		return nil, nil
 	}
 	if prepared == nil || prepared.Task == nil {

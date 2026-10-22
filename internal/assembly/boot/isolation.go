@@ -78,7 +78,8 @@ func (b *builder) addIsolation() error {
 		authority := func(ctx context.Context, grant writeclaim.WritePathSet) isolation.SourceAuthorizer {
 			return b.isolationSourceAuthorizer(ctx, posture, grant)
 		}
-		b.tools.taskTool.WithEnvironmentFactory(b.cfg.Agent.Collaboration, newIsolatedEnvironmentFactory(parent, store, posture, b.root, sink, authority, b.prompt.projectChecks...))
+		mode, _ := b.cfg.CollaborationMode()
+		b.tools.taskTool.WithEnvironmentFactory(mode, newIsolatedEnvironmentFactory(parent, store, posture, b.root, sink, authority, b.prompt.projectChecks...))
 	} else {
 		b.tools.taskTool.SetIsolation(store, b.root, func(ctx context.Context, run isolation.Run) (isolation.Outcome, error) {
 			answer, unverified, err := runUnattended(ctx, parent, isolatedUsage{sink}, posture.mode(), run.WorkspaceRoot, run.Prompt, run.Model)
