@@ -21,6 +21,7 @@ type preparedPush struct {
 	plan    Plan
 	raw     string
 	oldRef  string
+	shallow bool
 }
 
 func sourceScope(ctx context.Context, scope SourceScope) (func(), error) {
@@ -30,7 +31,7 @@ func sourceScope(ctx context.Context, scope SourceScope) (func(), error) {
 	return scope(ctx)
 }
 
-func preparePush(ctx context.Context, repo gitcmd.Repo, confirmed Plan, scope SourceScope) (_ preparedPush, cleanup func(), err error) {
+func preparePush(ctx context.Context, repo gitcmd.Repo, confirmed Plan, scope SourceScope, whole bool) (_ preparedPush, cleanup func(), err error) {
 	release, err := sourceScope(ctx, scope)
 	if err != nil {
 		return preparedPush{}, nil, err
@@ -62,13 +63,14 @@ func preparePush(ctx context.Context, repo gitcmd.Repo, confirmed Plan, scope So
 	if out, err := sc.repo.Command(ctx, "update-ref", "refs/heads/push", plan.Head).CombinedOutput(); err != nil {
 		return preparedPush{}, cleanup, fmt.Errorf("%w: %s", errors.Join(ErrPushFailed, ctx.Err(), err), strings.TrimSpace(string(out)))
 	}
-	if out, err := sc.repo.Command(ctx, "repack", "-a", "-d").CombinedOutput(); err != nil {
-		return preparedPush{}, cleanup, fmt.Errorf("%w: materialize push objects: %s", errors.Join(ErrPushFailed, ctx.Err(), err), strings.TrimSpace(string(out)))
+	shallow, err := materialize(ctx, repo, sc, plan, old, whole)
+	if err != nil {
+		return preparedPush{}, cleanup, err
 	}
 	if err := os.Remove(filepath.Join(sc.repo.CommonDir, "objects", "info", "alternates")); err != nil {
 		return preparedPush{}, cleanup, err
 	}
-	return preparedPush{scratch: sc, plan: plan, raw: raw, oldRef: old}, cleanup, nil
+	return preparedPush{scratch: sc, plan: plan, raw: raw, oldRef: old, shallow: shallow}, cleanup, nil
 }
 
 func trackingRef(plan Plan) string { return "refs/remotes/" + plan.Remote + "/" + plan.UpstreamBranch }

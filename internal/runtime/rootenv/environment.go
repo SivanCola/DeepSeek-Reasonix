@@ -33,6 +33,7 @@ type Record struct {
 	RunGeneration   string                       `json:"run_generation"`
 	SessionID       string                       `json:"session_id"`
 	Attachments     map[string]string            `json:"attachments,omitempty"`
+	Bound           bool                         `json:"bound,omitempty"` // set before any transcript binding is written
 	SourceWorkspace string                       `json:"source_workspace"`
 	Source          gitcmd.Repo                  `json:"source"`
 	State           string                       `json:"state"`
@@ -101,7 +102,7 @@ func New(managedRoot, sourceWorkspace string, repo gitcmd.Repo, coordinator *mut
 }
 
 // Prepare retains a durable record before snapshotting or changing Git metadata.
-// A failed preparation remains discoverable and cannot silently execute at source.
+// A failed preparation cannot silently execute at source; ReclaimAbandoned removes it.
 func (s *Store) Prepare(ctx context.Context, sessionID string, copies, denied []string) (*Environment, error) {
 	return s.prepareOwned(ctx, sessionID, copies, denied, nil)
 }

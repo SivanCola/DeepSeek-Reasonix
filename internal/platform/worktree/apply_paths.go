@@ -191,15 +191,22 @@ func treeBlobs(ctx context.Context, repo gitcmd.Repo, tree string, paths []strin
 
 // liveBlobs hashes each path as it stands in the workspace, through the same
 // filters a snapshot stages it with, so an unchanged file hashes to its blob. A
-// symlink hashes as its target text, which is how git stores one.
+// symlink hashes as its target text, which is how git stores one; so does a
+// regular file standing in for an indexed link where Git does not trust symlinks.
 func liveBlobs(ctx context.Context, repo gitcmd.Repo, paths []string) (map[string]gitFileVersion, error) {
 	repoRoot := repo.WorkTree
 	blobs := make(map[string]gitFileVersion, len(paths))
-	modes, err := indexModesWhenUntrusted(ctx, repo, paths)
+	trust, err := readWorktreeTrust(ctx, repo)
 	if err != nil {
 		return nil, err
 	}
-	var regular []string
+	var modes map[string]string
+	if !trust.fileMode || !trust.symlinks {
+		if modes, err = indexModes(ctx, repo, paths); err != nil {
+			return nil, err
+		}
+	}
+	var regular, links []string
 	for _, p := range paths {
 		info, err := os.Lstat(filepath.Join(repoRoot, filepath.FromSlash(p)))
 		switch {
@@ -217,38 +224,48 @@ func liveBlobs(ctx context.Context, repo gitcmd.Repo, paths []string) (map[strin
 				return nil, err
 			}
 			blobs[p] = gitFileVersion{Mode: "120000", Blob: id}
+		case !trust.symlinks && info.Mode().IsRegular() && modes[p] == "120000":
+			blobs[p] = gitFileVersion{Mode: "120000"}
+			links = append(links, p)
 		case info.IsDir():
 			blobs[p] = gitFileVersion{Mode: "040000"}
 		default:
 			mode := "100644"
-			if modes != nil {
-				if m := modes[p]; m != "" {
-					mode = m
-				}
-			} else if info.Mode().Perm()&0111 != 0 {
+			if (trust.fileMode && info.Mode().Perm()&0111 != 0) || (!trust.fileMode && modes[p] == "100755") {
 				mode = "100755"
 			}
 			blobs[p] = gitFileVersion{Mode: mode}
 			regular = append(regular, p)
 		}
 	}
-	if len(regular) == 0 {
-		return blobs, nil
+	if err := hashPaths(ctx, repo, blobs, regular); err != nil {
+		return nil, err
 	}
-	out, stderr, err := runGitInput(ctx, repo, strings.Join(regular, "\n")+"\n", "hash-object", "--stdin-paths")
+	if err := hashPaths(ctx, repo, blobs, links, "--no-filters"); err != nil {
+		return nil, err
+	}
+	return blobs, nil
+}
+
+func hashPaths(ctx context.Context, repo gitcmd.Repo, blobs map[string]gitFileVersion, paths []string, flags ...string) error {
+	if len(paths) == 0 {
+		return nil
+	}
+	args := append([]string{"hash-object"}, append(flags, "--stdin-paths")...)
+	out, stderr, err := runGitInput(ctx, repo, strings.Join(paths, "\n")+"\n", args...)
 	if err != nil {
-		return nil, fmt.Errorf("hash workspace files: %w%s", err, stderrSuffix(stderr))
+		return fmt.Errorf("hash workspace files: %w%s", err, stderrSuffix(stderr))
 	}
 	ids := strings.Fields(out)
-	if len(ids) != len(regular) {
-		return nil, fmt.Errorf("hash workspace files: got %d ids for %d paths", len(ids), len(regular))
+	if len(ids) != len(paths) {
+		return fmt.Errorf("hash workspace files: got %d ids for %d paths", len(ids), len(paths))
 	}
-	for i, p := range regular {
+	for i, p := range paths {
 		v := blobs[p]
 		v.Blob = ids[i]
 		blobs[p] = v
 	}
-	return blobs, nil
+	return nil
 }
 
 func hashText(ctx context.Context, repo gitcmd.Repo, text string) (string, error) {

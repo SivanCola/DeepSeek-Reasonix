@@ -83,6 +83,11 @@ func resolveToolEnvironment(opts Options, cfg *config.Config, roots config.Roots
 		env.bash.RequiredIntegrity = sandbox.CompleteFileIntegrity
 		env.bash.MinimalWrites = true
 		env.bash.ProtectedWriteRoots = slices.Clone(opts.protectedMutationRoots)
+		for _, metadata := range []string{opts.WorkspaceRepo.CommonDir, opts.WorkspaceRepo.GitDir} {
+			if metadata != "" {
+				env.bash.ReadRoots = appendUniquePaths(env.bash.ReadRoots, metadata)
+			}
+		}
 	}
 	// On Windows an enforcing spec is prepared here: its roots granted to the
 	// restricted token, or the reason it cannot be. Elsewhere this changes nothing.

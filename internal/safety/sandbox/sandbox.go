@@ -26,8 +26,8 @@ type Spec struct {
 	// Pins are the identities WriteRoots had when the session established
 	// them; a root that no longer has its identity is not made writable.
 	Pins *WriteRootPins
-	// ReadRoots are explicit host paths a Windows AppContainer may read. The
-	// macOS/Linux profiles already mount the host read-only by default.
+	// ReadRoots are explicit host read grants. Linux restores declared temporary
+	// directories hidden by private /tmp; Windows uses them for AppContainer reads.
 	ReadRoots []string
 	// AppContainerWriteRoots are the small subset of WriteRoots that a
 	// read-only Windows AppContainer may write (for MCP this is only its

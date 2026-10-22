@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -69,5 +70,28 @@ func TestFileViewTracksTheReturnedReadRatherThanASecondRead(t *testing.T) {
 	err := runViewTool(t, writeFile{views: views, overlay: overlay}, map[string]string{"path": path, "content": "overwrite\n"})
 	if !errors.Is(err, ErrFileChangedSinceSeen) || overlay.writes != 0 {
 		t.Fatalf("stale read certified a later version: %v; writes=%d", err, overlay.writes)
+	}
+}
+
+func TestStrictOverwriteOfPartlyReadFileNamesTheWholeRead(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "long.txt")
+	if err := os.WriteFile(path, []byte(strings.Repeat("line\n", readFileDefaultLimit+500)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	views := NewStrictFileViews()
+	reader, writer := readFile{workDir: root, views: views}, writeFile{workDir: root, views: views}
+	if _, err := reader.Execute(t.Context(), json.RawMessage(`{"path":"long.txt"}`)); err != nil {
+		t.Fatal(err)
+	}
+	_, err := writer.Execute(t.Context(), json.RawMessage(`{"path":"long.txt","content":"short\n"}`))
+	if !errors.Is(err, ErrFileNotFullySeen) || !errors.Is(err, ErrFileChangedSinceSeen) || !strings.Contains(err.Error(), "2500") {
+		t.Fatalf("partial read refusal does not say how to certify the file: %v", err)
+	}
+	if _, err := reader.Execute(t.Context(), json.RawMessage(`{"path":"long.txt","limit":2500}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Execute(t.Context(), json.RawMessage(`{"path":"long.txt","content":"short\n"}`)); err != nil {
+		t.Fatalf("whole read did not certify the overwrite: %v", err)
 	}
 }

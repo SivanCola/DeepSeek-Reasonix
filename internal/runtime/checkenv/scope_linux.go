@@ -12,10 +12,29 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/sys/unix"
 
 	"reasonix/internal/base/proc"
+)
+
+var (
+	errNamespaceUnreported = errors.New("verification launcher never reported its namespace")
+	errNamespaceUnbound    = errors.New("verification namespace could not be bound to its launcher")
+	errNamespaceSignal     = errors.New("verification namespace cancellation signal failed")
+)
+
+// namespaceReleaseGrace bounds how long a scope whose namespace was never bound
+// waits for the last reader of its block pipe to exit.
+var namespaceReleaseGrace = 5 * time.Second
+
+type scopeSettlement int
+
+const (
+	scopePending    scopeSettlement = iota
+	scopeExited                     // PID1's pidfd reported its exit
+	scopeUnreleased                 // no process can read the block pipe, so the payload can never run
 )
 
 type namespaceScope struct {
@@ -27,7 +46,7 @@ type namespaceScope struct {
 	pidfd     int
 	cancelled bool
 	started   bool
-	confirmed bool
+	settled   scopeSettlement
 	done      chan struct{}
 	monitor   *os.Process
 	err       error
@@ -52,7 +71,7 @@ func (s *namespaceScope) prepare() error {
 		s.block, s.unblock, err = os.Pipe()
 	}
 	if err != nil {
-		s.closeFiles()
+		s.release()
 	}
 	return err
 }
@@ -94,7 +113,7 @@ func (s *namespaceScope) wait() error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if started && !s.confirmed {
+	if started && s.settled == scopePending {
 		return errors.Join(s.err, proc.ErrScopeCompletionUnknown)
 	}
 	return s.err
@@ -103,7 +122,20 @@ func (s *namespaceScope) wait() error {
 func (s *namespaceScope) completed() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.confirmed
+	return s.settled != scopePending
+}
+
+// stranded reports a scope whose observation ended without proving that its
+// payload can no longer run; its owner releases only what cannot unblock it.
+func (s *namespaceScope) stranded() bool {
+	select {
+	case <-s.done:
+	default:
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.settled == scopePending
 }
 
 // PID1 cannot execute its payload until its pidfd and namespace identity agree
@@ -115,16 +147,25 @@ func (s *namespaceScope) observe() {
 		Namespace uint64 `json:"pid-namespace"`
 	}
 	err := json.NewDecoder(io.LimitReader(s.info, 1<<20)).Decode(&info)
+	cause := errNamespaceUnreported
 	s.mu.Lock()
 	if err == nil && info.PID > 0 {
+		cause = errNamespaceUnbound
 		s.pidfd, err = s.bind(info.PID, info.Namespace, s.monitor)
 	}
 	fd := s.pidfd
 	s.cancelled = s.cancelled || s.ctx.Err() != nil
 	if err != nil || fd < 0 {
-		s.err = errors.Join(ErrUnsupported, err)
+		s.err = errors.Join(ErrUnsupported, cause, err)
 		if fd < 0 {
 			_ = s.monitor.Kill()
+			unblock := s.unblock
+			s.mu.Unlock()
+			unreadable := noBlockReader(unblock, namespaceReleaseGrace)
+			s.mu.Lock()
+			if unreadable {
+				s.settled = scopeUnreleased
+			}
 			s.mu.Unlock()
 			return
 		}
@@ -134,6 +175,7 @@ func (s *namespaceScope) observe() {
 		}
 	} else if !s.cancelled || s.cancelLocked() == nil {
 		s.unblock.Close()
+		s.unblock = nil
 	}
 	s.mu.Unlock()
 	for {
@@ -143,8 +185,9 @@ func (s *namespaceScope) observe() {
 			continue
 		}
 		s.mu.Lock()
-		s.confirmed = err == nil && poll[0].Revents&unix.POLLIN != 0
-		if !s.confirmed {
+		if err == nil && poll[0].Revents&unix.POLLIN != 0 {
+			s.settled = scopeExited
+		} else {
 			s.err = errors.Join(s.err, ErrUnsupported, err)
 		}
 		unix.Close(fd)
@@ -157,7 +200,7 @@ func (s *namespaceScope) observe() {
 func (s *namespaceScope) cancelLocked() error {
 	err := s.signal(s.pidfd)
 	if err != nil && !errors.Is(err, unix.ESRCH) {
-		s.err = errors.Join(s.err, err)
+		s.err = errors.Join(s.err, errNamespaceSignal, err)
 		_ = s.monitor.Kill()
 		return err
 	}
@@ -190,10 +233,57 @@ func bindNamespacePID(pid int, namespace uint64, monitor *os.Process) (int, erro
 	return fd, nil
 }
 
-func (s *namespaceScope) closeFiles() {
-	for _, f := range []*os.File{s.info, s.infoWrite, s.block, s.unblock} {
+// noBlockReader waits until every holder of the block pipe's read end has
+// exited. PID1 runs its payload only by reading that pipe, so afterwards
+// closing the write end can release nothing.
+func noBlockReader(unblock *os.File, timeout time.Duration) bool {
+	raw, err := unblock.SyscallConn()
+	if err != nil {
+		return false
+	}
+	deadline := time.Now().Add(timeout)
+	unreadable := false
+	_ = raw.Control(func(fd uintptr) {
+		for {
+			wait := -1
+			if timeout >= 0 {
+				wait = int(max(time.Until(deadline), 0) / time.Millisecond)
+			}
+			poll := []unix.PollFd{{Fd: int32(fd)}}
+			count, err := unix.Poll(poll, wait)
+			if errors.Is(err, unix.EINTR) {
+				continue
+			}
+			unreadable = err == nil && count == 1 && poll[0].Revents&unix.POLLERR != 0
+			return
+		}
+	})
+	return unreadable
+}
+
+// release closes every descriptor that cannot start the payload. Closing the
+// block pipe's write end can, so an unsettled scope hands it to a waiter that
+// closes it once no reader remains.
+func (s *namespaceScope) release() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, f := range []*os.File{s.info, s.infoWrite, s.block} {
 		if f != nil {
 			_ = f.Close()
 		}
+	}
+	unblock := s.unblock
+	s.info, s.infoWrite, s.block, s.unblock = nil, nil, nil, nil
+	switch {
+	case unblock == nil:
+	case !s.started || s.settled != scopePending:
+		_ = unblock.Close()
+	default:
+		go func() {
+			for !noBlockReader(unblock, -1) {
+				time.Sleep(time.Second)
+			}
+			_ = unblock.Close()
+		}()
 	}
 }

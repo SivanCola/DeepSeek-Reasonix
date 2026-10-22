@@ -76,6 +76,18 @@ isolation 全套 race 的首次整包运行也达到累计上限，当时当前�
 
 ### 性能与保障边界
 
+PR #14133 的首轮托管检查补充发现：缺少完整隔离后端时，装配测试仍假定创建候选；
+现已分别断言可用环境和安全回退，不跳过拒绝路径。工具 `Executed` 表示进入工具执行，
+物理程序未启动应检查 Shell 的 `not_run` 状态及无退出码，不能混为一个标志。
+
+另外修复两个生命周期边界：成功的 MCP 延迟握手在发布客户端时登记缓存持久化，
+不再依赖可取消的观察者；Linux 候选将宿主已解析的 Git 元数据显式只读映射到私有
+`/tmp` 内。真实 Linux 检查覆盖元数据可读不可写、无关临时目录不可见及读取拒绝优先。
+同时补齐前端恢复动作登记、英文拒绝提示，并移除路径合并函数的容量加法。
+
+这些增量不把托管 CI 或安全审查改记为通过。首轮 CodeQL 告警仍需逐项核对数据流、
+实际授权边界与新旧来源；检查摘要与维护者按规则/文件计数的净增量并非同一指标。
+
 500ms 模拟推理、4 个 worker、每个 3 次变更、每种负载 20 组成对运行：
 
 | 负载 | legacy 中位数 / P95 ms | shared 中位数 / P95 ms |
@@ -98,6 +110,23 @@ Windows 普通候选 Bash/hooks 的完整写入边界仍不可用；自动准备
 显式隔离程序执行拒绝。原生平台专用构建及签名不由 Linux 检查代替。
 
 ## English
+
+PR #14133's first hosted run exposed additional qualification gaps and two owner
+defects. Unsupported-backend assembly tests now assert safe shared fallback or
+unknown/refused verification instead of assuming a candidate can execute.
+
+Entering a tool is distinct from starting its shell process; prelaunch refusal
+is checked through `not_run` and an absent exit code.
+
+Successful deferred MCP handshakes now register cache persistence when the host
+publishes the client, independently of the cancellable lazy observer.
+
+Linux candidates restore host-resolved Git metadata read-only inside their
+private temporary namespace. Real backend checks retain read-denial precedence,
+metadata write refusal and unrelated temporary-directory isolation.
+
+Frontend action/translation registrations and allocation-hint arithmetic are repaired.
+Hosted checks and individual CodeQL flow review remain separate pending gates.
 
 This record covers the #14025 implementation and completed local qualification.
 New installations use `auto`; existing configurations retain their choice.

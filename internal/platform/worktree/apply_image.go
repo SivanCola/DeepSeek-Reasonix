@@ -106,6 +106,9 @@ func publishImage(root, rel string, before, after fileImage) error {
 		return err
 	case "file":
 		if before.Kind == "" {
+			if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
+				return err
+			}
 			return fileutil.AtomicCreateFile(path, after.Data, after.Mode)
 		}
 		return fileutil.AtomicWriteFileStrictValidated(path, after.Data, after.Mode, validate)
@@ -117,7 +120,7 @@ func publishImage(root, rel string, before, after fileImage) error {
 }
 
 func publishLink(path, target string, absent bool, validate func() error) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
 		return err
 	}
 	dir, err := os.MkdirTemp(filepath.Dir(path), ".reasonix-link-")
@@ -147,13 +150,17 @@ func prepareApply(ctx context.Context, repo gitcmd.Repo, tree string, changes []
 	if err != nil {
 		return nil, err
 	}
+	trust, err := readWorktreeTrust(ctx, repo)
+	if err != nil {
+		return nil, err
+	}
 	j := &applyJournal{Version: 1, Root: repo.WorkTree, Tree: tree}
 	for _, ch := range changes {
 		before, err := readImage(repo.WorkTree, ch.Path)
 		if err != nil {
 			return nil, err
 		}
-		after, err := targetImage(ctx, repo, ch.Path, targets[ch.Path], before)
+		after, err := targetImage(ctx, repo, ch.Path, targets[ch.Path], before, trust.symlinks)
 		if err != nil {
 			return nil, err
 		}
@@ -174,23 +181,26 @@ func prepareApply(ctx context.Context, repo gitcmd.Repo, tree string, changes []
 	return j, nil
 }
 
-func targetImage(ctx context.Context, repo gitcmd.Repo, path string, target gitFileVersion, before fileImage) (fileImage, error) {
+// targetImage is what checking target out writes. Where Git does not trust
+// symlinks, a link is a regular file holding its target text.
+func targetImage(ctx context.Context, repo gitcmd.Repo, path string, target gitFileVersion, before fileImage, symlinks bool) (fileImage, error) {
 	if target == absent {
 		return fileImage{}, nil
 	}
-	image := fileImage{Kind: "file", Mode: 0644}
+	image := fileImage{Kind: "file", Mode: os.FileMode(newFileMode())}
+	if before.Kind == "file" {
+		image.Mode = before.Mode &^ 0111
+	}
 	args := []string{"cat-file", "--filters", "--path=" + path, target.Blob}
 	switch target.Mode {
 	case "120000":
-		image.Kind, image.Mode = "symlink", 0
+		if symlinks {
+			image.Kind, image.Mode = "symlink", 0
+		}
 		args = []string{"cat-file", "blob", target.Blob}
-	case "100644", "100755":
-		if before.Kind == "file" {
-			image.Mode = before.Mode &^ 0111
-		}
-		if target.Mode == "100755" {
-			image.Mode |= 0111
-		}
+	case "100644":
+	case "100755":
+		image.Mode |= 0111
 	default:
 		return fileImage{}, fmt.Errorf("unsupported candidate mode %s at %s", target.Mode, path)
 	}
@@ -199,7 +209,7 @@ func targetImage(ctx context.Context, repo gitcmd.Repo, path string, target gitF
 		return fileImage{}, fmt.Errorf("materialize %s: %w%s", path, err, stderrSuffix(stderr))
 	}
 	image.Data = []byte(out)
-	if image.Kind == "symlink" && strings.ContainsRune(out, 0) {
+	if target.Mode == "120000" && strings.ContainsRune(out, 0) {
 		return fileImage{}, errors.New("invalid symlink target")
 	}
 	return image, nil

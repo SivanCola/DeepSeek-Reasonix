@@ -140,6 +140,8 @@ var mirroredWireTypes = []wireMirror{
 	{"internal/runtime/isolation/catalog.go", "RecoveryTarget", "desktop/frontend-next/src/port/isolation.ts", "IsolationRecoveryTarget"},
 	{"internal/runtime/isolation/catalog.go", "RecoveryRequest", "desktop/frontend-next/src/port/isolation.ts", "IsolationRecoveryRequest"},
 	{"internal/runtime/isolation/catalog.go", "CatalogDiagnostic", "desktop/frontend-next/src/port/isolation.ts", "IsolationDiagnostic"},
+	{"internal/runtime/isolation/catalog.go", "RootSceneSummary", "desktop/frontend-next/src/port/isolation.ts", "RootSceneSummary"},
+	{"internal/runtime/isolation/catalog.go", "RootSceneRequest", "desktop/frontend-next/src/port/isolation.ts", "RootSceneRequest"},
 	{"internal/runtime/isolation/catalog.go", "ResultSummary", "desktop/frontend-next/src/port/isolation.ts", "IsolationResult"},
 	{"internal/runtime/isolation/discard_preview.go", "DiscardPreview", "desktop/frontend-next/src/port/isolation.ts", "IsolatedDiscardPreview"},
 	{"internal/session/control/isolation_results.go", "IsolatedDiscardRequest", "desktop/frontend-next/src/port/isolation.ts", "IsolatedDiscardRequest"},

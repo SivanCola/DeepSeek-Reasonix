@@ -27,6 +27,10 @@ func captureSnapshotMetadata(ctx context.Context, repo gitcmd.Repo, tree string)
 	if err != nil {
 		return "", err
 	}
+	trust, err := readWorktreeTrust(ctx, repo)
+	if err != nil {
+		return "", err
+	}
 	root, err := os.OpenRoot(repo.WorkTree)
 	if err != nil {
 		return "", err
@@ -57,7 +61,7 @@ func captureSnapshotMetadata(ctx context.Context, repo gitcmd.Repo, tree string)
 			}
 			metadata.Directories[path] = uint32(info.Mode().Perm())
 		case "120000":
-			if info.Mode()&os.ModeSymlink == 0 {
+			if info.Mode()&os.ModeSymlink == 0 && (trust.symlinks || !info.Mode().IsRegular()) {
 				return "", fmt.Errorf("snapshot symlink identity changed: %s", path)
 			}
 		}

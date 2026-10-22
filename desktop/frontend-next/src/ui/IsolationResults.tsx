@@ -7,7 +7,7 @@ import type { IsolationCatalog, IsolatedDiscardPreview, IsolationRecoveryTarget 
 import { DiscardIsolatedDialog } from "./DiscardIsolatedDialog";
 import "../styles/isolation-results.css";
 
-const stateName = (state: string) => ({ preparing: t("准备中"), running: t("运行中"), pending: t("待整合"), applying: t("整合中"), integrated: t("已整合"), discarded: t("已丢弃"), recovery_required: t("需要恢复"), interrupted: t("已中断"), failed: t("失败"), cancelled: t("已取消"), conflict: t("冲突") }[state] ?? state);
+const stateName = (state: string) => ({ preparing: t("准备中"), running: t("运行中"), pending: t("待整合"), applying: t("整合中"), integrated: t("已整合"), discarded: t("已丢弃"), recovery_required: t("需要恢复"), interrupted: t("已中断"), failed: t("失败"), cancelled: t("已取消"), conflict: t("冲突"), ready: t("现场就绪"), acknowledged: t("已确认整合") }[state] ?? state);
 
 export function IsolationResults({ port }: { port: AgentPort }) {
   const [state, setState] = useState<{ port: AgentPort; value: IsolationCatalog } | null>(null);
@@ -22,7 +22,6 @@ export function IsolationResults({ port }: { port: AgentPort }) {
   }), [port]);
   useEffect(() => {
     const current = ++epoch.current;
-    setState(null);
     setPreview(null);
     setError("");
     setBusy(false);

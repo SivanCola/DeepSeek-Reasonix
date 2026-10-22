@@ -203,6 +203,15 @@ func workingTree(ctx context.Context, repo gitcmd.Repo) (string, error) {
 	stageCtx, cancel := context.WithTimeout(ctx, gitWorktreeAddTimeout)
 	defer cancel()
 	if _, err := os.Stat(private); err == nil {
+		unmerged, stderr, err := runGitEnv(stageCtx, repo, env, "ls-files", "--unmerged", "-z")
+		if err != nil {
+			return "", fmt.Errorf("read private index: %w%s", err, stderrSuffix(stderr))
+		}
+		if unmerged != "" {
+			if err := repo.StageAll(stageCtx, env...); err != nil {
+				return "", fmt.Errorf("stage conflicted workspace snapshot: %w", err)
+			}
+		}
 		indexTree, stderr, err := runGitEnv(stageCtx, repo, env, "write-tree")
 		if err != nil {
 			return "", fmt.Errorf("record private index: %w%s", err, stderrSuffix(stderr))

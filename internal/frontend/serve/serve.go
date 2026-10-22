@@ -484,7 +484,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	cleanup, err := s.prepareRootExecutionLocked(r.Context())
 	if err != nil {
 		s.bindMu.Unlock()
-		writeErr(w, http.StatusConflict, err)
+		writeIsolationError(w, err)
 		return
 	}
 	defer cleanup()

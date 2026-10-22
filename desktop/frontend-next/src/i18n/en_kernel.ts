@@ -72,6 +72,12 @@ export const EN_KERNEL: Record<string, string> = {
   "隔离结果使用了不支持的状态版本，原文件已保留。请使用兼容版本处理": "The isolated result uses an unsupported state version. Its files are retained; use a compatible version to continue",
   "隔离环境已经进入新的运行，旧运行不能结束或删除它。当前结果已保留": "The isolated environment has a newer execution. The previous execution cannot finish or delete it; current results are retained",
   "该隔离环境属于另一个会话，请从原会话继续": "This isolated environment belongs to another conversation. Continue it from that conversation",
+  "找不到该隔离结果，它可能已被应用或丢弃。请刷新后再操作": "The isolated result no longer exists; it may have been applied or discarded. Refresh before acting on it",
+  "当前运行时不提供隔离结果管理。未执行任何变更": "This runtime does not offer isolated result management. Nothing was changed",
+  "工作区不是 Git 仓库，无法使用隔离环境": "The workspace is not a Git repository, so isolated environments are unavailable",
+  "工作区在任务开始后改动了相同文件，未应用任何内容。请协调后重新应用或丢弃该结果": "The workspace changed the same files after the task began, so nothing was applied. Reconcile, then apply again or discard the result",
+  "隔离结果尚未通过受控验证，已保留未整合。请重新验证后再应用": "The isolated result has not passed controlled verification and stays unintegrated. Verify it again before applying",
+  "此次隔离调用包含不支持的参数组合，未开始执行": "This isolated call combines arguments that are not supported, so it did not start",
   "搜索模型「{model}」的格式应为 服务/模型": "Search model “{model}” must be written as service/model",
   "搜索模型「{model}」所在的连接还没有添加：先添加这个连接，再选它": "Search model “{model}”'s connection has not been added yet: add that connection first, then pick it",
   "搜索模型「{model}」已不在配置里": "Search model “{model}” is no longer configured",
@@ -695,4 +701,5 @@ export const EN_KERNEL: Record<string, string> = {
   "它的某个钩子超过了时间预算，进程已被结束；多次发生后会被停用": "One of its hooks ran past its time budget and the process was ended; after repeats it is disabled",
   "它的某个钩子抛出了异常": "One of its hooks threw an exception",
   "它用到了本宿主不支持的功能": "It uses something this host does not support",
+  "当前后端不能约束全部文件变更，隔离命令已在启动前拒绝；请使用候选目录内的文件工具，或选择支持完整隔离的执行环境": "This backend cannot confine every file mutation, so the isolated command was refused before launch; use file tools inside the candidate or choose an execution environment with complete isolation",
 };

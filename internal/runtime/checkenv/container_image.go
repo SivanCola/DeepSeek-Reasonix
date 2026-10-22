@@ -113,12 +113,17 @@ func (i *containerEnvironment) prepareImage(ctx context.Context, image string, r
 	if err != nil {
 		return err
 	}
-	_, copyErr := i.client.run(ctx, file, "cp", "-", i.journal.Stage+":/")
+	info, err := file.Stat()
+	if err != nil {
+		return errors.Join(err, file.Close())
+	}
+	timeout := transferTimeout(info.Size())
+	_, copyErr := i.client.runWithin(ctx, timeout, file, "cp", "-", i.journal.Stage+":/")
 	err = errors.Join(copyErr, file.Close())
 	if err != nil {
 		return err
 	}
-	body, err := i.client.run(ctx, nil, "commit", "--change", "LABEL "+containerOwnerLabel+"="+i.identity, i.journal.Stage)
+	body, err := i.client.runWithin(ctx, timeout, nil, "commit", "--change", "LABEL "+containerOwnerLabel+"="+i.identity, i.journal.Stage)
 	if err != nil {
 		return err
 	}

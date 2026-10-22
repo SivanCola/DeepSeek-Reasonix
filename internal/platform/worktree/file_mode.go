@@ -8,16 +8,36 @@ import (
 	"reasonix/internal/platform/gitcmd"
 )
 
-func indexModesWhenUntrusted(ctx context.Context, repo gitcmd.Repo, paths []string) (map[string]string, error) {
-	out, stderr, err := runGit(ctx, repo, "config", "--bool", "--default=true", "--get", "core.filemode")
+// worktreeTrust is whether Git believes a checkout's executable bits and
+// symlinks. Where it does not, git add keeps the mode the index already holds.
+type worktreeTrust struct {
+	fileMode bool
+	symlinks bool
+}
+
+func readWorktreeTrust(ctx context.Context, repo gitcmd.Repo) (worktreeTrust, error) {
+	fileMode, err := configBool(ctx, repo, "core.filemode")
 	if err != nil {
-		return nil, fmt.Errorf("read filemode policy: %w%s", err, stderrSuffix(stderr))
+		return worktreeTrust{}, err
 	}
-	if strings.TrimSpace(out) == "true" {
-		return nil, nil
+	symlinks, err := configBool(ctx, repo, "core.symlinks")
+	if err != nil {
+		return worktreeTrust{}, err
 	}
+	return worktreeTrust{fileMode: fileMode, symlinks: symlinks}, nil
+}
+
+func configBool(ctx context.Context, repo gitcmd.Repo, key string) (bool, error) {
+	out, stderr, err := runGit(ctx, repo, "config", "--type=bool", "--default=true", "--get", key)
+	if err != nil {
+		return false, fmt.Errorf("read %s: %w%s", key, err, stderrSuffix(stderr))
+	}
+	return strings.TrimSpace(out) == "true", nil
+}
+
+func indexModes(ctx context.Context, repo gitcmd.Repo, paths []string) (map[string]string, error) {
 	args := append([]string{"ls-files", "--stage", "-z", "--"}, paths...)
-	out, stderr, err = runGit(ctx, repo, args...)
+	out, stderr, err := runGit(ctx, repo, args...)
 	if err != nil {
 		return nil, fmt.Errorf("read index modes: %w%s", err, stderrSuffix(stderr))
 	}

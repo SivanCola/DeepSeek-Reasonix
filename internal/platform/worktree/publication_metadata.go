@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 )
 
 // ValidatePublicationModes rejects metadata the Git-path application protocol
@@ -32,7 +31,7 @@ func ValidatePublicationModes(ctx context.Context, baseline, target Snapshot) er
 			continue
 		}
 		mode, exists := after.Files[entry.Path]
-		expected := uint32(0644)
+		expected := newFileMode()
 		if previous, ok := before.Files[entry.Path]; ok {
 			expected = previous &^ 0111
 		}
@@ -47,10 +46,7 @@ func ValidatePublicationModes(ctx context.Context, baseline, target Snapshot) er
 	for path, mode := range after.Directories {
 		expected, exists := before.Directories[path]
 		if !exists {
-			expected = 0755
-			if runtime.GOOS == "windows" {
-				expected = 0777
-			}
+			expected = newDirMode()
 		}
 		if mode != expected {
 			return fmt.Errorf("publication cannot reproduce directory permission changes at %s; root scene retained", path)

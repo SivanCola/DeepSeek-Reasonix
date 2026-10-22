@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"reasonix/internal/contract/tool"
@@ -15,6 +16,9 @@ import (
 // ErrFileChangedSinceSeen marks a write_file refused because the file no longer
 // holds what the agent last read or wrote there.
 var ErrFileChangedSinceSeen = errors.New("file changed since the agent last saw it")
+
+// ErrFileNotFullySeen marks a strict overwrite of a file no whole read certified.
+var ErrFileNotFullySeen = fmt.Errorf("%w: not read in full", ErrFileChangedSinceSeen)
 
 // FileViews is what one run's agent last saw of each file: the content a read
 // returned it from, or what one of its own writes left there. write_file checks
@@ -82,7 +86,11 @@ func (v *FileViews) checkOverwrite(path, current string) error {
 	want, ok := v.seen[filepath.Clean(path)]
 	v.mu.Unlock()
 	if !ok && v.strict {
-		return fmt.Errorf("%w: read %s before replacing an existing file", ErrFileChangedSinceSeen, path)
+		lines := strings.Count(current, "\n")
+		if current != "" && !strings.HasSuffix(current, "\n") {
+			lines++
+		}
+		return fmt.Errorf("%w: write_file replaces all %d lines of %s; read it whole first (read_file with offset 0 and limit >= %d), or change it with edit_file", ErrFileNotFullySeen, lines, path, lines)
 	}
 	if !ok || want == sha256.Sum256([]byte(current)) {
 		return nil

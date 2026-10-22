@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 
+	"reasonix/internal/base/filelock"
 	"reasonix/internal/base/fileutil"
 	"reasonix/internal/contract/tool"
 	"reasonix/internal/safety/evidence"
@@ -93,7 +94,14 @@ func (i *Invocation) freeze(ctx context.Context, request tool.ControlledShellReq
 	if err := os.MkdirAll(storage, 0700); err != nil {
 		return err
 	}
+	if err := recoverContainerJournals(ctx, storage, "", nil); err != nil {
+		return err
+	}
 	i.state.directory, err = os.MkdirTemp(storage, "check-")
+	if err != nil {
+		return err
+	}
+	i.state.release, err = filelock.TryAcquire(filepath.Join(i.state.directory, "owner.lock"))
 	if err != nil {
 		return err
 	}
@@ -130,7 +138,7 @@ func ensureMountpoint(rootPath, virtual string) error {
 	}
 	defer root.Close()
 	path := "."
-	for _, component := range strings.Split(strings.TrimPrefix(filepath.Clean(virtual), "/"), "/") {
+	for component := range strings.SplitSeq(strings.TrimPrefix(filepath.Clean(virtual), "/"), "/") {
 		path = filepath.Join(path, component)
 		if err := root.Mkdir(path, 0755); err != nil && !os.IsExist(err) {
 			return err

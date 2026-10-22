@@ -62,7 +62,12 @@ func capturedGoRuntime(t *testing.T) string {
 }
 
 func TestControlledBaselineRunsCapturedGoWithoutRestoringToolsOrWritingSource(t *testing.T) {
-	image := capturedGoRuntime(t)
+	canVerify := sandbox.AvailableFor(sandbox.Spec{Mode: "enforce", RequiredIntegrity: sandbox.CompleteFileIntegrity})
+	t.Logf("controlled verification available: %t", canVerify)
+	image := t.TempDir()
+	if canVerify {
+		image = capturedGoRuntime(t)
+	}
 	for _, mode := range []string{"pass", "fail", "disabled", "denied", "postwrite", "posterror", "stale-after"} {
 		t.Run(mode, func(t *testing.T) {
 			impl := "package spike\nfunc Evict(n int) int { return n-1 }\n"
@@ -100,17 +105,19 @@ func TestControlledBaselineRunsCapturedGoWithoutRestoringToolsOrWritingSource(t 
 					t.Fatal(err)
 				}
 				facts := a.baselineFacts()
-				if len(facts) != 1 || facts[0].Evaluation != nil || len(evidence.BaselineTestObligations(facts, a.mutationEpoch())) != 1 {
+				if len(facts) != 1 || len(evidence.BaselineTestObligations(facts, a.mutationEpoch())) != 1 ||
+					(canVerify && facts[0].Evaluation != nil) ||
+					(!canVerify && facts[0].Evaluation != nil && facts[0].Evaluation.Result != evidence.CriterionUnavailable) {
 					t.Fatalf("stale receipt settled: %+v", facts)
 				}
 				return
 			}
 			facts := a.baselineFacts()
 			want := evidence.CriterionUnavailable
-			if mode == "pass" {
+			if canVerify && mode == "pass" {
 				want = evidence.CriterionPass
 			}
-			if mode == "fail" {
+			if canVerify && mode == "fail" {
 				want = evidence.CriterionFail
 			}
 			if len(facts) != 1 || facts[0].Evaluation == nil || facts[0].Evaluation.Result != want {

@@ -16,9 +16,19 @@ func (i *containerEnvironment) finish() {
 		return
 	}
 	i.input.Completed = true
+	switch {
+	case i.cancelled || i.closed || ctx.Err() != nil:
+		i.input.Gaps = []string{"controlled_execution_cancelled"}
+		return
+	case i.scopeErr != nil:
+		i.input.Gaps = []string{"controlled_scope_unconfirmed"}
+		return
+	case cmd.ProcessState.ExitCode() != i.exitCode:
+		i.input.Gaps = []string{"controlled_exit_status_changed"}
+		return
+	}
 	i.input.Gaps = []string{"controlled_launch_identity_changed"}
-	if i.cancelled || i.closed || ctx.Err() != nil || i.scopeErr != nil || cmd.ProcessState.ExitCode() != i.exitCode ||
-		!reflect.DeepEqual(cmd.Args, i.argv) || cmd.Path != i.client.executable || cmd.Dir != i.client.config || cmd.Stdin != i.controlRead {
+	if !reflect.DeepEqual(cmd.Args, i.argv) || cmd.Path != i.client.executable || cmd.Dir != i.client.config || cmd.Stdin != i.controlRead {
 		return
 	}
 	object, err := i.client.inspect(ctx, i.journal.RunID)

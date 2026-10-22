@@ -57,8 +57,38 @@ func within(root, path string) bool {
 	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
 		root, path = strings.ToLower(root), strings.ToLower(path)
 	}
+	return withinExact(root, path)
+}
+
+func withinExact(root, path string) bool {
 	rel, err := filepath.Rel(root, path)
 	return err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))))
+}
+
+// heldWithin authorizes path under root. A case-folded spelling counts only
+// when the filesystem resolves that prefix to root itself.
+func heldWithin(root, path string) bool {
+	if withinExact(root, path) {
+		return true
+	}
+	if !within(root, path) {
+		return false
+	}
+	depth := len(strings.Split(filepath.Clean(root), string(filepath.Separator)))
+	parts := strings.Split(filepath.Clean(path), string(filepath.Separator))
+	if len(parts) < depth {
+		return false
+	}
+	prefix := strings.Join(parts[:depth], string(filepath.Separator))
+	if prefix == "" {
+		prefix = string(filepath.Separator)
+	}
+	held, err := os.Stat(root)
+	if err != nil {
+		return false
+	}
+	spelled, err := os.Stat(prefix)
+	return err == nil && os.SameFile(held, spelled)
 }
 
 func overlaps(a, b []string) bool {
@@ -67,9 +97,12 @@ func overlaps(a, b []string) bool {
 			if within(x, y) || within(y, x) {
 				return true
 			}
-			ix, ex := os.Stat(x)
-			iy, ey := os.Stat(y)
-			if ex == nil && ey == nil && os.SameFile(ix, iy) {
+		}
+	}
+	left, right := existing(a), existing(b)
+	for _, x := range left {
+		for _, y := range right {
+			if os.SameFile(x, y) {
 				return true
 			}
 		}
@@ -77,9 +110,19 @@ func overlaps(a, b []string) bool {
 	return false
 }
 
+func existing(paths []string) []os.FileInfo {
+	out := make([]os.FileInfo, 0, len(paths))
+	for _, path := range paths {
+		if info, err := os.Stat(path); err == nil {
+			out = append(out, info)
+		}
+	}
+	return out
+}
+
 func covers(held, requested []string) bool {
 	return !slices.ContainsFunc(requested, func(path string) bool {
-		return !slices.ContainsFunc(held, func(root string) bool { return within(root, path) })
+		return !slices.ContainsFunc(held, func(root string) bool { return heldWithin(root, path) })
 	})
 }
 
@@ -100,6 +143,27 @@ func (c *Coordinator) validate(ctx context.Context, i Intent, paths []string) er
 	return validateExpected(ctx, i.Expected, paths)
 }
 
+// versionProbe rehashes a waiting request's inputs only when their metadata
+// moves; the check under a granted lease still reads every version in full.
+type versionProbe map[string]os.FileInfo
+
+func (p versionProbe) check(ctx context.Context, versions map[string]ContentVersion, paths []string) error {
+	for path, expected := range versions {
+		info, statErr := os.Lstat(path)
+		if previous, ok := p[path]; ok && statErr == nil && os.SameFile(previous, info) &&
+			previous.Size() == info.Size() && previous.Mode() == info.Mode() && previous.ModTime().Equal(info.ModTime()) {
+			continue
+		}
+		if err := validateExpected(ctx, map[string]ContentVersion{path: expected}, paths); err != nil {
+			return err
+		}
+		if statErr == nil {
+			p[path] = info
+		}
+	}
+	return nil
+}
+
 // A preflight may reject stale inputs, but only the repeated check under a
 // granted lease authorizes execution against the expected versions.
 func validateExpected(ctx context.Context, versions map[string]ContentVersion, paths []string) error {
@@ -111,7 +175,7 @@ func validateExpected(ctx context.Context, versions map[string]ContentVersion, p
 		if err != nil {
 			return err
 		}
-		if !slices.ContainsFunc(paths, func(root string) bool { return within(root, canonical) }) {
+		if !slices.ContainsFunc(paths, func(root string) bool { return heldWithin(root, canonical) }) {
 			return ErrInvalidIntent
 		}
 		actual, err := ReadVersionContext(ctx, path)

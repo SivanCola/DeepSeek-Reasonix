@@ -12,7 +12,7 @@ func (c *Config) CollaborationMode() (string, error) {
 	}
 	mode := strings.ToLower(strings.TrimSpace(c.Agent.Collaboration))
 	switch mode {
-	case "":
+	case "", unavailableInstallationCollaboration:
 		return "legacy", nil
 	case "legacy", "auto", "shared", "isolated":
 		return mode, nil

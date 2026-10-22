@@ -121,12 +121,19 @@ func writeIsolationError(w http.ResponseWriter, err error) {
 	}
 	var refusal tool.Refusal
 	if errors.As(err, &refusal) {
-		status := http.StatusConflict
-		if refusal.Code == isolation.CodeUnknownID {
-			status = http.StatusNotFound
-		}
-		refuse(w, status, refusal.Code, refusal.Message, nil)
+		refuse(w, isolationRefusalStatus(refusal.Code), refusal.Code, refusal.Message, nil)
 		return
 	}
 	writeErr(w, http.StatusInternalServerError, err)
+}
+
+func isolationRefusalStatus(code string) int {
+	switch code {
+	case isolation.CodeUnknownID:
+		return http.StatusNotFound
+	case isolation.CodeUnavailable, isolation.CodeNotGit, isolation.CodeUnsupportedState:
+		return http.StatusNotImplemented
+	default:
+		return http.StatusConflict
+	}
 }

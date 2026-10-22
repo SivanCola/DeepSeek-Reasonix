@@ -39,6 +39,7 @@ type invocationState struct {
 	ctx            context.Context
 	sourcePolicy   treePolicy
 	launcher       fileutil.ContentVersion
+	release        func()
 	active         bool
 	closed         bool
 }
@@ -74,6 +75,9 @@ func (i *Invocation) Inputs() []evidence.CheckInputs {
 		return nil
 	}
 	input := i.state.input
+	if i.state.active && i.scope.stranded() {
+		input.Gaps = []string{namespaceGap(i.scope.wait())}
+	}
 	input.Gaps = append([]string(nil), input.Gaps...)
 	return []evidence.CheckInputs{input}
 }
@@ -82,13 +86,13 @@ func (i *Invocation) Close() {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	i.state.closed = true
-	if !i.state.active {
+	if !i.state.active || i.scope.stranded() {
 		i.remove()
 	}
 }
 
 func (i *Invocation) remove() {
-	i.scope.closeFiles()
+	i.scope.release()
 	if i.state.status != nil {
 		_ = i.state.status.Close()
 		i.state.status = nil
@@ -96,5 +100,9 @@ func (i *Invocation) remove() {
 	if i.state.directory != "" {
 		removeFrozenTree(i.state.directory)
 		i.state.directory = ""
+	}
+	if i.state.release != nil {
+		i.state.release()
+		i.state.release = nil
 	}
 }

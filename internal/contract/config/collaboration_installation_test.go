@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -220,11 +221,14 @@ func TestUnsupportedInstallationDefaultIsPreservedAndCannotBecomeWritableDefault
 				t.Fatal(err)
 			}
 			cfg, err := roots.LoadForRootReadOnly(t.TempDir())
-			if err == nil {
-				_, err = cfg.CollaborationMode()
+			if err != nil {
+				t.Fatal(err)
 			}
-			if err == nil {
-				t.Fatal("unsupported default silently enabled a writer")
+			if mode, err := cfg.CollaborationMode(); err != nil || mode != "legacy" || cfg.UsesMutationTransactions() {
+				t.Fatalf("unsupported default must run the compatible protocol, got %q %v", mode, err)
+			}
+			if !slices.ContainsFunc(cfg.LoadWarnings(), func(w string) bool { return strings.Contains(w, "installation collaboration default unavailable") }) {
+				t.Fatalf("unsupported default was not reported: %v", cfg.LoadWarnings())
 			}
 			edit := roots.defaultConfig()
 			if err := edit.SaveTo(roots.UserConfigPath()); err == nil {

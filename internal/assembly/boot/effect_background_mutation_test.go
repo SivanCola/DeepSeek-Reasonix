@@ -3,6 +3,7 @@ package boot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -39,7 +40,7 @@ func (p *backgroundMutationProvider) Stream(_ context.Context, _ provider.Reques
 	return ch, nil
 }
 
-func TestEffectBackgroundProcessRetainsMutationAfterTurn(t *testing.T) {
+func TestEffectRunningBackgroundProcessLeavesTheWorkspaceWritable(t *testing.T) {
 	home, root := statedBootHome(t), t.TempDir()
 	sh := pinnedEffectShell()
 	p := &backgroundMutationProvider{command: "echo ready > ready; sleep 120"}
@@ -89,37 +90,23 @@ model="x"
 			t.Fatal("background writer did not start")
 		}
 	}
-	waiting := make(chan struct{}, 1)
-	other, err := mutation.New(root, config.WorkspaceLeaseDir(), func(n mutation.Notice) {
-		if n.State == "waiting" {
-			waiting <- struct{}{}
-		}
-	})
+	other, err := mutation.New(root, config.WorkspaceLeaseDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	acquired := make(chan error, 1)
-	go func() {
-		l, err := other.Acquire(ctx, mutation.Intent{Effect: mutation.Workspace, SessionID: "other"})
-		if l != nil {
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		l, err := other.TryAcquire(ctx, mutation.Intent{Effect: mutation.Workspace, SessionID: "other"})
+		if err == nil {
 			l.End(mutation.NotExecuted)
+			break
 		}
-		acquired <- err
-	}()
-	select {
-	case <-waiting:
-	case err := <-acquired:
-		t.Fatalf("running background writer lost its lease: %v", err)
-	case <-ctx.Done():
-		t.Fatal("no wait event")
+		if !errors.Is(err, mutation.ErrBusy) || time.Now().After(deadline) {
+			t.Fatalf("a running background service kept the workspace from other writers: %v", err)
+		}
+		<-ticker.C
 	}
-	b.session.jobs.KillForSession(sessionstore.BranchID(built.Controller.SessionPath()), jobID)
-	select {
-	case err := <-acquired:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-ctx.Done():
-		t.Fatal("cancelled writer kept its lease")
+	if !b.session.jobs.KillForSession(sessionstore.BranchID(built.Controller.SessionPath()), jobID) {
+		t.Fatal("background service ended before another writer was admitted")
 	}
 }
