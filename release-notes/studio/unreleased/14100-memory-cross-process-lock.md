@@ -1,6 +1,0 @@
-- 修复：两个进程共用一个记忆目录时，写入不再互相覆盖。关联 #14100。
-- 修复：同一 subject 不再出现两条生效事实、改名不再「报成功却没存」、回滚不再倒退版本、索引不再丢行。关联 #14100。
-- 兼容性：另一进程正持锁时，写入可能等约 2 秒后返回可重试的「被另一个进程锁定」，而不是默默写坏。关联 #14100。
-- Fixed: with two processes sharing one memory directory, writes can no longer overwrite each other. Refs #14100.
-- Fixed: no duplicate active subject, no rename that reports success without a file, no revision going backwards, no dropped index line. Refs #14100.
-- Compatibility: while the other process holds the lock, a write may wait about 2s and then return a retryable "locked by another process" error. Refs #14100.

@@ -1,2 +1,0 @@
-- 修复：长会话里已完成且收起的工具调用卡片不再挂载整段输出，页面节点数和内存占用大幅下降；展开或查找命中时才显示正文。关联 #13899。
-- Fixed: a finished, closed tool-call card no longer mounts its whole output, cutting DOM nodes and memory in long sessions. Refs #13899.

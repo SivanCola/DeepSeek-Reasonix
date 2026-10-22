@@ -1,2 +1,0 @@
-- 修复：已登录账号时，反馈贡献榜不再错误提示先到设置里登录。关联 #14012。
-- Fixed: the feedback contribution board no longer asks signed-in users to log in through Settings. Refs #14012.

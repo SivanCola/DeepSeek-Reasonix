@@ -1,2 +1,0 @@
-- 修复：`reasonix session` 和 `reasonix task` 的 `--dir` 指向不存在的路径或文件时，不再当作"没有会话"返回空结果，而是报 `invalid_argument` 并退出码 2。关联 #14119。
-- Fixed: `reasonix session` and `reasonix task` no longer answer an empty result for a `--dir` that does not exist or is a file; they fail with `invalid_argument` (exit 2). Refs #14119.

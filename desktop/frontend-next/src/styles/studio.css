@@ -2101,7 +2101,7 @@ button, input, select, textarea { font-size: calc(13.3333px * var(--fs-scale, 1)
 .session-pop {
   position: fixed;
   z-index: 70;
-  width: 228px;
+  width: 228px; max-height: calc(100vh / var(--zoom, 1) - 24px); overflow-y: auto;
   display: grid;
   padding: 6px;
   border: 1px solid var(--border);

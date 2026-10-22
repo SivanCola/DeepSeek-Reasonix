@@ -1,2 +1,0 @@
-- 预设模块选择支持多选、搜索、全选与内置／自定义分组；手动 ID 入口移至高级选项，避免两个“添加模块”含义不同。Refs #13988.
-- Preset modules support grouped multi-selection, search and select all. Manual ID entry is explicitly labeled as advanced; existing parameters are preserved. Refs #13988.

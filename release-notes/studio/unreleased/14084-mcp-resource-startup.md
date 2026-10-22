@@ -1,2 +1,0 @@
-- 修复：普通会话在启动期间读取 MCP 资源时，会等待已授权的服务器连接就绪，避免因连接尚未完成而提前报错。关联 #14084。
-- Fixed: ordinary sessions wait for the authorized MCP server connection when reading resources during startup, avoiding premature errors while the connection is still initializing. Refs #14084.

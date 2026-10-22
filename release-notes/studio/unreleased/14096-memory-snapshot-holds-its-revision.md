@@ -1,4 +1,0 @@
-- 修复：两个进程同时改写同一条记忆时，回滚历史不再被写错版本。关联 #14096。
-- 兼容性：此前「恢复旧版本」可能返回该版本从未有过的内容，或报「找不到该版本」。关联 #14096。
-- Fixed: with two processes writing one fact, a revision snapshot can no longer be filed under the wrong revision. Refs #14096.
-- Compatibility: restoring an old revision used to return a body that revision never had, or report it missing. Refs #14096.

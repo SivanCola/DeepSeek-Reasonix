@@ -1,2 +1,0 @@
-- 修复：`reasonix config compact-ratio 33.3` 写入配置文件的是 `0.333`，不再是 `0.33299999999999996` 这样带浮点误差的数。关联 #14120。
-- Fixed: `reasonix config compact-ratio 33.3` now saves `0.333` instead of float noise such as `0.33299999999999996`. Refs #14120.

@@ -1,4 +1,0 @@
-- 修复：会话历史搜索不再把宿主追加的记忆召回与执行策略块当作「用户说过的话」。关联 #14076。
-- 兼容性：升级后首次打开会重建一次历史索引，首开会慢一点（与升到 3 时相同）。关联 #14076。
-- Fixed: history search no longer treats the host-appended memory-recall and execution-policy blocks as words the user said. Refs #14076.
-- Compatibility: the history index rebuilds once on first open after upgrading, so first open is slower (same as the 3 bump). Refs #14076.

@@ -1,2 +1,0 @@
-- 修复：恢复将右侧工作区文件树中的文件和文件夹拖入对话，添加为文件引用。关联 #12771。
-- Fixed: restore dragging files and folders from the workbench file tree into chat as file references. Refs #12771.
