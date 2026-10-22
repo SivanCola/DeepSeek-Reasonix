@@ -84,7 +84,7 @@ func (i *Invocation) freeze(ctx context.Context, request tool.ControlledShellReq
 	}
 	i.spec.SourceRoot, i.spec.Directory = source, directory
 	i.state.sourcePolicy = treePolicy{source: true, denied: denied}
-	i.state.input = evidence.CheckInputs{Directory: directory, Platform: runtime.GOOS + "/" + runtime.GOARCH,
+	i.state.input = evidence.CheckInputs{Directory: request.Directory, Platform: runtime.GOOS + "/" + runtime.GOARCH,
 		CommandDigest: evidence.CheckCommandDigest(i.command), Gaps: []string{"controlled_environment_incomplete"}}
 	i.state.input.Before = evidence.CaptureContentSnapshot(ctx, source, 50_000)
 	if !i.state.input.Before.Complete {
@@ -190,8 +190,9 @@ func (i *Invocation) launchArguments(ctx context.Context, request tool.Controlle
 func (i *Invocation) Command(ctx context.Context, launch tool.ShellLaunch) (*exec.Cmd, func(), error) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
+	directory, directoryErr := filepath.EvalSymlinks(launch.Directory)
 	if i.state.closed || i.state.active || i.state.cmd != nil || len(i.state.argv) == 0 ||
-		launch.Command != i.command || launch.Directory != i.spec.Directory || !reflect.DeepEqual(launch.Arguments, i.state.argv) {
+		directoryErr != nil || launch.Command != i.command || directory != i.spec.Directory || !reflect.DeepEqual(launch.Arguments, i.state.argv) {
 		return nil, nil, errors.New("verification launch identity changed")
 	}
 	status, err := os.CreateTemp(i.state.directory, "namespace-status-")

@@ -12,14 +12,19 @@ import (
 )
 
 type capturedInput struct {
-	path string
-	body []byte
+	path     string
+	body     []byte
+	relative string
 }
 
 // WithCaptured substitutes host-held criterion bytes in the frozen source only.
 // Its receipt cannot authorize ordinary integration checks.
 func (s Spec) WithCaptured(path string, body []byte) Spec {
-	s.capture = &capturedInput{path: path, body: bytes.Clone(body)}
+	relative, err := filepath.Rel(s.SourceRoot, path)
+	if err != nil || !filepath.IsAbs(path) || !filepath.IsLocal(relative) || relative == "." {
+		relative = ""
+	}
+	s.capture = &capturedInput{path: path, body: bytes.Clone(body), relative: relative}
 	return s
 }
 
@@ -32,10 +37,17 @@ type capturedInputIdentity struct {
 	Body []byte
 }
 
+func (s Spec) captureIdentity() string {
+	if s.capture == nil {
+		return ""
+	}
+	return digest(capturedInputIdentity{s.capture.path, s.capture.body})
+}
+
 func (s Spec) applyCapture(ctx context.Context, frozen string, policy treePolicy) (string, error) {
 	if s.capture != nil {
-		path, err := filepath.Rel(s.SourceRoot, s.capture.path)
-		if err != nil || !filepath.IsAbs(s.capture.path) || !filepath.IsLocal(path) || path == "." {
+		path := s.capture.relative
+		if path == "" {
 			return "", errors.New("captured criterion is outside verification source")
 		}
 		path = filepath.ToSlash(path)

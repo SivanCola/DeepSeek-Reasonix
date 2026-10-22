@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"reasonix/internal/base/fileutil"
 
 	"reasonix/internal/contract/tool"
 	"reasonix/internal/runtime/isolation"
@@ -28,11 +29,19 @@ func integrationAuthorizerWithExecution(source string, posture *isolationPosture
 		if err := validateExecution(ctx); err != nil {
 			return err
 		}
+		canonicalSource, err := fileutil.CanonicalWritePath(source)
+		if err != nil {
+			return err
+		}
 		for _, path := range paths {
-			if !grant.AllowsPath(path) {
+			canonical, err := fileutil.CanonicalWritePath(path)
+			if err != nil {
+				return err
+			}
+			if !grant.AllowsPath(canonical) {
 				return tool.Refusal{Code: isolation.CodeOwnerMismatch, Message: "integration path exceeds original source write grant"}
 			}
-			relative, err := filepath.Rel(source, path)
+			relative, err := filepath.Rel(canonicalSource, canonical)
 			if err != nil || !filepath.IsLocal(relative) {
 				return tool.Refusal{Code: isolation.CodeOwnerMismatch, Message: "integration path is outside the source workspace"}
 			}
@@ -59,8 +68,17 @@ func checkSourceMutationPaths(ctx context.Context, source string, gate *control.
 
 func integrationPathDenied(gate *control.SharedHeadlessGate, source, path string) bool {
 	names := []string{path}
-	if relative, err := filepath.Rel(source, path); err == nil && filepath.IsLocal(relative) {
-		names = append(names, relative)
+	canonicalSource, err := fileutil.CanonicalWritePath(source)
+	if err != nil {
+		return true
+	}
+	canonicalPath, err := fileutil.CanonicalWritePath(path)
+	if err != nil {
+		return true
+	}
+	names = append(names, canonicalPath)
+	if relative, err := filepath.Rel(canonicalSource, canonicalPath); err == nil && filepath.IsLocal(relative) {
+		names = append(names, relative, filepath.Join(source, relative))
 	}
 	for _, name := range names {
 		args, _ := json.Marshal(map[string]string{"path": filepath.ToSlash(name)})

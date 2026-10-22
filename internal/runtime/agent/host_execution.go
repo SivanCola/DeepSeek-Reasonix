@@ -61,6 +61,7 @@ func NewHostExecutor(reg *tool.Registry, opts Options, sink event.Sink, environm
 	host := &HostExecutor{agent: New(nil, reg, sessionstore.NewSession(""), opts, hostExecutionSink{sink}), temp: m}
 	if len(environments) != 0 && environments[0] != nil {
 		copy := *environments[0]
+		copy.Client.Environment = append([]string(nil), environments[0].Client.Environment...)
 		host.environment = &copy
 	}
 	return host
@@ -118,7 +119,7 @@ func (h *HostExecutor) Execute(ctx context.Context, call provider.ToolCall) (res
 	inputs = evidence.NewCheckInputObserver(h.agent.observeRoot)
 	invocation = &hostCall{expected: call, inputs: inputs}
 	if h.environment != nil {
-		invocation.environment = checkenv.New(*h.environment, bashCommandFromArgs(json.RawMessage(call.ExecutionArguments())), executionID(ctx), call.ID)
+		invocation.environment = checkenv.NewEnvironment(*h.environment, bashCommandFromArgs(json.RawMessage(call.ExecutionArguments())), executionID(ctx), call.ID)
 	}
 	ctx = context.WithValue(ctx, hostCallKey{}, invocation)
 	h.agent.SetPlanMode(PlanModeFromContext(ctx))
@@ -152,7 +153,7 @@ type hostCall struct {
 	expected    provider.ToolCall
 	entered     atomic.Bool
 	inputs      *evidence.CheckInputObserver
-	environment *checkenv.Invocation
+	environment checkenv.Environment
 }
 
 func markHostExecution(ctx context.Context, callID string) {

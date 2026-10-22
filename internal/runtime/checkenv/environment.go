@@ -17,7 +17,18 @@ type Spec struct {
 	StorageRoot string
 	SourceRoot  string
 	Directory   string
+	Client      ClientSpec
 	capture     *capturedInput
+}
+
+type ClientSpec struct {
+	Executable  string
+	Environment []string
+}
+
+func (s ClientSpec) Clone() ClientSpec {
+	s.Environment = append([]string(nil), s.Environment...)
+	return s
 }
 
 var _ tool.ControlledShell = (*Invocation)(nil)

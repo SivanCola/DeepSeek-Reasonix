@@ -11,6 +11,8 @@ reviewed: 2026-10-22
 
 ## 中文
 
+可选的跨平台受控验证入口见[受控容器验证](CONTROLLED_CONTAINER_VERIFICATION.md)。
+
 本文记录正在实施的协议及验收边界，不代表自动隔离和自动整合已交付。
 默认模式仍保持兼容行为。当前可验证的新版路径是用户配置中的
 `[agent] collaboration = "shared"`。`auto` 与 `isolated` 已接入 CLI、serve、

@@ -18,6 +18,7 @@ import (
 	"reasonix/internal/ext/plugin"
 	"reasonix/internal/model/billing"
 	"reasonix/internal/platform/computer"
+	"reasonix/internal/runtime/checkenv"
 	"reasonix/internal/runtime/rootenv"
 	"reasonix/internal/runtime/taskmonitor"
 	"reasonix/internal/runtime/writeclaim"
@@ -35,6 +36,7 @@ import (
 // run/serve pass true so a missing key fails fast, chat/desktop false so the UI
 // is reachable before one is set.
 type Options struct {
+	VerificationClient     checkenv.ClientSpec
 	frozenConfig           *config.Config
 	inheritedReadDenies    []string
 	readPolicyRoot         string

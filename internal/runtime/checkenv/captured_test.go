@@ -39,8 +39,13 @@ func TestCapturedInputOnlyReplacesFrozenAuthorizedRegularPath(t *testing.T) {
 			}
 			body := []byte("captured")
 			spec := (Spec{SourceRoot: source}).WithCaptured(filepath.Join(source, path), body)
+			canonical, err := filepath.EvalSymlinks(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			spec.SourceRoot = canonical
 			body[0] = 'X'
-			_, err := spec.applyCapture(t.Context(), frozen, policy)
+			_, err = spec.applyCapture(t.Context(), frozen, policy)
 			if mode != "replace" && mode != "deleted" {
 				if err == nil {
 					t.Fatal("unsafe captured replacement accepted")

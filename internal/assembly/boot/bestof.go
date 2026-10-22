@@ -124,6 +124,7 @@ func unattendedOptions(parent Options, sink event.Sink, mode, root, model string
 		return Options{}, err
 	}
 	return Options{
+		VerificationClient:     parent.VerificationClient.Clone(),
 		inheritedReadDenies:    denies,
 		readPolicyRoot:         root,
 		ComputerDriver:         parent.ComputerDriver,

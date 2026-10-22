@@ -15,5 +15,5 @@ func (w roleWiring) verificationEnvironment(in delegationInputs) *checkenv.Spec 
 		root = in.root
 	}
 	return &checkenv.Spec{RuntimeRoot: w.cfg.Agent.VerificationRuntime, StorageRoot: filepath.Join(w.roots.DeliveryWorktreeDir(), "verification-v1"),
-		SourceRoot: root, Directory: in.root}
+		SourceRoot: root, Directory: in.root, Client: in.opts.VerificationClient}
 }

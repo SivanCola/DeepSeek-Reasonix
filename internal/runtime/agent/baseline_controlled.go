@@ -31,6 +31,7 @@ func cloneCheckEnvironment(spec *checkenv.Spec) *checkenv.Spec {
 		return nil
 	}
 	copy := *spec
+	copy.Client.Environment = append([]string(nil), spec.Client.Environment...)
 	return &copy
 }
 

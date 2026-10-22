@@ -2,7 +2,9 @@ package boot
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"reasonix/internal/safety/permission"
@@ -39,6 +41,35 @@ func TestIntegrationSourceChecksRespectAbsoluteAndRelativeDenyRules(t *testing.T
 		access := (builtin.Workspace{Dir: root, WriteRoots: []string{root}}).TargetAccessCheck()
 		if err := checkSourceMutationPaths(t.Context(), root, gate, access, []string{path}); err == nil {
 			t.Fatalf("integration bypassed %s", pattern)
+		}
+	}
+}
+
+func TestIntegrationSourceChecksDoNotLoseDeniesAcrossRootAliases(t *testing.T) {
+	root := t.TempDir()
+	canonical, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if canonical == root {
+		alias := filepath.Join(t.TempDir(), "workspace")
+		if err := os.Symlink(root, alias); err != nil {
+			if runtime.GOOS != "windows" {
+				t.Fatal(err)
+			}
+			if out, err := exec.CommandContext(t.Context(), "cmd", "/c", "mklink", "/J", alias, canonical).CombinedOutput(); err != nil {
+				t.Fatalf("create Windows directory junction: %v %s", err, out)
+			}
+			t.Log("root alias regression uses a Windows directory junction")
+		}
+		root = alias
+	}
+	path := filepath.Join(canonical, "protected.txt")
+	for _, pattern := range []string{"edit_file(protected.txt)", "edit_file(" + filepath.ToSlash(filepath.Join(root, "protected.txt")) + ")", "edit_file(" + filepath.ToSlash(path) + ")"} {
+		gate := control.NewSharedHeadlessGate(permission.New("allow", nil, nil, []string{pattern}), control.ToolApprovalYolo)
+		access := (builtin.Workspace{Dir: root, WriteRoots: []string{root}}).TargetAccessCheck()
+		if err := checkSourceMutationPaths(t.Context(), root, gate, access, []string{path}); err == nil {
+			t.Fatalf("root alias bypassed %s", pattern)
 		}
 	}
 }

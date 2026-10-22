@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"io"
+	"reasonix/internal/frontend/hostenv"
 
 	"reasonix/internal/assembly/boot"
 	"reasonix/internal/contract/ablation"
@@ -65,6 +66,7 @@ func setupProfileWithOverrides(ctx context.Context, modelName string, maxStepsOv
 func cliProfileBuildOptions(modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, profile string, overrides cliBuildOverrides) boot.Options {
 	// profile is dual-write TokenMode; also set AgentPreset for the new path.
 	return boot.Options{
+		VerificationClient:     hostenv.VerificationClient(),
 		AgentComposition:       overrides.AgentComposition,
 		Composition:            overrides.Composition,
 		Version:                overrides.Version,

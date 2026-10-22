@@ -24,6 +24,17 @@ type ownedReceipt struct {
 	capture   string
 }
 
+func recordOwnedReceipt(input evidence.CheckInputs, execution, capture string) {
+	receipts.Lock()
+	defer receipts.Unlock()
+	if len(receipts.order) >= 4096 {
+		delete(receipts.inputs, receipts.order[0])
+		receipts.order = receipts.order[1:]
+	}
+	receipts.inputs[input.EnvironmentReceipt] = ownedReceipt{input, execution, capture}
+	receipts.order = append(receipts.order, input.EnvironmentReceipt)
+}
+
 func Verify(input evidence.CheckInputs, executionID string) bool {
 	return verifyReceipt(input, executionID, "")
 }
