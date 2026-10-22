@@ -25,6 +25,7 @@ type child struct {
 	decoder *json.Decoder
 	log     *os.File
 	waited  bool
+	waitErr error
 }
 
 func runRound(ctx context.Context, load workload, mode, scope string) (got round, err error) {
@@ -80,7 +81,7 @@ func runRound(ctx context.Context, load workload, mode, scope string) (got round
 	for _, c := range children {
 		var ready string
 		if err := c.decoder.Decode(&ready); err != nil || ready != "ready" {
-			return got, errors.Join(err, errors.New("worker did not become ready"))
+			return got, c.failure("preparation", errors.Join(err, errors.New("worker did not become ready")))
 		}
 	}
 	started := time.Now()
@@ -92,14 +93,13 @@ func runRound(ctx context.Context, load workload, mode, scope string) (got round
 	for _, c := range children {
 		var measurement measuredWorker
 		if err := c.decoder.Decode(&measurement); err != nil {
-			body, _ := os.ReadFile(c.log.Name())
-			return got, fmt.Errorf("product worker: %w: %s", err, body)
+			return got, c.failure("execution", err)
 		}
 		got.Workers = append(got.Workers, measurement)
-		waitErr := c.cmd.Wait()
+		c.waitErr = c.cmd.Wait()
 		c.waited = true
-		if waitErr != nil {
-			return got, waitErr
+		if c.waitErr != nil {
+			return got, c.failure("exit", c.waitErr)
 		}
 	}
 	got.WallNS = time.Since(started).Nanoseconds()
@@ -113,7 +113,7 @@ func (c *child) stop() {
 		return
 	}
 	done := make(chan struct{})
-	go func() { _ = c.cmd.Wait(); close(done) }()
+	go func() { c.waitErr = c.cmd.Wait(); close(done) }()
 	timer := time.NewTimer(10 * time.Second)
 	defer timer.Stop()
 	select {
@@ -122,6 +122,17 @@ func (c *child) stop() {
 		_ = c.cmd.Process.Kill()
 		<-done
 	}
+	c.waited = true
+}
+
+func (c *child) failure(phase string, cause error) error {
+	c.stop()
+	body, _ := os.ReadFile(c.log.Name())
+	exitErr := c.waitErr
+	if exitErr != nil {
+		exitErr = fmt.Errorf("process exit: %w", exitErr)
+	}
+	return fmt.Errorf("worker %s: %w: %s", phase, errors.Join(cause, exitErr), body)
 }
 
 const verificationFixture = `package fixture

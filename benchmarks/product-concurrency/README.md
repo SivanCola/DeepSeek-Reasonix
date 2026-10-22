@@ -5,9 +5,16 @@ file/Bash tools and final persistence. Only the provider is simulated. Each
 worker runs a real fixture `go test -count=1 ./...` that checks its output.
 The parent independently verifies every expected file.
 
+Every completed round is saved atomically. Preparation and execution failures
+retain worker stderr and exit status in the report. Partial reports remain
+`completed=false` and the analyzer rejects them as qualification results.
+
 使用真实进程执行 `boot.Build`、Controller 准入、会话租约、文件与 Bash 工具及
 最终持久化。仅模型由固定脚本模拟。每个 worker 运行真实的 Go 测试检查自身
 输出，父进程再独立核对全部文件。
+
+每轮结果原子保存；准备或执行失败时保留 worker 的 stderr 和退出状态。
+未完成的报告保持 `completed=false`，分析器拒绝将其作为完整验收结果。
 
 ```sh
 go build -o /tmp/reasonix-product-concurrency ./benchmarks/product-concurrency
@@ -20,7 +27,15 @@ python3 benchmarks/product-concurrency/summarize.py product-throughput.json \
 python3 benchmarks/product-concurrency/summarize.py --self-test product-locks.json \
   --output product-locks-summary.json
 python3 benchmarks/product-concurrency/cancel-probe.py /tmp/reasonix-product-concurrency
+python3 benchmarks/product-concurrency/failure-probe.py /tmp/reasonix-product-concurrency
 ```
+
+The failure probe uses POSIX argv injection to make a real assembled worker
+reject an invalid policy. It checks retained stderr, exit status and the
+incomplete report without changing the public benchmark protocol.
+
+失败复现使用 POSIX argv 注入，让真实装配的 worker 拒绝无效策略，
+验证 stderr、退出状态和未完成报告，不修改基准的公开协议。
 
 Keep throughput and trace runs separate. Record source and executable hashes,
 CPU count, platform and concurrent machine load with the raw reports. Add a
@@ -90,6 +105,13 @@ result 包含准入及等待，不等于纯文件执行耗时。分析器拒绝�
 模拟模型推理重叠。
 
 关闭 OS 采样时，吞吐量摘要不提供持锁边界，不能把缺失的采样显示为零持锁。
+
+`notified_resource_wait` measures transaction waiting notices. Legacy waiting
+has no equivalent event identity and is omitted. Unnotified waiting remains
+included in dispatch-to-result. Summary schema 2 states this metric scope.
+
+`notified_resource_wait` 只计事务等待通知。旧模式没有对应事件身份，摘要不提供
+该指标。未通知的等待仍包含在 dispatch 到 result 区间内。摘要版本 2 明示此范围。
 
 This fixture covers independent shared sessions. Isolation, fleet, recovery,
 frontend interaction and controlled verification need separate evidence.

@@ -39,6 +39,7 @@ Direct-parent management and retention are described in the
 | publication v1 | preparing、pending、acknowledged；只推进导出的根游标 | 未知格式保留 | 新 ID 替换旧对象；同 ID 才递归保留未知字段 |
 | 环境绑定 v1 + 会话事件 envelope v6 | 首条日志持久绑定；sidecar 缺失从日志恢复，冲突拒绝；绑定不改变原始消息日志、revision 或摘要 | 已验证的前版 reader/writer 将 schema 6 作为未来格式拒绝；不能忽略日志回落 checkpoint | 追加、压缩及修复保留屏障；旧 sidecar-only 实验会话须由当前会话 authority 在执行前升级 |
 | 检查进程崩溃 | 取得 run 锁后核验封存内容，同 ResultID 重检 | 不共享过程内受控凭据 | 重启后证据保持未知，不能反序列化为有效 |
+| 容器验证日志 v1 | OS owner、Engine/端点及对象身份校验；未知版本、字段和尾随数据保留并拒绝回收 | 没有容器工厂的内核拒绝镜像 URI，不回收该资源 | 本地 Unix socket/命名管道；过程内凭据不能跨重启复用 |
 | 终态收据 | 清理后重复同操作幂等；相反操作拒绝 | 按其理解的格式读取 | 应用成功和当前验证有效是两个事实 |
 | 结果身份及迁移 | 工作区过滤前严格扫描同 ID；仅允许同目录完全相同的终态迁移对，并先归一化再更新 | 宽松旧 reader 没有全域去重保证 | 重复、不可读或无法归因的记录拒绝执行并保留 |
 | 等待事件 | 可选事务、会话、执行及原因字段 | 旧事件继续读取 | 无身份的结束事件仅闭合无身份的旧等待 |
@@ -62,8 +63,10 @@ Clear、Fork 和恢复副本均在消息发布前绑定目标身份；恢复使�
 这些边界约束支持协议的读写器。旧程序或任意外部进程完全不读取会话/整合协议时，
 新程序不能在崩溃后凭一个 sidecar 阻止其直接写文件；这种降级不属于安全兼容范围。
 
-Linux 的显式离线验证运行时可以产生过程内所有的受控凭据。macOS、Windows 目前
-不支持该受控验证器；普通 Shell 观察不会被升级为完整输入证明。非执行位或目录
+Linux 的显式离线根文件系统及各宿主的本地容器验证可以产生过程内受控凭据。
+容器验证不改变 Windows 候选 Bash/hook 的写入约束要求。
+
+普通 Shell 观察不会被升级为完整输入证明。非执行位或目录
 权限变更无法由当前 Git 应用协议重现时，会拒绝发布并保留成果。
 
 候选完整性是执行环境要求，独立于审批。完整文件变更边界不受支持时，在 Windows
@@ -91,6 +94,7 @@ ACL 授权、hook 启动及 Bash 逃逸审批之前拒绝。源保护路径按�
 | Publication v1 | preparing/pending/acknowledged; cursor advances only to root export | Unsupported formats retained | New identities replace old objects; recursive preservation only within one ID |
 | Environment binding v1 + session-event envelope v6 | Durable first-record binding; recover absent sidecar from WAL, refuse conflicts; preserve original message WAL, revision and digest | Qualified previous reader/writer refuses schema 6 as a future format, without checkpoint fallback | Append, compact and repair retain the fence; live session authority upgrades experimental sidecar-only sessions before execution |
 | Check-process crash | Acquire run owner, verify sealed content and recheck same ResultID | No reusable process-owned receipts | Restart leaves verification unknown |
+| Container verification journal v1 | OS owner, Engine/endpoint and object identity checks; retain unknown versions, fields and trailing data | Kernels without the factory refuse image URIs and do not reclaim these resources | Local Unix socket/named pipe; process-owned receipts cannot survive restart |
 | Terminal receipts | Same-action retries idempotent after cleanup; opposite action refuses | Reads supported formats | Publication and current verification validity remain separate facts |
 | Result identity and migration | Strict global ID scan before workspace filtering; only identical terminal markers in one directory may normalize before updates | Permissive old readers lack global deduplication | Duplicate, unreadable and unidentified records refuse execution and remain retained |
 | Wait events | Optional transaction/session/execution identity and reason | Legacy events remain readable | Identity-free closure matches only identity-free waits |
@@ -123,9 +127,11 @@ program or external process can ignore every session and integration protocol;
 a sidecar cannot prevent its direct file writes after a crash. Such downgrades
 are outside safe compatibility.
 
-The explicit Linux offline runtime can issue process-owned controlled receipts.
-macOS/Windows do not currently implement this verifier; ordinary shell
-observations remain unknown. Permission changes outside the Git apply protocol's
+Explicit Linux offline roots and local container verification on all hosts can
+issue process-owned controlled receipts. Container verification does not change
+Windows candidate Bash/hook mutation-bound requirements.
+
+Ordinary observations remain unknown. Permission changes outside the Git apply protocol's
 representation refuse publication and retain the result.
 
 Candidate launch integrity is an execution requirement, separate from approval.

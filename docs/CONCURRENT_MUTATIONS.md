@@ -20,6 +20,7 @@ ACP 的首次执行及持久环境恢复，但完整验收仍未完成。默认�
 
 固定负载的协调器层对照及 P95 回退见[性能证据](CONCURRENT_MUTATIONS_PERFORMANCE.md)。
 这份记录不替代完整产品性能验收。
+真实装配、工具与进程对照见[产品并发测量](CONCURRENT_MUTATIONS_PRODUCT_PERFORMANCE.md)。
 
 ### 权限与事务
 
@@ -156,7 +157,10 @@ Linux 可在用户配置中显式声明 `agent.verification_runtime` 离线根�
 宿主环境变量。启动握手固定 PID 1 的身份，取消及完成均等待真实执行域终止。
 
 缺失执行域完成证明时保留资源，不用监控进程退出冒充完成。凭据由当前进程拥有，
-JSON 标志不能伪造；重启后须重新验证。macOS、Windows 暂不支持该受控验证器，
+JSON 标志不能伪造；重启后须重新验证。
+
+各宿主也可显式选择[本地容器验证](CONTROLLED_CONTAINER_VERIFICATION.md)，
+通过 Unix socket 或 Windows 命名管道运行不可变 Linux 镜像。
 普通 Shell 观察继续显示未知，不会因此获得自动整合权限。
 
 最终进程启动边界记录实际 argv/环境摘要、命令摘要、解释器内容身份、目录、平台、
@@ -334,11 +338,12 @@ CLI/TUI 使用 `/isolated root recheck`、`retry`、`recover`；恢复需确认�
 
 ### 尚未完成的发布条件
 
-短事务、根任务自动选择、task/fleet 生命周期与共享预算、恢复界面和 Linux 受控
+短事务、根任务自动选择、task/fleet 生命周期与共享预算、恢复界面和受控
 整合已有实现。新安装默认 `auto` 仍关闭；最终平台、兼容、故障和性能验收未全部
 完成前不能切换。
 
-macOS/Windows 本地受控验证仍不支持；未获得可靠验证的嵌套成果保留在各自候选中，
+macOS/Windows 可使用显式的本地 Linux 容器验证；这不改变候选任务自身 Bash/hook
+的写入边界。未获得可靠验证的嵌套成果保留在各自候选中，
 不能静默应用到最外层源。无宿主环境工厂的旧运行时仍拒绝显式嵌套 worktree。
 `Outcome.Unverified` 为空不构成正向凭据，不能据此自动应用结果。
 
@@ -357,7 +362,7 @@ Windows 现有创建限制令牌无法提供这个完整边界，因此候选 Ba
 在启动前明确拒绝；会话级逃逸批准不能绕过。候选的进程内文件工具继续按授权运行。
 程序 hook 的拒绝通过宿主诊断显示，不重放候选的模型流或工具轨迹。
 
-隔离环境的 Go 基线检查使用已声明的 Linux 离线验证运行环境，在冻结副本中恢复
+隔离环境的 Go 基线检查使用声明的离线根文件系统或本地容器，在冻结副本中恢复
 宿主持有的测试正文，经原工具、权限、扩展和 hook 管线执行。未配置受控运行环境、
 工具被禁用、权限拒绝或后端不支持时保留 unavailable，不直接在宿主启动候选代码。
 
@@ -367,7 +372,7 @@ Windows 现有创建限制令牌无法提供这个完整边界，因此候选 Ba
 正向结算还要求整个命令与宿主收尾成功；收尾 hook 改动源码或后续输入变化会使凭据失效。
 
 共享环境保留旧 overlay 基线语义；取消、启动失败或完成未知不会用已有局部 pass
-结算该义务。普通进程 wait 不是任意后代都已结束的证明，不能代替 Linux 受控验证器的执行域凭据。
+结算该义务。普通进程 wait 不是任意后代都已结束的证明，不能代替受控验证器的执行域凭据。
 
 ## English
 
@@ -514,8 +519,11 @@ A startup handshake fixes PID1 identity; cancellation
 and cleanup await actual scope termination. Unproven termination retains resources.
 
 Receipts belong to the current process; persisted flags cannot forge them and
-restart requires a recheck. macOS/Windows do not yet support this verifier;
-ordinary shell observations remain unknown and cannot authorize integration.
+restart requires a recheck.
+
+All hosts can also explicitly select a local immutable Linux image through
+[container verification](CONTROLLED_CONTAINER_VERIFICATION.md), using a Unix
+socket or Windows named pipe. Ordinary observations remain unknown.
 
 The final launch boundary records hashes of actual argv, environment and command,
 interpreter content, cwd/platform, content before/after and physical wait
@@ -538,7 +546,7 @@ The complete projected postimage
 must match the checked candidate before any source write. Journals retain result
 and attempt IDs; retries preserve terminal receipts.
 
-Production Linux controlled receipts can authorize automatic checking and
+Production controlled receipts can authorize automatic checking and
 integration after source freshness and authorization are revalidated.
 
 Ordinary launch observations retain Git/external-environment gaps: those attempts
@@ -854,11 +862,14 @@ programs in independent sessions can still ignore source recovery journals;
 that downgrade is outside safe compatibility.
 
 Short transactions, root environment selection, task/fleet lifecycles and shared
-budgets, recovery UI and Linux controlled integration are implemented. New-install
+budgets, recovery UI and controlled integration are implemented. New-install
 `auto` remains disabled until final platform, compatibility, fault and performance
 qualification completes.
 
-macOS/Windows lack a local controlled verifier. Unverified nested results remain
+macOS/Windows can use explicitly provisioned local Linux container verification.
+This does not change the candidate task's own Bash/hook mutation boundary.
+
+Unverified nested results remain
 in their own candidates without being applied to the outermost source. Legacy
 runtimes without a host environment factory still refuse explicit nested worktrees.
 
@@ -889,7 +900,7 @@ Host hook diagnostics reach the source without replaying the candidate's model
 stream or tool transcript.
 
 Isolated Go baseline checks restore host-held test bytes only in a frozen copy
-of the declared Linux offline verification runtime and source. They use the
+of the declared offline root or local container runtime and source. They use the
 original tool, permission, extension and hook pipeline. Missing runtimes,
 disabled tools, denied access and unsupported backends remain unavailable.
 
@@ -910,4 +921,4 @@ completion cannot settle an obligation from partial passing output.
 
 Ordinary
 process wait does not prove every descendant has ended and cannot replace the
-Linux controlled verifier's execution-scope receipt.
+controlled verifier's execution-scope receipt.

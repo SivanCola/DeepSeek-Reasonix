@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"reasonix/internal/base/fileutil"
 	"runtime"
 	"time"
 )
@@ -37,6 +38,8 @@ type report struct {
 	Definition string             `json:"definition"`
 	Load       workload           `json:"load"`
 	Results    map[string][]round `json:"results"`
+	Completed  bool               `json:"completed"`
+	Failure    string             `json:"failure,omitempty"`
 }
 
 func main() {
@@ -77,16 +80,26 @@ func compare(ctx context.Context, load workload, trials int, output string) erro
 			for _, mode := range modes {
 				got, err := runRound(ctx, load, mode, scope)
 				if err != nil {
-					return fmt.Errorf("%s/%s trial %d: %w", scope, mode, trial, err)
+					err = fmt.Errorf("%s/%s trial %d: %w", scope, mode, trial, err)
+					r.Failure = err.Error()
+					return errors.Join(err, r.save(output))
 				}
 				key := scope + "/" + mode
 				r.Results[key] = append(r.Results[key], got)
+				if err := r.save(output); err != nil {
+					return err
+				}
 			}
 		}
 	}
+	r.Completed = true
+	return r.save(output)
+}
+
+func (r report) save(output string) error {
 	raw, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(output, append(raw, '\n'), 0600)
+	return fileutil.AtomicWriteFileStrict(output, append(raw, '\n'), 0600)
 }

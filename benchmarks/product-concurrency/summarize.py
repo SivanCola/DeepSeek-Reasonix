@@ -34,7 +34,9 @@ def worker(row, platform, recorded):
     inference = [(p["start_ns"], p["end_ns"]) for p in row["phases"] if p["phase"] == "provider_wait"]
     waits = [(p["start_ns"], p["end_ns"]) for p in row["phases"] if p["phase"] == "resource_wait"]
     tools = [(p["start_ns"], p["end_ns"]) for p in row["phases"] if p["phase"] == "tool_dispatch_to_result"]
-    common = {"inference_ns": duration(inference), "tool_dispatch_ns": duration(tools), "resource_wait_ns": duration(waits)}
+    common = {"inference_ns": duration(inference), "tool_dispatch_ns": duration(tools)}
+    if row["effective_policy"] == "shared":
+        common["notified_resource_wait_ns"] = duration(waits)
     if not recorded:
         return common
     lower, upper, registry, preparation = [], [], [], []
@@ -64,7 +66,10 @@ def worker(row, platform, recorded):
 
 
 def summarize(report):
-    output = {"platform": report["platform"], "load": report["load"], "definition": report["definition"], "results": {}}
+    if not report.get("completed", True):
+        raise ValueError("incomplete qualification: " + report.get("failure", "still running"))
+    output = {"summary_schema": 2, "platform": report["platform"], "load": report["load"], "definition": report["definition"],
+              "wait_scope": "Notified transaction waits only. Legacy waiting is unavailable here; unnotified waiting remains included in tool dispatch to result.", "results": {}}
     for key, rounds in report["results"].items():
         samples = []
         for sample in rounds:
@@ -88,6 +93,12 @@ def summarize(report):
 
 
 def self_test():
+    try:
+        summarize({"completed": False, "failure": "worker preparation failed"})
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("incomplete qualification reported as complete")
     assert duration([(1, 5), (3, 8), (10, 12)]) == 9
     assert overlap([(1, 5), (3, 8)], [(0, 2), (4, 6)]) == 3
     assert overlap([(1, 2)], [(2, 3)]) == 0
@@ -100,6 +111,9 @@ def self_test():
     row = {"id": 0, "effective_policy": "shared", "conflicts": 0, "reschedules": 0,
            "phases": [], "coordination_dir": "/coord", "locks": []}
     assert "resource_hold_lower_ns" not in worker(row, "linux/arm64", False)
+    legacy = {**row, "effective_policy": "legacy"}
+    assert "notified_resource_wait_ns" not in worker(legacy, "linux/arm64", False)
+    assert worker(row, "linux/arm64", False)["notified_resource_wait_ns"] == 0
     try:
         worker(row, "linux/arm64", True)
     except ValueError:
