@@ -1,0 +1,2 @@
+- 修复：最终回答后的工作区观察遇到阻塞 I/O 时，会话不再长时间显示运行中；停止操作会取消观察和证据封存的等待，未完成的观察记录为证据缺口。关联 #13953、#14140。
+- Fixed: blocked workspace observation no longer holds a turn after its final answer; Stop cancels observation and seal waits, and incomplete observations remain gaps. Refs #13953, #14140.

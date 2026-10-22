@@ -43,6 +43,9 @@ type Priced struct {
 	CNY       string
 	USD       string
 	Estimated bool
+	// Incomplete says the quote could not price the row's usage: its money is
+	// unknown, not zero.
+	Incomplete bool
 	// BillingMode is the mode the quote was made in; empty reads as billed.
 	BillingMode string
 }
@@ -50,7 +53,7 @@ type Priced struct {
 // WithCost attaches a line's quote. An amount that does not parse is dropped
 // rather than guessed: a missing total beats a wrong one.
 func (e Entry) WithCost(p Priced) Entry {
-	e.Cost, e.CostCurrency, e.CostEstimated, e.BillingMode = 0, "", p.Estimated, p.BillingMode
+	e.Cost, e.CostCurrency, e.CostEstimated, e.CostIncomplete, e.BillingMode = 0, "", p.Estimated, p.Incomplete, p.BillingMode
 	if amount, ok := parseAmount(p.Amount); ok {
 		e.Cost, e.CostCurrency = amount, pricing.NormalizeCurrency(p.Currency)
 	}

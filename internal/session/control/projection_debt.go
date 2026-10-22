@@ -1,62 +1,101 @@
 // projection_debt.go — what the model has of one block that is delivered once.
 package control
 
-import "sync/atomic"
-
-// projectionDebt is the fact behind "is this block owed": whether what the
-// model has still equals what the host would render now. The delivered value is
-// the version, so comparing it is exact and no digest can drift from it. When
-// to invalidate is not decided here — that belongs to whoever owns the
-// canonical state, which is the whole point.
+// projectionDebt answers "is this block owed" from the model-visible history,
+// never from what a turn was handed: a refusal, a fold, a rewind or a session
+// rotation all change the answer by themselves. newest reports the most recent
+// block of a tag the model still reads (agent.NewestStandingBlock); nil means
+// no model is attached, so every block is owed.
 type projectionDebt struct {
-	delivered atomic.Pointer[string]
-	// pending is what this turn is carrying but has not yet put anywhere the
-	// model reads. Rendering does not settle a debt: a turn can still be
-	// blocked by a hook or refused by an extension after it composed.
-	pending atomic.Pointer[string]
+	newest func(string) (string, bool)
 }
 
-// owed returns the projection when the model does not already have it. The
-// value is held as pending until settle records that the turn carried it.
-func (d *projectionDebt) owed(projection string) string {
-	prev := d.delivered.Load()
-	if projection == "" && (prev == nil || *prev == "") {
+// owed returns the projection unless the model's newest block of this tag is
+// already those exact bytes. An older copy does not count: a later block of the
+// same tag replaced it, and the caller may be owing those bytes again.
+func (d *projectionDebt) owed(tag, projection string) string {
+	if projection == "" {
 		return ""
 	}
-	d.pending.Store(&projection)
-	if prev != nil && *prev == projection {
-		return ""
+	if d.newest != nil {
+		if got, ok := d.newest(tag); ok && got == wrapTurnBlock(tag, projection) {
+			return ""
+		}
 	}
 	return projection
 }
 
-// settle records what the turn actually carried. Until it is called the debt
-// stands, which is the whole reason it is separate from owed: a turn that
-// composed and was then abandoned put those bytes nowhere.
-func (d *projectionDebt) settle() {
-	if pending := d.pending.Swap(nil); pending != nil {
-		d.delivered.Store(pending)
+// bindProjectionSeer points every once-delivered block at the same model-visible
+// history. New calls it once, before a turn can read a debt; a controller with
+// no executor leaves every seer nil and owes every block, because no model has
+// been told anything.
+func (c *Controller) bindProjectionSeer(newest func(string) (string, bool), notes func(string) bool) {
+	if newest == nil {
+		return
 	}
+	c.date.debt.newest = newest
+	c.scratch.debt.newest = newest
+	c.skills.catalog.newest = newest
+	c.memory.instructions.newest = newest
+	c.rules.always.newest = newest
+	c.rules.scoped.newest = newest
+	c.deliveryNotes(notes)
 }
 
-// sent reports whether the model holds a non-empty projection of this block, so
-// a caller can tell "nothing to say" from "what I said no longer holds".
-func (d *projectionDebt) sent() bool {
-	prev := d.delivered.Load()
-	return prev != nil && *prev != ""
+// deliveredNewest is the seer a controller uses for its own model: it resolves
+// the executor held at call time, so an adopted or rotated session is answered
+// from the session this runtime has now, and it answers "nothing is visible"
+// until a turn is handed to the runner. A switched model inherits another
+// model's delivery, so the replacement restates the blocks once (see Restate).
+func (c *Controller) deliveredNewest(tag string) (string, bool) {
+	if c == nil || c.restateProjection.Load() || c.executor == nil {
+		return "", false
+	}
+	return c.executor.NewestStandingBlock(tag)
 }
 
-// inherit takes over what another controller's model was told, for a
-// replacement that carries that conversation verbatim.
-func (d *projectionDebt) inherit(from *projectionDebt) {
-	d.pending.Store(nil)
-	d.delivered.Store(from.delivered.Load())
+// deliveredSees is deliveredNewest's question for the one-time notes.
+func (c *Controller) deliveredSees(text string) bool {
+	if c == nil || c.restateProjection.Load() || c.executor == nil {
+		return false
+	}
+	return c.executor.SeesProjection(text)
 }
 
-// forget returns the debt to unknown: what was sent is no longer in the context
-// the model samples from. A new session starts here, and so does a fold — which
-// also discards a turn's pending bytes, since the fold decided their fate.
-func (d *projectionDebt) forget() {
-	d.pending.Store(nil)
-	d.delivered.Store(nil)
+// RestateStandingProjection marks this generation as having delivered nothing to
+// the model it is about to address: a rebuild that switched models adopted a
+// conversation composed for the model being replaced, not for this one.
+func (c *Controller) RestateStandingProjection() {
+	if c == nil {
+		return
+	}
+	c.restateProjection.Store(true)
+}
+
+// settleProjection records that a composed turn is being handed to the runner.
+// From here on the visible history is the record of what this runtime delivered.
+func (c *Controller) settleProjection() {
+	c.restateProjection.Store(false)
+}
+
+// deliveryNotes binds the one-time facts a turn also carries. They are not
+// standing blocks: a note is delivered when the model can read it anywhere.
+func (c *Controller) deliveryNotes(notes func(string) bool) {
+	if notes == nil {
+		return
+	}
+	c.mcp.promptFailures.sees = notes
+	c.refused.sees = notes
+}
+
+// visible reports whether the model still reads any block with this tag. It
+// answers "is anything of this kind in view", where owed asks about the exact
+// bytes this turn would render: a caller replacing a block needs the first
+// question, and can then owe the replacement.
+func (d *projectionDebt) visible(tag string) bool {
+	if d.newest == nil || tag == "" {
+		return false
+	}
+	_, ok := d.newest(tag)
+	return ok
 }

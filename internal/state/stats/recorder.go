@@ -144,10 +144,25 @@ func (r *Recorder) Emit(e event.Event) {
 	if r != nil && r.writer != nil && e.Kind == event.Usage {
 		r.recordUsage(e)
 	} else if r != nil && r.writer != nil && e.Kind == event.GuardianAssessment && e.Guardian.Usage != nil {
-		r.recordProviderUsage(e.ModelRef, e.Guardian.Usage, nil, "")
+		r.recordGuardianUsage(e)
 	} else if r != nil && r.writer != nil && e.Kind == event.TurnDone {
 		r.recordTurn()
 	}
+}
+
+// recordGuardianUsage prices a review once, on the same terms as a turn call.
+// The CostQuoteSink quotes it in production; an emitter that bypasses the sink
+// still gets an explicit quote here (nil Pricing yields an incomplete quote, so
+// the row says "no price", never "free").
+func (r *Recorder) recordGuardianUsage(e event.Event) {
+	quote := e.Guardian.CostQuote
+	if quote == nil {
+		quote = event.EnsureCostQuote(event.Event{
+			Kind: event.Usage, ModelRef: e.ModelRef, Source: e.Source,
+			UsageSource: e.UsageSource, Usage: e.Guardian.Usage, Pricing: e.Guardian.Pricing,
+		}, nil)
+	}
+	r.recordProviderUsage(e.ModelRef, e.Guardian.Usage, quote, e.UsageSource)
 }
 
 // RecordTurnCompletion records synchronous controller runs that deliberately do

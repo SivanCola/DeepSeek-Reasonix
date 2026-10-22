@@ -150,6 +150,7 @@ func rebuildWithPrevious(ctx context.Context, old *control.Controller, previous 
 // conversation, and the session axes a switch must not silently reset.
 type RuntimeMigration struct {
 	prevPath         string
+	prevModelRef     string
 	carried          []provider.Message
 	authorizations   control.SessionAuthorizations
 	toolApprovalMode string
@@ -166,6 +167,7 @@ type RuntimeMigration struct {
 func CaptureRuntimeMigration(old control.SessionAPI) RuntimeMigration {
 	m := RuntimeMigration{
 		prevPath:         old.SessionPath(),
+		prevModelRef:     old.ModelRef(),
 		carried:          old.History(),
 		toolApprovalMode: old.ToolApprovalMode(),
 		postureDefaulted: old.Posture().Defaulted,
@@ -192,6 +194,11 @@ func ApplyRuntimeMigration(ctrl, old *control.Controller, m RuntimeMigration) er
 		return err
 	}
 	ctrl.AdoptHistory(carried, path)
+	// Same conversation, different model: the carried blocks were composed
+	// for the model being replaced, so this one is owed them once.
+	if old != nil && m.prevModelRef != ctrl.ModelRef() {
+		ctrl.RestateStandingProjection()
+	}
 
 	// Re-apply session axes a rebuild must not reset.
 	if m.postureDefaulted {
@@ -209,7 +216,6 @@ func ApplyRuntimeMigration(ctrl, old *control.Controller, m RuntimeMigration) er
 			ctrl.CarryRecoveryFrom(old)
 		}
 		ctrl.InheritLifecycleFrom(old)
-		ctrl.InheritScratchFrom(old)
 	}
 	ctrl.RestoreSessionAuthorizations(m.authorizations)
 	// A mode survives only onto a model that declares it: switching to one

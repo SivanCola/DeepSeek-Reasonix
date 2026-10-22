@@ -319,7 +319,7 @@ func (a *Agent) runToolLoop(ctx context.Context, state *turnRuntime) error {
 		if len(committed) == 0 {
 			state.answeredMs = workMs
 		}
-		if cont, perr := a.settlePerseveration(state, streamed); !cont {
+		if cont, perr := a.settlePerseveration(ctx, state, streamed); !cont {
 			return perr
 		} else if streamed.perseverationAborted {
 			continue
@@ -352,7 +352,7 @@ func (a *Agent) runToolLoop(ctx context.Context, state *turnRuntime) error {
 	// Only reached when a positive maxSteps guard is configured. The work so far
 	// is already in the session, so the user can just send another message to pick
 	// up where it left off.
-	return a.gracePause(state)
+	return a.gracePause(ctx, state)
 }
 
 // settleRewritesBeforeSampling closes out whatever changed the conversation
@@ -561,13 +561,13 @@ func (a *Agent) handleFinalResponse(ctx context.Context, state *turnRuntime, tex
 	readiness := a.finalReadinessCheckFor()
 	a.turn.lastReadiness = &readiness
 	if state.graceRound && (readiness.reason != "" || !hasVisibleFinalAnswer(text)) {
-		return false, a.gracePause(state)
+		return false, a.gracePause(ctx, state)
 	}
 	if state.graceRound && (state.landCause.kind == "task_budget" || !state.runLimitHostOwned) {
 		// Explicit max_steps and spend budgets are user-selected boundaries.
 		// Preserve the summary, then return a resumable pause so Goal does not
 		// immediately open another Run and silently bypass the chosen limit.
-		return false, a.gracePause(state)
+		return false, a.gracePause(ctx, state)
 	}
 	// An executor that has not acted yet gets its one in-turn nudge before the
 	// gate ends the run: what it owes is still something this turn can supply.
@@ -589,7 +589,7 @@ func (a *Agent) handleFinalResponse(ctx context.Context, state *turnRuntime, tex
 		// The blocked turn is the one whose summary matters most — it is where
 		// a rewritten check or an unverified mutation is still outstanding —
 		// and it was the only turn that never reported one.
-		a.emitTurnShadows(a.turn.turnInput, true)
+		a.emitTurnShadows(ctx, a.turn.turnInput, true)
 		return false, &FinalReadinessError{Attempts: 1, Reason: readiness.reason, Missing: readiness.missingIDs(), Signature: readiness.progressSignature()}
 	}
 	// The turn has earned its stop. What the gate let through on a warn verdict
@@ -613,7 +613,7 @@ func (a *Agent) handleFinalResponse(ctx context.Context, state *turnRuntime, tex
 	if readiness.applies {
 		event.RecordReadinessAudit(a.svc.sink, readiness.audit(hostaudit.ReadinessAllowed, a.turn.readinessRecovered))
 	}
-	a.emitTurnShadows(a.turn.turnInput, false)
+	a.emitTurnShadows(ctx, a.turn.turnInput, false)
 	if !a.closeSteerIntakeIfIdle() {
 		return true, nil
 	}
@@ -664,7 +664,7 @@ func (a *Agent) handleToolRound(ctx context.Context, state *turnRuntime, step in
 		return false, fmt.Errorf("model repeatedly called context-unavailable tools without a visible answer: %s", strings.Join(unavailableContextTools, ", "))
 	}
 
-	if boundaryErr, stop := a.stopUnexecutedBoundaryCalls(state, calls, usage); stop {
+	if boundaryErr, stop := a.stopUnexecutedBoundaryCalls(ctx, state, calls, usage); stop {
 		return false, boundaryErr
 	}
 
@@ -712,7 +712,7 @@ func (a *Agent) handleToolRound(ctx context.Context, state *turnRuntime, step in
 		a.recordInterruptedDisplay("", "", nil, true, state.workDurationMs(), "")
 		return false, ctx.Err()
 	}
-	if pause := a.settleProgressRound(state, mark); pause != nil {
+	if pause := a.settleProgressRound(ctx, state, mark); pause != nil {
 		return false, pause
 	}
 	if len(unavailableContextTools) > 0 {

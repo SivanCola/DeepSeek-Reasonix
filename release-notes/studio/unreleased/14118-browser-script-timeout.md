@@ -1,0 +1,2 @@
+- 修复：`browser_act` 的脚本等待一个永远不会结束的 Promise 时不再无限期卡住（有用户等了十分钟以上）；30 秒后停止脚本，并告诉模型"脚本超时"。关联 #14118。
+- Fixed: a `browser_act` script awaiting a promise that never settles no longer holds the call forever; after 30 seconds it is stopped and the model is told it timed out. Refs #14118.

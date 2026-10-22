@@ -64,10 +64,13 @@ type RangeStats struct {
 	EstimateCost []pricing.Money `json:"estimateCost,omitempty"`
 	// CostEstimated marks a total that folded in at least one quote priced from
 	// a fallback rate card. A surface labelling the sum "paid" has to say so.
-	CostEstimated bool   `json:"costEstimated,omitempty"`
-	ActiveDays    int    `json:"active_days"`
-	TopModel      string `json:"top_model"`
-	TopProvider   string `json:"top_provider"`
+	CostEstimated bool `json:"costEstimated,omitempty"`
+	// CostIncomplete marks a total that counted usage for at least one call
+	// whose money is unknown. Cost is then a floor, not the whole bill.
+	CostIncomplete bool   `json:"costIncomplete,omitempty"`
+	ActiveDays     int    `json:"active_days"`
+	TopModel       string `json:"top_model"`
+	TopProvider    string `json:"top_provider"`
 	// Series
 	Daily     []DailyTokens   `json:"daily"`
 	Models    []ModelUsage    `json:"models"`
@@ -188,6 +191,9 @@ func (w *Writer) queryJSONL(f SourceFilter) (RangeStats, error) {
 				totalCost.add(mode, currency, pricing.Amount(amount))
 				out.CostEstimated = out.CostEstimated || (mode == "" && rec.CostEstimated)
 			}
+			if rec.CostComplete != nil && !*rec.CostComplete {
+				out.CostIncomplete = true
+			}
 			dayActive = dayActive || rec.Total > 0 || requests > 0
 		}
 		if dayActive {
@@ -278,6 +284,9 @@ func rangeStatsFromRollups(f SourceFilter, days []string, rows []usagecatalog.Ro
 				dayCost.add(entry.Mode, currency, pricing.Amount(entry.Amount))
 				totalCost.add(entry.Mode, currency, pricing.Amount(entry.Amount))
 				out.CostEstimated = out.CostEstimated || (entry.Mode == "" && entry.Estimated)
+			}
+			if row.CostIncomplete > 0 {
+				out.CostIncomplete = true
 			}
 			if row.Total > 0 || row.Requests > 0 {
 				active[day] = true

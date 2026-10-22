@@ -30,8 +30,11 @@ func TestScratchBlockProjectsTheSpellingNotTheHostPath(t *testing.T) {
 	m := sessiontemp.NewWithRoot(testenv.TempDir(t))
 	c := New(Options{SessionTemp: m, Sink: event.Discard})
 	defer c.Close()
+	var visible projectionHistory
+	c.bindProjectionSeer(visible.newest, visible.sees)
 
-	first := scratchBlockOf(c.Compose("turn-one"))
+	firstTurn := c.Compose("turn-one")
+	first := scratchBlockOf(firstTurn)
 	dir := m.Dir()
 	if dir == "" {
 		t.Fatal("projecting the scratch block did not create the session's directory")
@@ -42,12 +45,11 @@ func TestScratchBlockProjectsTheSpellingNotTheHostPath(t *testing.T) {
 	if strings.Contains(first, dir) || strings.Contains(first, sessiontemp.Prefix()) {
 		t.Fatalf("scratch block projected the host path %q:\n%s", dir, first)
 	}
-	c.settleTurnProjections()
+	visible.deliver(firstTurn)
 
 	if again := scratchBlockOf(c.Compose("turn-two")); again != "" {
 		t.Fatalf("an unchanged block was projected twice:\n%s", again)
 	}
-	c.settleTurnProjections()
 
 	m.Rotate()
 	if rotated := scratchBlockOf(c.Compose("turn-three")); rotated != "" {
@@ -60,17 +62,20 @@ func TestScratchBlockIsOwedUntilATurnCarriesIt(t *testing.T) {
 	m := sessiontemp.NewWithRoot(testenv.TempDir(t))
 	c := New(Options{SessionTemp: m, Sink: event.Discard})
 	defer c.Close()
+	var visible projectionHistory
+	c.bindProjectionSeer(visible.newest, visible.sees)
 
 	if scratchBlockOf(c.Compose("blocked")) == "" {
 		t.Fatal("first turn carried no scratch block")
 	}
-	if scratchBlockOf(c.Compose("retry")) == "" {
+	retry := c.Compose("retry")
+	if scratchBlockOf(retry) == "" {
 		t.Fatal("an unsettled scratch block was dropped from the next turn")
 	}
-	c.settleTurnProjections()
-	c.scratch.debt.forget()
+	visible.deliver(retry)
+	visible.forget() // a fold took the delivered turn out of view
 	if scratchBlockOf(c.Compose("after-fold")) == "" {
-		t.Fatal("a forgotten delivery was not re-owed")
+		t.Fatal("a folded-away delivery was not re-owed")
 	}
 }
 
@@ -81,18 +86,22 @@ func TestScratchBlockRetractsADirectoryThatNoLongerHolds(t *testing.T) {
 	m := sessiontemp.NewWithRoot(testenv.TempDir(t))
 	c := New(Options{SessionTemp: m, Sink: event.Discard})
 	defer c.Close()
+	var visible projectionHistory
+	c.bindProjectionSeer(visible.newest, visible.sees)
 
-	if scratchBlockOf(c.Compose("one")) == "" {
+	one := c.Compose("one")
+	if scratchBlockOf(one) == "" {
 		t.Fatal("first turn carried no scratch block")
 	}
-	c.settleTurnProjections()
+	visible.deliver(one)
 	m.SetMkDirForTest(func(string) (string, error) { return "", errors.New("disk full") })
 	m.Rotate()
-	retract := scratchBlockOf(c.Compose("two"))
+	two := c.Compose("two")
+	retract := scratchBlockOf(two)
 	if retract == "" || strings.Contains(retract, "`$TMPDIR/<name>`") {
 		t.Fatalf("a directory that no longer holds was not retracted:\n%s", retract)
 	}
-	c.settleTurnProjections()
+	visible.deliver(two)
 	if again := scratchBlockOf(c.Compose("three")); again != "" {
 		t.Fatalf("the retraction was repeated:\n%s", again)
 	}
@@ -114,14 +123,17 @@ func TestScratchDeliverySurvivesARebuild(t *testing.T) {
 	m := sessiontemp.NewWithRoot(testenv.TempDir(t))
 	old := New(Options{SessionTemp: m, Sink: event.Discard})
 	defer old.Close()
-	if scratchBlockOf(old.Compose("one")) == "" {
+	var visible projectionHistory
+	old.bindProjectionSeer(visible.newest, visible.sees)
+	one := old.Compose("one")
+	if scratchBlockOf(one) == "" {
 		t.Fatal("first turn carried no scratch block")
 	}
-	old.settleTurnProjections()
+	visible.deliver(one)
 
 	for _, temp := range []*sessiontemp.Manager{m, sessiontemp.NewWithRoot(testenv.TempDir(t))} {
 		next := New(Options{SessionTemp: temp, Sink: event.Discard})
-		next.InheritScratchFrom(old)
+		next.bindProjectionSeer(visible.newest, visible.sees)
 		if got := scratchBlockOf(next.Compose("two")); got != "" {
 			t.Fatalf("a rebuild re-sent the block:\n%s", got)
 		}

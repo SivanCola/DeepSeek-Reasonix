@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 
 	"reasonix/internal/contract/event"
@@ -52,8 +53,8 @@ func (a *Agent) armFinalizationRound(state *turnRuntime, cause landCause) {
 // caused the landing. Every host-stopped turn leaves through here, so the
 // end-of-turn summary is reported here too: a turn that ran out of rounds is
 // the one whose unverified work matters most to report.
-func (a *Agent) gracePause(state *turnRuntime) error {
-	a.emitTurnShadows(a.turn.turnInput, true)
+func (a *Agent) gracePause(ctx context.Context, state *turnRuntime) error {
+	a.emitTurnShadows(ctx, a.turn.turnInput, true)
 	if state.landCause.kind == "task_budget" {
 		return &taskBudgetPause{axis: state.landCause.axis, detail: state.landCause.detail}
 	}

@@ -1,0 +1,6 @@
+- 修复：注入的常驻上下文（技能清单、项目指令、规则、日期）不再因为「已交付」的书签而漏发。关联 #14099。
+- 修复：扩展拒绝、取消、折叠、回退、截断之后，都会按模型真正看到的历史重新判断。关联 #14099。
+- 修复：服务端新建会话（/new）的首个请求现在会带上技能清单、项目指令与日期。关联 #14099。
+- Fixed: injected standing context (skills listing, project instructions, rules, the date) can no longer be believed delivered when the model never got it. Refs #14099.
+- Fixed: a refusal, cancel, fold, rewind or truncation now re-asks the model-visible history instead of a bookmark. Refs #14099.
+- Fixed: a new session in the served app now starts with the skills listing, project instructions and the date. Refs #14099.

@@ -50,7 +50,7 @@ func TestSealedBundleDoesNotCopyTheContractEachTurn(t *testing.T) {
 		a.task.baselineCriteria[path] = evidence.TestCriterion{LogicalID: path, Digest: evidence.DigestOf([]byte(path))}
 	}
 	seal := func(input string) {
-		a.sealShadowBundle(input, taskcontract.New(input), completion.Report{}, nil, false)
+		a.sealShadowBundle(t.Context(), input, taskcontract.New(input), completion.Report{}, nil, false)
 	}
 
 	seal("first")
@@ -100,7 +100,7 @@ func TestLegacyBundleStillServesTheSnapshotInAMixedChain(t *testing.T) {
 	}
 
 	a, _ := contractAgent(t, &scriptedProvider{}, "", store)
-	a.sealShadowBundle("next", taskcontract.New("next"), completion.Report{}, []evidence.Receipt{{ToolName: "write_file", Success: true, Write: true, Mutation: true}}, false)
+	a.sealShadowBundle(t.Context(), "next", taskcontract.New("next"), completion.Report{}, []evidence.Receipt{{ToolName: "write_file", Success: true, Write: true, Mutation: true}}, false)
 	if _, err := store.Verify("ws"); err != nil {
 		t.Fatalf("mixed chain must verify: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestSealIsAuditedWhenTheObligationsCannotBeStored(t *testing.T) {
 	}
 	store := trustedstate.Open(root, nil)
 	a, sink := contractAgent(t, &scriptedProvider{}, "", store)
-	a.sealShadowBundle("x", taskcontract.New("x"), completion.Report{}, []evidence.Receipt{{ToolName: "write_file", Success: true, Write: true, Mutation: true}}, false)
+	a.sealShadowBundle(t.Context(), "x", taskcontract.New("x"), completion.Report{}, []evidence.Receipt{{ToolName: "write_file", Success: true, Write: true, Mutation: true}}, false)
 	got := sink.last(t)
 	if got.Sealed || got.FailureCode != "trusted_state.unwritable" {
 		t.Fatalf("audit = %+v, want unsealed with the store's typed cause", got)

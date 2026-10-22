@@ -262,7 +262,7 @@ func (c *Controller) runReady(ctx context.Context, input string) (err error) {
 	ctx, marker = c.beginTurn(ctx, startMessages, true)
 	ctx = c.announceAuthoredTurn(ctx, rawInput, startMessages)
 	ctx = c.withPlannerTurnMetadata(ctx, rawInput, false)
-	err = c.runSettled(ctx, c.withCapabilityRoute(ctx, input, rawInput))
+	err = c.runWithRunner(ctx, c.withCapabilityRoute(ctx, input, rawInput))
 	return err
 }
 

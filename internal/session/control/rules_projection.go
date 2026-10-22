@@ -37,10 +37,10 @@ func (c *Controller) loadRules() (rules.Result, bool) {
 
 func (r *rulesSet) owedAlways(res rules.Result) string {
 	block := rules.Block(res.Always)
-	if block == "" && r.always.sent() {
+	if block == "" && r.always.visible(projectRulesTag) {
 		block = rulesClearedBlock
 	}
-	return r.always.owed(block)
+	return r.always.owed(projectRulesTag, block)
 }
 
 func (r *rulesSet) owedScoped(res rules.Result, hits *skill.PathHits) string {
@@ -51,20 +51,8 @@ func (r *rulesSet) owedScoped(res rules.Result, hits *skill.PathHits) string {
 		}
 	}
 	block := rules.ScopedBlock(eligible)
-	if block == "" && r.scoped.sent() {
+	if block == "" && r.scoped.visible(scopedRulesTag) {
 		block = rulesScopedNoneBlock
 	}
-	return r.scoped.owed(block)
-}
-
-func (r *rulesSet) settle() {
-	r.always.settle()
-	r.scoped.settle()
-}
-
-// forget returns both blocks to unknown after a fold took the turn that carried
-// them out of the model's view.
-func (r *rulesSet) forget() {
-	r.always.forget()
-	r.scoped.forget()
+	return r.scoped.owed(scopedRulesTag, block)
 }

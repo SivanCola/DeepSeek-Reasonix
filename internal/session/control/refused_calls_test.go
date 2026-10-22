@@ -14,6 +14,8 @@ func refusedResult(name, args, code string) event.Event {
 
 func TestRefusedCallsRideTheNextTurnTailOnce(t *testing.T) {
 	c := New(Options{})
+	var visible projectionHistory
+	c.bindProjectionSeer(visible.newest, visible.sees)
 	c.sink.Emit(refusedResult("bash", `{"command":"git push origin main"}`, permission.RefusalDenyRule))
 	c.sink.Emit(refusedResult("write_file", `{"path":"a.txt"}`, permission.RefusalUnattended))
 	c.sink.Emit(event.Event{Kind: event.ToolResult, Tool: event.Tool{Name: "bash", Args: `{"command":"ls"}`, Err: "exit 2"}})
@@ -41,7 +43,7 @@ func TestRefusedCallsRideTheNextTurnTailOnce(t *testing.T) {
 	if !strings.HasSuffix(got, "next") && !strings.Contains(got, "next") {
 		t.Fatalf("user text lost: %s", got)
 	}
-	c.settleTurnProjections()
+	visible.deliver(got)
 	if again := c.Compose("later"); strings.Contains(again, "<refused-calls>") {
 		t.Errorf("a settled refusal was projected again:\n%s", again)
 	}

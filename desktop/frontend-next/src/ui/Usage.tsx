@@ -338,12 +338,14 @@ export function Usage({ port }: { port: AgentPort }) {
       {report && <>
       <section className="uhero">
         {/* "Paid" is only honest while every folded quote came from the
-            provider. One fallback-priced row and the label needs the caveat. */}
-        <div className="uhero-k">{report.costEstimated ? t("花费") : t("实付")}</div>
+            provider and priced its call. One fallback-priced or unpriced row
+            and the label needs the caveat. */}
+        <div className="uhero-k">{report.costEstimated || report.costIncomplete ? t("花费") : t("实付")}</div>
         <div className="uhero-fig">
           <div className="uhero-v">{moneyList(report.cost)}</div>
           {pricedFrom && <span className="uhero-scope">{t("{day} 起 · {n} 天有记录", { day: pricedFrom.slice(5), n: priced.length })}</span>}
           {report.costEstimated && <span className="uhero-scope">{t("含估算")}</span>}
+          {report.costIncomplete && <span className="uhero-scope">{t("未定价调用未计入")}</span>}
         </div>
         {report.estimateCost?.length ? (
           <div className="uhero-est">

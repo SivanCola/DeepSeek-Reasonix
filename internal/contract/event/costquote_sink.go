@@ -104,8 +104,9 @@ func (c *QuoteContext) catalogProvider(modelRef string) string {
 	return strings.TrimSpace(resolve(modelRef))
 }
 
-// CostQuoteSink fills CostQuote on Usage events before forwarding. Frontends
-// must consume e.CostQuote and must not call Pricing.Cost for aggregation.
+// CostQuoteSink fills CostQuote on Usage and GuardianAssessment events before
+// forwarding. Frontends must consume e.CostQuote and must not call
+// Pricing.Cost for aggregation.
 type CostQuoteSink struct {
 	AuditForwarder
 	Inner Sink
@@ -131,8 +132,25 @@ func (s *CostQuoteSink) Emit(e Event) {
 	if e.Kind == Usage && e.Usage != nil && e.CostQuote == nil {
 		e.CostQuote = EnsureCostQuote(e, s.Ctx)
 	}
+	if e.Kind == GuardianAssessment && e.Guardian.Usage != nil && e.Guardian.CostQuote == nil {
+		e.Guardian.CostQuote = EnsureCostQuote(guardianUsageEvent(e), s.Ctx)
+	}
 	if s.Inner != nil {
 		s.Inner.Emit(e)
+	}
+}
+
+// guardianUsageEvent spells a review's usage as the Usage event it is, so the
+// review and the turn's own calls are priced by one code path (including
+// e.ModelRef's billing mode and catalog provider).
+func guardianUsageEvent(e Event) Event {
+	return Event{
+		Kind:        Usage,
+		ModelRef:    e.ModelRef,
+		Source:      e.Source,
+		UsageSource: e.UsageSource,
+		Usage:       e.Guardian.Usage,
+		Pricing:     e.Guardian.Pricing,
 	}
 }
 

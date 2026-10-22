@@ -5,9 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 const maxEvalResult = 64 << 10
+
+// evalTimeout bounds one script: the evaluation awaits the script's promise, and
+// a page can leave one pending forever, which would hold the tool call for good.
+var evalTimeout = 30 * time.Second
+
 const maxEvalScript = 256 << 10
 
 // Evaluate runs JavaScript in the main world of a tab and returns its value.
@@ -51,9 +57,15 @@ func (s *Session) Evaluate(ctx context.Context, tabID, script, approvedOrigin st
 			} `json:"exception"`
 		} `json:"exceptionDetails"`
 	}
-	if err := t.call(ctx, "Runtime.evaluate", map[string]any{
+	callCtx, stop := context.WithTimeout(ctx, evalTimeout)
+	defer stop()
+	if err := t.call(callCtx, "Runtime.evaluate", map[string]any{
 		"expression": expression, "awaitPromise": true, "returnByValue": true, "userGesture": true, "uniqueContextId": contextID,
 	}, &result); err != nil {
+		if callCtx.Err() != nil && ctx.Err() == nil {
+			t.terminateScript()
+			return "", t.info(true), fail(CodeScriptTimeout, "the script did not finish within %s; a promise it awaits may never settle. Read the page again, and if the work needs longer, run it in steps and poll for the result in a later call", evalTimeout)
+		}
 		t.mu.Lock()
 		currentContext := t.runtime.contexts[t.mainFrame]
 		t.mu.Unlock()
@@ -84,4 +96,12 @@ func (s *Session) Evaluate(ctx context.Context, tabID, script, approvedOrigin st
 		value = value[:maxEvalResult] + "\n… result truncated"
 	}
 	return value, t.info(true), nil
+}
+
+// terminateScript stops what the timed-out script is still running. It is best
+// effort: the failure being reported does not depend on the page answering.
+func (t *tab) terminateScript() {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_ = t.call(ctx, "Runtime.terminateExecution", map[string]any{}, nil)
 }

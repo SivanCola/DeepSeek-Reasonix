@@ -48,13 +48,16 @@ func (e *MCPPromptError) turnNote() string {
 		promptNoteEscaper.Replace(e.Prompt), promptNoteEscaper.Replace(e.Server), e.Stage, promptNoteEscaper.Replace(e.reason()))
 }
 
-// promptFailureDebt holds failures the model has not yet been told about.
-// composed counts the entries the in-flight turn carries, so settling clears
-// exactly those and never one recorded while the turn was being assembled.
+// promptFailureDebt holds failures the model has not yet been told about. It
+// keeps the notes until the model-visible history carries them: a turn refused
+// before the provider delivered none of them, and asking the history is what
+// lets the next turn owe them again.
 type promptFailureDebt struct {
-	mu       sync.Mutex
-	notes    []string
-	composed int
+	mu    sync.Mutex
+	notes []string
+	// sees is the model-visible history (agent.SeesProjection); nil means no
+	// model is attached and every note is still owed.
+	sees func(string) bool
 }
 
 func (d *promptFailureDebt) owe(note string) {
@@ -62,21 +65,22 @@ func (d *promptFailureDebt) owe(note string) {
 	defer d.mu.Unlock()
 	if len(d.notes) >= maxPromptFailuresOwed {
 		d.notes = d.notes[1:]
-		d.composed = max(d.composed-1, 0)
 	}
 	d.notes = append(d.notes, note)
 }
 
+// owed returns the notes the model cannot read yet. A note already present
+// verbatim is not repeated: the block it rides is derived from the history, so
+// this needs no settle at the hand-off.
 func (d *promptFailureDebt) owed() string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.composed = len(d.notes)
-	return strings.Join(d.notes, "\n")
-}
-
-func (d *promptFailureDebt) settle() {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.notes = d.notes[d.composed:]
-	d.composed = 0
+	live := make([]string, 0, len(d.notes))
+	for _, note := range d.notes {
+		if d.sees != nil && d.sees(note) {
+			continue
+		}
+		live = append(live, note)
+	}
+	return strings.Join(live, "\n")
 }

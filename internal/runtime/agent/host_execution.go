@@ -124,6 +124,9 @@ func (h *HostExecutor) Execute(ctx context.Context, call provider.ToolCall) (res
 	ctx = context.WithValue(ctx, hostCallKey{}, invocation)
 	h.agent.SetPlanMode(PlanModeFromContext(ctx))
 	_, turn, err := h.agent.beginRunTurn(ctx, "Run the host-selected verification check")
+	if turn != nil && turn.snapshot != nil {
+		defer turn.snapshot.cancel()
+	}
 	if err != nil {
 		return HostExecutionResult{CallID: call.ID, ExecutionID: executionID(ctx), Blocked: true, Error: err.Error()}
 	}

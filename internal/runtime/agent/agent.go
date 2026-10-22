@@ -902,6 +902,9 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	}
 
 	_, state, admissionErr := a.beginRunTurn(ctx, input)
+	if state != nil && state.snapshot != nil {
+		defer state.snapshot.cancel()
+	}
 	if admissionErr != nil {
 		return admissionErr
 	}

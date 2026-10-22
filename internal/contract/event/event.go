@@ -528,6 +528,10 @@ type GuardianResult struct {
 	DurationMs        int64             // wall-clock review time
 	Usage             *provider.Usage   // guardian review token telemetry
 	Pricing           *provider.Pricing // for cost display (nil = omit cost)
+	// CostQuote is the occurrence-time quote for Usage, filled by CostQuoteSink
+	// exactly as a Usage event's quote is. Nil until quoted; a quote with
+	// CostComplete=false says the review's money is unknown, not zero.
+	CostQuote *pricing.CostQuote
 }
 
 // AskAnswer is the user's reply to one AskQuestion: the chosen option label(s)

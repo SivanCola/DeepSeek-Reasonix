@@ -26,11 +26,13 @@ func pathCatalogSet(t *testing.T) skillSet {
 
 func TestCatalogListsAGatedSkillOnlyAfterItsPathIsTouched(t *testing.T) {
 	set := pathCatalogSet(t)
+	var visible projectionHistory
+	set.catalog.newest = visible.newest
 	before := set.owedCatalog()
 	if !strings.Contains(before, "plain") || strings.Contains(before, "gogate") || strings.Contains(before, "broken") {
 		t.Fatalf("listing before any hit:\n%s", before)
 	}
-	set.catalog.settle()
+	visible.deliver(wrapTurnBlock(availableSkillsTag, before))
 	if again := set.owedCatalog(); again != "" {
 		t.Fatalf("an unchanged state owed the listing again:\n%s", again)
 	}
@@ -41,9 +43,9 @@ func TestCatalogListsAGatedSkillOnlyAfterItsPathIsTouched(t *testing.T) {
 	if !strings.Contains(after, "gogate") || !strings.Contains(after, "plain") || strings.Contains(after, "broken") {
 		t.Fatalf("listing after a matching hit:\n%s", after)
 	}
-	set.catalog.settle()
+	visible.deliver(wrapTurnBlock(availableSkillsTag, after))
 	if again := set.owedCatalog(); again != "" {
-		t.Fatalf("a settled listing was owed again:\n%s", again)
+		t.Fatalf("a delivered listing was owed again:\n%s", again)
 	}
 }
 
@@ -63,12 +65,15 @@ func TestCatalogBytesDependOnlyOnTheCanonicalState(t *testing.T) {
 
 func TestCatalogSaysSoWhenTheSetShrinksUnderADeliveredListing(t *testing.T) {
 	set := pathCatalogSet(t)
+	var visible projectionHistory
+	set.catalog.newest = visible.newest
 	root := set.pathHits
 	_ = root.Observe("src/a.go")
-	if got := set.owedCatalog(); !strings.Contains(got, "gogate") {
-		t.Fatalf("setup: %s", got)
+	delivered := set.owedCatalog()
+	if !strings.Contains(delivered, "gogate") {
+		t.Fatalf("setup: %s", delivered)
 	}
-	set.catalog.settle()
+	visible.deliver(wrapTurnBlock(availableSkillsTag, delivered))
 	root.Reset()
 	got := set.owedCatalog()
 	if strings.Contains(got, "gogate") || !strings.Contains(got, "plain") {
@@ -81,14 +86,17 @@ func TestCatalogWithOnlyGatedSkillsNamesTheCauseWhenNoneApply(t *testing.T) {
 	writeSkillFile(t, root, ".reasonix/skills/gogate/SKILL.md", "---\nname: gogate\ndescription: go work\npaths: \"*.go\"\n---\nB")
 	store := skill.New(skill.Options{HomeDir: testenv.TempDir(t), ProjectRoot: root, DisableBuiltins: true})
 	set := newSkillSet(nil, nil, store, store, false, root)
+	var visible projectionHistory
+	set.catalog.newest = visible.newest
 	if got := set.owedCatalog(); got != "" {
 		t.Fatalf("nothing eligible and nothing sent should say nothing, got:\n%s", got)
 	}
 	_ = set.pathHits.Observe("main.go")
-	if got := set.owedCatalog(); !strings.Contains(got, "gogate") {
-		t.Fatalf("listing after the hit:\n%s", got)
+	delivered := set.owedCatalog()
+	if !strings.Contains(delivered, "gogate") {
+		t.Fatalf("listing after the hit:\n%s", delivered)
 	}
-	set.catalog.settle()
+	visible.deliver(wrapTurnBlock(availableSkillsTag, delivered))
 	set.pathHits.Reset()
 	got := set.owedCatalog()
 	if !strings.Contains(got, "None of this project's skills apply") || strings.Contains(got, "switched off") {

@@ -1,0 +1,4 @@
+- 修复：用量页与 hero 的「实付」现在包含守护评审这些安全审查的花费（此前它们的 token 计入而钱没计入）。关联 #14110。
+- 兼容性：没有价目的行不再显示成 ¥0，而是把总额标为「未定价调用未计入」的下限。关联 #14110。
+- Fixed: the usage page and hero paid total now include the guardian's safety reviews, whose tokens were counted but whose money was not. Refs #14110.
+- Compatibility: a row with no price no longer shows as zero; the total is marked as a floor with "unpriced calls not included". Refs #14110.
