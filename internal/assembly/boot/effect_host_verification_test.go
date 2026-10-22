@@ -12,16 +12,21 @@ import (
 	"reasonix/internal/session/control"
 )
 
-func TestEffectHostVerificationOffIsTheUsersChoiceOnly(t *testing.T) {
+// holdChangedTurns is the user-level opt-in that makes a turn which changed files
+// owe its check, review and sign-off; tests of what a turn owes start from it.
+const holdChangedTurns = "\n[agent]\nhost_verification = \"on\"\n"
+
+func TestEffectHostVerificationIsOffUnlessTheUserTurnsItOn(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
 		userExtra   string
 		projectFile string
+		preset      string
 		wantHeld    bool
 	}{
-		{name: "default holds a changed turn to its declared check", wantHeld: true},
-		{name: "the user file turns it off", userExtra: "\n[agent]\nhost_verification = \"off\"\n"},
-		{name: "a project file cannot turn it off", projectFile: "[agent]\nhost_verification = \"off\"\n", wantHeld: true},
+		{name: "default drops the owed check on a changed turn", preset: AgentPresetBalanced},
+		{name: "the user file turns it on", preset: AgentPresetBalanced, userExtra: "\n[agent]\nhost_verification = \"on\"\n", wantHeld: true},
+		{name: "a project file cannot turn it on", preset: AgentPresetBalanced, projectFile: "[agent]\nhost_verification = \"on\"\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			isolateConfigHome(t)
@@ -47,7 +52,7 @@ func TestEffectHostVerificationOffIsTheUsersChoiceOnly(t *testing.T) {
 				testutil.Turn{Text: "done"},
 			)
 			setBootTokenProfileTestProvider(t, prov)
-			ctrl, err := Build(context.Background(), Options{Home: home, WorkspaceRoot: dir, AgentPreset: AgentPresetBalanced, HeadlessApprovalMode: control.ToolApprovalAuto})
+			ctrl, err := Build(context.Background(), Options{Home: home, WorkspaceRoot: dir, AgentPreset: tc.preset, HeadlessApprovalMode: control.ToolApprovalAuto})
 			if err != nil {
 				t.Fatal(err)
 			}

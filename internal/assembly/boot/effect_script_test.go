@@ -27,6 +27,7 @@ print("rm ok:", r.ok)
 func TestEffectRunScriptCallsPassTheOrdinaryChecks(t *testing.T) {
 	t.Parallel()
 	home := statedBootHome(t)
+	writeFile(t, home, "config.toml", holdChangedTurns)
 	dir := testenv.TempDir(t)
 	rec := &browserScriptProvider{rounds: []func(string) *provider.ToolCall{
 		func(string) *provider.ToolCall {
@@ -109,6 +110,7 @@ print("rewrote")
 func TestEffectRunScriptReadEditWriteKeepsTheBytes(t *testing.T) {
 	t.Parallel()
 	home := statedBootHome(t)
+	writeFile(t, home, "config.toml", holdChangedTurns)
 	dir := testenv.TempDir(t)
 	big := strings.Repeat("// filler line that pads the file past one tool result\n", 1200) + "func OldName() {}\n"
 	files := map[string]string{

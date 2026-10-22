@@ -559,9 +559,8 @@ export function Composer({ port, status, running, quote, restore, inject, focus,
           onKeyUp={(e) => setCaret(chips.snap(e.currentTarget, caret))}
           onClick={(e) => setCaret(chips.snap(e.currentTarget, caret))}
           data-action-paste="session.attach"
-          // Dropping is the pane's job — a one-row box is 40px to aim at, and the
-          // handler that used to live here prevented the default and then did
-          // nothing with text, which is worse than not handling it at all.
+          // Clipboard files are copied into host-owned attachments. Their native
+          // paths can belong to a source application's restricted or short-lived cache.
           onPaste={(e) => {
             if (submitting) {
               e.preventDefault();
@@ -570,7 +569,7 @@ export function Composer({ port, status, running, quote, restore, inject, focus,
             const files = [...e.clipboardData.files];
             if (files.length > 0) {
               e.preventDefault();
-              attach(files);
+              attach(files.map((file) => new File([file], file.name, { type: file.type })));
               return;
             }
             const body = e.clipboardData.getData("text/plain");

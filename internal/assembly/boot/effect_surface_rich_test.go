@@ -23,6 +23,7 @@ import (
 
 func TestEffectRichSurfaceChoicesReachProviderAndReplay(t *testing.T) {
 	isolateConfigHome(t)
+	writeUserConfig(t, holdChangedTurns)
 	dir := robustTempDir(t)
 	t.Chdir(dir)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

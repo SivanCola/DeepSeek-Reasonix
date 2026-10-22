@@ -68,6 +68,7 @@ func (p *writeThenReplyProvider) Stream(context.Context, provider.Request) (<-ch
 // without keeping the bytes it wrote.
 func TestEffectEveryTurnSealsAVerifiableShadowBundle(t *testing.T) {
 	isolateConfigHome(t)
+	writeUserConfig(t, holdChangedTurns)
 	dir := robustTempDir(t)
 	t.Chdir(dir)
 	provider.Register("boot-evidence-seal", func(provider.Config) (provider.Provider, error) {
@@ -214,6 +215,7 @@ func (p *scriptedProvider) Stream(context.Context, provider.Request) (<-chan pro
 // verdict rather than "done", and nothing is counted as satisfied by a claim.
 func TestEffectAMarkedTodoProvesNothingThroughRealBuild(t *testing.T) {
 	isolateConfigHome(t)
+	writeUserConfig(t, holdChangedTurns)
 	dir := robustTempDir(t)
 	t.Chdir(dir)
 	provider.Register("boot-claim-only", func(provider.Config) (provider.Provider, error) {

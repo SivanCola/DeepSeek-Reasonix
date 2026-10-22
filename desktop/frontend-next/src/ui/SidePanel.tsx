@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { t } from "../i18n";
 import { reason } from "../i18n/kernel";
 import type { AgentPort } from "../port/port";
+import { Markdown } from "./Markdown";
 import { StudioIcon } from "./StudioIcon";
 import { listenAction } from "./listen";
 
@@ -135,7 +136,7 @@ export function SidePanel({ port, onClose }: { port: AgentPort; onClose: () => v
         {turns.map((turn, i) => (
           <div key={i} className="sideturn" data-role={turn.role}>
             {turn.quotes?.map((q) => <blockquote key={q}>{q}</blockquote>)}
-            <p>{turn.text}</p>
+            {turn.role === "side" ? <Markdown text={turn.text} images={false} /> : <p>{turn.text}</p>}
           </div>
         ))}
         {busy && <p className="sidehint">{t("正在读取并回答…")}</p>}

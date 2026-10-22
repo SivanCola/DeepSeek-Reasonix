@@ -61,7 +61,7 @@ func TestEffectSupportingWritesWithoutChecksMayFinish(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Chdir(dir)
-			writeUserConfig(t, userModel+"\n[codegraph]\nenabled = false\n")
+			writeUserConfig(t, userModel+holdChangedTurns+"\n[codegraph]\nenabled = false\n")
 			registerBootTokenProfileTestProvider()
 			writeFile(t, dir, "todo.md", "A neutral task.\n")
 			if tc.move {

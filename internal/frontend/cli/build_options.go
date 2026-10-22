@@ -32,6 +32,7 @@ type cliBuildOverrides struct {
 	SessionEnvironmentPath string
 	HeadlessApprovalMode   string
 	GoalTurnsUnreachable   bool
+	HoldOwedChecks         bool
 	Stderr                 io.Writer
 	OnSessionRecovered     func(control.SessionRecoveryInfo) error
 	Ablation               ablation.Set
@@ -86,6 +87,7 @@ func cliProfileBuildOptions(modelName string, maxStepsOverride int, requireKey b
 		AdditionalDirs:         overrides.AdditionalDirs,
 		HeadlessApprovalMode:   overrides.HeadlessApprovalMode,
 		GoalTurnsUnreachable:   overrides.GoalTurnsUnreachable,
+		HoldOwedChecks:         overrides.HoldOwedChecks,
 		StatsSource:            surface.CLI,
 		FeedbackSurface:        feedback.SurfaceTUI,
 		Stderr:                 overrides.Stderr,
@@ -102,7 +104,7 @@ func cliProfileBuildOptions(modelName string, maxStepsOverride int, requireKey b
 // exits, so nothing in this path can reach SetGoal and goal-only tools are left
 // out of the provider schema.
 func runBuildOverrides(effort *string, allow, dirs []string, workspaceRoot, approval string,
-	onRecovered func(control.SessionRecoveryInfo) error, ablated ablation.Set) cliBuildOverrides {
+	onRecovered func(control.SessionRecoveryInfo) error, ablated ablation.Set, holdOwedChecks bool) cliBuildOverrides {
 	return cliBuildOverrides{
 		Effort:               effort,
 		PermissionAllow:      allow,
@@ -112,5 +114,6 @@ func runBuildOverrides(effort *string, allow, dirs []string, workspaceRoot, appr
 		GoalTurnsUnreachable: true,
 		OnSessionRecovered:   onRecovered,
 		Ablation:             ablated,
+		HoldOwedChecks:       holdOwedChecks,
 	}
 }

@@ -55,7 +55,7 @@ func proseAfterCheckWorkspace(t *testing.T, declared, hook bool) (home, dir stri
 		t.Fatal(err)
 	}
 	t.Chdir(dir)
-	writeUserConfig(t, userModel+"\n[sandbox]\nbash = \"off\"\n\n[codegraph]\nenabled = false\n")
+	writeUserConfig(t, userModel+holdChangedTurns+"\n[sandbox]\nbash = \"off\"\n\n[codegraph]\nenabled = false\n")
 	registerBootTokenProfileTestProvider()
 	if hook {
 		command, err := json.Marshal(markerCommand(t, filepath.Join(dir, "main.go")))

@@ -46,6 +46,22 @@ describe("the side conversation panel", () => {
     expect(screen.getByText("这个函数做什么？")).toBeTruthy();
   });
 
+  it("draws the answer as markdown but leaves the question as typed", async () => {
+    const { port } = draw();
+    vi.spyOn(port, "askSide").mockResolvedValue("先看 **入口函数** 再看 `main`");
+    await userEvent.type(await screen.findByRole("textbox", { name: "向辅助会话提问" }), "写 **粗** 的问题");
+    await userEvent.click(screen.getByRole("button", { name: "发送" }));
+    const answer = await waitFor(() => {
+      const el = document.querySelector('.sideturn[data-role="side"]') as HTMLElement;
+      expect(el.querySelector("strong")).toBeTruthy();
+      return el;
+    });
+    expect(answer.querySelector("strong")!.textContent).toBe("入口函数");
+    expect(answer.querySelector("code")!.textContent).toBe("main");
+    expect(answer.textContent).not.toContain("**");
+    expect(document.querySelector('.sideturn[data-role="me"]')!.textContent).toContain("**粗**");
+  });
+
   it("brings the selected text of the main conversation along as a quote, once", async () => {
     const { port } = draw();
     const ask = vi.spyOn(port, "askSide");

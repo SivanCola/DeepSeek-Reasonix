@@ -217,6 +217,14 @@ class Replies(unittest.TestCase):
         self.assertEqual(metrics(s)["m4"]["max_run"], 2)
 
 
+class NoTextEvents(unittest.TestCase):
+    def test_a_stream_without_text_events_has_no_m4_value_not_a_zero(self):
+        self.assertIsNone(metrics(Stream().turn().call("c1"))["m4"]["max_run"])
+
+    def test_a_stream_with_text_events_and_no_repeat_is_zero_or_one(self):
+        self.assertEqual(metrics(Stream().turn().say("a long enough reply that is over the cap"))["m4"]["max_run"], 0)
+
+
 class Resume(unittest.TestCase):
     def first(self):
         s = Stream().turn()
@@ -248,6 +256,55 @@ class Cost(unittest.TestCase):
         s = Stream().turn().usage("a1").usage("a1").usage("a2")
         m = metrics(s)["m5"]
         self.assertEqual((m["requests"], m["completion"]), (2, 10))
+
+
+class Inputs(unittest.TestCase):
+    def test_two_requests_that_share_an_attempt_id_are_both_counted(self):
+        s = Stream().turn().usage("sa-1-1", completion=5).usage("sa-1-1", completion=9)
+        m = metrics(s)["m5"]
+        self.assertEqual((m["requests"], m["completion"]), (2, 14))
+
+    def test_an_identical_usage_event_emitted_twice_counts_once(self):
+        s = Stream().turn().usage("sa-1-1").usage("sa-1-1")
+        self.assertEqual(metrics(s)["m5"]["requests"], 1)
+
+    def test_a_wire_log_whose_sidecar_says_truncated_is_reported_as_a_prefix(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = Stream().turn().write(d, "s.wire.jsonl")
+            self.assertIsNone(lm.wire_truncated(log))
+            with open(os.path.join(d, "s.wire.meta.json"), "w") as fh:
+                json.dump({"truncated": True}, fh)
+            self.assertTrue(lm.wire_truncated(log))
+            self.assertEqual(lm.cell_summary("x", [log])["truncated_wire_logs"], [log])
+
+    def test_a_complete_wire_log_and_a_trajectory_are_not_reported_truncated(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = Stream().turn().write(d, "s.wire.jsonl")
+            with open(os.path.join(d, "s.wire.meta.json"), "w") as fh:
+                json.dump({"truncated": False}, fh)
+            self.assertFalse(lm.wire_truncated(log))
+            self.assertIsNone(lm.wire_truncated(Stream().turn().write(d, "t.jsonl")))
+
+
+class Legs(unittest.TestCase):
+    def test_usage_in_two_processes_is_not_deduplicated_across_them(self):
+        a = Stream().turn().usage("sa-1-1")
+        b = Stream().turn().usage("sa-1-1")
+        m = lm.run_metrics([a.events(), b.events()])["m5"]
+        self.assertEqual(m["requests"], 2)
+
+    def test_legs_sum_calls_and_keep_turns_apart(self):
+        a = Stream().turn().call("c1")
+        b = Stream().turn().call("c2")
+        m = lm.run_metrics([a.events(), b.events()])
+        self.assertEqual((m["turns"], m["m1"]["unique_calls"], m["m1"]["redundant"]), (2, 2, 0))
+
+    def test_a_run_given_as_comma_separated_files_is_one_run(self):
+        with tempfile.TemporaryDirectory() as d:
+            one = Stream().turn().call("c1").usage("a").write(d, "1.jsonl")
+            two = Stream().turn().call("c2").usage("a").write(d, "2.jsonl")
+            s = lm.cell_summary("x", [one + "," + two])
+            self.assertEqual((s["runs"], s["series"]["requests"]["median"]), (1, 2))
 
 
 class Cells(unittest.TestCase):

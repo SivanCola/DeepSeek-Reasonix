@@ -5,6 +5,8 @@ import userEvent from "@testing-library/user-event";
 import "./testkit";
 import { Composer } from "./Composer";
 import { MockPort } from "../port/mock";
+import { SsePort } from "../port/sse";
+import { host } from "../port/host";
 import { DeliveryError, HttpError } from "../port/port";
 import type { AgentPort, ApprovalMode, Attachment, Completion, ModelEntry, Preset, SessionStatus, WorkspaceGit } from "../port/port";
 import { draftKey } from "./drafts";
@@ -670,6 +672,33 @@ describe("composer menus", () => {
 });
 
 describe("composer attachments", () => {
+  it.each(["application/pdf", ""])("stores a pasted native file as an attachment copy (%j)", async (mime) => {
+    const file = new File(["%PDF-1.7\nreport"], "海上航路规划调研报告.pdf", { type: mime });
+    const nativePath = `/private/chat-cache/${file.name}`;
+    vi.spyOn(host(), "pathsForFiles").mockImplementation((files) => files.flatMap((f) => f === file ? [nativePath] : []));
+    const saved = { path: ".reasonix/attachments/clipboard-report.pdf", ref: "@.reasonix/attachments/clipboard-report.pdf", image: false };
+    const fetched = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => Response.json(
+      String(input).endsWith("/drop") ? [{ path: nativePath, ref: "@__reasonix_external_folder/cache/report.pdf", image: false }] : saved,
+    ));
+    const port = new MockPort();
+    const intake = new SsePort("", "r1");
+    vi.spyOn(port as AgentPort, "attach").mockImplementation((...args) => intake.attach(...args));
+    const { box, onSubmit } = draw({ port });
+
+    fireEvent.paste(box, { clipboardData: { files: [file], getData: () => "" } });
+    await waitFor(() => expect(fetched).toHaveBeenCalledWith(expect.stringContaining("/attachments/upload?"), expect.objectContaining({
+      body: expect.objectContaining({ size: file.size, type: mime }),
+      headers: { "content-type": "application/octet-stream" },
+    })));
+    expect(fetched).toHaveBeenCalledOnce();
+    const query = new URL(String(fetched.mock.calls[0][0]), "http://localhost").searchParams;
+    expect(query.get("name")).toBe(file.name);
+    expect(query.get("mime")).toBe(mime);
+    await waitFor(() => expect((screen.getByRole("button", { name: "发送" }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledExactlyOnceWith(saved.ref));
+  });
+
   it("cancels an upload when its attachment is removed", async () => {
     const port = new MockPort();
     let signal: AbortSignal | undefined;

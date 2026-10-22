@@ -1,0 +1,16 @@
+Which package in this repository owns the workspace write-lease logic? Answer in one sentence.
+Using what you found, which file decides whether two lease claims conflict? One sentence.
+Which function in that file does the conflict check? One sentence.
+Who calls that function outside its own package? List up to three, one line each.
+Which package builds the agent system prompt? One sentence.
+Where is the reply-language policy text defined, and what is its first sentence? Two lines at most.
+Which package owns context compaction? One sentence.
+What config key sets the compaction ratio? One sentence.
+Where is the default compaction ratio set? One sentence.
+Which file registers the HTTP route for agent presets? One sentence.
+Name the function that handles importing an agent preset. One sentence.
+Which package defines the built-in agent presets, and in which file? One sentence.
+Which tool is responsible for running shell commands? One sentence.
+Where does the sandbox decide whether a write is allowed? One sentence.
+Which earlier answer of yours named the package that owns compaction, and what was it? One sentence, no tool calls needed.
+Summarise in two sentences how the lease conflict check and the compaction ratio relate, if at all.
