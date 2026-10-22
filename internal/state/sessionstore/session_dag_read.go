@@ -48,30 +48,31 @@ type sessionDAGEntry struct {
 }
 
 type sessionDAGNode struct {
-	parent string
-	at     time.Time
-	msg    provider.Message
+	parent  string
+	at      time.Time
+	payload sessionDAGPayload
 }
 
 type sessionDAGHead struct {
 	leaf         string
-	system       *provider.Message
+	system       *sessionDAGPayload
 	lastActivity time.Time
 	lastOffset   int64
 	retired      bool
 }
 
-// sessionDAGState is the replayed graph: every message node, every head, and
-// the overlays that change how a message reads without moving a head.
+// sessionDAGState retains topology and file offsets; message bodies are loaded
+// only for the effective selected transcript.
 type sessionDAGState struct {
 	path            string
 	nodes           map[string]*sessionDAGNode
 	heads           map[string]*sessionDAGHead
 	headOrder       []string
-	patches         map[string]provider.Message
-	redactions      map[string]provider.Message
+	patches         map[string]sessionDAGPayload
+	redactions      map[string]sessionDAGPayload
 	selected        string
 	collectionItems int
+	metadataBytes   int64
 	records         int
 	damaged         bool
 }
@@ -80,20 +81,15 @@ type sessionDAGState struct {
 // does not decode and reports the transcript up to there as damaged; an entry
 // type this reader does not know is a hard error, since the log's meaning
 // would change under it.
-func replaySessionDAG(path string, limits sessionReplayLimits) (*sessionDAGState, error) {
+func replaySessionDAG(f *os.File, path string, limits sessionReplayLimits) (*sessionDAGState, error) {
 	st := &sessionDAGState{
 		path:       path,
 		nodes:      map[string]*sessionDAGNode{},
 		heads:      map[string]*sessionDAGHead{sessionDAGMainHead: {}},
 		headOrder:  []string{sessionDAGMainHead},
-		patches:    map[string]provider.Message{},
-		redactions: map[string]provider.Message{},
+		patches:    map[string]sessionDAGPayload{},
+		redactions: map[string]sessionDAGPayload{},
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		return st, err
-	}
-	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
 		return st, err
@@ -101,19 +97,27 @@ func replaySessionDAG(path string, limits sessionReplayLimits) (*sessionDAGState
 	if info.Size() > limits.maxBytes {
 		return st, sessionReplayLimitError(path, "encoded_bytes", info.Size(), limits.maxBytes)
 	}
-	dec := json.NewDecoder(limits.reader(f))
+	reader := newSessionRecordReader(limits.reader(f), path, limits.maxBytes)
 	for {
 		if err := limits.err(); err != nil {
 			return st, err
 		}
-		var e sessionDAGEntry
-		if err := dec.Decode(&e); err != nil {
+		raw, start, err := reader.next()
+		if err != nil {
 			if err := limits.err(); err != nil {
+				return st, err
+			}
+			if errors.Is(err, ErrSessionReplayLimitExceeded) {
 				return st, err
 			}
 			if !errors.Is(err, io.EOF) {
 				st.damaged = true
 			}
+			return st, nil
+		}
+		var e sessionDAGEntry
+		if err := json.Unmarshal(raw, &e); err != nil {
+			st.damaged = true
 			return st, nil
 		}
 		if e.SchemaVersion != sessionDAGSchemaVersion {
@@ -122,7 +126,19 @@ func replaySessionDAG(path string, limits sessionReplayLimits) (*sessionDAGState
 		if st.records >= limits.maxRecords {
 			return st, sessionReplayLimitError(path, "event_records", int64(st.records+1), int64(limits.maxRecords))
 		}
-		ok, err := st.apply(e, dec.InputOffset(), limits)
+		metadataBytes := len(e.ID) + len(e.Head) + len(e.Parent) + len(e.Target) + len(e.NewHead) + len(e.From) + len(e.To)
+		for id := range e.Targets {
+			metadataBytes += len(id)
+		}
+		if err := st.chargeMetadata(int64(metadataBytes)); err != nil {
+			return st, err
+		}
+		locations, err := locateSessionDAGPayloads(raw, start)
+		if err != nil {
+			st.damaged = true
+			return st, nil
+		}
+		ok, err := st.apply(e, reader.offset, locations, limits)
 		if err := limits.err(); err != nil {
 			return st, err
 		}
@@ -139,12 +155,12 @@ func replaySessionDAG(path string, limits sessionReplayLimits) (*sessionDAGState
 
 // apply folds one entry into the state. ok=false marks an entry that does not
 // decode; err is kept for unknown types and replay limits.
-func (st *sessionDAGState) apply(e sessionDAGEntry, offset int64, limits sessionReplayLimits) (bool, error) {
+func (st *sessionDAGState) apply(e sessionDAGEntry, offset int64, locations sessionDAGLocations, limits sessionReplayLimits) (bool, error) {
 	switch e.Type {
 	case "message":
-		return st.applyMessage(e, offset, limits)
+		return st.applyMessage(e, offset, locations.message, limits)
 	case "patch", "system", "redact":
-		return st.applyOverlay(e, limits)
+		return st.applyOverlay(e, locations, limits)
 	case "fork":
 		if e.NewHead == "" {
 			return false, nil
@@ -168,55 +184,53 @@ func (st *sessionDAGState) apply(e sessionDAGEntry, offset int64, limits session
 	return true, nil
 }
 
-func (st *sessionDAGState) applyMessage(e sessionDAGEntry, offset int64, limits sessionReplayLimits) (bool, error) {
+func (st *sessionDAGState) applyMessage(e sessionDAGEntry, offset int64, ref sessionDAGPayload, limits sessionReplayLimits) (bool, error) {
 	if e.ID == "" {
 		return false, nil
 	}
-	m, ok, err := st.decodeOne(e.Msgs, limits)
+	payload, ok, err := st.payload(e.Msgs, ref, limits)
 	if err != nil || !ok {
 		return ok, err
 	}
 	if _, dup := st.nodes[e.ID]; dup {
 		return true, nil
 	}
-	st.nodes[e.ID] = &sessionDAGNode{parent: e.Parent, at: e.At, msg: m}
+	st.nodes[e.ID] = &sessionDAGNode{parent: e.Parent, at: e.At, payload: payload}
 	h := st.head(e.Head)
 	h.leaf, h.lastActivity, h.lastOffset = e.ID, e.At, offset
 	return true, nil
 }
 
-func (st *sessionDAGState) applyOverlay(e sessionDAGEntry, limits sessionReplayLimits) (bool, error) {
+func (st *sessionDAGState) applyOverlay(e sessionDAGEntry, locations sessionDAGLocations, limits sessionReplayLimits) (bool, error) {
 	switch e.Type {
 	case "patch":
 		if _, known := st.nodes[e.Target]; !known {
 			return true, nil
 		}
-		m, ok, err := st.decodeOne(e.Msgs, limits)
+		payload, ok, err := st.payload(e.Msgs, locations.message, limits)
 		if err != nil || !ok {
 			return ok, err
 		}
-		st.patches[e.Target] = m
+		st.patches[e.Target] = payload
 	case "system":
-		m, ok, err := st.decodeOne(e.Msgs, limits)
+		payload, ok, err := st.payload(e.Msgs, locations.message, limits)
 		if err != nil || !ok {
 			return ok, err
 		}
-		st.head(e.Head).system = &m
+		st.head(e.Head).system = &payload
 	case "redact":
 		for id, raw := range e.Targets {
-			m, ok, err := st.decodeOne(raw, limits)
+			payload, ok, err := st.payload(raw, locations.targets[id], limits)
 			if err != nil || !ok {
 				return ok, err
 			}
-			st.redactions[id] = m
+			st.redactions[id] = payload
 		}
 	}
 	return true, nil
 }
 
-// decodeOne decodes the one-message array an entry carries through the same
-// bounded decoder schema 1 records use. 1.x marks a message the host wrote with
-// origin "host", which this build calls HostAuthored.
+// decodeOne validates the historical message before its file reference is kept.
 func (st *sessionDAGState) decodeOne(raw json.RawMessage, limits sessionReplayLimits) (provider.Message, bool, error) {
 	msgs, items, err := decodeSessionEventMessages(st.path, raw, len(st.nodes), st.collectionItems, limits)
 	if err != nil {
@@ -229,14 +243,7 @@ func (st *sessionDAGState) decodeOne(raw json.RawMessage, limits sessionReplayLi
 		return provider.Message{}, false, nil
 	}
 	st.collectionItems = items
-	m := msgs[0]
-	var origin []struct {
-		Origin string `json:"origin"`
-	}
-	if json.Unmarshal(raw, &origin) == nil && len(origin) == 1 && origin[0].Origin == "host" {
-		m.HostAuthored = true
-	}
-	return m, true, nil
+	return msgs[0], true, nil
 }
 
 // head resolves a head id, creating one the log never declared rather than
@@ -283,10 +290,10 @@ func (st *sessionDAGState) selectedHead() string {
 // materialize is the transcript of one head: its parent chain from the root,
 // patches and redactions applied, and the head's system message first. A
 // chain that reaches a parent the log no longer holds starts there.
-func (st *sessionDAGState) materialize(headID string) []provider.Message {
+func (st *sessionDAGState) materialize(f io.ReaderAt, headID string, limits sessionReplayLimits) ([]provider.Message, error) {
 	h := st.heads[headID]
 	if h == nil {
-		return nil
+		return nil, nil
 	}
 	var ids []string
 	seen := map[string]bool{}
@@ -300,35 +307,57 @@ func (st *sessionDAGState) materialize(headID string) []provider.Message {
 		id = n.parent
 	}
 	slices.Reverse(ids)
-	msgs := make([]provider.Message, 0, len(ids)+1)
+	refs := make([]sessionDAGPayload, 0, len(ids)+1)
 	for _, id := range ids {
-		m := st.nodes[id].msg
+		m := st.nodes[id].payload
 		if p, ok := st.patches[id]; ok {
 			m = p
 		}
 		if r, ok := st.redactions[id]; ok {
 			m = r
 		}
-		msgs = append(msgs, m)
+		refs = append(refs, m)
 	}
 	if h.system != nil {
-		if len(msgs) > 0 && msgs[0].Role == provider.RoleSystem {
-			msgs[0] = *h.system
+		if len(refs) > 0 && refs[0].role == provider.RoleSystem {
+			refs[0] = *h.system
 		} else {
-			msgs = append([]provider.Message{*h.system}, msgs...)
+			refs = append([]sessionDAGPayload{*h.system}, refs...)
 		}
 	}
-	return msgs
+	var payloadBytes int64
+	for _, ref := range refs {
+		payloadBytes += ref.end - ref.start
+		if err := checkSessionPayloadBytes(st.path, payloadBytes); err != nil {
+			return nil, err
+		}
+	}
+	msgs := make([]provider.Message, 0, len(refs))
+	for _, ref := range refs {
+		m, err := ref.read(f, st.path, limits)
+		if err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, m)
+	}
+	return msgs, nil
 }
 
 // loadSessionDAGMessages is the transcript a schema 2 log's selected head
 // holds.
 func loadSessionDAGMessages(sessionPath string, limits sessionReplayLimits) ([]provider.Message, bool, error) {
-	st, err := replaySessionDAG(store.SessionEventLog(sessionPath), limits)
+	path := store.SessionEventLog(sessionPath)
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, false, err
 	}
-	return st.materialize(st.selectedHead()), st.damaged, nil
+	defer f.Close()
+	st, err := replaySessionDAG(f, path, limits)
+	if err != nil {
+		return nil, false, err
+	}
+	msgs, err := st.materialize(f, st.selectedHead(), limits)
+	return msgs, st.damaged, err
 }
 
 // dagTranscriptMatches reports whether a snapshot holds what the 1.x log

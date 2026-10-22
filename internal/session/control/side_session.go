@@ -34,9 +34,9 @@ var (
 )
 
 // SideConversation is one side conversation as the assembly builds it. Ask
-// answers one question and remembers it; parent receives what the run bills.
+// answers one question and remembers it; the controller routes its events.
 type SideConversation interface {
-	Ask(ctx context.Context, prompt string, parent event.Sink) (string, error)
+	Ask(ctx context.Context, prompt string, sink event.Sink) (string, error)
 }
 
 // SideFactory opens a new, empty side conversation.
@@ -148,7 +148,8 @@ func (c *Controller) CloseSide(id string) { c.side.close(id) }
 // AskSide puts a question to a side conversation. quotes are passages the
 // person selected in the main conversation; they ride this one question as
 // quoted text and are not added to the main session.
-func (c *Controller) AskSide(ctx context.Context, id, question string, quotes []string) (string, error) {
+// Progress is request-scoped; only usage is sent to the main session sink.
+func (c *Controller) AskSide(ctx context.Context, id, question string, quotes []string, progress event.Sink) (string, error) {
 	question = strings.TrimSpace(question)
 	if question == "" {
 		return "", ErrSideEmpty
@@ -167,7 +168,16 @@ func (c *Controller) AskSide(ctx context.Context, id, question string, quotes []
 		cancel()
 		entry.setRunning(nil)
 	}()
-	return entry.conv.Ask(ctx, sidePrompt(question, quotes), c.sink)
+	return entry.conv.Ask(ctx, sidePrompt(question, quotes), event.FuncSink(func(e event.Event) {
+		if e.Kind == event.Usage {
+			e.UsageSource = event.UsageSourceSide
+			if c.sink != nil {
+				c.sink.Emit(e)
+			}
+		} else if progress != nil {
+			progress.Emit(e)
+		}
+	}))
 }
 
 // sidePrompt is the one message a question becomes: the quoted passages, fenced

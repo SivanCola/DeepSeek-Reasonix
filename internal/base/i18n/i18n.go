@@ -406,12 +406,6 @@ type Messages struct {
 	SlashCopyListHeader  string // header shown before the numbered list
 	SlashExportDoneFmt   string // "/export" succeeded, %s = file path
 	SlashExportEmpty     string // no messages to export
-	ArgSkillShow         string // /skills show
-	ArgSkillNew          string // /skills new
-	ArgSkillPaths        string // /skills paths
-	ArgMcpAdd            string // /mcp add
-	ArgMcpRemove         string // /mcp remove
-	ArgMcpConnected      string // /mcp remove <server> tag
 	ArgHooksList         string // /hooks list
 	ArgModelCurrent      string // /model <ref> active tag
 	ArgEffortAuto        string // /effort auto

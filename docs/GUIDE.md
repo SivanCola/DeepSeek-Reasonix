@@ -328,6 +328,16 @@ restores the terminal, and opens an explicit `/sessions/<id>#token=...` deep lin
 Even a never-used session keeps its reserved ID without forcing an empty
 transcript onto disk, so the first Web turn continues the same session identity.
 
+Studio and the Web UI offer **Side question** beside the composer for read-only
+questions without adding them to the main conversation.
+
+A submitted question appears immediately. Answer text streams as it arrives,
+with the current phase, tool name and elapsed time shown while it runs.
+
+Collapsing the panel keeps the request running; closing it cancels the request
+and discards that side conversation. If a request fails, partial text is marked
+interrupted and the draft remains for retry.
+
 ```bash
 cd your-project
 reasonix web

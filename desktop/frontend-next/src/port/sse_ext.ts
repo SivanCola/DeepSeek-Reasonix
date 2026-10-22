@@ -3,6 +3,7 @@ import type { MarketDetail, MarketList, MarketOwnRequest, MarketPackage, MarketP
 import { rootQuery } from "./sse_http";
 import { download } from "./download";
 import { host } from "./host";
+import { readSideAnswer, type SideProgress } from "./side";
 
 function marketPath(slug: string) {
   const [handle = "", name = ""] = slug.split("/", 2);
@@ -134,8 +135,16 @@ export class SseExtensions extends SseLook {
   async openSide() {
     return (await this.post0<{ id: string }>("/side", {})).id;
   }
-  async askSide(id: string, question: string, quotes: string[]) {
-    return (await this.post0<{ answer: string }>("/side/" + encodeURIComponent(id) + "/ask", { question, quotes })).answer;
+  async askSide(id: string, question: string, quotes: string[], onProgress?: (progress: SideProgress) => void) {
+    const path = "/side/" + encodeURIComponent(id) + "/ask";
+    const res = await fetch(this.base + path, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "text/event-stream" },
+      credentials: "same-origin",
+      body: JSON.stringify({ question, quotes }),
+    });
+    if (!res.ok) await SseExtensions.fail(path, res);
+    return readSideAnswer(res, onProgress);
   }
   async closeSide(id: string) {
     await this.del("/side/" + encodeURIComponent(id));

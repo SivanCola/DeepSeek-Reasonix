@@ -549,7 +549,7 @@ type Commits interface {
 // session. Only the full port names it; an editor has no panel to ask from.
 type SideSessions interface {
 	OpenSide() (string, error)
-	AskSide(ctx context.Context, id, question string, quotes []string) (string, error)
+	AskSide(ctx context.Context, id, question string, quotes []string, progress event.Sink) (string, error)
 	CloseSide(id string)
 }
 

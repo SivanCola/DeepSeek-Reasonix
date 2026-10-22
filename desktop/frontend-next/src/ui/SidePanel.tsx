@@ -3,13 +3,24 @@ import { t } from "../i18n";
 import { reason } from "../i18n/kernel";
 import type { AgentPort } from "../port/port";
 import { Markdown } from "./Markdown";
+import type { SideProgress } from "../port/side";
 import { StudioIcon } from "./StudioIcon";
 import { listenAction } from "./listen";
+import { RunClock } from "./RunClock";
 
 interface Turn {
   role: "me" | "side";
   text: string;
   quotes?: string[];
+}
+
+interface PendingTurn {
+  question: string;
+  quotes: string[];
+  text: string;
+  phase: SideProgress["kind"] | "failed";
+  tool?: string;
+  since: number;
 }
 
 const QUOTE_CAP = 20000;
@@ -23,15 +34,22 @@ export function SidePanel({ port, onClose }: { port: AgentPort; onClose: () => v
   const [draft, setDraft] = useState("");
   const [collapsed, setCollapsed] = useState(false);
   const contentId = useId();
-  const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState<PendingTurn | null>(null);
+  const busy = pending !== null && pending.phase !== "failed";
   const [error, setError] = useState("");
   const panel = useRef<HTMLElement>(null);
   const opened = useRef<Promise<string> | null>(null);
   const id = useRef("");
+  const live = useRef(true);
 
-  useEffect(() => () => {
-    const open = opened.current;
-    if (open) void open.then((held) => port.closeSide(held)).catch(() => {});
+  useEffect(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+      const open = opened.current;
+      opened.current = null;
+      if (open) void open.then((held) => port.closeSide(held)).catch(() => {});
+    };
   }, [port]);
 
   // Rectangles include interface zoom; the CSS height uses local pixels.
@@ -82,25 +100,37 @@ export function SidePanel({ port, onClose }: { port: AgentPort; onClose: () => v
   const send = async () => {
     const question = draft.trim();
     if (!question || busy) return;
-    setBusy(true);
+    const sent = quotes;
+    setPending({ question, quotes: sent, text: "", phase: "waiting", since: Date.now() });
     setError("");
     try {
       opened.current ??= port.openSide().then((held) => { id.current = held; return held; });
       const held = await opened.current;
-      const sent = quotes;
-      const answer = await port.askSide(held, question, sent);
+      if (!live.current) return;
+      const answer = await port.askSide(held, question, sent, (progress) => {
+        if (!live.current) return;
+        setPending((current) => current && {
+          ...current,
+          text: progress.kind === "text" ? current.text + (progress.text ?? "") : current.text,
+          phase: progress.kind,
+          tool: progress.tool,
+        });
+      });
+      if (!live.current) return;
       setTurns((all) => [...all, { role: "me", text: question, quotes: sent }, { role: "side", text: answer }]);
+      setPending(null);
       setDraft("");
       setQuotes([]);
     } catch (e) {
+      if (!live.current) return;
       opened.current = id.current ? opened.current : null;
       setError(reason(e));
-    } finally {
-      setBusy(false);
+      setPending((current) => current && { ...current, phase: "failed" });
     }
   };
 
   const close = () => {
+    live.current = false;
     const open = opened.current;
     opened.current = null;
     if (open) void open.then((held) => port.closeSide(held)).catch(() => {});
@@ -132,16 +162,27 @@ export function SidePanel({ port, onClose }: { port: AgentPort; onClose: () => v
       </header>
       <div className="sidecontent" id={contentId} hidden={collapsed}>
       <div className="sidebody" aria-live="polite">
-        {turns.length === 0 && <p className="sidehint">{t("在这里问关于这段代码、这个报错的问题：它只能读文件和搜索，不会改动任何东西。")}</p>}
+        {turns.length === 0 && !pending && <p className="sidehint">{t("在这里问关于这段代码、这个报错的问题：它只能读文件和搜索，不会改动任何东西。")}</p>}
         {turns.map((turn, i) => (
           <div key={i} className="sideturn" data-role={turn.role}>
             {turn.quotes?.map((q) => <blockquote key={q}>{q}</blockquote>)}
             {turn.role === "side" ? <Markdown text={turn.text} images={false} /> : <p>{turn.text}</p>}
           </div>
         ))}
-        {busy && <p className="sidehint">{t("正在读取并回答…")}</p>}
+        {pending && (
+          <>
+            <div className="sideturn" data-role="me">
+              {pending.quotes.map((quote) => <blockquote key={quote}>{quote}</blockquote>)}
+              <p>{pending.question}</p>
+            </div>
+            {pending.text && <div className="sideturn" data-role="side">
+              <Markdown text={pending.text} images={false} />
+              {pending.phase === "failed" && <small className="sidehint">{t("已中断")}</small>}
+            </div>}
+          </>
+        )}
       {error && <p className="sideerr" role="alert">{error}</p>}
-      {quotes.length > 0 && (
+      {quotes.length > 0 && !busy && (
         <ul className="sidequotes">
           {quotes.map((q, i) => (
             <li key={q}>
@@ -152,8 +193,13 @@ export function SidePanel({ port, onClose }: { port: AgentPort; onClose: () => v
         </ul>
       )}
       </div>
+      {busy && pending && <p className="sidehint sideprogress" role="status">
+        {pending.phase === "text" ? t("正在回答") : pending.phase === "thinking" ? t("思考中") : pending.phase === "tool" ? t("正在处理…") : t("等待模型回复")}
+        {pending.tool && <> · {pending.tool}</>}
+        {" · "}<RunClock since={pending.since} />
+      </p>}
       <footer>
-        <button type="button" className="sidequote" data-action="side.quote" onClick={quoteSelection}>{t("引用选中内容")}</button>
+        <button type="button" className="sidequote" data-action="side.quote" disabled={busy} onClick={quoteSelection}>{t("引用选中内容")}</button>
         <textarea
           aria-label={t("向辅助会话提问")}
           value={draft}

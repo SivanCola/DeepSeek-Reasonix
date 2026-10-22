@@ -18,6 +18,7 @@ type fakeSide struct {
 	prompts []string
 	hold    chan struct{}
 	started chan struct{}
+	events  []event.Event
 	err     error
 }
 
@@ -25,6 +26,9 @@ func (f *fakeSide) Ask(ctx context.Context, prompt string, parent event.Sink) (s
 	f.mu.Lock()
 	f.prompts = append(f.prompts, prompt)
 	f.mu.Unlock()
+	for _, e := range f.events {
+		parent.Emit(e)
+	}
 	if f.started != nil {
 		f.started <- struct{}{}
 	}
@@ -62,7 +66,7 @@ func TestSideAnswersWithoutTouchingTheMainSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := c.AskSide(context.Background(), id, "what does this do?", []string{"func f() {}", "  "})
+	got, err := c.AskSide(context.Background(), id, "what does this do?", []string{"func f() {}", "  "}, nil)
 	if err != nil || got != "answer" {
 		t.Fatalf("ask = %q %v", got, err)
 	}
@@ -79,7 +83,7 @@ func TestSideQuotesAreCappedAndEmptyQuestionsRefused(t *testing.T) {
 	side := &fakeSide{}
 	c := sideController(t, side)
 	id, _ := c.OpenSide()
-	if _, err := c.AskSide(context.Background(), id, "   ", nil); !errors.Is(err, ErrSideEmpty) {
+	if _, err := c.AskSide(context.Background(), id, "   ", nil, nil); !errors.Is(err, ErrSideEmpty) {
 		t.Fatalf("an empty question = %v", err)
 	}
 	huge := strings.Repeat("é", maxSideQuoteRunes*2)
@@ -87,7 +91,7 @@ func TestSideQuotesAreCappedAndEmptyQuestionsRefused(t *testing.T) {
 	for i := range many {
 		many[i] = "x"
 	}
-	if _, err := c.AskSide(context.Background(), id, "q", append([]string{huge}, many...)); err != nil {
+	if _, err := c.AskSide(context.Background(), id, "q", append([]string{huge}, many...), nil); err != nil {
 		t.Fatal(err)
 	}
 	p := side.prompts[0]
@@ -114,9 +118,9 @@ func TestSideLimitsBusyAndUnknown(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	go func() { _, err := c.AskSide(context.Background(), first, "q", nil); done <- err }()
+	go func() { _, err := c.AskSide(context.Background(), first, "q", nil, nil); done <- err }()
 	<-slow.started
-	if _, err := c.AskSide(context.Background(), first, "again", nil); !errors.Is(err, ErrSideBusy) {
+	if _, err := c.AskSide(context.Background(), first, "again", nil, nil); !errors.Is(err, ErrSideBusy) {
 		t.Fatalf("a second question while answering = %v", err)
 	}
 	close(slow.hold)
@@ -124,7 +128,7 @@ func TestSideLimitsBusyAndUnknown(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.CloseSide(first)
-	if _, err := c.AskSide(context.Background(), first, "q", nil); !errors.Is(err, ErrSideUnknown) {
+	if _, err := c.AskSide(context.Background(), first, "q", nil, nil); !errors.Is(err, ErrSideUnknown) {
 		t.Fatalf("a closed one = %v", err)
 	}
 	if _, err := c.OpenSide(); err != nil {
@@ -137,7 +141,7 @@ func TestClosingASideStopsItsRunningQuestion(t *testing.T) {
 	c := sideController(t, slow)
 	id, _ := c.OpenSide()
 	done := make(chan error, 1)
-	go func() { _, err := c.AskSide(context.Background(), id, "q", nil); done <- err }()
+	go func() { _, err := c.AskSide(context.Background(), id, "q", nil, nil); done <- err }()
 	<-slow.started
 	c.CloseSide(id)
 	select {
@@ -155,7 +159,7 @@ func TestClosingTheControllerClosesEverySideAndRefusesNewOnes(t *testing.T) {
 	c := New(Options{Runner: &fakeTurnRunner{}, SideFactory: func() (SideConversation, error) { return slow, nil }})
 	id, _ := c.OpenSide()
 	done := make(chan error, 1)
-	go func() { _, err := c.AskSide(context.Background(), id, "q", nil); done <- err }()
+	go func() { _, err := c.AskSide(context.Background(), id, "q", nil, nil); done <- err }()
 	<-slow.started
 	c.Close()
 	if err := <-done; !errors.Is(err, context.Canceled) {
@@ -207,5 +211,50 @@ func TestSideConversationsAreUnlimitedByDefault(t *testing.T) {
 		if _, err := c.OpenSide(); err != nil {
 			t.Fatalf("side conversation %d refused: %v", i+1, err)
 		}
+	}
+}
+
+func TestSideRoutesUsageAndProgressToSeparateSinks(t *testing.T) {
+	side := &fakeSide{events: []event.Event{
+		{Kind: event.Text, Text: "private answer"},
+		{Kind: event.Reasoning, Text: "private reasoning"},
+		{Kind: event.ToolDispatch, Tool: event.Tool{Name: "read_file"}},
+		{Kind: event.Usage, UsageSource: event.UsageSourceExecutor},
+	}}
+	var parent, progress []event.Event
+	c := New(Options{
+		Runner:      &fakeTurnRunner{},
+		Sink:        event.FuncSink(func(e event.Event) { parent = append(parent, e) }),
+		SideFactory: func() (SideConversation, error) { return side, nil },
+	})
+	defer c.Close()
+	id, err := c.OpenSide()
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := len(parent)
+	_, err = c.AskSide(context.Background(), id, "q", nil, event.FuncSink(func(e event.Event) {
+		progress = append(progress, e)
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parent[before:]; len(got) != 1 || got[0].Kind != event.Usage || got[0].UsageSource != event.UsageSourceSide {
+		t.Fatalf("parent received side events: %+v", got)
+	}
+	if len(progress) != 3 {
+		t.Fatalf("progress = %+v", progress)
+	}
+	for _, e := range progress {
+		if e.Kind == event.Usage {
+			t.Fatal("billing leaked to progress")
+		}
+	}
+	before = len(parent)
+	if _, err := c.AskSide(context.Background(), id, "again", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(parent) != before+1 || parent[before].Kind != event.Usage {
+		t.Fatalf("nil progress leaked events: %+v", parent[before:])
 	}
 }

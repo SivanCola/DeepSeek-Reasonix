@@ -81,7 +81,7 @@ func SlashArgItems(line string, d ArgData) ([]SlashItem, int) {
 	case "/agent":
 		raw = d.Compositions
 	case "/mcp":
-		raw = mcpArgItems(prior, cur, d)
+		raw = mcpArgItems(prior, d)
 	case "/model":
 		raw = modelArgItems(prior, d)
 	case "/provider":
@@ -276,71 +276,20 @@ func currentEffortEntry(d ArgData) *config.ProviderEntry {
 	return entry
 }
 
-func mcpArgItems(prior []string, cur string, d ArgData) []SlashItem {
+func mcpArgItems(prior []string, d ArgData) []SlashItem {
 	if len(prior) <= 1 {
 		return []SlashItem{
-			{Label: "add", Insert: "add ", Hint: i18n.M.ArgMcpAdd, Descend: true},
 			{Label: "connect", Insert: "connect ", Hint: i18n.M.ArgMcpConnect, Descend: true},
-			{Label: "show", Insert: "show ", Hint: i18n.M.ArgMcpShow, Descend: true},
-			{Label: "tools", Insert: "tools ", Hint: i18n.M.ArgMcpTools, Descend: true},
-			{Label: "remove", Insert: "remove ", Hint: i18n.M.ArgMcpRemove, Descend: true},
-			{Label: "import", Insert: "import", Hint: i18n.M.ArgMcpImport},
 		}
 	}
-	switch prior[1] {
-	case "remove", "rm":
-		if len(prior) != 2 { // the single name arg is already placed
-			return nil
-		}
-		var items []SlashItem
-		for _, name := range d.ServerNames {
-			items = append(items, SlashItem{Label: name, Insert: name, Hint: i18n.M.ArgMcpConnected})
-		}
-		return items
-	case "show", "tools":
-		if len(prior) != 2 {
-			return nil
-		}
-		var items []SlashItem
-		for _, name := range allMCPArgNames(d) {
-			items = append(items, SlashItem{Label: name, Insert: name})
-		}
-		return items
-	case "connect":
-		if len(prior) != 2 {
-			return nil
-		}
-		var items []SlashItem
-		for _, name := range d.DisconnectedMCP {
-			items = append(items, SlashItem{Label: name, Insert: name, Hint: i18n.M.ArgMcpConfigured})
-		}
-		return items
-	case "add":
-		if strings.HasPrefix(cur, "-") {
-			return []SlashItem{
-				{Label: "--http", Insert: "--http ", Hint: i18n.M.ArgMcpHTTP},
-				{Label: "--sse", Insert: "--sse ", Hint: i18n.M.ArgMcpSSE},
-				{Label: "--env", Insert: "--env ", Hint: i18n.M.ArgMcpEnv},
-				{Label: "--header", Insert: "--header ", Hint: i18n.M.ArgMcpHeader},
-			}
-		}
+	if prior[1] != "connect" || len(prior) != 2 {
+		return nil
 	}
-	return nil
-}
-
-func allMCPArgNames(d ArgData) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, list := range [][]string{d.ServerNames, d.ConfiguredMCP, d.DisconnectedMCP} {
-		for _, name := range list {
-			if strings.TrimSpace(name) == "" || seen[name] {
-				continue
-			}
-			seen[name] = true
-			out = append(out, name)
-		}
+	var items []SlashItem
+	for _, name := range d.DisconnectedMCP {
+		items = append(items, SlashItem{Label: name, Insert: name, Hint: i18n.M.ArgMcpConfigured})
 	}
-	return out
+	return items
 }
 
 func modelArgItems(prior []string, d ArgData) []SlashItem {
@@ -376,35 +325,25 @@ func providerArgItems(prior []string, d ArgData) []SlashItem {
 func skillArgItems(prior []string, d ArgData) []SlashItem {
 	if len(prior) <= 1 {
 		return []SlashItem{
-			{Label: "show", Insert: "show ", Hint: i18n.M.ArgSkillShow, Descend: true},
 			{Label: "enable", Insert: "enable ", Hint: i18n.M.ArgSkillEnable, Descend: true},
 			{Label: "disable", Insert: "disable ", Hint: i18n.M.ArgSkillDisable, Descend: true},
-			{Label: "new", Insert: "new ", Hint: i18n.M.ArgSkillNew},
-			{Label: "paths", Insert: "paths", Hint: i18n.M.ArgSkillPaths},
 		}
 	}
-	if (prior[1] == "show" || prior[1] == "cat") && len(prior) == 2 {
-		var items []SlashItem
-		for _, s := range d.Skills {
-			items = append(items, SlashItem{Label: s.Name, Insert: s.Name, Hint: string(s.Scope)})
-		}
-		return items
+	if len(prior) != 2 {
+		return nil
 	}
-	if prior[1] == "disable" && len(prior) == 2 {
-		var items []SlashItem
-		for _, s := range d.Skills {
-			items = append(items, SlashItem{Label: s.Name, Insert: s.Name, Hint: string(s.Scope)})
-		}
-		return items
+	var pool []skill.Skill
+	switch prior[1] {
+	case "disable":
+		pool = d.Skills
+	case "enable":
+		pool = d.DisabledSkills
 	}
-	if prior[1] == "enable" && len(prior) == 2 {
-		var items []SlashItem
-		for _, s := range d.DisabledSkills {
-			items = append(items, SlashItem{Label: s.Name, Insert: s.Name, Hint: string(s.Scope)})
-		}
-		return items
+	var items []SlashItem
+	for _, s := range pool {
+		items = append(items, SlashItem{Label: s.Name, Insert: s.Name, Hint: string(s.Scope)})
 	}
-	return nil
+	return items
 }
 
 func pluginArgItems(prior []string, d ArgData) []SlashItem {
@@ -485,24 +424,7 @@ func (c *Controller) managementNotice(trimmed string) bool {
 		args := strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0]))
 		migration.RunLegacyRescueCommand(args, c.sink)
 	case "/skill", "/skills":
-		sub := ""
-		if len(fields) >= 2 {
-			sub = strings.ToLower(fields[1])
-		}
-		if len(fields) >= 3 && (sub == "enable" || sub == "disable") {
-			enabled := sub == "enable"
-			scope, where := config.ActivationProject, "in this project"
-			if slices.Contains(fields[3:], "--global") {
-				scope, where = config.ActivationGlobal, "everywhere"
-			}
-			if err := c.SetSkillEnabled(fields[2], scope, enabled); err != nil {
-				c.notice("skill " + sub + ": " + err.Error())
-			} else {
-				c.notice(sub + "d skill " + fields[2] + " " + where + " — in effect from your next message")
-			}
-			return true
-		}
-		c.notice(c.skillListText())
+		c.skillsNotice(fields)
 	case "/plugin", "/plugins":
 		c.pluginsNotice(fields)
 	case "/reload-cmd":
@@ -536,20 +458,57 @@ func (c *Controller) managementNotice(trimmed string) bool {
 			c.notice("unknown /hooks subcommand " + fields[1] + " — try: /hooks or /hooks list")
 		}
 	case "/mcp":
-		if len(fields) >= 3 && fields[1] == "connect" {
-			n, err := c.ConnectConfiguredMCPServer(fields[2])
-			if err != nil {
-				c.notice("mcp connect: " + err.Error())
-			} else {
-				c.notice(fmt.Sprintf("connected %s — %d tools", fields[2], n))
-			}
-			return true
-		}
-		c.notice(c.mcpListText())
+		c.mcpNotice(fields)
 	default:
 		return c.settingsNotice(fields, trimmed)
 	}
 	return true
+}
+
+// skillsNotice answers /skills: the listing, or enable/disable of one skill.
+func (c *Controller) skillsNotice(fields []string) {
+	sub := ""
+	if len(fields) >= 2 {
+		sub = strings.ToLower(fields[1])
+	}
+	if len(fields) >= 3 && (sub == "enable" || sub == "disable") {
+		enabled := sub == "enable"
+		scope, where := config.ActivationProject, "in this project"
+		if slices.Contains(fields[3:], "--global") {
+			scope, where = config.ActivationGlobal, "everywhere"
+		}
+		if err := c.SetSkillEnabled(fields[2], scope, enabled); err != nil {
+			c.notice("skill " + sub + ": " + err.Error())
+		} else {
+			c.notice(sub + "d skill " + fields[2] + " " + where + " — in effect from your next message")
+		}
+		return
+	}
+	if sub != "" && sub != "list" && sub != "ls" && sub != "enable" && sub != "disable" {
+		c.notice("unknown /skills subcommand " + fields[1] + " — try: /skills, /skills enable <name> or /skills disable <name>")
+		return
+	}
+	c.notice(c.skillListText())
+}
+
+// mcpNotice answers /mcp: the listing, or connecting one configured server.
+func (c *Controller) mcpNotice(fields []string) {
+	if len(fields) >= 3 && fields[1] == "connect" {
+		n, err := c.ConnectConfiguredMCPServer(fields[2])
+		if err != nil {
+			c.notice("mcp connect: " + err.Error())
+		} else {
+			c.notice(fmt.Sprintf("connected %s — %d tools", fields[2], n))
+		}
+		return
+	}
+	if len(fields) >= 2 {
+		if sub := strings.ToLower(fields[1]); sub != "list" && sub != "ls" && sub != "connect" {
+			c.notice("unknown /mcp subcommand " + fields[1] + " — try: /mcp or /mcp connect <name>")
+			return
+		}
+	}
+	c.notice(c.mcpListText())
 }
 
 // pluginsNotice answers /plugins: the installed list, or one package's manifest.

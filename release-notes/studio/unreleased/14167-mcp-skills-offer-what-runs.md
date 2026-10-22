@@ -1,0 +1,2 @@
+- 修复：输入 `/mcp`、`/skills` 时，补全只提供真正会执行的子命令；输入不认识的子命令会明确提示，而不是悄悄显示列表。关联 #14167。
+- Fixed: `/mcp` and `/skills` completion now offers only the subcommands that run, and an unrecognised one is reported instead of silently printing the listing. Refs #14167.

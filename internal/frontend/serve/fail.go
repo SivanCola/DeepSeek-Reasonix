@@ -110,15 +110,22 @@ func writeErr(w http.ResponseWriter, fallback int, err error) {
 // is one condition with one code across every panel that writes settings, and
 // it carries where to look rather than a parser's sentence about columns.
 func refuseUnparsedConfig(w http.ResponseWriter, err error) bool {
+	reason, ok := unparsedConfigReason(err)
+	if ok {
+		refuse(w, http.StatusConflict, reason.Code, reason.Message, reason.Params)
+	}
+	return ok
+}
+
+func unparsedConfigReason(err error) (Reason, bool) {
 	problem := control.ConfigProblemFromError(err)
 	if problem == nil {
-		return false
+		return Reason{}, false
 	}
-	refuse(w, http.StatusConflict, "config.unparsed", err.Error(), map[string]any{
+	return Reason{Code: "config.unparsed", Message: err.Error(), Params: map[string]any{
 		"path": problem.Path, "line": problem.Line, "excerpt": problem.Excerpt,
 		"repair": problem.Repair, "recovered": problem.Recovered,
-	})
-	return true
+	}}, true
 }
 
 // saveFailed refuses a settings write with an identity. A config file the
@@ -136,12 +143,19 @@ func saveFailed(w http.ResponseWriter, status int, code string, err error) {
 }
 
 func refuseMemoryDirectory(w http.ResponseWriter, err error) bool {
+	reason, ok := memoryDirectoryReason(err)
+	if ok {
+		refuse(w, http.StatusInternalServerError, reason.Code, reason.Message, reason.Params)
+	}
+	return ok
+}
+
+func memoryDirectoryReason(err error) (Reason, bool) {
 	var directory *memory.DirectoryReadError
 	if !errors.As(err, &directory) {
-		return false
+		return Reason{}, false
 	}
-	refuse(w, http.StatusInternalServerError, "memory.directory_unreadable", err.Error(), nil)
-	return true
+	return Reason{Code: "memory.directory_unreadable", Message: err.Error()}, true
 }
 
 // codedRefusal is the identity a coded error carries, for the caller that has to

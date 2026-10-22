@@ -2,6 +2,7 @@ import { download } from "./download";
 import { mockModPlan } from "./mock_mods";
 import { HttpError, type PluginExport, type PluginInstallRequest, type PluginPackage, type PluginPlan, type ScopeLayer, type SkillCatalog, type SkillEntry, type SkillUpdatePlan } from "./port";
 import { MockMarket } from "./mock_market";
+import type { SideProgress } from "./side";
 
 // The extension half of the fixture: skills, and the packages that bring them.
 // MockPort extends this rather than holding one, so the class still satisfies
@@ -190,8 +191,10 @@ export class MockExtensions extends MockMarket {
   async openSide() {
     return "side-" + ++this.sides;
   }
-  async askSide(_id: string, question: string, quotes: string[]) {
-    return `（演示）${quotes.length ? `引用了 ${quotes.length} 段；` : ""}这是对「${question}」的只读回答。`;
+  async askSide(_id: string, question: string, quotes: string[], onProgress?: (progress: SideProgress) => void) {
+    const answer = `（演示）${quotes.length ? `引用了 ${quotes.length} 段；` : ""}这是对「${question}」的只读回答。`;
+    onProgress?.({ kind: "text", text: answer });
+    return answer;
   }
   async closeSide() {}
 }

@@ -1,8 +1,8 @@
 import type { SurfaceActionRequest, SurfaceActionRecord } from "./surface";
 import type { AgentComposition, AgentPresetVersion, AgentPresetCatalog, CompositionSummary } from "./composition";
 export type * from "./composition";
-import { DeliveryError, HttpError } from "./http_error";
-import type { DeliveryFault } from "./http_error";
+import { DeliveryError, HttpError, type DeliveryFault } from "./http_error";
+import type { SideProgress } from "./side";
 
 /** What `subscribe` hands back: the disposer, and where the transport has one, a
  *  way to give its connection up and take it again without losing the cursor. */
@@ -486,7 +486,7 @@ export interface AgentPort extends WorkspacePreviewPort, IsolationPort {
   // A read-only question beside the session: its own conversation, never the
   // main transcript, billed to the session and gone when closed.
   openSide(): Promise<string>;
-  askSide(id: string, question: string, quotes: string[]): Promise<string>;
+  askSide(id: string, question: string, quotes: string[], onProgress?: (progress: SideProgress) => void): Promise<string>;
   closeSide(id: string): Promise<void>;
   // The same sealed envelope as a file the person saves and opens again. The
   // window only: a paired device is refused, and no account is needed.

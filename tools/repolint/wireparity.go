@@ -48,6 +48,7 @@ var mirroredWireTypes = []wireMirror{
 	{"internal/base/workspacefile/file.go", "Ref", tsWorkspaceFile, "FileRef"},
 	{"internal/base/workspacefile/file.go", "Info", tsWorkspaceFile, "PreviewInfo"},
 	{"internal/contract/delivery/delivery.go", "File", tsWorkspaceFile, "DeliveredFile"},
+	{"internal/frontend/serve/side.go", "SideProgress", "desktop/frontend-next/src/port/side.ts", "SideProgress"},
 	{"internal/platform/worktree/source.go", "Source", tsWorkspaceFile, "WorktreeSource"},
 	{"internal/frontend/serve/workspace_source.go", "worktreeSourcesView", tsWorkspaceFile, "WorktreeSources"},
 	{"internal/frontend/serve/workspace_source.go", "worktreeSelection", tsWorkspaceFile, "WorktreeSelection"},
