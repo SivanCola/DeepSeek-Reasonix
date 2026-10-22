@@ -3,8 +3,8 @@ import { t } from "../../i18n";
 export type Remembered = "session" | "always";
 
 const LABEL: Record<Remembered, string> = {
-  session: "本会话允许此类操作，不再询问",
-  always: "始终允许此类操作，不再询问",
+  session: "本会话允许",
+  always: "始终允许",
 };
 
 /** The quieter half of a prompt's footer: the choices that answer this question
@@ -32,13 +32,13 @@ export function RememberChoice({ options, target, busy, disabled, onChoose }: {
   );
 }
 
-/** Where the remembered choices live, as one sentence for the footer's note. */
+/** The note distinguishes transient grants from saved permission rules. */
 export function RememberWhere({ options, target }: { options: readonly Remembered[]; target: string }) {
   if (options.length === 0) return null;
   const text = options.includes("always")
     ? options.includes("session")
-      ? "“本会话允许”只在这次会话内有效，不写入磁盘；“始终允许”写入用户配置的权限规则，可在设置 → 工具与权限里撤销。"
-      : "“始终允许”写入用户配置的权限规则，可在设置 → 工具与权限里撤销。"
-    : "“本会话允许”只在这次会话内有效，不写入磁盘。";
+      ? "会话授权不落盘；始终允许将保存规则，可在设置 → 工具与权限中撤销。"
+      : "始终允许将保存规则，可在设置 → 工具与权限中撤销。"
+    : "会话授权仅在本次会话有效，不写入磁盘。";
   return <div className="apv-note" id={`remember-where-${target}`}>{t(text)}</div>;
 }
