@@ -695,4 +695,5 @@ export const EN_KERNEL: Record<string, string> = {
   "它的某个钩子超过了时间预算，进程已被结束；多次发生后会被停用": "One of its hooks ran past its time budget and the process was ended; after repeats it is disabled",
   "它的某个钩子抛出了异常": "One of its hooks threw an exception",
   "它用到了本宿主不支持的功能": "It uses something this host does not support",
+  "当前后端不能约束全部文件变更，隔离命令已在启动前拒绝；请使用候选目录内的文件工具，或选择支持完整隔离的执行环境": "This backend cannot confine every file mutation, so the isolated command was refused before launch; use file tools inside the candidate or choose an execution environment with complete isolation",
 };

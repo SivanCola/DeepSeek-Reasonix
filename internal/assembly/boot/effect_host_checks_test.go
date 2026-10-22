@@ -13,7 +13,9 @@ import (
 	"reasonix/internal/contract/config"
 	"reasonix/internal/contract/event"
 	"reasonix/internal/contract/provider"
+	"reasonix/internal/contract/tool"
 	"reasonix/internal/runtime/isolation"
+	"reasonix/internal/safety/sandbox"
 	"reasonix/internal/session/control"
 )
 
@@ -95,6 +97,12 @@ model="fixture"
 				t.Fatal(err)
 			}
 			defer c.Close()
+			cfg, err := config.RootsForHome(home).LoadForRootReadOnly(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			canExecute := sandbox.AvailableFor(sandbox.Spec{Mode: "enforce", RequiredIntegrity: sandbox.CompleteFileIntegrity, Network: cfg.Sandbox.Network})
+			t.Logf("candidate program execution available: %t", canExecute)
 			c.EnsureSessionPath()
 			c.SetToolApprovalMode(control.ToolApprovalYolo)
 			if err := c.Run(runCtx, "delegate an isolated writer"); err != nil && name != "cancel" && name != "cancel-integration" {
@@ -103,16 +111,17 @@ model="fixture"
 			mu.Lock()
 			defer mu.Unlock()
 			wantChecks := 1
-			if name == "allowed" || name == "cancel-integration" {
+			if canExecute && (name == "allowed" || name == "cancel-integration") {
 				wantChecks = 2 // original result, then the fresh integration candidate
 			}
 			if len(results) != wantChecks {
-				t.Fatalf("host check executions = %d, want %d; result=%s", len(results), wantChecks, p.childSaw)
+				raw, _ := json.Marshal(results)
+				t.Fatalf("host check executions = %d, want %d; checks=%s; result=%s", len(results), wantChecks, raw, p.childSaw)
 			}
 			if results[0].Tool.Executed != (name == "allowed" || name == "cancel-integration") {
 				t.Fatalf("host check changed original grant: %+v", results[0].Tool)
 			}
-			if name == "allowed" && (results[0].Tool.Err != "" || results[0].Tool.Execution == nil || results[0].Tool.Execution.ExitCode == nil || *results[0].Tool.Execution.ExitCode != 0) {
+			if canExecute && name == "allowed" && (results[0].Tool.Err != "" || results[0].Tool.Execution == nil || results[0].Tool.Execution.ExitCode == nil || *results[0].Tool.Execution.ExitCode != 0) {
 				t.Fatalf("host check did not execute successfully: %+v", results[0].Tool)
 			}
 			if _, err := os.Stat(filepath.Join(root, "out.txt")); !os.IsNotExist(err) {
@@ -134,7 +143,18 @@ model="fixture"
 			if err := json.Unmarshal(raw, &saved); err != nil || saved.Evidence == nil || saved.Evidence.Verification != "unknown" {
 				t.Fatalf("candidate check promoted source verification: %s %v", raw, err)
 			}
-			if name == "allowed" {
+			if !canExecute && p.allowShell && name != "cancel" {
+				execution := results[0].Tool.Execution
+				if len(saved.Evidence.Checks) != 1 || saved.Evidence.Checks[0].Success || results[0].Tool.RefusalCode == "" ||
+					execution == nil || execution.State != tool.ShellStateNotRun || execution.ExitCode != nil {
+					t.Fatalf("unsupported execution invented success or lost refusal: %s %+v", raw, results[0].Tool)
+				}
+				attempts := isolation.NewStore(managed, root, c.WorkspaceRepo()).IntegrationAttempts()
+				if len(attempts) != 0 {
+					t.Fatal("unsupported check started integration")
+				}
+			}
+			if canExecute && name == "allowed" {
 				if len(saved.Evidence.Checks) != 1 || !saved.Evidence.Checks[0].Success || len(saved.Evidence.Checks[0].Inputs) != 1 {
 					t.Fatalf("host launch did not reach durable check evidence: %s", raw)
 				}
@@ -156,7 +176,7 @@ model="fixture"
 					t.Fatalf("integration reused original environment or invented verification: %s %v", attemptRaw, err)
 				}
 			}
-			if name == "cancel-integration" {
+			if canExecute && name == "cancel-integration" {
 				attempts := isolation.NewStore(managed, root, c.WorkspaceRepo()).IntegrationAttempts()
 				if len(attempts) != 1 || attempts[0].Attempt == nil || attempts[0].Attempt.State != isolation.Cancelled || attempts[0].Attempt.Verification != "unknown" || attempts[0].Active {
 					t.Fatalf("second-round cancellation was swallowed or retained ownership: %+v", attempts)

@@ -164,6 +164,8 @@ func TestEffectFleetOverlappingGrantsUseTransactionsAndAutomaticIsolation(t *tes
 				if err := cfg.SaveToScope(filepath.Join(opts.Home, "config.toml"), config.RenderScopeUser); err != nil {
 					t.Fatal(err)
 				}
+				wantIsolated := mode == "auto" && automaticIsolationAvailability(opts, cfg) == nil
+				t.Logf("automatic fleet isolation available: %t", wantIsolated)
 				ctrl, err := Build(t.Context(), opts)
 				if err != nil {
 					t.Fatal(err)
@@ -216,9 +218,9 @@ func TestEffectFleetOverlappingGrantsUseTransactionsAndAutomaticIsolation(t *tes
 						results = append(results, row)
 					}
 				}
-				if mode == "shared" {
+				if !wantIsolated {
 					if len(results) != 0 {
-						t.Fatalf("shared fleet created candidates: %+v", results)
+						t.Fatalf("shared or fallback fleet created candidates: %+v", results)
 					}
 					for _, id := range []string{"a", "b"} {
 						if raw, err := os.ReadFile(filepath.Join(opts.WorkspaceRoot, id+".md")); err != nil || string(raw) != "worker "+id+"\n" {

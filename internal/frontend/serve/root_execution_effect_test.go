@@ -11,6 +11,7 @@ import (
 
 	"reasonix/internal/contract/config"
 	"reasonix/internal/contract/provider"
+	"reasonix/internal/safety/sandbox"
 	"reasonix/internal/session/control"
 	"reasonix/internal/state/sessionstore"
 	"reasonix/internal/state/store"
@@ -28,6 +29,12 @@ func TestSubmitAutoIsolationPublishesBeforeCapturingTurnRuntime(t *testing.T) {
 	if err := os.WriteFile(path, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
+	cfg, err := config.RootsForHome(h.home).LoadForRootReadOnly(h.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canIsolate := sandbox.AvailableFor(sandbox.Spec{Mode: "enforce", RequiredIntegrity: sandbox.CompleteFileIntegrity, Network: cfg.Sandbox.Network})
+	t.Logf("automatic program isolation available: %t", canIsolate)
 	firstHub, first, firstBC := h.pane(filepath.Join(SessionDirFor(h.root), "first.jsonl"))
 	defer firstHub.Shutdown()
 	secondHub, second, secondBC := h.pane(filepath.Join(SessionDirFor(h.root), "second.jsonl"))
@@ -54,29 +61,18 @@ func TestSubmitAutoIsolationPublishesBeforeCapturingTurnRuntime(t *testing.T) {
 	}
 	submit(second.Server, "second task")
 	next, ok := second.Server.Controller().(*control.Controller)
-	if !ok || next == old || next.RootEnvironment() == nil {
-		t.Fatal("submit retained source controller")
+	if !ok {
+		t.Fatal("submit lost the concrete turn controller")
 	}
-	if next.WorkspaceRepo().WorkTree == first.Server.Controller().(*control.Controller).WorkspaceRepo().WorkTree {
-		t.Fatal("parallel writable chats share the source copy")
-	}
-	if next.SessionPath() != old.SessionPath() {
-		t.Fatal("automatic isolation forked the conversation")
-	}
-	binding, bound, err := sessionstore.LoadExecutionEnvironment(next.SessionPath())
-	if err != nil || !bound || binding.EnvironmentID != next.RootEnvironment().Record().ID {
-		t.Fatalf("session binding = %+v %v %v", binding, bound, err)
-	}
-	if err := next.CheckSessionEnvironment(next.SessionPath()); err != nil {
-		t.Fatal(err)
-	}
-	if old.Running() {
-		t.Fatal("source captured the delegated turn")
-	}
-	for _, message := range old.History() {
-		if message.Content == "second task" {
-			t.Fatal("input appended to source history")
+	if !canIsolate {
+		if next != old || next.RootEnvironment() != nil || next.WorkspaceRepo().WorkTree != first.Server.Controller().(*control.Controller).WorkspaceRepo().WorkTree {
+			t.Fatal("unavailable automatic isolation did not retain the source runtime")
 		}
+		if binding, bound, err := sessionstore.LoadExecutionEnvironment(next.SessionPath()); err != nil || bound {
+			t.Fatalf("fallback published an unusable environment: %+v %v %v", binding, bound, err)
+		}
+	} else {
+		assertIsolatedSubmitRuntime(t, first.Server.Controller().(*control.Controller), old, next)
 	}
 	first.Server.Controller().Cancel()
 	next.Cancel()
@@ -97,6 +93,41 @@ func TestSubmitAutoIsolationPublishesBeforeCapturingTurnRuntime(t *testing.T) {
 	finished:
 	}
 	waitNotRunning(t, next)
+	if canIsolate {
+		assertIsolatedSessionRotation(t, next)
+	}
+}
+
+func assertIsolatedSubmitRuntime(t *testing.T, first *control.Controller, old control.SessionAPI, next *control.Controller) {
+	t.Helper()
+	if next == old || next.RootEnvironment() == nil {
+		t.Fatal("submit retained source controller")
+	}
+	if next.WorkspaceRepo().WorkTree == first.WorkspaceRepo().WorkTree {
+		t.Fatal("parallel writable chats share the source copy")
+	}
+	if next.SessionPath() != old.SessionPath() {
+		t.Fatal("automatic isolation forked the conversation")
+	}
+	binding, bound, err := sessionstore.LoadExecutionEnvironment(next.SessionPath())
+	if err != nil || !bound || binding.EnvironmentID != next.RootEnvironment().Record().ID {
+		t.Fatalf("session binding = %+v %v %v", binding, bound, err)
+	}
+	if err := next.CheckSessionEnvironment(next.SessionPath()); err != nil {
+		t.Fatal(err)
+	}
+	if old.Running() {
+		t.Fatal("source captured the delegated turn")
+	}
+	for _, message := range old.History() {
+		if message.Content == "second task" {
+			t.Fatal("input appended to source history")
+		}
+	}
+}
+
+func assertIsolatedSessionRotation(t *testing.T, next *control.Controller) {
+	t.Helper()
 	initialPath := next.SessionPath()
 	for _, action := range []struct {
 		name string
