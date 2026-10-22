@@ -26,6 +26,7 @@ type SubagentSpec struct {
 	Model                 string
 	Effort                string
 	// ResumedFrom and UpstreamFrom feed the context capsule only.
-	ResumedFrom  string
-	UpstreamFrom []string
+	ResumedFrom        string
+	UpstreamFrom       []string
+	continuationSource *EnvironmentSource
 }

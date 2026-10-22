@@ -45,7 +45,7 @@ func TestConcurrentAutoWritersChooseAfterExecutionRegistration(t *testing.T) {
 	parent := NewTaskToolWithOptions(TaskToolOptions{Provider: p, ParentRegistry: tool.NewRegistry(), MaxSteps: 4, SysPrompt: "sys"}).
 		WithTranscripts(NewSubagentStore(t.TempDir()), root, "model", "").WithScheduler(scheduler).WithMutationCoordinator(coordinator)
 	var preparations atomic.Int32
-	parent.WithEnvironmentFactory("auto", func(_ context.Context, spec ProfileExecSpec, _ string) (*ExecutionEnvironment, error) {
+	parent.WithEnvironmentFactory("auto", func(_ context.Context, spec ProfileExecSpec, _ *EnvironmentSource) (*ExecutionEnvironment, error) {
 		preparations.Add(1)
 		child := NewTaskToolWithOptions(TaskToolOptions{Provider: p, ParentRegistry: tool.NewRegistry(), MaxSteps: 4, SysPrompt: "sys"}).
 			WithTranscripts(NewSubagentStore(t.TempDir()), root, "model", "").WithMutationCoordinator(coordinator)

@@ -25,7 +25,7 @@ func (t *TaskTool) startProfileBackground(ctx context.Context, plan *profileExec
 	defer releaseStart()
 	// Shared-task callers already receive a transcript reference on submission.
 	// An isolated transcript must wait until its admitted environment exists.
-	if environment == nil && t.mutations == nil {
+	if (environment == nil || environment.mode == "shared") && t.mutations == nil {
 		if err := plan.prepareTranscript(ctx, execution); err != nil {
 			return "", err
 		}
@@ -41,6 +41,7 @@ func (t *TaskTool) startProfileBackground(ctx context.Context, plan *profileExec
 		ref = "\n" + FormatSubagentReference(plan.run)
 	}
 	job, err := manager.StartOwnedForSession(jobs.SessionFromContext(ctx), "task", label, func(jobCtx context.Context, _ io.Writer) (result string, err error) {
+		defer environment.release()
 		defer releaseResident()
 		runCtx := evidence.WithLedger(backgroundProfileContext(jobCtx, ctx), ledger)
 		defer plan.release()

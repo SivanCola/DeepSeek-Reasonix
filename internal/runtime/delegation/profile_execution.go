@@ -31,6 +31,7 @@ type profileExecution struct {
 	writerRelease                       func()
 	presenceRelease                     func()
 	releaseOnce                         sync.Once
+	environment                         *environmentRequest
 }
 
 func (t *TaskTool) prepareProfileExecution(ctx context.Context, spec ProfileExecSpec, trk *subagentProgressTracker) (*profileExecution, error) {
@@ -43,7 +44,7 @@ func (t *TaskTool) prepareProfileExecution(ctx context.Context, spec ProfileExec
 }
 
 func (t *TaskTool) prepareAdmissionProfile(ctx context.Context, spec ProfileExecSpec, trk *subagentProgressTracker, environment *environmentRequest) (*profileExecution, error) {
-	if environment != nil || t.mutations != nil {
+	if (environment != nil && environment.mode != "shared") || t.mutations != nil {
 		return t.prepareProfileIdentity(ctx, spec, trk)
 	}
 	return t.prepareProfileExecution(ctx, spec, trk)
@@ -71,7 +72,11 @@ func (p *profileExecution) prepareTranscript(ctx context.Context, execution stri
 	p.review = reviewGrantFor(p.spec.Worker, execution)
 	agent.AttachReviewReport(p.registry, p.review)
 	s := p.spec
-	run, err := p.task.prepareTranscriptRunWithPrompt(withUpstream(ctx, s.Context.Upstream), p.registry, p.model, p.effort, s.Context.parentSession(ctx), execution, s.Context.executionParent(execution), s.Context.ContinueFrom, s.Context.ForkFrom, s.Worker.SystemPrompt, s.Worker.Kind, s.Worker.Name)
+	var source *EnvironmentSource
+	if p.environment != nil && p.environment.source != nil && p.environment.source.Kind == EnvironmentCopy {
+		source = p.environment.source
+	}
+	run, err := p.task.prepareTranscriptRunWithPrompt(withUpstream(ctx, s.Context.Upstream), p.registry, p.model, p.effort, s.Context.parentSession(ctx), execution, s.Context.executionParent(execution), s.Context.ContinueFrom, s.Context.ForkFrom, s.Worker.SystemPrompt, s.Worker.Kind, s.Worker.Name, source)
 	if err != nil {
 		return err
 	}
@@ -100,6 +105,7 @@ func (p *profileExecution) reserveWriter(ctx context.Context) error {
 
 func (p *profileExecution) release() {
 	p.releaseOnce.Do(func() {
+		p.environment.release()
 		if p.presenceRelease != nil {
 			defer p.presenceRelease()
 		}
@@ -127,7 +133,7 @@ func (t *TaskTool) runAdmittedProfile(ctx context.Context, plan *profileExecutio
 			panic(caught)
 		}
 	}()
-	if request != nil {
+	if request != nil && request.mode != "shared" {
 		prepared, prepareErr := t.prepareEnvironment(t.environmentPreparationContext(ctx), plan.spec, request, trk.wrap())
 		if prepareErr != nil {
 			return "", prepareErr
@@ -146,6 +152,7 @@ func (t *TaskTool) runAdmittedProfile(ctx context.Context, plan *profileExecutio
 			}
 		}
 	}
+	plan.environment = request
 	defer plan.release()
 	if err := plan.enterExecutionPresence(ctx); err != nil {
 		return "", err
@@ -169,6 +176,7 @@ func (p *profileExecution) execute(ctx context.Context, execution string, life *
 	if err := p.task.beginExecution(ctx, life, p.spec.Context.Ephemeral, trk, p.run); err != nil {
 		return "", err
 	}
+	p.environment.release()
 	answer, err := p.runSession(ctx, trk.wrap(), terminal)
 	if err != nil {
 		if p.spec.Sched.RunInBackground {

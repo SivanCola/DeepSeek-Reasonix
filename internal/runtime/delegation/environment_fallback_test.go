@@ -31,7 +31,7 @@ func TestAutomaticEnvironmentFallbackPublishesSharedEvidence(t *testing.T) {
 	task := NewTaskToolWithOptions(TaskToolOptions{Provider: p, ParentRegistry: registry, MaxSteps: 20, SysPrompt: "sys", CheckTargetAccess: allowTestFileAccess}).
 		WithTranscripts(NewSubagentStore(t.TempDir()), root, "model", "high").WithOptimisticClaims(true)
 	preparations := 0
-	task.WithEnvironmentFactory("auto", func(context.Context, ProfileExecSpec, string) (*ExecutionEnvironment, error) {
+	task.WithEnvironmentFactory("auto", func(context.Context, ProfileExecSpec, *EnvironmentSource) (*ExecutionEnvironment, error) {
 		preparations++
 		return nil, errors.New("environment unavailable")
 	})

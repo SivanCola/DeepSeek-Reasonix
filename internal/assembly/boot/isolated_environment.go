@@ -20,7 +20,11 @@ import (
 
 func newIsolatedEnvironmentFactory(parent Options, store *isolation.Store, posture *isolationPosture, source string, sink event.Sink, authority func(context.Context, writeclaim.WritePathSet) isolation.SourceAuthorizer, checks ...instruction.VerifyCheck) delegation.EnvironmentFactory {
 	frozenChecks := slices.Clone(checks)
-	return func(ctx context.Context, spec delegation.ProfileExecSpec, resumeID string) (prepared *delegation.ExecutionEnvironment, resultErr error) {
+	return func(ctx context.Context, spec delegation.ProfileExecSpec, origin *delegation.EnvironmentSource) (prepared *delegation.ExecutionEnvironment, resultErr error) {
+		resumeID := ""
+		if origin != nil {
+			resumeID = origin.ID
+		}
 		if err := checkAutomaticTaskIsolation(parent, spec.Sched.Environment, resumeID); err != nil {
 			return nil, err
 		}
@@ -36,7 +40,7 @@ func newIsolatedEnvironmentFactory(parent Options, store *isolation.Store, postu
 		if err != nil {
 			return nil, err
 		}
-		entry, err := prepareIsolatedEntry(ctx, parent.isolatedParent, store, source, resumeID, agent.ParentSession(ctx))
+		entry, err := prepareIsolatedEntry(ctx, parent.isolatedParent, store, source, origin, agent.ParentSession(ctx))
 		if err != nil {
 			return nil, err
 		}

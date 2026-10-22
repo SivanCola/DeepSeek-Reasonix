@@ -31,6 +31,7 @@ Direct-parent management and retention are described in the
 | v4 父子依赖记录 | 子快照前登记直接父关系；封口后拒绝新增；待处理孩子阻止父封存、换代和清理 | v2/v3 reader 拒绝 v4 | 新版工厂统一 BeginChild/ResumeChild；子换代保持父准入锁至落盘 |
 | v4 preparation-lock-v1 | 登记前持准备 OS 锁；无记录、准备者及 run 都已结束才回收登记 | 先前 v4 写者保留未知字段但不回收；未标记的旧登记保留 | 不按超时撤销活准备者；扫描错误不能证明不存在 |
 | v5 嵌套整合依赖 | child 锁内先发布版本屏障再登记 int；父结算同时核对关联 int 的终态、清理和 OS owner；普通保存不降版本 | 先前 v4 reader/writer 拒绝 v5，不能删除仍被关联 int 引用的父环境 | 不追溯拦截已越过旧版快照阶段的在途直接 API 调用；旧生产 nested guard 未开放 |
+| v6 祖先任务副本 | origin v2/ancestor_copy 固定来源身份、物化快照及原整合基线；副本独立续跑 | 先前 v5 reader/writer 拒绝；不降版本 | 来源凭据不继承；origin v1 根导出保持不可变 |
 | publication revocation v1 | 同一 entry 锁内撤销、应用及提交；先持久撤销再更新根记录 | 不支持撤销的早期实验 v3 reader 可忽略 sidecar | 早期实验 v3 不属于安全降级范围 |
 | int_ 尝试 v1 | 独立候选及精确快照检查；恢复保持成果身份 | 旧程序不读取该目录 | 历史验证不代表当前工作区仍有效 |
 | recovery.resultId | 可选字段路由至登记的直接源，检查 runtime、revision 及当前根权限 | 缺字段保持根恢复；旧读者忽略新增的行级 recovery | 管理可发现性不授予整合权限；旧内核拒绝不属于根工作区的恢复目标 |
@@ -83,6 +84,7 @@ ACL 授权、hook 启动及 Bash 逃逸审批之前拒绝。源保护路径按�
 | v4 parent/child dependencies | Register the direct parent before a child snapshot; seal admission; unsettled children block parent sealing, generation changes and cleanup | v2/v3 readers refuse v4 | New factories use BeginChild/ResumeChild; child generation publication retains parent admission ownership |
 | v4 preparation-lock-v1 | Own preparation OS lock before registration; reclaim an absent record only after preparation and run end | Earlier v4 writers preserve unknown fields without reclaiming; untagged registrations remain | Timeouts do not revoke active preparers; scan errors do not prove absence |
 | v5 nested integration dependencies | Under the child lock, publish the version barrier before int registration; parent settlement checks associated int decisions, cleanup and OS ownership; saves never downgrade | Earlier v4 readers/writers refuse v5 and retain the source environment pinned by its integration attempt | Does not fence an old direct API preparer already past its snapshot; the previous production entry point did not allow nested worktrees |
+| v6 ancestor task copies | Origin v2/ancestor_copy pins source identity, materialization and original comparison baseline; copies resume independently | Previous v5 readers/writers refuse; saves never downgrade | Source receipts are not inherited; origin v1 root exports remain immutable |
 | Revocation v1 | Revoke, Apply and Commit fence at the same entry lock; revocation persists first | Early experimental v3 readers can ignore the sidecar | Those experimental readers are outside the safe downgrade scope |
 | int_ v1 | Separate candidate and snapshot-bound checks; recover same identity | Does not read this directory | Historical verification does not prove current source validity |
 | recovery.resultId | Optional direct-source routing rechecks registered identity, runtime, revision and current root permissions | Absent means legacy root recovery; older readers ignore added per-row recovery | Discoverability grants no integration authority; older kernels refuse foreign-workspace recovery targets |

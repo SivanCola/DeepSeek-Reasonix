@@ -42,6 +42,18 @@ type ChildResult struct {
 // BeginChild registers the dependency before reading the parent's snapshot.
 // Failed preparation retains its registration whenever a child record exists.
 func (s *Store) BeginChild(ctx context.Context, parent *Entry, children *Store, owner string) (*Entry, error) {
+	return s.beginChildUsing(ctx, parent, children, owner, func(id string, lineage *ResultLineage) (*Entry, error) {
+		return children.beginOwned(ctx, children.workspace, owner, id, lineage)
+	})
+}
+
+func (s *Store) CopyChild(ctx context.Context, parent *Entry, children *Store, source CopySource, owner string) (*Entry, error) {
+	return s.beginChildUsing(ctx, parent, children, owner, func(id string, lineage *ResultLineage) (*Entry, error) {
+		return children.copyOwned(ctx, source, owner, id, lineage)
+	})
+}
+
+func (s *Store) beginChildUsing(ctx context.Context, parent *Entry, children *Store, owner string, begin func(string, *ResultLineage) (*Entry, error)) (*Entry, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -65,7 +77,7 @@ func (s *Store) BeginChild(ctx context.Context, parent *Entry, children *Store, 
 	if s.childRegistrationProbe != nil {
 		s.childRegistrationProbe(parent, registration)
 	}
-	child, err := children.beginOwned(ctx, children.workspace, owner, id, &ResultLineage{Parent: link, Admission: "open"})
+	child, err := begin(id, &ResultLineage{Parent: link, Admission: "open"})
 	if err != nil {
 		err = errors.Join(err, s.retractUnpreparedChild(context.WithoutCancel(ctx), parent, children, id, link.Token))
 	}

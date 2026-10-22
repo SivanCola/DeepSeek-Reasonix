@@ -60,7 +60,7 @@ model="fixture"
 	spec := delegation.ProfileExecSpec{Grant: delegation.CapabilityGrant{WritePaths: grant}}
 	factory := newIsolatedEnvironmentFactory(parent, children, b.tools.isolation.posture, parentEntry.Cand.WorkspaceRoot, event.Discard, nil)
 	ctx := agent.WithParentSession(t.Context(), "source-session")
-	first, err := factory(ctx, spec, "")
+	first, err := factory(ctx, spec, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ model="fixture"
 	if !found {
 		t.Fatal("real candidate Build did not register its direct parent")
 	}
-	second, err := factory(ctx, spec, first.ID)
+	second, err := factory(ctx, spec, &delegation.EnvironmentSource{ID: first.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ model="fixture"
 	if _, err := store.Finish(ctx, parentEntry); err == nil {
 		t.Fatal("parent sealed while its registered child result remains pending")
 	}
-	if resumed, err := factory(ctx, spec, first.ID); err == nil {
+	if resumed, err := factory(ctx, spec, &delegation.EnvironmentSource{ID: first.ID}); err == nil {
 		_, _ = resumed.Finish(ctx, "", nil)
 		t.Fatal("nested factory resumed after direct parent execution stopped")
 	}

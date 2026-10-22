@@ -13,6 +13,10 @@ import (
 )
 
 func (s *Store) prepareEntry(ctx context.Context, e *Entry) (prepared *Entry, err error) {
+	return s.prepareEntryUsing(ctx, e, s.materializeEntry)
+}
+
+func (s *Store) prepareEntryUsing(ctx context.Context, e *Entry, materialize func(context.Context, *Entry) error) (prepared *Entry, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -38,17 +42,13 @@ func (s *Store) prepareEntry(ctx context.Context, e *Entry) (prepared *Entry, er
 	if s.preparationProbe != nil {
 		s.preparationProbe(Preparing, e)
 	}
-	if err := s.materializeEntry(ctx, e); err != nil {
+	if err := materialize(ctx, e); err != nil {
 		return nil, fmt.Errorf("candidate retained at %s: %w", e.Cand.WorktreeRoot, err)
 	}
 	return e, nil
 }
 
 func (s *Store) materializeEntry(ctx context.Context, e *Entry) error {
-	materialization := e.Snap
-	if e.Origin != nil {
-		materialization = e.Origin.Materialization
-	}
 	if s.mutations != nil {
 		paths := []string{e.Snap.Repo.CommonDir, e.Cand.WorktreeRoot}
 		if e.Origin != nil && e.Origin.Environment != nil {
@@ -62,6 +62,14 @@ func (s *Store) materializeEntry(ctx context.Context, e *Entry) error {
 		}
 		defer lease.End(mutation.Unknown)
 		ctx = lease.Context(ctx)
+	}
+	return s.materializeHeldEntry(ctx, e)
+}
+
+func (s *Store) materializeHeldEntry(ctx context.Context, e *Entry) error {
+	materialization := e.Snap
+	if e.Origin != nil {
+		materialization = e.Origin.Materialization
 	}
 	cand, err := worktree.MaterializeCandidate(ctx, materialization, e.Cand)
 	e.Cand = cand

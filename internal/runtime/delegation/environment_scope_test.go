@@ -22,7 +22,7 @@ func TestEnvironmentBindsToolsAgainstTargetSandbox(t *testing.T) {
 	p := &blockingProvider{started: make(chan struct{})}
 	parent := NewTaskToolWithOptions(TaskToolOptions{Provider: p, ParentRegistry: registry, MaxSteps: 20, SysPrompt: "sys"}).WithTranscripts(NewSubagentStore(t.TempDir()), root, "model", "high")
 	prepared := false
-	parent.WithEnvironmentFactory("shared", func(_ context.Context, spec ProfileExecSpec, _ string) (*ExecutionEnvironment, error) {
+	parent.WithEnvironmentFactory("shared", func(_ context.Context, spec ProfileExecSpec, _ *EnvironmentSource) (*ExecutionEnvironment, error) {
 		prepared = true
 		child := NewTaskToolWithOptions(TaskToolOptions{Provider: p, ParentRegistry: registry, MaxSteps: 20, SysPrompt: "sys"}).WithTranscripts(parent.transcripts, root, "model", "high").WithBashSandboxEnforced(func() bool { return true })
 		return &ExecutionEnvironment{ID: "iso_target", Task: child, Spec: spec}, nil
@@ -44,7 +44,7 @@ func TestBackgroundEnvironmentDoesNotInheritSourceHostCapabilities(t *testing.T)
 	p := &blockingProvider{started: make(chan struct{})}
 	parent := NewTaskToolWithOptions(TaskToolOptions{Provider: p, ParentRegistry: tool.NewRegistry(), MaxSteps: 20, SysPrompt: "sys"}).WithTranscripts(NewSubagentStore(t.TempDir()), root, "model", "high")
 	parent.maxSubagentDepth = 4
-	parent.WithEnvironmentFactory("shared", func(ctx context.Context, spec ProfileExecSpec, _ string) (*ExecutionEnvironment, error) {
+	parent.WithEnvironmentFactory("shared", func(ctx context.Context, spec ProfileExecSpec, _ *EnvironmentSource) (*ExecutionEnvironment, error) {
 		if _, ok := tool.BackgroundStarterFrom(ctx); ok {
 			t.Error("candidate inherited source background starter")
 		}

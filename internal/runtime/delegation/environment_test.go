@@ -37,7 +37,7 @@ func TestNestedEnvironmentUsesCurrentCandidate(t *testing.T) {
 }
 
 func TestNestedEnvironmentUsesRegisteredFactoryWithoutChangingSharedOrReadonly(t *testing.T) {
-	task := &TaskTool{environmentID: "iso_current", environment: &environmentPolicy{mode: "auto", prepare: func(context.Context, ProfileExecSpec, string) (*ExecutionEnvironment, error) {
+	task := &TaskTool{environmentID: "iso_current", environment: &environmentPolicy{mode: "auto", prepare: func(context.Context, ProfileExecSpec, *EnvironmentSource) (*ExecutionEnvironment, error) {
 		return nil, nil
 	}}}
 	for _, mode := range []string{"auto", "shared", "worktree", "isolated"} {
@@ -77,7 +77,7 @@ func testEnvironmentEvidence(t *testing.T, background, panicAfterWrite bool) {
 		WithTranscripts(NewSubagentStore(t.TempDir()), root, "model", "high").WithOptimisticClaims(true)
 	finished := 0
 	candidateEvidence := evidence.NewLedger()
-	parent.WithEnvironmentFactory("shared", func(_ context.Context, spec ProfileExecSpec, _ string) (*ExecutionEnvironment, error) {
+	parent.WithEnvironmentFactory("shared", func(_ context.Context, spec ProfileExecSpec, _ *EnvironmentSource) (*ExecutionEnvironment, error) {
 		if spec.Worker.Model != "model" || spec.Worker.Effort != "high" {
 			t.Errorf("environment lost inherited runtime selection: %q/%q", spec.Worker.Model, spec.Worker.Effort)
 		}
