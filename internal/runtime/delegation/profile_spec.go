@@ -172,6 +172,8 @@ type ContextRequest struct {
 // child is asked to do or what it is allowed to touch.
 type SchedulerPolicy struct {
 	Environment string
+	// ParallelWriter declares a writer with an independent writer in its group.
+	ParallelWriter bool
 	// MaxSteps is the optional per-call step budget (0 = default).
 	MaxSteps int
 	// RunInBackground starts a jobs.Manager background job.

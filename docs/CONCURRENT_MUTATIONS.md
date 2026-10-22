@@ -7,6 +7,8 @@ reviewed: 2026-10-22
 
 # Concurrent mutation protocol / 并发变更协议
 
+[Fleet coordination / 批量任务协调](CONCURRENT_MUTATIONS_FLEET.md)
+
 ## 中文
 
 本文记录正在实施的协议及验收边界，不代表自动隔离和自动整合已交付。

@@ -72,7 +72,7 @@ type environmentRequest struct {
 }
 
 func (t *TaskTool) prepareEnvironment(ctx context.Context, spec ProfileExecSpec, request *environmentRequest) (*ExecutionEnvironment, error) {
-	if request.mode == "auto" && !spec.Sched.RunInBackground && !spec.Sched.BackgroundWriter && t.scheduler.ActiveWriters() <= 1 {
+	if request.mode == "auto" && !spec.Sched.RunInBackground && !spec.Sched.BackgroundWriter && !spec.Sched.ParallelWriter && t.scheduler.ActiveWriters() <= 1 {
 		return nil, nil
 	}
 	prepared, err := t.environment.prepare(ctx, spec, request.resumeID)
