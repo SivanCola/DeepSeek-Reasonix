@@ -33,23 +33,27 @@ func (p *restartCompositionProvider) Stream(_ context.Context, req provider.Requ
 }
 
 func TestCustomCompositionSurvivesHubRestart(t *testing.T) {
-	for _, selection := range []string{"new", "picker"} {
-		for _, reopen := range []string{"open", "reuse-blank"} {
-			t.Run(selection+"/"+reopen, func(t *testing.T) {
-				testCustomCompositionRestart(t, selection, reopen)
-			})
-		}
+	for _, scope := range []string{"user", "project"} {
+		t.Run(scope, func(t *testing.T) {
+			for _, selection := range []string{"new", "picker"} {
+				for _, reopen := range []string{"open", "reuse-blank"} {
+					t.Run(selection+"/"+reopen, func(t *testing.T) {
+						testCustomCompositionRestart(t, scope, selection, reopen)
+					})
+				}
+			}
+		})
 	}
 }
 
-func testCustomCompositionRestart(t *testing.T, selection, reopen string) {
+func testCustomCompositionRestart(t *testing.T, scope, selection, reopen string) {
 	t.Helper()
 	home, root := t.TempDir(), t.TempDir()
 	t.Setenv("REASONIX_HOME", home)
 	t.Chdir(root)
 	closeSharedCatalogsOnCleanup(t)
 	d := agentcomposition.Builtins()[0]
-	d.ID, d.Name = "user:restart", "Restart reviewer"
+	d.ID, d.Name = scope+":restart", "Restart reviewer"
 	d.Persona.Prefix = "You are the restart regression reviewer."
 	empty := agentcomposition.Selection{Mode: agentcomposition.Select, Members: []agentcomposition.Module{}}
 	d.Tools, d.Skills, d.MCP, d.Extensions, d.Hooks, d.Commands = empty, empty, empty, empty, empty, empty
