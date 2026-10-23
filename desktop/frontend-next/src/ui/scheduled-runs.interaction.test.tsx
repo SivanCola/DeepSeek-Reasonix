@@ -80,6 +80,27 @@ describe("scheduled runs", () => {
     expect((screen.getByRole("button", { name: "预览" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("offers the open project for trust where a schedule needs it, and lists it once the answer is recorded", async () => {
+    const trusted = board({ folders: [{ path: "/Users/you/src/app", name: "app" }] });
+    const open = board({ folders: [], current: { path: "/Volumes/ssd/ERP", name: "ERP", trust: "", trustable: true } });
+    let b = open;
+    const decide = vi.fn(async () => { b = trusted; });
+    const port = draw({ schedules: vi.fn(async () => b), decideWorkspaceTrust: decide } as Partial<AgentPort>, open);
+    await userEvent.click(await screen.findByRole("button", { name: "新建定时运行" }));
+    expect(screen.getByText(/ERP/)).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "信任此文件夹" }));
+    expect(decide).toHaveBeenCalledWith("trusted");
+    expect(await screen.findByLabelText("文件夹（它只能读这里）")).toBeTruthy();
+    expect(port.schedules).toHaveBeenCalledTimes(2);
+  });
+
+  it("says a declined project was declined, and offers nothing for one that cannot be trusted", async () => {
+    draw({}, board({ folders: [], current: { path: "/Volumes/ssd", name: "ssd", trust: "declined", trustable: false } }));
+    await userEvent.click(await screen.findByRole("button", { name: "新建定时运行" }));
+    expect(screen.queryByRole("button", { name: "信任此文件夹" })).toBeNull();
+    expect(screen.getByText(/还没有受信任的项目/)).toBeTruthy();
+  });
+
   it("goes back from the preview without creating anything", async () => {
     const port = draw();
     await userEvent.click(await screen.findByRole("button", { name: "新建定时运行" }));

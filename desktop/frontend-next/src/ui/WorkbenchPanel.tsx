@@ -444,6 +444,7 @@ export function WorkbenchPanel({
       if (launcher && e.key === "Escape") { e.stopPropagation(); toggleLauncher(); newTab.current?.focus(); }
     }}>
       <header className="workbench-tabs">
+        {wideMode && <BrowserWideToggle {...wideMode} />}
         <div
           className="workbench-tablist"
           role="tablist"
@@ -519,8 +520,6 @@ export function WorkbenchPanel({
           </div>
         ))}
         </div>
-        {wideMode && <BrowserWideToggle {...wideMode} />}
-        {fullMode && <BrowserFullToggle {...fullMode} />}
         <TooltipButton
           className="workbench-files"
           data-action="workbench.files"
@@ -542,6 +541,7 @@ export function WorkbenchPanel({
         >
           <StudioIcon name="plus" />
         </TooltipButton>
+        {fullMode && <BrowserFullToggle {...fullMode} />}
       </header>
       {closeFailure && <div className="workbench-error workbench-close-error" role="alert">{closeFailure}</div>}
       <div className="workbench-body" data-files={showFiles && !launcher ? "" : undefined}>

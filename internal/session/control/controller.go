@@ -500,6 +500,8 @@ func New(opts Options) *Controller {
 	if c.executor != nil {
 		c.bindProjectionSeer(c.deliveredNewest, c.deliveredSees)
 	}
+	c.approval.onGrantChange = func() { go c.persistSessionGrants() }
+	c.restoreSessionGrants(opts.SessionPath)
 	c.adoptSessionResources(opts)
 	c.publishPerProjectContext(opts)
 	if opts.Extensions != nil {

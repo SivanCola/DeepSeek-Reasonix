@@ -187,7 +187,7 @@ export function ApprovalCard({ item, onApprove, onFullAccess, onPlan }: Props) {
             {sealed && (
               <div className="apv-done">
                 {item.verdict === "session" ? (
-                  <><b>{t("已允许：本会话内此类操作不再询问。")}</b>{t("内核已记入会话授权，不写入磁盘。")}</>
+                  <><b>{t("已允许：本会话内此类操作不再询问。")}</b>{t("内核已记入这个对话的授权，随对话保存；恢复对话后仍然有效。")}</>
                 ) : item.verdict === "always" ? (
                   <><b>{t("已允许：已保存为规则。")}</b>{t("已写入配置，后续会话中此类操作也始终允许，不再询问。")}</>
                 ) : item.verdict === "yolo" ? (

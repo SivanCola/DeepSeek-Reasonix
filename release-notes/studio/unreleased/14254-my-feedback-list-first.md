@@ -1,0 +1,2 @@
+- 修复：“我的反馈”再次打开时立即显示上次的列表并在后台刷新；等级、账号关联和贡献榜收进一行折叠，点开才加载，不再占满首屏。关联 #14254。
+- Fixed: My feedback shows its last list at once and refreshes behind it; level, account and the leaderboard sit behind one collapsed row loaded on open instead of filling the first screen. Refs #14254.

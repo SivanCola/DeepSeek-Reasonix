@@ -283,18 +283,29 @@ func TestProjectionCompactionReOwesTheLatestCanonicalState(t *testing.T) {
 }
 
 // blockOf extracts one host block from a projection, so a failure reports the
-// listing under test instead of the whole turn.
+// listing under test instead of the whole turn. The opening is matched by tag
+// prefix: a variant block (<active-goal contract="full">) carries attributes
+// after its tag, which looking for "<tag>" alone never finds.
 func blockOf(projection, tag string) string {
-	open, close := "<"+tag+">", "</"+tag+">"
-	i := strings.Index(projection, open)
-	if i < 0 {
-		return ""
+	open := "<" + tag
+	close := "</" + tag + ">"
+	for at := 0; ; {
+		i := strings.Index(projection[at:], open)
+		if i < 0 {
+			return ""
+		}
+		i += at
+		rest := projection[i+len(open):]
+		if !strings.HasPrefix(rest, ">") && !strings.HasPrefix(rest, " ") {
+			at = i + len(open)
+			continue
+		}
+		j := strings.Index(rest, close)
+		if j < 0 {
+			return projection[i:]
+		}
+		return projection[i : i+len(open)+j+len(close)]
 	}
-	j := strings.Index(projection[i:], close)
-	if j < 0 {
-		return projection[i:]
-	}
-	return projection[i : i+j+len(close)]
 }
 
 // Arm 6: an editor, a script and the model's own write tool all reach the

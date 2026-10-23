@@ -1,2 +1,0 @@
-- 修复：从微信等应用复制文件粘贴到输入框时，文件会先复制成附件再发送，不再登记原路径，避免来源应用的缓存路径读不到而失败。关联 #14150。
-- Fixed: a file pasted from another application, such as WeChat, is now copied into an attachment instead of being registered by its original path, which could fail to read later. Refs #14150.

@@ -54,6 +54,16 @@ export interface ScheduleBoard {
   // The trusted projects a schedule may be given. A creation names one of these
   // and nothing else; the kernel refuses any other path.
   folders: ScheduleFolder[];
+  // The open project when it is not one of those yet, with the recorded answer
+  // about it ("" undecided, "declined" after a refusal).
+  current?: ScheduleCurrent;
+}
+
+export interface ScheduleCurrent {
+  path: string;
+  name: string;
+  trust: string;
+  trustable: boolean;
 }
 
 export interface ScheduleFolder {

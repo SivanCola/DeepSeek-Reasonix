@@ -1,2 +1,0 @@
-- 修复：上下文压缩超时或取消时，不再因摘要流同时关闭而误报成功或采用未完成的摘要。关联 #14144。
-- Fixed: context compaction no longer reports success or accepts an unfinished digest when its summary stream closes at the same time as a timeout or cancellation. Refs #14144.

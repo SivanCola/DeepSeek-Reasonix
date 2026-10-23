@@ -54,7 +54,7 @@ const (
 // a kind of dynamic state means one entry here, not a new prepend site — which
 // is what this replaced: eight of them, whose order was the order they happened
 // to be written in, reversed.
-func (c *Controller) turnBlocksFor(source string, includeOwed bool, notes []string, plan bool, goal, goalStatus, responseLanguage, reasoningLanguage string) []turnBlock {
+func (c *Controller) turnBlocksFor(source string, includeOwed bool, notes []string, plan bool, goal, goalStatus, goalStopCause, responseLanguage, reasoningLanguage string) []turnBlock {
 	var blocks []turnBlock
 	var always, scoped string
 	if includeOwed {
@@ -83,7 +83,7 @@ func (c *Controller) turnBlocksFor(source string, includeOwed bool, notes []stri
 		turnBlock{"turn-narration", langpref.TurnNarrationBlock(c.TurnNarration() == config.TurnNarrationDetailed, langpref.ResolveResponseLanguage(responseLanguage, source))},
 		turnBlock{"response-language", langpref.ResponseLanguageBlock(langpref.ResolveResponseLanguage(responseLanguage, source))},
 		turnBlock{"", planModeMarkerBlock(plan)},
-		turnBlock{"active-goal", c.activeGoalTurnBlock(goal, goalStatus)},
+		turnBlock{activeGoalTag, c.activeGoalTurnBlock(goal, goalStatus, goalStopCause)},
 	)
 }
 
@@ -126,11 +126,11 @@ func planModeMarkerBlock(plan bool) string {
 	return PlanModeMarker
 }
 
-func (c *Controller) activeGoalTurnBlock(goal, goalStatus string) string {
-	if strings.TrimSpace(goal) == "" || goalStatus != GoalStatusRunning {
-		return ""
+func (c *Controller) activeGoalTurnBlock(goal, goalStatus, goalStopCause string) string {
+	if strings.TrimSpace(goal) != "" && goalStatus == GoalStatusRunning {
+		return c.activeGoalBlockForTurn(goal)
 	}
-	return c.activeGoalBlockForTurn(goal)
+	return c.goalRetractionBlock(goal, goalStatus, goalStopCause)
 }
 
 // recallTail is the one block after the user's text: retrieved facts answer the

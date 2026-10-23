@@ -86,11 +86,11 @@ reasoning_language = "auto"      # 可见思考过程语言：auto|zh|en
 # max_queued_inputs = 0              # 会话队列里等待发送的消息条数；0 = 不限制，队列的字节上限仍然生效（只认用户级配置）
 # max_subagent_steer_bytes = 16384    # 发给运行中子代理的单条指示的字节数，防止一条消息占满它的上下文；0 = 不限制（只认用户级配置）
 # max_subagent_steers_per_minute = 30  # 每分钟发给同一个运行中子代理的指示条数，用来刹住循环；0 = 不限制（只认用户级配置）
-# write_lease = "optimistic"          # 仅用户配置文件；没有声明路径的写入（bash、MCP）不再占住整个工作区，默认 strict
+# write_lease = "strict"              # 仅用户配置文件；默认 optimistic：没有声明路径的写入（bash、MCP）不占住整个工作区；strict 则让它占住整个工作区
 # write_lease_max_wait_minutes = 0    # 写入在另一个会话占着路径时最多等多少分钟，超时以 workspace.claim_timeout 失败；0（默认）= 一直等到本轮结束，建议值 120（只认用户级配置）
 # plan_approval = "auto"             # 仅用户配置文件；提交的计划不再等待批准点击，直接开始执行，对话里会留下说明，默认 ask
 # default_mode = "plan"              # 仅用户配置文件；新对话从计划模式开始（恢复的对话保持自己的模式；设置里有对应开关），默认 normal
-# subagent_claims = "optimistic"      # 仅用户配置文件；没有声明 write_paths 的子代理只占用正在写的路径，不占整个工作区，默认 strict
+# subagent_claims = "strict"          # 仅用户配置文件；默认 optimistic：没有声明 write_paths 的子代理只占用正在写的路径；strict 则让它占整个工作区
 # host_verification = "on"           # 仅用户配置文件；设为 on 时，改过文件的回合要先有检查、复核和签收才能结束；不设或设为 off 则不要求（不设时交付预设仍会要求）；交付回执始终如实写明检查了什么
 # compact_ratio 是唯一自动维护阈值（默认 0.85；预设 0.70/0.80/0.85）
 # max_output_tokens = 0            # 推荐：自动（DeepSeek 默认 high → 约 64K；不是无限）
@@ -776,6 +776,10 @@ CLI/TUI 文本输入可通过 `[ui].cursor_shape` 设置光标形状，支持 `u
 | 计划审批卡片 | `Left` / `Right`、`Enter`、`1`-`3`、`Esc` | 在“修改计划 / 开始执行 / 退出计划”之间移动。默认高亮是“开始执行”。 |
 | Plan 控件 | 切换 Plan 开/关 | 和 `Shift+Tab` 是同一个模式。 |
 | 协作菜单里的 Goal | 启动、查看或清除 Goal | Goal 不进入任何快捷键循环。 |
+
+Studio 会在同一浏览器或桌面配置中记住侧边栏本机和远程项目的展开、收起状态，
+包括「收起所有项目 / 展开所有项目」，重新打开后仍然保留。新项目默认展开。
+这些显示偏好仅保存在当前设备，不修改会话，也不会同步到其他客户端。
 
 #### Studio 文件附件
 

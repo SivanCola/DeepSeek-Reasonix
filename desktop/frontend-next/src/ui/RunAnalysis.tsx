@@ -128,7 +128,7 @@ export function RunAnalysis({ rows, availability, onSave }: {
     return (
       <div className="run-empty">
         <strong>{t("还没有可分析的运行")}</strong>
-        <span>{t("发送任务后，这里会按真实轨迹显示模型、工具、重试与并行耗时。")}</span>
+        <span>{t("发送任务后，这里会按真实运行记录显示模型、工具、重试与并行耗时。")}</span>
       </div>
     );
   }
@@ -142,7 +142,7 @@ export function RunAnalysis({ rows, availability, onSave }: {
       <header className="run-analysis-head">
         <span>
           <b>{t("运行分析")}</b>
-          <small>{t("本轮 · 基于真实轨迹")}</small>
+          <small>{t("本轮 · 基于真实记录")}</small>
         </span>
         <span className="run-analysis-actions">
           {saved && <small title={saved}>{t("已导出")}</small>}
@@ -154,7 +154,7 @@ export function RunAnalysis({ rows, availability, onSave }: {
               void onSave(name, serialiseTrajectory(rows, availability)).then((to) => setSaved(to ?? name));
             }}
           >
-            {t("导出轨迹")}
+            {t("导出运行记录")}
           </button>
         </span>
       </header>

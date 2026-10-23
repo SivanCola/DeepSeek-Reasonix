@@ -11,9 +11,10 @@ import type { AgentPort, JobEntry } from "../port/port";
 afterEach(cleanup);
 
 const METRICS = {
-  hit: 10, miss: 2, out: 100, bySource: {}, cost: 1.5, currency: "¥",
+  hit: 10, miss: 2, out: 100, bySource: {}, cost: [{ currency: "CNY", amount: 1.5 }],
   prefixHash: "", prefixChanged: false, prefixReasons: [], bodyChanged: false,
-  carriedMessages: 3, toolSchema: 1, estimated: false, alt: null, turn: 1, rounds: [],
+  carriedMessages: 3, toolSchema: 1, estimated: false, alt: null,
+  turn: [{ currency: "CNY", amount: 1 }], rounds: [],
 } as never;
 
 const JOB = { id: "j1", name: "bg", state: "running" } as unknown as JobEntry;

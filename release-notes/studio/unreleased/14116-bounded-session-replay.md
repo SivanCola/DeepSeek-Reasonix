@@ -1,4 +1,0 @@
-- 修复：旧版 1.x 历史索引不再保留已回退或被覆盖的消息正文，降低启动时的内存压力。关联 #14116。
-- Fixed: legacy 1.x indexing retains payload locations, not discarded message bodies. Preflight no longer copies large strings. Refs #14116.
-- 超过 64 MiB 安全预算的记录、有效消息正文或 DAG 元数据会被拒绝；原文件保持不变，其他会话仍可索引。关联 #14116。
-- Records, retained payloads, and DAG metadata have separate 64 MiB budgets. Refusals preserve files, never use stale checkpoints, and leave healthy sources indexable. Refs #14116.

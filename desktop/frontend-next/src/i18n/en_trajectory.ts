@@ -3,9 +3,9 @@
 // file-size ceiling, and a screen's worth of wording is read together.
 export const EN_TRAJECTORY: Record<string, string> = {
   "运行分析": "Run analysis",
-  "本轮 · 基于真实轨迹": "This turn · from recorded events",
+  "本轮 · 基于真实记录": "This turn · from recorded events",
   "{n} 条记录": "{n} records",
-  "导出轨迹": "Export trajectory",
+  "导出运行记录": "Export run record",
   "已导出": "Exported",
   "运行摘要": "Run summary",
   "总时长": "Total time",
@@ -34,7 +34,7 @@ export const EN_TRAJECTORY: Record<string, string> = {
   "模型回合": "Model round",
   "类型": "Type",
   "还没有可分析的运行": "There is no run to analyse yet",
-  "发送任务后，这里会按真实轨迹显示模型、工具、重试与并行耗时。":
+  "发送任务后，这里会按真实运行记录显示模型、工具、重试与并行耗时。":
     "After you send a task, real events will show model, tool, retry and parallel time here.",
   "时间轴": "Timeline",
   "已保存至 {path}": "Saved to {path}",

@@ -182,8 +182,17 @@ export function ScheduledRuns({ port }: { port: AgentPort }) {
         {form && !preview && (
           <div className="peerform" role="group" aria-label={t("新建定时运行")}>
             <label className="peernote" htmlFor="sched-folder">{t("文件夹（它只能读这里）")}</label>
+            {board.current?.trustable && (
+              <div className="peernote">
+                {board.current.trust === "declined"
+                  ? t("当前项目「{name}」之前选了“暂不信任”，所以定时运行读不了它。信任后，在有系统沙盒的电脑上，默认设置下它的编辑和命令不再逐条询问；你手动选定的批准模式不受影响。", { name: board.current.name })
+                  : t("当前项目「{name}」还没有受信任，所以定时运行读不了它。信任后，在有系统沙盒的电脑上，默认设置下它的编辑和命令不再逐条询问；你手动选定的批准模式不受影响。", { name: board.current.name })}
+                {" "}
+                <button className="act" data-action="workspace.trust" data-value="trusted" disabled={busy} onClick={() => void run(() => port.decideWorkspaceTrust("trusted"))}>{t("信任此文件夹")}</button>
+              </div>
+            )}
             {board.folders.length === 0 ? (
-              <div className="peernote" id="sched-folder">{t("还没有受信任的项目。先在 Studio 或终端界面里打开一个项目并信任它，再回来选。")}</div>
+              !board.current?.trustable && <div className="peernote" id="sched-folder">{t("还没有受信任的项目。先在 Studio 或终端界面里打开一个项目并信任它，再回来选。")}</div>
             ) : (
               <select id="sched-folder" className="peerfield" data-action-change="schedule.folder" value={form.workspace} disabled={busy}
                 onChange={(e) => draft({ workspace: e.target.value })}>

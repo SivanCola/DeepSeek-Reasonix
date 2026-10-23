@@ -68,13 +68,25 @@ export interface RememberedFact {
   body: string;
 }
 
+// Money this session was billed, in one currency. Two rounds billed in
+// different currencies stay two entries: adding them would need a rate nobody
+// quoted, and the sum would be a number with no unit. The usage page prints its
+// report the same way, one line per code.
+export interface CurrencyAmount {
+  currency: string;
+  amount: number;
+}
+
 export interface Metrics {
   hit: number;
   miss: number;
   out: number;
-  bySource: Record<string, number>;
-  cost: number;
-  currency: string;
+  // What each source spent, split by currency for the same reason the session
+  // total is.
+  bySource: Record<string, CurrencyAmount[]>;
+  // The session total, one entry per currency. Never one scalar plus a label:
+  // the label could only name one of the currencies that were added.
+  cost: CurrencyAmount[];
   // The prefix the last round was sampled against, and whether it moved. A
   // cache that stops hitting is almost always a prefix that changed, and the
   // hash is what tells "changed" from "the endpoint dropped it".
@@ -102,9 +114,10 @@ export interface Metrics {
   // The converted amount, when the host quoted in a second currency. Kept
   // apart rather than summed: adding them would require inventing a rate.
   alt: { amount: number; currency: string } | null;
-  // What this turn added, and the per-round series behind the trend. Bounded:
-  // a long session must not grow an unbounded array in the reducer.
-  turn: number;
+  // What this turn added, split by currency like the session total, and the
+  // per-round series behind the trend. Bounded: a long session must not grow an
+  // unbounded array in the reducer.
+  turn: CurrencyAmount[];
   rounds: number[];
 }
 

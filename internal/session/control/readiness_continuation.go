@@ -100,7 +100,11 @@ func readinessContinuationPrompt(todos []evidence.TodoItem, reason string) strin
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("This turn ended with work still outstanding:\n")
+	// The opening must match an entry in sessionstore.SyntheticUserPrefixes: this
+	// message is persisted with role "user", so its opening is the only thing
+	// that tells a reloaded session it did not come from the person.
+	b.WriteString("Host: this turn ended with work still outstanding. ")
+	b.WriteString("The user did not send this; it is the host's own account of what the turn owes.\n")
 	for _, p := range parts {
 		b.WriteString("- " + p + "\n")
 	}

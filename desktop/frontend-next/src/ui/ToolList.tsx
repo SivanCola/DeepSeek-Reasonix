@@ -4,6 +4,7 @@ import { reason } from "../i18n/kernel";
 import type { AgentPort, ToolSettings } from "../port/port";
 import { Group } from "./Group";
 import { Switch } from "./Switch";
+import { toolBlurb } from "./toolBlurbs";
 
 // Every tool the model is offered, each with a switch. Turning one off removes
 // it from every request in conversations opened afterwards and refuses a call to
@@ -60,7 +61,7 @@ export function ToolList({ port }: { port: AgentPort }) {
                 ? t("{feature}需要它，不能关闭。", { feature: feature(tool.requiredBy) })
                 : tool.byProject
                   ? t("这个项目的配置文件把它关掉了；要重新打开，请在项目的 reasonix.toml 里去掉。")
-                  : tool.description}
+                  : (toolBlurb(tool.name) ?? tool.description)}
             </span>
           </span>
           {!tool.requiredBy && !tool.byProject && (

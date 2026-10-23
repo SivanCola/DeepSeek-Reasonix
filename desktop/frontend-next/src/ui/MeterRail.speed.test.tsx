@@ -10,7 +10,7 @@ function rail(firstToken: number) {
   return render(
     <MeterRail
       tps={0} trail={[]} running={false} speed={{ output: 80, modelSeconds: 2, average: 40, firstToken }}
-      metrics={{ hit: 0, miss: 0 }} ctx={null} mcp={[]} compact={{ phase: "idle" } as never} cost="" wallet={{} as never}
+      metrics={{ hit: 0, miss: 0 }} ctx={null} mcp={[]} compact={{ phase: "idle" } as never} cost={[]} wallet={{} as never}
       hideAmounts={false} tasks={[]} jobs={[]} onSettings={vi.fn()} onCancelJob={vi.fn(async () => {})}
     />,
   );
@@ -35,12 +35,12 @@ describe("two rails on one screen", () => {
       <>
         <MeterRail
           tps={0} trail={[]} running={false} speed={{ output: 0, modelSeconds: 0, average: 0, firstToken: 0 }}
-          metrics={{ hit: 0, miss: 0 }} ctx={null} mcp={[]} compact={{ phase: "idle" } as never} cost="" wallet={{} as never}
+          metrics={{ hit: 0, miss: 0 }} ctx={null} mcp={[]} compact={{ phase: "idle" } as never} cost={[]} wallet={{} as never}
           hideAmounts={false} tasks={[]} jobs={[]} onSettings={vi.fn()} onCancelJob={vi.fn(async () => {})}
         />
         <MeterRail
           tps={0} trail={[]} running={false} speed={{ output: 0, modelSeconds: 0, average: 0, firstToken: 0 }}
-          metrics={{ hit: 0, miss: 0 }} ctx={null} mcp={[]} compact={{ phase: "idle" } as never} cost="" wallet={{} as never}
+          metrics={{ hit: 0, miss: 0 }} ctx={null} mcp={[]} compact={{ phase: "idle" } as never} cost={[]} wallet={{} as never}
           hideAmounts={false} tasks={[]} jobs={[]} onSettings={vi.fn()} onCancelJob={vi.fn(async () => {})}
         />
       </>,

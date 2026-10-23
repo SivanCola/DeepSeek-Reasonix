@@ -44,6 +44,23 @@ describe("a delivery receipt", () => {
     expect(finds[1].querySelector(".t")?.textContent).toBe("没跑 Windows");
   });
 
+  it("shows only the start of a long or multi-line command and keeps the whole of it for hover", () => {
+    const script = "cd \"$TMPDIR/wxcheck\" && python - <<'PYEOF'\n" + "p = open(\"verify.py\").read()\n".repeat(40) + "PYEOF\npython -m unittest verify -v 2>&1 | tail -12";
+    const box = draw({ gaps: [{ kind: "inconclusive_verification", detail: script }] });
+    const code = box.querySelector("code.gapd")!;
+    expect(code.textContent!.length).toBeLessThanOrEqual(121);
+    expect(code.textContent).toContain("cd \"$TMPDIR/wxcheck\" && python - <<'PYEOF'");
+    expect(code.textContent!.endsWith("…")).toBe(true);
+    expect(code.getAttribute("title")).toBe(script);
+  });
+
+  it("leaves a short one-line command exactly as it was", () => {
+    const box = draw({ gaps: [{ kind: "failed_verification", detail: "go test ./internal/..." }] });
+    const code = box.querySelector("code.gapd")!;
+    expect(code.textContent).toBe("go test ./internal/...");
+    expect(code.getAttribute("title")).toBe("go test ./internal/...");
+  });
+
   it("keeps the total honest when it stops listing", () => {
     const gaps = Array.from({ length: 8 }, (_, i) => ({ kind: "missing_check", detail: `c${i}` }));
     const box = draw({ gaps });

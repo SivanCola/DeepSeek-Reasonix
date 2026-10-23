@@ -7,14 +7,14 @@ import { estimateTokens, sample } from "../port/tokens";
 import type { HistoryMessage } from "../port/port";
 import { plural, t } from "../i18n";
 import { currentStep, stepDone, stepLabel } from "./session_types";
-import type { Item, Metrics, PlanStep, RememberedFact, RuntimeNotice, SessionState, TodoStatus, TurnTerminal, Waiting } from "./session_types";
-import { foldUsage, quoteAmount } from "./usage";
+import type { CurrencyAmount, Item, Metrics, PlanStep, RememberedFact, RuntimeNotice, SessionState, TodoStatus, TurnTerminal, Waiting } from "./session_types";
+import { DEFAULT_CURRENCY, foldUsage, quoteAmount } from "./usage";
 
 // The types live next door; this stays their way in, so no reader of a
 // session has to know they were split off.
 import { splitProviderSearch } from "./providersearch";
 
-export type { Item, Metrics, PlanStep, RememberedFact, RuntimeNotice, SessionState, TodoStatus, TurnTerminal, Waiting };
+export type { CurrencyAmount, Item, Metrics, PlanStep, RememberedFact, RuntimeNotice, SessionState, TodoStatus, TurnTerminal, Waiting };
 export { currentStep, stepDone, stepLabel };
 import { askAnnounced, askEngaged, askFromCall, promptOpen, prompted, sealByReceipt } from "./prompts";
 import { nameTurnStart, othersSteer } from "./turn_start";
@@ -51,9 +51,9 @@ export const initialState: SessionState = {
   plan: [],
   outWindow: [],
   outLive: 0,
-  metrics: { hit: 0, miss: 0, out: 0, bySource: {}, cost: 0, currency: "¥",
+  metrics: { hit: 0, miss: 0, out: 0, bySource: {}, cost: [], turn: [],
     prefixHash: "", prefixChanged: false, prefixReasons: [], bodyChanged: false, carriedMessages: 0, toolSchema: 0,
-    estimated: false, coverage: "none", incompleteReason: "", alt: null, turn: 0, rounds: [] },
+    estimated: false, coverage: "none", incompleteReason: "", alt: null, rounds: [] },
   waiting: {},
   running: false,
   doing: IDLE,
@@ -328,8 +328,8 @@ function apply(s: SessionState, ev: SessionEvent): SessionState {
         ...s.metrics,
         hit: ev.hit,
         miss: ev.miss,
-        cost: ev.cost ?? s.metrics.cost,
-        currency: ev.currency || s.metrics.currency,
+        // The kernel's one priced total replaces the live buckets; joining it would mix answers.
+        cost: ev.cost === undefined ? s.metrics.cost : [{ currency: ev.currency || s.metrics.cost[0]?.currency || DEFAULT_CURRENCY, amount: ev.cost }],
         coverage: ev.coverage ?? s.metrics.coverage,
         incompleteReason: ev.coverage ? ev.incompleteReason ?? "" : s.metrics.incompleteReason,
       },
@@ -364,7 +364,7 @@ function apply(s: SessionState, ev: SessionEvent): SessionState {
       // twice: no seal — calls still run, a prompt is still owed — but naming
       // still runs, because the row may have been sent between the two.
       if (s.running && ev.msgIndex !== undefined && ev.msgIndex === s.turnMsgIndex) return nameTurnStart(s, ev);
-      return nameTurnStart({ ...s, running: true, runSince: Date.now(), doing: "运行中", terminal: null, outLive: 0, turnModel: ev.modelRef || s.turnModel, waiting: { ttftSince: Date.now() }, turnMsgIndex: ev.msgIndex ?? s.turnMsgIndex, items: sealTurn(sealSay(s.items, true)) }, ev);
+      return nameTurnStart({ ...s, metrics: { ...s.metrics, turn: [] }, running: true, runSince: Date.now(), doing: "运行中", terminal: null, outLive: 0, turnModel: ev.modelRef || s.turnModel, waiting: { ttftSince: Date.now() }, turnMsgIndex: ev.msgIndex ?? s.turnMsgIndex, items: sealTurn(sealSay(s.items, true)) }, ev);
 
     case "reasoning":
       return {

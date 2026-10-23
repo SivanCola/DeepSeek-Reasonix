@@ -313,6 +313,11 @@ var SyntheticUserPrefixes = []string{
 	"<reasoning-language>",
 	"Plan approved — plan mode is off",
 	"Host final-answer readiness check failed",
+	// Both openings must stay listed. readinessContinuationPrompt writes the
+	// attributed one; a session written before it did starts with the older
+	// text, and either one read back as user input becomes a title.
+	"Host: this turn ended with work still outstanding",
+	"This turn ended with work still outstanding",
 	"You are already in the executor phase",
 	"The previous assistant response was interrupted while a tool call",
 	"The previous assistant response was interrupted during streaming",

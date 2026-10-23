@@ -39,6 +39,16 @@ function gapPhrase(kind: string): string {
 // the total honest.
 const MAX_GAPS = 5;
 
+// A command is evidence, not a document: the card shows where it starts and the
+// whole of it stays in the hover title.
+const DETAIL_CHARS = 120;
+function gapDetail(detail: string): string {
+  const first = detail.split("\n").find((line) => line.trim() !== "") ?? "";
+  const more = first.trim() !== detail.trim();
+  const line = first.trim();
+  return line.length > DETAIL_CHARS ? `${line.slice(0, DETAIL_CHARS)}…` : more ? `${line} …` : line;
+}
+
 // What carried a clean verdict, so "verified" is never an unsourced assertion.
 function evidence(r: Receipt): string[] {
   const out: string[] = [];
@@ -85,7 +95,7 @@ export function ReceiptCard({ r }: { r: Receipt }) {
           {shown.map((g, i) => (
             <div className="find" data-lvl="warn" key={`${g.kind}:${g.detail ?? i}`} style={{ "--i": i } as React.CSSProperties}>
               <span className="t">{gapPhrase(g.kind)}</span>
-              {g.detail && <code className="gapd" title={g.detail}>{g.detail}</code>}
+              {g.detail && <code className="gapd" title={g.detail}>{gapDetail(g.detail)}</code>}
             </div>
           ))}
           {rest > 0 && <div className="rc-more">{t("另有 {n} 项", { n: rest })}</div>}

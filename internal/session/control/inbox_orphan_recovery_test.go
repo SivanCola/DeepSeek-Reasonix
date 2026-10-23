@@ -162,7 +162,7 @@ func TestRetryThenStaleSteerTreatsAlreadyRunningItemAsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetState(rec.ItemID, sessioninbox.StateUncertain, "review retry"); err != nil {
+	if err := st.SetStateCoded(rec.ItemID, sessioninbox.StateUncertain, sessioninbox.BlockSteerUnapplied, "review retry"); err != nil {
 		t.Fatal(err)
 	}
 

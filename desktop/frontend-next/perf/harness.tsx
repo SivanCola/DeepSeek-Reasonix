@@ -6,6 +6,7 @@ import "../src/styles/tokens.css";
 import "../src/styles/app.css";
 import "../src/styles/dock.css";
 import "../src/styles/studio.css";
+import "../src/styles/flowgrip.css";
 import "../src/styles/changedpill.css";
 import "../src/styles/askskip.css";
 import "../src/styles/pastekeep.css";
@@ -296,9 +297,35 @@ class BenchPort extends MockPort {
   }
 
   private settingCardSent = false;
+  private receiptSent = false;
+
+  async receiptSettings() {
+    const read = await super.receiptSettings();
+    return query.has("receipt") ? { ...read, show: true } : read;
+  }
+  private meterSent = false;
 
   subscribe(on: (e: WireEvent) => void) {
     this.subs.add(on);
+    if (query.has("meter") && !this.meterSent) {
+      this.meterSent = true;
+      const usage = (amount: number) => ({ cacheHitTokens: 90, cacheMissTokens: 10, completionTokens: 40, totalTokens: 140, cost: amount, currency: "CNY", currencyCode: "CNY", source: "executor" });
+      setTimeout(() => {
+        for (const [msgIndex, amount] of [[1, 1.2], [2, 0.35]] as const) {
+          this.feed({ kind: "turn_started", msgIndex } as unknown as WireEvent);
+          this.feed({ kind: "usage", usage: usage(amount) } as unknown as WireEvent);
+          this.feed({ kind: "turn_done" } as unknown as WireEvent);
+        }
+      }, 500);
+    }
+    if (query.has("receipt") && !this.receiptSent) {
+      this.receiptSent = true;
+      const script = "cd \"C:/Users/me/work\" && cat > \"$TMPDIR/check/verify_006.py\" <<'PYEOF'\n" + "import os, re, sys, unittest\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertEqual(1, 1)\n".repeat(18) + "PYEOF\npython -m unittest verify_006 2>&1 | tail -12";
+      setTimeout(() => {
+        this.feed({ kind: "turn_started", msgIndex: 9 } as unknown as WireEvent);
+        this.feed({ kind: "turn_done", receipt: { saysSomething: true, severity: "warn", gaps: [{ kind: "failed_verification", detail: script }, { kind: "inconclusive_verification", detail: "go test ./internal/... 2>&1 | tail -5" }] } } as unknown as WireEvent);
+      }, 500);
+    }
     const card = query.get("settingcard");
     if (card && !this.settingCardSent) {
       this.settingCardSent = true;

@@ -50,7 +50,7 @@ describe("RunAnalysis", () => {
   it("exports the same recorded rows directly from analysis", async () => {
     const save = vi.fn(async (_name: string, _content: string) => "D:/exports/trajectory.json");
     render(<RunAnalysis rows={rows} availability="complete" onSave={save} />);
-    fireEvent.click(screen.getByRole("button", { name: "导出轨迹" }));
+    fireEvent.click(screen.getByRole("button", { name: "导出运行记录" }));
     await vi.waitFor(() => expect(save).toHaveBeenCalledOnce());
     const [name, content] = save.mock.calls[0];
     expect(name).toMatch(/^trajectory-.*\.json$/);

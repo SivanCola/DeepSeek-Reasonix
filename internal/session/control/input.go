@@ -34,6 +34,7 @@ const PlanModeMarker = planmode.Marker
 const PlannerRouteMarker = "[Reasonix: plan-first]"
 
 const (
+	activeGoalTag  = "active-goal"
 	activeGoalOpen = "<active-goal>"
 	// activeGoalFullOpen marks the turn carrying the whole task contract.
 	activeGoalFullOpen = `<active-goal contract="full">`
@@ -106,20 +107,21 @@ func (c *Controller) Compose(text string) string {
 }
 
 func (c *Controller) compose(text, source string, includeHookContext bool) string {
-	goal, goalStatus := c.goals.snapshot()
+	goal, goalStatus, goalStopCause := c.goals.snapshot()
 	return c.composeWithGoal(
 		text,
 		source,
 		includeHookContext,
 		goal,
 		goalStatus,
+		goalStopCause,
 	)
 }
 
 func (c *Controller) composeWithGoal(
 	text, source string,
 	includeHookContext bool,
-	goal, goalStatus string,
+	goal, goalStatus, goalStopCause string,
 ) string {
 	c.mu.Lock()
 	plan := c.PlanMode()
@@ -128,7 +130,7 @@ func (c *Controller) composeWithGoal(
 	c.mu.Unlock()
 	notes := c.memory.drainPending()
 
-	blocks := c.turnBlocksFor(source, includeHookContext, notes, plan, goal, goalStatus, responseLanguage, reasoningLanguage)
+	blocks := c.turnBlocksFor(source, includeHookContext, notes, plan, goal, goalStatus, goalStopCause, responseLanguage, reasoningLanguage)
 	var tail string
 	if includeHookContext {
 		tail = c.recallTail(source, len(notes) > 0)

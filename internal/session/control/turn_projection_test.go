@@ -14,7 +14,7 @@ func TestTurnBlockOrderIsDeclared(t *testing.T) {
 	defer c.Close()
 
 	got := []string{}
-	for _, blk := range c.turnBlocksFor("hello", true, nil, false, "", "", "", "") {
+	for _, blk := range c.turnBlocksFor("hello", true, nil, false, "", "", "", "", "") {
 		got = append(got, blk.tag)
 	}
 	want := []string{
@@ -48,7 +48,7 @@ func TestEveryTurnBlockIsRegisteredAsTransient(t *testing.T) {
 	c := New(Options{})
 	defer c.Close()
 
-	for _, blk := range c.turnBlocksFor("hello", true, nil, false, "", "", "", "") {
+	for _, blk := range c.turnBlocksFor("hello", true, nil, false, "", "", "", "", "") {
 		if blk.tag == "" {
 			continue
 		}

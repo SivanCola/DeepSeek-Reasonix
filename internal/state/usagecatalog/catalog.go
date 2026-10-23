@@ -417,7 +417,10 @@ func projectRecord(ctx context.Context, tx *sql.Tx, entry Entry) error {
         requests=requests+excluded.requests,turns=turns+excluded.turns,cost_incomplete=cost_incomplete+excluded.cost_incomplete`,
 		entry.Day, entry.Source, entry.ModelRef, entry.Provider,
 		entry.Prompt, entry.Completion, entry.Reasoning, entry.CacheHit, entry.CacheMiss, entry.Total, entry.Requests, entry.Turns, incomplete)
-	if err != nil || entry.CostCurrency == "" || entry.Cost == 0 {
+	// A currency means the line was priced; its amount may genuinely be zero
+	// (a free or zero-rate quote). Only a line with no currency carries no
+	// price at all, so only that one has no cost rows.
+	if err != nil || entry.CostCurrency == "" {
 		return err
 	}
 	estimated := 0
@@ -494,11 +497,12 @@ func entryFromRaw(day string, raw rawRecord) Entry {
 	if raw.Turn {
 		turns = 1
 	}
+	incomplete := CostIncomplete(raw.CostComplete, raw.Total, raw.CostAmount)
 	return Entry{Day: day, Source: raw.Source, ModelRef: raw.ModelRef, Provider: providerOf(raw.ModelRef), Prompt: raw.Prompt,
 		Completion: raw.Completion, Reasoning: raw.Reasoning, CacheHit: raw.CacheHit, CacheMiss: raw.CacheMiss,
 		Total: raw.Total, Requests: raw.Requests, Turns: turns}.WithCost(Priced{Amount: raw.CostAmount,
 		Currency: raw.CostCurrency, CNY: raw.ValuationCNY, USD: raw.ValuationUSD, Estimated: raw.CostEstimated,
-		Incomplete: raw.CostComplete != nil && !*raw.CostComplete, BillingMode: raw.BillingMode})
+		Incomplete: incomplete, BillingMode: raw.BillingMode})
 }
 
 // recordDays is every day the file's records were filed under, plus the day it
@@ -604,31 +608,19 @@ func (c *Catalog) ReconcileFile(ctx context.Context, path, day string) error {
 	return nil
 }
 
-func (c *Catalog) ReconcileDir(ctx context.Context, dir string) error {
-	entries, err := os.ReadDir(dir)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
-			continue
-		}
-		day := strings.TrimSuffix(entry.Name(), ".jsonl")
-		if err := c.ReconcileFile(ctx, filepath.Join(dir, entry.Name()), day); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (c *Catalog) Ready(ctx context.Context, dir string, days []string) bool {
 	for _, day := range days {
 		path := filepath.Join(dir, day+".jsonl")
 		info, err := os.Stat(path)
 		if errors.Is(err, os.ErrNotExist) {
+			// A day file that vanished after it was indexed is not complete:
+			// rows left for it are stale, so the caller falls back to the
+			// authoritative JSONL until the reconcile forgets the file. A day
+			// never indexed keeps reading as an empty, complete day.
+			var indexed int
+			if err := c.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM usage_files WHERE path=?`, path).Scan(&indexed); err != nil || indexed != 0 {
+				return false
+			}
 			continue
 		}
 		if err != nil {

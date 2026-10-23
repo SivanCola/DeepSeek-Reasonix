@@ -75,6 +75,7 @@ var (
 	ErrItemTooLarge        = errors.New("inbox item exceeds single-item size limit")
 	ErrNotFound            = errors.New("inbox item not found")
 	ErrInvalidState        = errors.New("inbox item state does not allow this operation")
+	ErrRetryMayRepeat      = errors.New("inbox item may already have run, so retrying it could repeat it")
 	ErrSchemaReadonly      = errors.New("inbox schema is newer and is read-only")
 	ErrClosed              = errors.New("inbox is closed")
 	ErrEmpty               = errors.New("inbox item body is empty")

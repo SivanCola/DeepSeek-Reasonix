@@ -55,6 +55,14 @@ describe("browser wide mode", () => {
     expect(width).not.toHaveBeenCalled();
   });
 
+  it("puts the wide toggle at the left edge of the workbench bar and the full-size toggle at the right edge", async () => {
+    const { container } = open();
+    await screen.findByLabelText("网页地址");
+    const bar = container.querySelector<HTMLElement>(".workbench-tabs")!;
+    expect(bar.firstElementChild).toBe(screen.getByRole("button", { name: "加宽工作台" }));
+    expect(bar.lastElementChild).toBe(screen.getByRole("button", { name: "全屏工作台" }));
+  });
+
   it("toggles with Ctrl+Shift+B and spends Escape leaving wide mode before the browser closes", async () => {
     const { container, close } = open();
     await screen.findByLabelText("网页地址");

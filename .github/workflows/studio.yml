@@ -87,7 +87,7 @@ jobs:
   browser-guards:
     name: browser guards
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: desktop/frontend-next
@@ -155,6 +155,7 @@ jobs:
           node perf/browser-full.mjs
           node perf/mod-ui.mjs
           node perf/codeeditor-size.mjs
+          node perf/composer-reflow.mjs
           node perf/action-icons.mjs
           node perf/rowhit.mjs
           node perf/tab-pip.mjs
@@ -185,6 +186,9 @@ jobs:
           node perf/output-cap.mjs
           node perf/changes-cap.mjs
           node perf/session-menu-fit.mjs
+          node perf/rail-rows-typography.mjs
+          node perf/settings-nav-fit.mjs
+          node perf/rail-rows-align.mjs
           node perf/progress-tail.mjs
           node perf/trust-wait.mjs
           node perf/nest-nodes.mjs

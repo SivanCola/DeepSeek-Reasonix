@@ -93,7 +93,7 @@ func (c *Controller) GoalRuntime() GoalRuntimeView {
 // turn/budget state, and the last
 // continuation reason. Every field is treated as untrusted by the evaluator.
 func (c *Controller) goalEvaluatorEvidence() goaleval.GoalEvidence {
-	goal, _ := c.goals.snapshot()
+	goal, _, _ := c.goals.snapshot()
 	ev := goaleval.GoalEvidence{
 		GoalContract:           goal,
 		LastContinuationReason: c.goals.lastContinuationReasonText(),

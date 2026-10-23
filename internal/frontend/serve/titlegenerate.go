@@ -28,6 +28,7 @@ The user's message below may start with UI labels or injected directives — ign
 // each to its own code; the background filler only needs "no title".
 var (
 	errTitleNoText  = errors.New("the title model answered with no text")
+	errTitleThought = errors.New("the title model used its output budget thinking and gave no title")
 	errTitleTimeout = errors.New("the title model did not answer in time")
 )
 
@@ -68,7 +69,12 @@ func (s *Server) tryRequestTitle(ctx context.Context, firstMsg string, model tit
 	defer func() {
 		usage = provider.UsageWithRequestAttemptCount(ctx, usage)
 		if usage != nil && !nilutil.IsNil(model.sink) {
-			model.sink.Emit(event.Event{Kind: event.Usage, ModelRef: model.ref, Usage: usage, Pricing: model.price, UsageSource: event.UsageSourceTitle})
+			e := event.Event{Kind: event.Usage, ModelRef: model.ref, Usage: usage, Pricing: model.price, UsageSource: event.UsageSourceTitle}
+			// The recorder writes money only for a non-nil quote, and no
+			// CostQuoteSink fronts the title's own recorder, so price the call
+			// here with the function that sink uses.
+			e.CostQuote = event.EnsureCostQuote(e, model.quote)
+			model.sink.Emit(e)
 		}
 	}()
 	ch, err := provider.Stream(ctx, model.prov, provider.Request{
@@ -83,6 +89,7 @@ func (s *Server) tryRequestTitle(ctx context.Context, firstMsg string, model tit
 		return "", titleFailure(ctx, err)
 	}
 	var text strings.Builder
+	thought := false
 chunks:
 	for {
 		select {
@@ -95,6 +102,8 @@ chunks:
 			switch chunk.Type {
 			case provider.ChunkText:
 				text.WriteString(chunk.Text)
+			case provider.ChunkReasoning:
+				thought = thought || strings.TrimSpace(chunk.Text) != ""
 			case provider.ChunkUsage:
 				usage = chunk.Usage
 			case provider.ChunkError:
@@ -111,6 +120,9 @@ chunks:
 	}
 	title = strings.TrimSpace(title)
 	if title == "" {
+		if thought || (usage != nil && usage.ReasoningTokens > 0) {
+			return "", errTitleThought
+		}
 		return "", errTitleNoText
 	}
 	return title, nil

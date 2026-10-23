@@ -1,2 +1,0 @@
-- 修复：辅助会话面板里的回答现在按 Markdown 显示，加粗、行内代码和列表不再露出原始符号。关联 #14157。
-- Fixed: answers in the side conversation panel are now drawn as Markdown, so bold, inline code and lists no longer show raw markers. Refs #14157.

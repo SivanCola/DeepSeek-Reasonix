@@ -21,10 +21,43 @@ func ImportLegacySessionsFromExplicitDir(srcDir, globalDest string, projectDir f
 	return n, rep, err
 }
 
+// legacyEventBases names the sessions that have a v0.x event log, so the
+// .jsonl-only pass can skip the ones event reconstruction already handles.
+func legacyEventBases(srcDir string, entries []os.DirEntry) map[string]bool {
+	bases := map[string]bool{}
+	for _, e := range entries {
+		name := e.Name()
+		if !e.IsDir() && strings.HasSuffix(name, ".events.jsonl") && !isNativeSessionEventLog(filepath.Join(srcDir, name)) {
+			bases[strings.TrimSuffix(name, ".events.jsonl")] = true
+		}
+	}
+	return bases
+}
+
+// rehomeFlatImport re-homes one legacy event-log session's flat leftover into
+// its routed project directory. count is 1 when the session was imported this
+// way; deferred reports that a live runtime owns the leftover, so the base must
+// neither be imported beside it nor let the one-time marker claim the source.
+func rehomeFlatImport(oldPath, newPath, destDir, base, summary string, srcInfo os.FileInfo) (count int, deferred bool) {
+	if sameDirPath(destDir, filepath.Dir(oldPath)) {
+		return 0, false
+	}
+	switch moveFlatImport(oldPath, newPath, srcInfo) {
+	case flatImportMoved:
+		recordImportedTitle(destDir, base, summary)
+		return 1, false
+	case flatImportDeferred:
+		return 0, true
+	}
+	return 0, false
+}
+
 // importBakSessions recovers sessions whose .jsonl was lost but a .jsonl.bak
-// remains.
-func importBakSessions(entries []os.DirEntry, srcDir, globalDest string, hasEvents map[string]bool, projectDir func(string) string, rep *LegacyReport) int {
+// remains. It returns the count imported and whether a copy failed; a failed
+// recovery copy has to reach the caller so the one-time marker is withheld.
+func importBakSessions(entries []os.DirEntry, srcDir, globalDest string, hasEvents map[string]bool, projectDir func(string) string, rep *LegacyReport) (int, bool) {
 	imported := 0
+	hadCopyFailure := false
 	// .jsonl.bak recovery: when the .jsonl was lost but a backup remains.
 	for _, e := range entries {
 		name := e.Name()
@@ -58,6 +91,7 @@ func importBakSessions(entries []os.DirEntry, srcDir, globalDest string, hasEven
 		srcInfo, _ := e.Info()
 		if err := transformAndCopyJsonl(bakPath, dest); err != nil {
 			rep.skipWrite(bakPath, err)
+			hadCopyFailure = true
 			continue
 		}
 		if srcInfo != nil {
@@ -67,14 +101,16 @@ func importBakSessions(entries []os.DirEntry, srcDir, globalDest string, hasEven
 		imported++
 	}
 
-	return imported
+	return imported, hadCopyFailure
 }
 
 // migrateProjectSubdirs recurses into subdirectories that look like project
 // session dirs: the TS version nested project-scoped sessions under a workspace
-// slug.
-func migrateProjectSubdirs(entries []os.DirEntry, srcDir, globalDest string, projectDir func(string) string, rep *LegacyReport) int {
+// slug. It returns the count imported and whether a copy failed, for the same
+// marker contract as the other passes.
+func migrateProjectSubdirs(entries []os.DirEntry, srcDir, globalDest string, projectDir func(string) string, rep *LegacyReport) (int, bool) {
 	imported := 0
+	hadCopyFailure := false
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
@@ -99,15 +135,12 @@ func migrateProjectSubdirs(entries []os.DirEntry, srcDir, globalDest string, pro
 		if !hasSessions {
 			continue
 		}
-		n, err := migrateSubDirectory(subDir, globalDest, projectDir, rep)
-		if err != nil {
-			rep.skipRead(subDir, err)
-			continue
-		}
+		n, failed := migrateSubDirectory(subDir, globalDest, projectDir, rep)
 		imported += n
+		hadCopyFailure = hadCopyFailure || failed
 	}
 
-	return imported
+	return imported, hadCopyFailure
 }
 
 // existsUnder reports whether name exists directly under dir, resolved through

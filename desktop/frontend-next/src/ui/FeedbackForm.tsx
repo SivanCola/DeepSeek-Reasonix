@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { t } from "../i18n";
 import { systemLabel } from "./osname";
 import { memoryLines } from "./memoryrows";
@@ -148,8 +148,12 @@ export function FeedbackForm({ port, onMine, onClose, onFile, onConceal }: Props
 
   const zone = useFileDrop((d) => void add(d.files), setOver);
 
-  const onPaste = (e: ClipboardEvent<HTMLFormElement>) => {
-    const files = [...e.clipboardData.files].filter((f) => f.type.startsWith("image/"));
+  const takePaste = (e: { clipboardData: DataTransfer | null; preventDefault(): void }) => {
+    const data = e.clipboardData;
+    if (!data) return;
+    const offered = [...data.files, ...[...(data.items ?? [])].flatMap((i) => (i.kind === "file" ? [i.getAsFile()] : []))];
+    const images = offered.filter((f): f is File => f !== null && f.type.startsWith("image/"));
+    const files = images.filter((f, i) => images.findIndex((g) => g.name === f.name && g.size === f.size && g.type === f.type) === i);
     if (files.length === 0) return;
     e.preventDefault();
     void add(files);
@@ -249,7 +253,8 @@ export function FeedbackForm({ port, onMine, onClose, onFile, onConceal }: Props
       noValidate
       data-action-paste="feedback.shot.add"
       data-action-submit="feedback.send"
-      onPaste={onPaste}
+      tabIndex={-1}
+      onPaste={takePaste}
       onSubmit={(e) => {
         e.preventDefault();
         void send();

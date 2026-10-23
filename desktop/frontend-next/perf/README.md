@@ -47,6 +47,7 @@ node perf/models.mjs     # 连接面板：网关报出一百多个模型时，�
 node perf/side.mjs       # 右栏：端点自己写的一句话有多长，都不该改变栏宽
 node perf/queue.mjs      # 待送达：正文读不回来时，「改」不许开出一个空编辑器
 node perf/reask.mjs      # 改写框：没有换行的长段落，框要长到让人读得到全文，宽屏和手机宽度各一遍
+node perf/composer-reflow.mjs # Draft and skill-chip wrapping during column transitions, interface zoom and native scrollbar gutters
 node perf/onboarding.mjs # First-run setup: zoom-aware card bounds, resize, scrolling, focus and completion
 node perf/running.mjs    # 执行过程：在跑的步骤自己在动、收起后由标题接着动，步骤行没有空栏
 node perf/lang.mjs       # 双语验证：英文启动、界面译文到位、切回中文
@@ -89,6 +90,13 @@ node perf/start.mjs     # 经工作台标签/边缘把手打开工作台先出�
 `switch.mjs` 收 `PERF_TURNS` 和 `PERF_STATUS_MS`——后者把内核 `/status` 的
 往返摆进来，用来分清「等的是这份记录」还是「等的是一次状态读」。
 性能台自己也读 `?ws=&sess=` 来决定左栏那棵树有多大。
+
+- `composer-reflow.mjs` arms frame sampling before each viewport change;
+  sampling only after `setViewportSize` returns can miss the stale-mirror frame.
+  It selects `/init`, types the draft, then visits
+  1440 → 960 → 640 → 420 → 1440px at each zoom.
+- The native-scrollbar case requires a space-consuming gutter, not an exact
+  pixel width; overlay-scrollbar browsers explicitly skip that case.
 
 ## 判据
 

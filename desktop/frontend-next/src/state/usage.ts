@@ -1,4 +1,4 @@
-import type { Metrics } from "./session_types";
+import type { CurrencyAmount, Metrics } from "./session_types";
 import type { CostCoverage, CostQuote, Usage } from "../port/wire";
 
 // What a billed round reports, read out of the quote rather than guessed.
@@ -6,12 +6,29 @@ import type { CostCoverage, CostQuote, Usage } from "../port/wire";
 // counts, not about how a session's items fold together.
 
 // The quote is the authoritative amount: it carries currency and an estimated
-// flag, while usage.cost is only a legacy alias.
+// flag, while usage.cost is only a legacy alias. A blank amount is no amount:
+// Number("") is 0, and a priced zero is a different fact from "not priced".
 export function quoteAmount(q?: { selected?: { amount: string }; original: { amount: string } }): number | undefined {
   const raw = q?.selected?.amount ?? q?.original.amount;
-  if (raw === undefined) return undefined;
+  if (raw === undefined || raw.trim() === "") return undefined;
   const n = Number(raw);
   return Number.isFinite(n) ? n : undefined;
+}
+
+// The symbol a session starts under before any round names its currency. It
+// labels the zero the pane draws before anything is priced, and nothing else:
+// every billed round brings its own code.
+export const DEFAULT_CURRENCY = "¥";
+
+// addCurrency adds money to the bucket for its code, making the bucket on the
+// first round that bills in that currency. Two codes never meet: they are not
+// addends, and there is no rate here to turn one into the other.
+export function addCurrency(totals: CurrencyAmount[], currency: string, amount: number): CurrencyAmount[] {
+  const at = totals.findIndex((total) => total.currency === currency);
+  if (at < 0) return [...totals, { currency, amount }];
+  const next = totals.slice();
+  next[at] = { currency, amount: next[at].amount + amount };
+  return next;
 }
 
 // The second currency, when the host quoted one. Only a *converted* quote has
@@ -59,12 +76,24 @@ export function quoteCoverage(q?: CostQuote): CostCoverage {
   return q.coverage ?? (q.costComplete ? "complete" : "incomplete");
 }
 
+// What one round billed, and in which unit. A round that named no amount is
+// unpriced for money purposes: it still contributes tokens and coverage, but a
+// zero in its currency would read as a round that was priced and cost nothing.
+function spentOf(u: Usage): CurrencyAmount | null {
+  const amount = quoteAmount(u.costQuote) ?? u.cost;
+  if (amount === undefined) return null;
+  // The kernel sends both, and says the code is preferred: only it can tell
+  // CN¥ from ¥ in an English window. The symbol stays as the fallback.
+  const currency = u.currencyCode || u.costQuote?.original.currency || u.currency || DEFAULT_CURRENCY;
+  return { currency, amount };
+}
+
 // foldUsage folds one billed round into the session's running metrics. It lives
 // here, not in the reducer, because every line of it is about money, tokens and
 // what the round was sampled against.
 export function foldUsage(m: Metrics, u: Usage): Metrics {
   const src = u.source || "executor";
-  const spent = quoteAmount(u.costQuote) ?? u.cost ?? 0;
+  const spent = spentOf(u);
   const d = u.cacheDiagnostics;
   const cov = quoteCoverage(u.costQuote);
   return {
@@ -72,11 +101,10 @@ export function foldUsage(m: Metrics, u: Usage): Metrics {
     hit: m.hit + u.cacheHitTokens,
     miss: m.miss + u.cacheMissTokens,
     out: m.out + u.completionTokens,
-    bySource: { ...m.bySource, [src]: (m.bySource[src] ?? 0) + spent },
-    cost: m.cost + spent,
-    // The kernel sends both, and says the code is preferred: only it can tell
-    // CN¥ from ¥ in an English window. The symbol stays as the fallback.
-    currency: u.currencyCode || u.costQuote?.original.currency || u.currency || m.currency,
+    bySource: spent
+      ? { ...m.bySource, [src]: addCurrency(m.bySource[src] ?? [], spent.currency, spent.amount) }
+      : m.bySource,
+    cost: spent ? addCurrency(m.cost, spent.currency, spent.amount) : m.cost,
     // Diagnostics describe the round that just billed, so they replace rather
     // than accumulate. A round that carried none leaves the last answer
     // standing instead of blanking the block mid-turn.
@@ -92,7 +120,7 @@ export function foldUsage(m: Metrics, u: Usage): Metrics {
     // reason alone: coverage stays short, and why it is short has to stay too.
     incompleteReason: cov === "complete" ? m.incompleteReason : u.costQuote?.incompleteReason || m.incompleteReason,
     alt: altAmount(u.costQuote) ?? m.alt,
-    turn: m.turn + spent,
+    turn: spent ? addCurrency(m.turn, spent.currency, spent.amount) : m.turn,
     rounds: sampleRound(m.rounds, u.totalTokens),
   };
 }

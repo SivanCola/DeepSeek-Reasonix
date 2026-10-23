@@ -32,6 +32,21 @@ export interface UsageDay {
   estimateCost?: Money[];
 }
 
+// One hour of a single-day window. `hour` is "09:00"; the bucket set is the
+// whole day, including empty hours, so the chart keeps a stable x axis.
+export interface UsageHour {
+  hour: string;
+  total: number;
+  byModel: Record<string, number>;
+  byProvider: Record<string, number>;
+  requests: number;
+  turns: number;
+  cacheHit: number;
+  cacheMiss: number;
+  cost?: Money[];
+  estimateCost?: Money[];
+}
+
 export interface UsageModel {
   model: string;
   provider: string;
@@ -67,6 +82,9 @@ export interface UsageReport {
   top_model: string;
   top_provider: string;
   daily: UsageDay[];
+  // Present only when the range is one calendar day; the kernel resolves the
+  // day's records into 24 hour buckets there.
+  hourly?: UsageHour[];
   models: UsageModel[];
   providers: UsageProvider[];
 }

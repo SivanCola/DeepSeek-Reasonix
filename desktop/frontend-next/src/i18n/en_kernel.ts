@@ -57,6 +57,7 @@ export const EN_KERNEL: Record<string, string> = {
   "自动命名失败，原标题未更改，请重试": "Automatic naming failed. The original title is unchanged. Please try again",
   "自动命名超时：标题模型没有及时回答，原标题未更改，请稍后重试": "Automatic naming timed out: the title model did not answer in time. The original title is unchanged. Please try again later",
   "自动命名失败：标题模型没有返回任何文字，原标题未更改": "Automatic naming failed: the title model returned no text. The original title is unchanged",
+  "自动命名失败：标题模型把输出额度都花在思考上，没有给出标题。请在设置里把“自动命名”换成能关闭思考的模型，原标题未更改": "Automatic naming failed: the title model spent its output budget thinking and gave no title. In Settings, pick a naming model that can turn thinking off. The original title is unchanged",
   "自动命名失败：标题模型的接口拒绝了请求（HTTP {status}）{detail}": "Automatic naming failed: the title model's endpoint refused the request (HTTP {status}) {detail}",
   "会话标题保存失败，请重试": "The session title could not be saved. Please try again",
 
@@ -147,6 +148,7 @@ export const EN_KERNEL: Record<string, string> = {
   "对话内容索引暂时无法回答，稍后再试": "The conversation index cannot answer right now; try again shortly",
   "已经请求停止这个后台任务，它的进程还没有退出，仍在等待": "A stop was already requested for this background job; its process has not exited yet, so it is still shutting down",
   "该条当前状态不允许此操作": "That entry's current state does not allow this",
+  "这一条可能已经跑过，重新发送可能重复执行；请先查看对话记录，或删除它": "That entry may already have run, so sending it again could repeat it. Check the transcript first, or delete it",
   "待送达已暂停，请先恢复派发再进行操作": "The pending queue is on hold - resume it first",
   "待送达条数已达上限，请先发送部分内容": "The pending queue is full - let a few go out first",
   "待送达总字数已达上限，请先发送部分内容": "The pending queue is out of room - let a few go out first",
@@ -424,6 +426,7 @@ export const EN_KERNEL: Record<string, string> = {
   "尚未打开任何会话": "No session is open yet",
   "该会话未启用记忆": "Memory is not enabled for this session",
   "无法读取记忆目录，请检查权限或存储状态后重试": "Cannot read the memory directory; check permissions or storage and try again",
+  "这条记忆存在于磁盘上，但读取失败，已拒绝覆盖；请检查权限或存储状态后重试": "This memory exists on disk but could not be read, so the save was refused; check permissions or storage and try again",
   "这个会话不支持辅助提问": "Side questions are not available in this session",
   "这个辅助提问已经关闭，请重新打开": "That side question is closed; open it again",
   "上一个问题还在回答，请稍候再问": "The previous question is still being answered; wait a moment",

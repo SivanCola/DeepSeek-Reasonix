@@ -16,6 +16,10 @@ type titleProviderState struct {
 	price *provider.Pricing
 	ref   string
 	sink  event.Sink
+	// quote prices a title call at emit time. Titles record into their own
+	// recorder instead of the assembled sink, so no CostQuoteSink sits in front
+	// of that recorder to fill the quote in; see tryRequestTitle.
+	quote *event.QuoteContext
 }
 
 func (s *Server) currentTitleProvider() titleProviderState {
@@ -51,7 +55,8 @@ func (s *Server) initTitleProvider() error {
 		return err
 	}
 	model := titleProviderState{prov: prov, price: entry.Price, ref: entry.Name + "/" + entry.Model,
-		sink: stats.NewRecorder(event.Discard, config.StatsDir(), "serve")}
+		sink:  stats.NewRecorder(event.Discard, config.StatsDir(), "serve"),
+		quote: boot.QuoteContextFor(cfg)}
 	s.mu.Lock()
 	s.titleModel = model
 	s.mu.Unlock()

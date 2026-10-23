@@ -55,10 +55,14 @@ type BranchMeta struct {
 	AgentPreset      string `json:"agent_preset,omitempty"`
 	Mode             string `json:"mode,omitempty"`
 	ToolApprovalMode string `json:"tool_approval_mode,omitempty"`
-	Goal             string `json:"goal,omitempty"`
-	Recovered        bool   `json:"recovered,omitempty"`
-	RecoveryReason   string `json:"recovery_reason,omitempty"`
-	RecoveryDigest   string `json:"recovery_digest,omitempty"`
+	// SessionGrants are the tool answers the person gave for the rest of this
+	// conversation. They live with the conversation and nowhere else: a resumed
+	// conversation keeps them, a branch or a new one starts without them.
+	SessionGrants  []string `json:"session_grants,omitempty"`
+	Goal           string   `json:"goal,omitempty"`
+	Recovered      bool     `json:"recovered,omitempty"`
+	RecoveryReason string   `json:"recovery_reason,omitempty"`
+	RecoveryDigest string   `json:"recovery_digest,omitempty"`
 	// RecoveryDepth counts how many recovery forks separate this branch from a
 	// normal session (1 = forked from a normal session). SaveRecoveryBranch
 	// refuses to fork past SessionRecoveryMaxDepth so a conflict loop cannot

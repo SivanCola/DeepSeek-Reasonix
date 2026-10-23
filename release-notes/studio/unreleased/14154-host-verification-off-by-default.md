@@ -1,4 +1,0 @@
-- 变更：改过文件的回合不再默认被要求先做检查、复核和签收才能结束；需要时在用户配置里设 `host_verification = "on"`。"交付"预设和 `--fail-on-unverified` 仍会要求。关联 #14154。
-- 兼容性：没设过这一项的用户升级后，回合收尾前不再被追问"还欠什么"；项目配置文件仍改不了这一项。关联 #14154。
-- Changed: a turn that changed files is no longer held open until a check, review and sign-off exist; set `host_verification = "on"` in your user config for that. Refs #14154.
-- Compatibility: if you never set this key, the end-of-turn "still owes" prompts stop after upgrading; a project config cannot change it. Refs #14154.

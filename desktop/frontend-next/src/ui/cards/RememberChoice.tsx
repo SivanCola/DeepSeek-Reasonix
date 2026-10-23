@@ -37,8 +37,8 @@ export function RememberWhere({ options, target }: { options: readonly Remembere
   if (options.length === 0) return null;
   const text = options.includes("always")
     ? options.includes("session")
-      ? "“本会话允许”只在这次会话内有效，不写入磁盘；“始终允许”写入用户配置的权限规则，可在设置 → 工具与权限里撤销。"
+      ? "“本会话允许”只对这个对话有效，随对话保存，恢复这个对话后仍然有效；“始终允许”写入用户配置的权限规则，可在设置 → 工具与权限里撤销。"
       : "“始终允许”写入用户配置的权限规则，可在设置 → 工具与权限里撤销。"
-    : "“本会话允许”只在这次会话内有效，不写入磁盘。";
+    : "“本会话允许”只对这个对话有效，随对话保存，恢复这个对话后仍然有效。";
   return <div className="apv-note" id={`remember-where-${target}`}>{t(text)}</div>;
 }

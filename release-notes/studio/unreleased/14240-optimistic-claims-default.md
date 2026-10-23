@@ -1,0 +1,2 @@
+- 变更：并行写入的“乐观模式”现在默认开启：没声明写入范围的子代理和写入不再占住整个工作区；已选过“严格”的不受影响，可在设置里关闭。关联 #14240。
+- Changed: optimistic mode for parallel writes is on by default, so writers with no declared scope no longer hold the whole workspace; a saved strict choice is kept. Refs #14240.

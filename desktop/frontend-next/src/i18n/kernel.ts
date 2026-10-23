@@ -90,6 +90,7 @@ const SAID: Record<string, string> = {
   "session.title_failed": "自动命名失败，原标题未更改，请重试",
   "session.title_timeout": "自动命名超时：标题模型没有及时回答，原标题未更改，请稍后重试",
   "session.title_no_text": "自动命名失败：标题模型没有返回任何文字，原标题未更改",
+  "session.title_thought_only": "自动命名失败：标题模型把输出额度都花在思考上，没有给出标题。请在设置里把“自动命名”换成能关闭思考的模型，原标题未更改",
   "session.title_refused": "自动命名失败：标题模型的接口拒绝了请求（HTTP {status}）{detail}",
   "session.title_save_failed": "会话标题保存失败，请重试",
 
@@ -337,6 +338,7 @@ const SAID: Record<string, string> = {
 
   "memory.unavailable": "该会话未启用记忆",
   "memory.directory_unreadable": "无法读取记忆目录，请检查权限或存储状态后重试",
+  "memory.fact_unreadable": "这条记忆存在于磁盘上，但读取失败，已拒绝覆盖；请检查权限或存储状态后重试",
   "side.unavailable": "这个会话不支持辅助提问",
   "side.unknown": "这个辅助提问已经关闭，请重新打开",
   "side.busy": "上一个问题还在回答，请稍候再问",
@@ -527,6 +529,7 @@ const SAID: Record<string, string> = {
   "mux.pane_not_local": "这个窗格由另一台机器驱动，使用它自己的事件流",
   "job.stop_in_progress": "已经请求停止这个后台任务，它的进程还没有退出，仍在等待",
   "inbox.invalid_state": "该条当前状态不允许此操作",
+  "inbox.retry_may_repeat": "这一条可能已经跑过，重新发送可能重复执行；请先查看对话记录，或删除它",
   "inbox.paused": "待送达已暂停，请先恢复派发再进行操作",
   "inbox.capacity_items": "待送达条数已达上限，请先发送部分内容",
   "inbox.capacity_bytes": "待送达总字数已达上限，请先发送部分内容",

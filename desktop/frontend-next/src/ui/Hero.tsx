@@ -15,7 +15,7 @@ export function Hero({ needsProject, onOpen, onKeep }: HeroProps) {
       <div className="s">
         {needsProject
           ? t("读取代码、运行测试与修改文件均只在你选定的文件夹内进行。")
-          : t("可读取代码、查找资料、运行工具并修改文件。完整执行过程可在「轨迹」中查看。")}
+          : t("可读取代码、查找资料、运行工具并修改文件。完整执行过程可在「运行分析」中查看。")}
       </div>
       {needsProject ? (
         <div className="herogo">

@@ -50,6 +50,18 @@ type Priced struct {
 	BillingMode string
 }
 
+// CostIncomplete reports whether a line that counted usage has no cost fact:
+// a quote that said it could not price the call, or no amount at all — a row
+// written before the cost fields existed, or one that simply lacks them. Such
+// a row's zero money is unknown, not free, so a total folding it in is a floor.
+// A turn marker counts no usage, so it is never an unpriced call.
+func CostIncomplete(costComplete *bool, total int, amount string) bool {
+	if costComplete != nil && !*costComplete {
+		return true
+	}
+	return total > 0 && strings.TrimSpace(amount) == ""
+}
+
 // WithCost attaches a line's quote. An amount that does not parse is dropped
 // rather than guessed: a missing total beats a wrong one.
 func (e Entry) WithCost(p Priced) Entry {
@@ -104,7 +116,10 @@ func viewCostSelect(view string) string {
 	}
 	currency := "CASE WHEN " + valuation + " IS NULL THEN cost_currency ELSE '" + view + "' END"
 	mode := "CASE WHEN billing_mode='" + pricing.BillingModeSubscriptionEquivalent + "' THEN '" + ModeEstimate + "' ELSE '' END"
+	// cost_currency<>'' is the whole test for "priced": a priced line whose
+	// amount is 0 is free, not unknown, and keeps its currency, its zero and
+	// its estimate flag in the money the JSONL read reports.
 	return `INSERT INTO usage_cost(day,source,model_ref,view,currency,mode,cost,estimated)
         SELECT day,source,model_ref,'` + view + `',` + currency + `,` + mode + `,SUM(COALESCE(` + valuation + `,cost)),MAX(cost_estimated)
-        FROM usage_records WHERE day=? AND cost_currency<>'' AND cost<>0 GROUP BY day,source,model_ref,` + currency + `,` + mode
+        FROM usage_records WHERE day=? AND cost_currency<>'' GROUP BY day,source,model_ref,` + currency + `,` + mode
 }

@@ -210,6 +210,23 @@ describe("screenshots", () => {
     expect(text.defaultPrevented).toBe(false);
   });
 
+  it("keeps focus on the form when a blank part of it is clicked, so a paste still reaches it, and takes an image the clipboard offers only as an item", async () => {
+    setup();
+    await ready();
+    const form = document.querySelector("form")!;
+    await userEvent.click(form.querySelector("h3")!);
+    expect(document.activeElement).toBe(form);
+
+    const item = new Event("paste", { bubbles: true, cancelable: true }) as Event & { clipboardData: unknown };
+    const shot = png("item.png");
+    item.clipboardData = { files: [], items: [{ kind: "file", type: "image/png", getAsFile: () => shot }], getData: () => "" };
+    await act(async () => {
+      (document.activeElement as HTMLElement).dispatchEvent(item);
+    });
+    expect(await screen.findByAltText("item.png")).toBeTruthy();
+    expect(item.defaultPrevented).toBe(true);
+  });
+
   it("takes files dropped on the form", async () => {
     install();
     setup();

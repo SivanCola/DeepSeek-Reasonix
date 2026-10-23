@@ -158,7 +158,7 @@ export class MockBoundary extends MockShell {
     return { ...this.browser };
   }
 
-  private claims: SubagentClaimsSettings = { optimistic: false, path: "/Users/you/.reasonix/config.toml" };
+  private claims: SubagentClaimsSettings = { optimistic: true, path: "/Users/you/.reasonix/config.toml" };
 
   async subagentClaims(): Promise<SubagentClaimsSettings> {
     return { ...this.claims };
@@ -225,8 +225,8 @@ export class MockBoundary extends MockShell {
     return structuredClone(this.toolList);
   }
 
-  private lease: WriteLeaseSettings = { optimistic: false, maxWaitMinutes: 0, path: "/Users/you/.reasonix/config.toml", collaboration: "legacy", autoIntegrate: true,
-    effective: { collaboration: "legacy", optimistic: false, maxWaitMinutes: 0, maxSubagentConcurrency: 8, maxParallelWriters: 4, transactionWaitSeconds: 0, autoIntegrate: true } };
+  private lease: WriteLeaseSettings = { optimistic: true, maxWaitMinutes: 0, path: "/Users/you/.reasonix/config.toml", collaboration: "legacy", autoIntegrate: true,
+    effective: { collaboration: "legacy", optimistic: true, maxWaitMinutes: 0, maxSubagentConcurrency: 8, maxParallelWriters: 4, transactionWaitSeconds: 0, autoIntegrate: true } };
 
   async writeLease(): Promise<WriteLeaseSettings> {
     return structuredClone(this.lease);

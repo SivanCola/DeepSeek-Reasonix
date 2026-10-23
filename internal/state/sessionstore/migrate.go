@@ -122,18 +122,10 @@ func migrateLegacySessionsWithMarkers(srcDir, globalDest, marker, jsonlMarker st
 		return 0, nil
 	}
 
-	// Build the set of base names that have a .events.jsonl so the .jsonl-only
-	// pass can skip sessions that will be (or were) handled by event reconstruction.
-	hasEvents := map[string]bool{}
-	for _, e := range entries {
-		name := e.Name()
-		if !e.IsDir() && strings.HasSuffix(name, ".events.jsonl") && !isNativeSessionEventLog(filepath.Join(srcDir, name)) {
-			hasEvents[strings.TrimSuffix(name, ".events.jsonl")] = true
-		}
-	}
+	hasEvents := legacyEventBases(srcDir, entries)
 
 	imported := 0
-	hadArtifactFailure := false
+	incomplete := false
 
 	// Pass 1 — event-log sessions (*.events.jsonl). When a same-named .jsonl
 	// exists in the source with a modification time >= the event log's, prefer
@@ -159,9 +151,10 @@ func migrateLegacySessionsWithMarkers(srcDir, globalDest, marker, jsonlMarker st
 			continue // already imported, or a v1+ session of the same name
 		}
 		eventsInfo, _ := e.Info()
-		if destDir != globalDest && moveFlatImport(filepath.Join(globalDest, base+".jsonl"), dest, eventsInfo) {
-			recordImportedTitle(destDir, base, meta.Summary)
-			imported++
+		count, deferred := rehomeFlatImport(filepath.Join(globalDest, base+".jsonl"), dest, destDir, base, meta.Summary, eventsInfo)
+		imported += count
+		incomplete = incomplete || deferred
+		if count > 0 || deferred {
 			continue
 		}
 
@@ -196,7 +189,11 @@ func migrateLegacySessionsWithMarkers(srcDir, globalDest, marker, jsonlMarker st
 			if errors.Is(err, os.ErrExist) {
 				continue
 			}
-			return imported, err
+			// One session's failed destination must not abort the run; the
+			// marker stays unwritten so the next boot retries it.
+			rep.skipWrite(filepath.Join(srcDir, name), err)
+			incomplete = true
+			continue
 		}
 		if eventsInfo != nil {
 			_ = os.Chtimes(dest, eventsInfo.ModTime(), eventsInfo.ModTime()) // preserve resume ordering
@@ -212,20 +209,22 @@ func migrateLegacySessionsWithMarkers(srcDir, globalDest, marker, jsonlMarker st
 	// get their .jsonl-only sessions imported.
 	if rep != nil || !importMarkerExists(globalDest, jsonlMarker) {
 		n, failed := importJsonlSessions(entries, srcDir, globalDest, hasEvents, projectDir, rep)
-		imported += n
-		hadArtifactFailure = hadArtifactFailure || failed
-
-		imported += importBakSessions(entries, srcDir, globalDest, hasEvents, projectDir, rep)
+		bak, bakFailed := importBakSessions(entries, srcDir, globalDest, hasEvents, projectDir, rep)
+		imported += n + bak
+		incomplete = incomplete || failed || bakFailed
 	}
 
 	// Pass 3 — recurse into subdirectories that look like project session dirs
 	// (e.g. Users_Yuki_git_polytone-audio-engine/ under ~/.reasonix/sessions/).
 	// The TS version nested project-scoped sessions under a workspace slug.
-	imported += migrateProjectSubdirs(entries, srcDir, globalDest, projectDir, rep)
+	subdirs, subdirsFailed := migrateProjectSubdirs(entries, srcDir, globalDest, projectDir, rep)
+	imported += subdirs
+	incomplete = incomplete || subdirsFailed
 
 	// Also stamp the flat markers so a downgrade to an older build doesn't
-	// re-run the flat import over routed sessions.
-	if hadArtifactFailure {
+	// re-run the flat import over routed sessions. An incomplete source (failed
+	// copy or a live owner) stays unwritten so the next pass can retry it.
+	if incomplete {
 		return imported, nil
 	}
 	writeImportMarkers(globalDest, marker, legacyImportMarker, legacyEventsHomeImportMarker, legacyEventsConfigImportMarker, jsonlMarker)
@@ -315,12 +314,14 @@ func jsonlSessionDestDir(srcDir, srcPath, base, globalDest string, projectDir fu
 }
 
 // migrateSubDirectory imports sessions from a project-scoped subdirectory
-// within the legacy session dir. It walks the subdirectory for .events.jsonl and
-// .jsonl files and imports them using the projectDir callback for routing.
-func migrateSubDirectory(subDir, globalDest string, projectDir func(string) string, rep *LegacyReport) (int, error) {
+// within the legacy session dir, walking it for .events.jsonl and .jsonl files
+// and routing each through projectDir. Returns the count imported and whether a
+// copy failed; a failure to write one destination skips that session only, so
+// the rest of the subdirectory and the later passes still run.
+func migrateSubDirectory(subDir, globalDest string, projectDir func(string) string, rep *LegacyReport) (int, bool) {
 	entries, err := os.ReadDir(subDir)
 	if err != nil {
-		return 0, nil
+		return 0, false
 	}
 	hasEvents := map[string]bool{}
 	for _, e := range entries {
@@ -330,6 +331,7 @@ func migrateSubDirectory(subDir, globalDest string, projectDir func(string) stri
 		}
 	}
 	imported := 0
+	hadCopyFailure := false
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() {
@@ -402,16 +404,20 @@ func migrateSubDirectory(subDir, globalDest string, projectDir func(string) stri
 				if errors.Is(err, os.ErrExist) {
 					continue
 				}
-				return imported, err
+				rep.skipWrite(srcPath, err)
+				hadCopyFailure = true
+				continue
 			}
 		} else if isNativeSessionEventLog(SessionEventLogPath(srcPath)) {
 			if err := saveNativeSessionCopy(srcPath, dest); err != nil {
 				rep.skipRead(srcPath, err)
+				hadCopyFailure = true
 				continue
 			}
 		} else {
 			if err := transformAndCopyJsonl(srcPath, dest); err != nil {
 				rep.skipWrite(srcPath, err)
+				hadCopyFailure = true
 				continue
 			}
 		}
@@ -421,7 +427,7 @@ func migrateSubDirectory(subDir, globalDest string, projectDir func(string) stri
 		recordImportedTitle(destDir, base, meta.Summary)
 		imported++
 	}
-	return imported, nil
+	return imported, hadCopyFailure
 }
 
 // isMessageFormat returns true when path's first non-whitespace bytes look like
@@ -589,27 +595,6 @@ func readLegacyMeta(srcDir, base string) legacyMeta {
 func dirExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
-}
-
-// publishFileNoReplace atomically publishes a completed sibling temp file
-// without replacing a destination another startup/import writer created.
-// The temp and destination share a directory, so a hard link is atomic and
-// portable across the filesystems Reasonix supports.
-func publishFileNoReplace(tmp, dst string) error {
-	if err := linkFileNoReplace(tmp, dst); err != nil {
-		return err
-	}
-	return os.Remove(tmp)
-}
-
-func linkFileNoReplace(src, dst string) error {
-	if err := os.Link(src, dst); err != nil {
-		if os.IsExist(err) {
-			return os.ErrExist
-		}
-		return err
-	}
-	return nil
 }
 
 // recordImportedTitle stores the legacy summary as the session's display title

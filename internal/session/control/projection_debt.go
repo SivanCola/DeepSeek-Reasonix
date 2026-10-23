@@ -14,15 +14,28 @@ type projectionDebt struct {
 // already those exact bytes. An older copy does not count: a later block of the
 // same tag replaced it, and the caller may be owing those bytes again.
 func (d *projectionDebt) owed(tag, projection string) string {
-	if projection == "" {
+	if projection == "" || d.held(tag, wrapTurnBlock(tag, projection)) {
 		return ""
 	}
-	if d.newest != nil {
-		if got, ok := d.newest(tag); ok && got == wrapTurnBlock(tag, projection) {
-			return ""
-		}
-	}
 	return projection
+}
+
+// owedBlock is owed for a renderer that writes its own opening tag: a variant
+// block carries attributes, which wrapTurnBlock cannot express, so the caller
+// passes the whole rendered block and the newest one must match it verbatim.
+func (d *projectionDebt) owedBlock(tag, block string) string {
+	if block == "" || d.held(tag, block) {
+		return ""
+	}
+	return block
+}
+
+func (d *projectionDebt) held(tag, block string) bool {
+	if d.newest == nil {
+		return false
+	}
+	got, ok := d.newest(tag)
+	return ok && got == block
 }
 
 // bindProjectionSeer points every once-delivered block at the same model-visible
@@ -39,6 +52,7 @@ func (c *Controller) bindProjectionSeer(newest func(string) (string, bool), note
 	c.memory.instructions.newest = newest
 	c.rules.always.newest = newest
 	c.rules.scoped.newest = newest
+	c.goalBlock.newest = newest
 	c.deliveryNotes(notes)
 }
 

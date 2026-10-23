@@ -93,9 +93,12 @@ describe("hiding the amounts in the meter", () => {
     act(() => setHidesAmounts(true));
     const metrics = {
       ...initialState.metrics,
-      cost: 4.37,
-      turn: 0.58,
-      bySource: { executor: 3.21, subagent: 1.16 },
+      cost: [{ currency: "CNY", amount: 4.37 }],
+      turn: [{ currency: "CNY", amount: 0.58 }],
+      bySource: {
+        executor: [{ currency: "CNY", amount: 3.21 }],
+        subagent: [{ currency: "CNY", amount: 1.16 }],
+      },
       alt: { amount: 0.61, currency: "USD" },
     };
     const html = renderToStaticMarkup(

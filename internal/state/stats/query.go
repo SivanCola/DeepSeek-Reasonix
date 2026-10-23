@@ -2,6 +2,7 @@ package stats
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"reasonix/internal/contract/pricing"
 	"sort"
@@ -25,6 +26,20 @@ type DailyTokens struct {
 	// EstimateCost is what a plan's API-priced estimates add up to; it never
 	// shares a figure with Cost.
 	EstimateCost []pricing.Money `json:"estimateCost,omitempty"`
+}
+
+// HourlyTokens is one hour's usage in a single-day range. Hour is "09:00".
+type HourlyTokens struct {
+	Hour         string           `json:"hour"`
+	Total        int              `json:"total"`
+	ByModel      map[string]int64 `json:"byModel"`
+	ByProvider   map[string]int64 `json:"byProvider"`
+	Requests     int              `json:"requests"`
+	Turns        int              `json:"turns"`
+	CacheHit     int64            `json:"cacheHit"`
+	CacheMiss    int64            `json:"cacheMiss"`
+	Cost         []pricing.Money  `json:"cost,omitempty"`
+	EstimateCost []pricing.Money  `json:"estimateCost,omitempty"`
 }
 
 // ModelUsage is one model's aggregate within the range.
@@ -72,7 +87,10 @@ type RangeStats struct {
 	TopModel       string `json:"top_model"`
 	TopProvider    string `json:"top_provider"`
 	// Series
-	Daily     []DailyTokens   `json:"daily"`
+	Daily []DailyTokens `json:"daily"`
+	// Hourly is filled only when the range is one calendar day; the day
+	// rollup cannot resolve an hour.
+	Hourly    []HourlyTokens  `json:"hourly,omitempty"`
 	Models    []ModelUsage    `json:"models"`
 	Providers []ProviderUsage `json:"providers"`
 }
@@ -92,6 +110,11 @@ type SourceFilter struct {
 // yield zero entries. When SourceFilter.Source is set, only records whose
 // Source matches are counted.
 func (w *Writer) Query(f SourceFilter) (RangeStats, error) {
+	// The catalog rolls up by day, so a single-day question has to read the
+	// authoritative records for its hour buckets.
+	if f.From.Format(dayLayout) == f.To.Format(dayLayout) {
+		return w.querySingleDay(f)
+	}
 	var manager *usageManager
 	if w != nil {
 		manager = w.usage
@@ -116,23 +139,31 @@ func (w *Writer) Query(f SourceFilter) (RangeStats, error) {
 	return w.queryJSONL(f)
 }
 
-func (w *Writer) queryJSONL(f SourceFilter) (RangeStats, error) {
-	out := RangeStats{
+func emptyRange(f SourceFilter) RangeStats {
+	return RangeStats{
 		From:      f.From.Format(dayLayout),
 		To:        f.To.Format(dayLayout),
 		Daily:     []DailyTokens{},
 		Models:    []ModelUsage{},
 		Providers: []ProviderUsage{},
 	}
+}
+
+func (w *Writer) queryJSONL(f SourceFilter) (RangeStats, error) {
 	if w == nil || w.dir == "" {
-		return out, nil
+		return emptyRange(f), nil
 	}
-	view := usagecatalog.CostView(f.Currency)
 	days := daysInRange(f.From, f.To)
 	recordsByDay, err := readDailyRange(w.dir, days)
 	if err != nil {
-		return out, err
+		return emptyRange(f), err
 	}
+	return aggregateDays(recordsByDay, days, f), nil
+}
+
+func aggregateDays(recordsByDay map[string][]record, days []string, f SourceFilter) RangeStats {
+	out := emptyRange(f)
+	view := usagecatalog.CostView(f.Currency)
 	modelTotals := map[string]int64{}
 	providerTotals := map[string]int64{}
 	totalCost := newCostBooks()
@@ -191,7 +222,7 @@ func (w *Writer) queryJSONL(f SourceFilter) (RangeStats, error) {
 				totalCost.add(mode, currency, pricing.Amount(amount))
 				out.CostEstimated = out.CostEstimated || (mode == "" && rec.CostEstimated)
 			}
-			if rec.CostComplete != nil && !*rec.CostComplete {
+			if usagecatalog.CostIncomplete(rec.CostComplete, rec.Total, rec.CostAmount) {
 				out.CostIncomplete = true
 			}
 			dayActive = dayActive || rec.Total > 0 || requests > 0
@@ -233,7 +264,72 @@ func (w *Writer) queryJSONL(f SourceFilter) (RangeStats, error) {
 		}
 	}
 	sort.SliceStable(out.Daily, func(i, j int) bool { return out.Daily[i].Day < out.Daily[j].Day })
+	return out
+}
+
+// querySingleDay adds the hour buckets a day rollup cannot answer. One day's
+// file is small enough to read whole rather than widen the catalog schema.
+func (w *Writer) querySingleDay(f SourceFilter) (RangeStats, error) {
+	if w == nil || w.dir == "" {
+		return emptyRange(f), nil
+	}
+	day := f.From.Format(dayLayout)
+	recs, err := readDaily(w.dir, day)
+	if err != nil {
+		return emptyRange(f), err
+	}
+	out := aggregateDays(map[string][]record{day: recs}, []string{day}, f)
+	out.Hourly = hourlyBuckets(day, recs, f)
 	return out, nil
+}
+
+func hourlyBuckets(day string, recs []record, f SourceFilter) []HourlyTokens {
+	view := usagecatalog.CostView(f.Currency)
+	buckets := make([]HourlyTokens, 24)
+	costs := make([]costBooks, 24)
+	for h := range buckets {
+		buckets[h] = HourlyTokens{
+			Hour:       fmt.Sprintf("%02d:00", h),
+			ByModel:    map[string]int64{},
+			ByProvider: map[string]int64{},
+		}
+		costs[h] = newCostBooks()
+	}
+	for _, rec := range recs {
+		if !matchesSource(rec.Source, f.Source) {
+			continue
+		}
+		hour := rec.Timestamp.Hour()
+		bucket := &buckets[hour]
+		if rec.Turn {
+			bucket.Turns++
+			continue
+		}
+		requests := rec.Requests
+		if rec.Total > 0 && requests <= 0 {
+			requests = 1
+		}
+		t := int64(rec.Total)
+		bucket.Total += rec.Total
+		bucket.Requests += requests
+		bucket.CacheHit += int64(rec.CacheHit)
+		bucket.CacheMiss += int64(rec.CacheMiss)
+		if rec.Total > 0 {
+			model := rec.ModelRef
+			if model == "" {
+				model = "(unknown)"
+			}
+			bucket.ByModel[model] += t
+			bucket.ByProvider[providerOf(model)] += t
+		}
+		if currency, amount := usageEntry(day, rec).CostIn(view); currency != "" {
+			costs[hour].add(usagecatalog.CostMode(rec.BillingMode), currency, pricing.Amount(amount))
+		}
+	}
+	for h := range buckets {
+		buckets[h].Cost, buckets[h].EstimateCost = moneySorted(costs[h].billed), moneySorted(costs[h].estimate)
+	}
+	return buckets
 }
 
 func rangeStatsFromRollups(f SourceFilter, days []string, rows []usagecatalog.Rollup) RangeStats {
@@ -278,9 +374,12 @@ func rangeStatsFromRollups(f SourceFilter, days []string, rows []usagecatalog.Ro
 			}
 			for _, entry := range row.Costs {
 				currency := pricing.NormalizeCurrency(entry.Currency)
-				if currency == "" || entry.Amount == 0 {
+				if currency == "" {
 					continue
 				}
+				// A currency with a zero amount is a priced free quote: the
+				// exact JSONL read reports {currency 0}, and so does this one,
+				// including its estimate flag.
 				dayCost.add(entry.Mode, currency, pricing.Amount(entry.Amount))
 				totalCost.add(entry.Mode, currency, pricing.Amount(entry.Amount))
 				out.CostEstimated = out.CostEstimated || (entry.Mode == "" && entry.Estimated)

@@ -2,15 +2,21 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { t } from "../i18n";
 import { count, money, tokens as fmtTokens } from "../i18n/format";
 import { reason } from "../i18n/kernel";
-import { DEFAULT_USAGE_DAYS, type AgentPort, type Money, type UsageDay, type UsageQuery, type UsageReport } from "../port/port";
+import { DEFAULT_USAGE_DAYS, type AgentPort, type Money, type UsageQuery, type UsageReport } from "../port/port";
 import { hostOf } from "./vendors";
 
 const RANGES: [number, string][] = [[7, "7 天"], [30, "30 天"], [365, "全部"]];
 
 type UsageWindow =
+  | { kind: "today" }
   | { kind: "days"; days: number }
   | { kind: "custom"; from: string; to: string }
   | { kind: "month"; month: string };
+
+function localDay(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
 
 function currentMonth(): string {
   const now = new Date();
@@ -53,41 +59,48 @@ function moneyList(list?: Money[]): string {
   return list.map((m) => money(Number(m.amount), m.currency)).join("  ·  ");
 }
 
-// A tick ladder a person reads: round the top up to a 1/2/5-ish step.
+// A tick ladder a person reads: round the top up to a 1/2/5-ish step. An empty
+// series still needs two distinct halves, or both upper ticks label as 1.
 function niceMax(raw: number): number {
-  if (raw <= 0) return 1;
+  if (raw <= 0) return 2;
   const pow = Math.pow(10, Math.floor(Math.log10(raw)));
   return [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].map((m) => m * pow).find((v) => v >= raw) ?? raw;
 }
 
+interface PlotPoint {
+  key: string;
+  axis: string;
+  tip: string;
+  value: number;
+}
+
 interface PlotProps {
-  days: UsageDay[];
-  pick: (d: UsageDay) => number;
+  points: PlotPoint[];
   label: (v: number) => string;
   aria: string;
 }
 
 // One series, so no legend: the card's title names it. Area fill, recessive
-// grid, an emphasised endpoint, and a crosshair that reads the nearest day.
-function Plot({ days, pick, label, aria }: PlotProps) {
+// grid, an emphasised endpoint, and a crosshair that reads the nearest point.
+function Plot({ points, label, aria }: PlotProps) {
   const [at, setAt] = useState<number | null>(null);
   const W = 860, H = 176, PL = 58, PR = 12, PT = 12, PB = 24;
-  const max = niceMax(Math.max(...days.map(pick), 0));
-  const x = (i: number) => PL + (days.length < 2 ? 0 : (i * (W - PL - PR)) / (days.length - 1));
+  const max = niceMax(Math.max(...points.map((p) => p.value), 0));
+  const x = (i: number) => PL + (points.length < 2 ? 0 : (i * (W - PL - PR)) / (points.length - 1));
   const y = (v: number) => PT + (1 - v / max) * (H - PT - PB);
   // The 365-day range rebuilds a ~365-segment path string; none of it depends
   // on which day the cursor is over, so a hover must not pay for it.
   const { pts, line, fill } = useMemo(() => {
-    const at2 = days.map((d, i) => [x(i), y(pick(d))] as const);
+    const at2 = points.map((p, i) => [x(i), y(p.value)] as const);
     const path = at2.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
     return {
       pts: at2, line: path,
-      fill: at2.length ? `${path} L${x(days.length - 1).toFixed(1)} ${H - PB} L${PL} ${H - PB} Z` : "",
+      fill: at2.length ? `${path} L${x(points.length - 1).toFixed(1)} ${H - PB} L${PL} ${H - PB} Z` : "",
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [days, pick, max]);
-  const every = Math.max(1, Math.ceil(days.length / 5));
-  const hover = at === null ? null : days[at];
+  }, [points, max]);
+  const every = Math.max(1, Math.ceil(points.length / 5));
+  const hover = at === null ? null : points[at];
 
   return (
     <div className="uplot" data-on={hover ? "" : undefined}>
@@ -101,9 +114,9 @@ function Plot({ days, pick, label, aria }: PlotProps) {
           {[0, max / 2, max].map((v) => (
             <text key={v} x={PL - 8} y={y(v) + 4} textAnchor="end">{label(v)}</text>
           ))}
-          {days.map((d, i) =>
+          {points.map((p, i) =>
             i % every ? null : (
-              <text key={d.day} x={x(i)} y={H - 7} textAnchor="middle">{d.day.slice(5)}</text>
+              <text key={p.key} x={x(i)} y={H - 7} textAnchor="middle">{p.axis}</text>
             ),
           )}
         </g>
@@ -113,7 +126,7 @@ function Plot({ days, pick, label, aria }: PlotProps) {
         {hover && at !== null && (
           <>
             <line className="ucross" x1={x(at)} x2={x(at)} y1={PT} y2={H - PB} />
-            <circle className="umark" cx={x(at)} cy={y(pick(hover))} r={4.5} />
+            <circle className="umark" cx={x(at)} cy={y(hover.value)} r={4.5} />
           </>
         )}
         <rect
@@ -122,11 +135,11 @@ function Plot({ days, pick, label, aria }: PlotProps) {
             const box = e.currentTarget.ownerSVGElement!.getBoundingClientRect();
             const vx = ((e.clientX - box.left) / box.width) * W;
             let best = 0, dist = Infinity;
-            days.forEach((_, i) => {
+            points.forEach((_, i) => {
               const d = Math.abs(x(i) - vx);
               if (d < dist) { dist = d; best = i; }
             });
-            // Only when the nearest day actually changed: pointermove fires far
+            // Only when the nearest point actually changed: pointermove fires far
             // faster than the reading can change.
             if (best !== at) setAt(best);
           }}
@@ -134,9 +147,9 @@ function Plot({ days, pick, label, aria }: PlotProps) {
         />
       </svg>
       {hover && at !== null && (
-        <div className="utip" style={{ left: `${(x(at) / W) * 100}%`, top: `${(y(pick(hover)) / H) * 100}%` }}>
-          <div className="d">{hover.day}</div>
-          <div className="v">{label(pick(hover))}</div>
+        <div className="utip" style={{ left: `${(x(at) / W) * 100}%`, top: `${(y(hover.value) / H) * 100}%` }}>
+          <div className="d">{hover.tip}</div>
+          <div className="v">{label(hover.value)}</div>
         </div>
       )}
     </div>
@@ -169,27 +182,37 @@ function Bars({ rows }: { rows: BarRow[] }) {
   );
 }
 
+interface BreakdownRow {
+  key: string;
+  label: string;
+  total: number;
+  requests: number;
+  cost?: Money[];
+  estimateCost?: Money[];
+}
+
 // A chart is an overview; a phone cannot hover it precisely. This list is the
 // exact record underneath the same data, and it stays available on every input.
-function DailyTable({ days }: { days: UsageDay[] }) {
+function BreakdownTable({ rows, hourly }: { rows: BreakdownRow[]; hourly: boolean }) {
+  const title = hourly ? t("每小时明细") : t("每日明细");
   return (
     <section className="ucard udaily">
-      <div className="ucard-h"><h3>{t("每日明细")}</h3><span className="hint">{t("精确到每天")} <span className="utable-scroll-hint">{t("左右滚动查看")}</span></span></div>
-      <div className="utable-wrap" role="region" aria-label={t("每日明细")} tabIndex={0}>
-        <table className="utable" aria-label={t("每日明细")}>
+      <div className="ucard-h"><h3>{title}</h3><span className="hint">{hourly ? t("精确到每小时") : t("精确到每天")} <span className="utable-scroll-hint">{t("左右滚动查看")}</span></span></div>
+      <div className="utable-wrap" role="region" aria-label={title} tabIndex={0}>
+        <table className="utable" aria-label={title}>
           <thead>
-            <tr><th>{t("日期")}</th><th>Tokens</th><th>{t("支出")}</th><th>{t("请求")}</th></tr>
+            <tr><th>{hourly ? t("时间") : t("日期")}</th><th>Tokens</th><th>{t("支出")}</th><th>{t("请求")}</th></tr>
           </thead>
           <tbody>
-            {[...days].sort((a, b) => b.day.localeCompare(a.day)).map((d) => (
-              <tr key={d.day} data-day={d.day}>
-                <td className="ud">{d.day}</td>
-                <td>{count(d.total)}</td>
+            {rows.map((row) => (
+              <tr key={row.key} data-day={hourly ? undefined : row.key} data-hour={hourly ? row.key : undefined}>
+                <td className="ud">{row.label}</td>
+                <td>{count(row.total)}</td>
                 <td>
-                  {moneyList(d.cost)}
-                  {d.estimateCost?.length ? <span className="udaily-est" title={t("按 API 价格估算的订阅用量，不是实际扣费")}>{t("等价估算")} {moneyList(d.estimateCost)}</span> : null}
+                  {moneyList(row.cost)}
+                  {row.estimateCost?.length ? <span className="udaily-est" title={t("按 API 价格估算的订阅用量，不是实际扣费")}>{t("等价估算")} {moneyList(row.estimateCost)}</span> : null}
                 </td>
-                <td>{count(d.requests)}</td>
+                <td>{count(row.requests)}</td>
               </tr>
             ))}
           </tbody>
@@ -209,6 +232,10 @@ export function Usage({ port }: { port: AgentPort }) {
   const [err, setErr] = useState("");
 
   const query = useMemo<UsageQuery>(() => {
+    if (range.kind === "today") {
+      const day = localDay();
+      return { from: day, to: day };
+    }
     if (range.kind === "days") return { days: range.days };
     if (range.kind === "custom") return { from: range.from, to: range.to };
     return monthBounds(range.month) ?? { days: DEFAULT_DAYS };
@@ -291,10 +318,31 @@ export function Usage({ port }: { port: AgentPort }) {
   const input = report ? report.cache_hit + report.cache_miss : 0;
   const hitRate = input > 0 ? (report!.cache_hit / input) * 100 : 0;
 
+  // A one-day window reads in hours; the kernel sends the buckets for exactly
+  // that case. "Today" stops at the current hour so the empty future does not
+  // read as a drop to zero.
+  const isSingleDay = !!report && report.from === report.to;
+  const hours = report?.hourly ?? [];
+  const hourView = isSingleDay && hours.length > 0;
+  const visibleHours = hourView && report!.to === localDay()
+    ? hours.slice(0, new Date().getHours() + 1)
+    : hours;
+  const usagePoints: PlotPoint[] = hourView
+    ? visibleHours.map((h) => ({ key: h.hour, axis: h.hour, tip: h.hour, value: h.total }))
+    : (report?.daily ?? []).map((d) => ({ key: d.day, axis: d.day.slice(5), tip: d.day, value: d.total }));
+  const dayRows: BreakdownRow[] = (report?.daily ?? [])
+    .slice()
+    .sort((a, b) => b.day.localeCompare(a.day))
+    .map((d) => ({ key: d.day, label: d.day, total: d.total, requests: d.requests, cost: d.cost, estimateCost: d.estimateCost }));
+  const hourRows: BreakdownRow[] = visibleHours.map((h) => ({
+    key: h.hour, label: h.hour, total: h.total, requests: h.requests, cost: h.cost, estimateCost: h.estimateCost,
+  }));
+
   return (
     <div className="usage">
       <div className="uhead">
         <div className="uranges" role="group" aria-label={t("时间范围")}>
+          <button type="button" data-action="usage.range.today" aria-pressed={range.kind === "today"} onClick={() => setRange({ kind: "today" })}>{t("今日")}</button>
           {RANGES.map(([n, lbl]) => (
             <button key={n} type="button" aria-pressed={range.kind === "days" && range.days === n} onClick={() => setRange({ kind: "days", days: n })}>{t(lbl)}</button>
           ))}
@@ -373,24 +421,25 @@ export function Usage({ port }: { port: AgentPort }) {
       </div>
 
       <section className="ucard">
-        <div className="ucard-h"><h3>{t("每日用量")}</h3><span className="hint">{t("悬停查看某天")}</span></div>
-        <Plot days={report.daily} pick={(d) => d.total} label={(v) => fmtTokens(Math.round(v))} aria={t("每日 tokens")} />
+        <div className="ucard-h"><h3>{hourView ? t("每小时用量") : t("每日用量")}</h3><span className="hint">{hourView ? t("悬停查看某个小时") : t("悬停查看某天")}</span></div>
+        <Plot points={usagePoints} label={(v) => fmtTokens(Math.round(v))} aria={hourView ? t("每小时 tokens") : t("每日 tokens")} />
       </section>
 
-      <DailyTable days={report.daily} />
+      <BreakdownTable rows={hourView ? hourRows : dayRows} hourly={hourView} />
 
       {/* One chart per currency, for the same reason tokens and money get their
           own: two currencies do not share an axis either, and the panel keeping
           them apart everywhere else would be undone by one merged plot. */}
       {currencies.map((code, at) => (
         <section className="ucard" key={code}>
-          <div className="ucard-h"><h3>{t("每日支出")}</h3><span className="hint">{code}</span></div>
+          <div className="ucard-h"><h3>{hourView ? t("每小时支出") : t("每日支出")}</h3><span className="hint">{code}</span></div>
           <p className="ucard-s">{t("与用量分开画：两者量纲不同，共用一根轴会读错")}</p>
           <Plot
-            days={priced.filter((d) => d.cost?.some((c) => c.currency === code))}
-            pick={(d) => Number(d.cost?.find((c) => c.currency === code)?.amount ?? 0)}
+            points={hourView
+              ? visibleHours.map((h) => ({ key: h.hour, axis: h.hour, tip: h.hour, value: Number(h.cost?.find((c) => c.currency === code)?.amount ?? 0) }))
+              : priced.filter((d) => d.cost?.some((c) => c.currency === code)).map((d) => ({ key: d.day, axis: d.day.slice(5), tip: d.day, value: Number(d.cost?.find((c) => c.currency === code)?.amount ?? 0) }))}
             label={(v) => money(v, code)}
-            aria={t("每日支出")}
+            aria={hourView ? t("每小时支出") : t("每日支出")}
           />
           {at === currencies.length - 1 && unpricedDays > 0 && (
             <div className="unote">

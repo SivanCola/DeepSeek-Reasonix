@@ -1,8 +1,8 @@
 package sessionstore
 
 import (
+	"io"
 	"os"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -25,15 +25,26 @@ func TestDAGMultiTargetRedactionLoadsEachPayloadOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime.GC()
-	var before, after runtime.MemStats
-	runtime.ReadMemStats(&before)
-	s, err := LoadSession(path)
-	runtime.ReadMemStats(&after)
+	f, err := os.Open(store.SessionEventLog(path))
 	if err != nil {
 		t.Fatal(err)
 	}
-	msgs := s.Snapshot()
+	defer f.Close()
+	st, err := replaySessionDAG(f, path, defaultSessionReplayLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads := &countingReaderAt{r: f}
+	loaded, err := st.materialize(reads, st.selectedHead(), defaultSessionReplayLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Each target reads its own payload, so the bytes read stay near the log's size; a shared
+	// redaction record reloaded per target would read it 256 times over.
+	if limit := info.Size() * 2; reads.n > limit {
+		t.Fatalf("materializing %d encoded bytes read %d, limit %d; redaction records must not be reloaded per target", info.Size(), reads.n, limit)
+	}
+	msgs := loaded
 	if len(msgs) != 256 {
 		t.Fatalf("message count = %d", len(msgs))
 	}
@@ -42,7 +53,15 @@ func TestDAGMultiTargetRedactionLoadsEachPayloadOnce(t *testing.T) {
 			t.Fatalf("message %d did not use its redaction", i)
 		}
 	}
-	if allocated, budget := after.TotalAlloc-before.TotalAlloc, uint64(info.Size())*10+8<<20; allocated > budget {
-		t.Fatalf("materializing %d encoded bytes allocated %d, budget %d; redaction records must not be reloaded per target", info.Size(), allocated, budget)
-	}
+}
+
+type countingReaderAt struct {
+	r io.ReaderAt
+	n int64
+}
+
+func (c *countingReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	n, err := c.r.ReadAt(p, off)
+	c.n += int64(n)
+	return n, err
 }

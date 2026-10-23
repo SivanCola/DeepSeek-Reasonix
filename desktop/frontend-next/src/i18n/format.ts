@@ -115,6 +115,13 @@ export function money(amount: number, code: string, digits = 2): string {
   return `${code}${nf(scale(amount, digits)).format(amount)}`;
 }
 
+/** moneyList prints one amount per currency, side by side. It never adds them:
+ *  two currencies are two units, and a single sum would need a rate nobody
+ *  quoted. A session billed in one currency still reads as one amount. */
+export function moneyList(list: readonly { amount: number; currency: string }[]): string {
+  return list.map((m) => money(m.amount, m.currency)).join("  ·  ");
+}
+
 // Plural categories are the language's, not a one-vs-many guess: English needs
 // two and Chinese one, but Russian needs four and Arabic six. Asking Intl now
 // means a catalogue that grows plural forms later does not also need this

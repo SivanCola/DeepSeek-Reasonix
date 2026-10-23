@@ -26,16 +26,25 @@ function draw(navShown: boolean, onSettings = vi.fn()) {
   );
 }
 
-const entry = () => screen.queryByRole("button", { name: /连接与机器/ });
+const remoteEntries = () => document.querySelectorAll('[data-action="settings.section"][data-value="remote"]');
 
-it("does not repeat the Remote entry of the icon rail while the rail is shown", () => {
+it("has no remote entry of its own while the icon rail is shown", () => {
   draw(true);
-  expect(entry()).toBeNull();
+  expect(remoteEntries()).toHaveLength(0);
 });
 
-it("keeps the way into the remote settings when there is no icon rail, and it opens that section", async () => {
+it("without the icon rail has one way into the remote settings, and it opens that section", async () => {
   const onSettings = vi.fn();
   draw(false, onSettings);
-  await userEvent.click(entry()!);
+  expect(remoteEntries()).toHaveLength(1);
+  expect(screen.queryByRole("button", { name: /连接与机器/ })).toBeNull();
+  await userEvent.click(remoteEntries()[0] as HTMLElement);
   expect(onSettings).toHaveBeenCalledWith("remote");
+});
+
+it("draws the shortcut rows with their label only, the shortcuts staying on the tooltip", () => {
+  draw(false);
+  expect(document.querySelectorAll(".studio-quicknav small, .studio-new-task kbd, .studio-search kbd")).toHaveLength(0);
+  expect(document.querySelector(".studio-new-task")?.getAttribute("title")).toBe("Alt N");
+  expect(document.querySelector(".studio-search")?.getAttribute("title")).toBe("Ctrl K");
 });

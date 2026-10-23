@@ -1,0 +1,2 @@
+- 变更：你对某个对话选的“本会话允许”现在随这个对话保存，恢复或重新打开这个对话后不再重复询问；仍只对该对话有效，可随时撤销。关联 #14243。
+- Changed: "Allow for this session" is now saved with its conversation, so resuming or reopening it no longer asks again; it still covers only that conversation and can be revoked. Refs #14243.

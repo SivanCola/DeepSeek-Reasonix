@@ -24,6 +24,22 @@ describe("the tool list", () => {
     expect(save).toHaveBeenLastCalledWith("web_fetch", false);
   });
 
+  it("says what a tool does in the interface's language and falls back to the kernel's line for one it has no line for", async () => {
+    const p = new MockPort() as unknown as AgentPort;
+    p.toolSettings = async () => ({
+      path: "",
+      tools: [
+        { name: "bash", description: "Execute a command in the shell and return combined stdout/stderr.", disabled: false },
+        { name: "mcp__files__stat", description: "Return the size of a file the server holds.", disabled: false },
+      ],
+    });
+    render(<ToolList port={p} />);
+    await screen.findByRole("switch", { name: "bash" });
+    expect(screen.getByText(/在命令行里执行命令并返回输出/)).toBeTruthy();
+    expect(screen.queryByText(/Execute a command in the shell/)).toBeNull();
+    expect(screen.getByText("Return the size of a file the server holds.")).toBeTruthy();
+  });
+
   it("gives a tool the host needs no switch and says what needs it", async () => {
     const p = new MockPort() as unknown as AgentPort;
     render(<ToolList port={p} />);

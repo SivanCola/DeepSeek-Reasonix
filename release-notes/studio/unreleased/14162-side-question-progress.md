@@ -1,2 +1,0 @@
-- 修复：辅助问题立即显示提问，流式显示回答文字、阶段和耗时；中断的回答标为未完成，输入保留可重试。关联 #14162。
-- Fixed: side questions show your question immediately and stream the answer, phase and elapsed time; interrupted answers are marked incomplete and drafts stay available for retry. Refs #14162.

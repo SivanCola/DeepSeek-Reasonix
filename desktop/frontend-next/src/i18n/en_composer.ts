@@ -126,6 +126,8 @@ export const EN_COMPOSER: Record<string, string> = {
   "是否信任此文件夹？": "Trust this folder?",
   "信任后，在此文件夹里的编辑和命令不再逐条询问（桌面端和终端都是）。系统沙盒把命令的写入限制在此文件夹、你额外允许写入的目录、临时目录和工具链缓存内；网络与拒绝规则照常生效。":
     "Once trusted, edits and commands in this folder run without asking each time, here and in the terminal. The OS sandbox limits what commands write to this folder, the directories you allowed writes to, temp and toolchain caches; network and deny rules still apply.",
+  "当前项目「{name}」之前选了“暂不信任”，所以定时运行读不了它。信任后，在有系统沙盒的电脑上，默认设置下它的编辑和命令不再逐条询问；你手动选定的批准模式不受影响。": "The open project \u201c{name}\u201d was declined earlier, so scheduled runs cannot read it. Once trusted, on a machine with the system sandbox its edits and commands stop asking one by one under the default settings; an approval mode you chose yourself is unchanged.",
+  "当前项目「{name}」还没有受信任，所以定时运行读不了它。信任后，在有系统沙盒的电脑上，默认设置下它的编辑和命令不再逐条询问；你手动选定的批准模式不受影响。": "The open project \u201c{name}\u201d is not trusted yet, so scheduled runs cannot read it. Once trusted, on a machine with the system sandbox its edits and commands stop asking one by one under the default settings; an approval mode you chose yourself is unchanged.",
   "信任此文件夹": "Trust this folder",
   "暂不信任": "Not now",
   "新会话默认每次询问": "New sessions ask first",

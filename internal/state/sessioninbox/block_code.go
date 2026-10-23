@@ -11,3 +11,8 @@ const (
 	BlockOwnerInactive    BlockCode = "owner_inactive"
 	BlockManifestSalvaged BlockCode = "manifest_salvaged"
 )
+
+// RetrySafe reports whether an uncertain item carrying this code never reached
+// the model, so queueing it again cannot repeat a turn. Every other code, and an
+// uncoded item, may already have run.
+func (c BlockCode) RetrySafe() bool { return c == BlockSteerUnapplied }

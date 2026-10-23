@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "./testkit";
 import { t } from "../i18n";
-import type { AgentPort, ModelEntry, ProviderEntry, UsageReport } from "../port/port";
+import type { AgentPort, ModelEntry, ProviderEntry, UsageHour, UsageReport } from "../port/port";
 import { Usage } from "./Usage";
 
 const REPORT: UsageReport = {
@@ -127,6 +127,106 @@ describe("usage is exact on every device", () => {
 
     expect(await screen.findByText("anthropic · gateway.example")).toBeTruthy();
     expect(screen.queryByText("relay-a")).toBeNull();
+  });
+});
+
+const TODAY: UsageReport = {
+  ...REPORT,
+  from: "2026-08-16",
+  to: "2026-08-16",
+  tokens: 1_234,
+  requests: 6,
+  turns: 5,
+  cache_hit: 1_000,
+  cache_miss: 234,
+  cost: [{ amount: "0.73", currency: "CNY" }],
+  active_days: 1,
+  daily: [REPORT.daily[1]],
+  hourly: Array.from({ length: 24 }, (_, hour): UsageHour => ({
+    hour: `${String(hour).padStart(2, "0")}:00`,
+    total: hour === 9 ? 1_234 : 0,
+    byModel: hour === 9 ? { "relay/model-b": 1_234 } : {},
+    byProvider: hour === 9 ? { "relay-b": 1_234 } : {},
+    requests: hour === 9 ? 6 : 0,
+    turns: hour === 9 ? 5 : 0,
+    cacheHit: hour === 9 ? 1_000 : 0,
+    cacheMiss: hour === 9 ? 234 : 0,
+    cost: hour === 9 ? [{ amount: "0.73", currency: "CNY" }] : undefined,
+  })),
+  models: [REPORT.models[1]],
+  providers: [REPORT.providers[1]],
+};
+
+function localToday(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
+
+function oneDayPort() {
+  return makePort({
+    usage: vi.fn((query) => Promise.resolve("days" in query ? REPORT : TODAY)),
+  });
+}
+
+describe("a one-day window reads in hours", () => {
+  it("asks for today as one explicit calendar day", async () => {
+    const port = oneDayPort();
+    render(<Usage port={port} />);
+    await screen.findByText("2026-08-01 → 2026-08-31");
+
+    fireEvent.click(screen.getByRole("button", { name: t("今日") }));
+
+    const today = localToday();
+    await waitFor(() => expect(port.usage).toHaveBeenLastCalledWith({ from: today, to: today }));
+  });
+
+  it("draws the day's hours instead of a single point", async () => {
+    const port = oneDayPort();
+    render(<Usage port={port} />);
+    fireEvent.click(await screen.findByRole("button", { name: t("今日") }));
+
+    expect(await screen.findByRole("img", { name: t("每小时 tokens") })).toBeTruthy();
+    const table = await screen.findByRole("table", { name: t("每小时明细") });
+    const row = table.querySelector<HTMLElement>('[data-hour="09:00"]');
+    expect(row).toBeTruthy();
+    expect(within(row!).getByText("1,234")).toBeTruthy();
+    expect(within(row!).getByText("6")).toBeTruthy();
+  });
+
+  it("keeps an empty day's y axis readable", async () => {
+    const empty: UsageReport = {
+      ...TODAY,
+      tokens: 0,
+      requests: 0,
+      turns: 0,
+      cache_hit: 0,
+      cache_miss: 0,
+      cost: [],
+      daily: [{ ...TODAY.daily[0], total: 0, requests: 0, turns: 0, cacheHit: 0, cacheMiss: 0, cost: undefined }],
+      hourly: TODAY.hourly!.map((hour) => ({
+        ...hour, total: 0, requests: 0, turns: 0, cacheHit: 0, cacheMiss: 0, cost: undefined,
+      })),
+    };
+    render(<Usage port={makePort({ usage: vi.fn().mockResolvedValue(empty) })} />);
+
+    const chart = await screen.findByRole("img", { name: t("每小时 tokens") });
+    const ticks = [...chart.querySelectorAll("text")]
+      .map((node) => node.textContent)
+      .filter((value) => value === "0" || value === "1" || value === "2");
+    expect(new Set(ticks).size).toBe(ticks.length);
+  });
+
+  it("uses the hour series for a custom one-day range", async () => {
+    const port = oneDayPort();
+    render(<Usage port={port} />);
+    await screen.findByText("2026-08-01 → 2026-08-31");
+
+    fireEvent.click(screen.getByRole("button", { name: t("自定义") }));
+    fireEvent.change(screen.getByLabelText(t("开始日期")), { target: { value: "2026-08-16" } });
+    fireEvent.change(screen.getByLabelText(t("结束日期")), { target: { value: "2026-08-16" } });
+    fireEvent.click(screen.getByRole("button", { name: t("应用") }));
+
+    expect(await screen.findByRole("table", { name: t("每小时明细") })).toBeTruthy();
   });
 });
 

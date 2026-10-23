@@ -13,9 +13,10 @@ afterEach(() => {
 });
 
 const metrics = (over: Partial<Metrics> = {}): Metrics =>
-  ({ hit: 76_000, miss: 9_000, out: 0, bySource: {}, cost: 0, currency: "¥",
+  ({ hit: 76_000, miss: 9_000, out: 0, bySource: {},
+     cost: [{ currency: "CNY", amount: 0 }], turn: [],
      prefixHash: "", prefixChanged: false, prefixReasons: [], bodyChanged: false,
-     carriedMessages: 3, toolSchema: 0, estimated: false, alt: null, turn: 0, rounds: [],
+     carriedMessages: 3, toolSchema: 0, estimated: false, alt: null, rounds: [],
      ...over } as Metrics);
 
 const ctx = (used: number): ContextBreakdown =>

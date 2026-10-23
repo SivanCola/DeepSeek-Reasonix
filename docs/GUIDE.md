@@ -77,9 +77,9 @@ reasoning_language = "auto"      # visible reasoning text: auto|zh|en
 # max_queued_inputs = 0              # prompts waiting in a session's queue; 0 = no limit, the queue's byte limits still apply (user config only)
 # max_subagent_steer_bytes = 16384    # bytes in one message of guidance to a running sub-agent, which keeps one message from filling its context; 0 = no limit (user config only)
 # max_subagent_steers_per_minute = 30  # messages of guidance per minute to one running sub-agent, a stop for a loop; 0 = no limit (user config only)
-# write_lease = "optimistic"          # user file only; a writer that declares no path (bash, MCP) stops holding the whole workspace
+# write_lease = "strict"              # user file only; default optimistic: a writer that declares no path (bash, MCP) does not hold the whole workspace; strict makes it hold it
 # write_lease_max_wait_minutes = 0    # minutes a write waits behind another session's claim before it fails with workspace.claim_timeout; 0 (default) = wait as long as the turn lasts, 120 is a sensible limit (user config only)
-# subagent_claims = "optimistic"      # user file only; a sub-agent that declares no write_paths holds only the path it is writing, not the whole workspace against other sessions; default strict
+# subagent_claims = "strict"          # user file only; default optimistic: a sub-agent that declares no write_paths holds only the path it is writing; strict makes it hold the whole workspace
 # plan_approval = "auto"             # user file only; a submitted plan starts executing without the approval click, and the transcript says so; default ask
 # default_mode = "plan"              # user file only; a new conversation starts in plan mode (a resumed one keeps its own; Settings has a switch); default normal
 # host_verification = "on"           # user file only; "on" holds a turn that changed files open until a check, a review and a sign-off exist; unset or "off" does not (unset still holds them under the delivery preset); the receipt always says what was checked
@@ -1001,6 +1001,11 @@ Composer shortcuts:
 | `Esc` while a turn is running | Cancels the running turn | If the turn has not produced a response yet, the draft is restored. |
 
 Remembered projects have Move up / Move down in their project menu. Open it with the keyboard, navigate with arrows or Home/End, and use Escape to return to the trigger. Moving a project changes sidebar order without changing the launch project.
+
+Studio remembers which local and remote projects you collapse in the sidebar,
+including Collapse all / Expand all, when you reopen it in the same browser or
+desktop profile. New projects start expanded. These display choices stay on
+this device; they do not change sessions or synchronize to another client.
 
 Ordinary Reasonix-managed worktree chats appear under their original project,
 without a separate project row for each checkout. The chat header shows Local

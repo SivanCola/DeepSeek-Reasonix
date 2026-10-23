@@ -79,10 +79,12 @@ func (s *Store) Claim(ctx context.Context, p Policy, scheduleID string, slot tim
 }
 
 // RecordSkip stores a slot that was deliberately not run, so the same slot is
-// not reconsidered by another ticker.
+// not reconsidered by another ticker. A one-shot has one slot, so recording it
+// skipped spends the schedule exactly as a claim does.
 func (s *Store) RecordSkip(ctx context.Context, scheduleID string, slot time.Time, why SkipReason) error {
 	return s.update(ctx, func(m *Manifest) error {
-		if m.schedule(scheduleID) == nil {
+		sc := m.schedule(scheduleID)
+		if sc == nil {
 			return ErrNotFound
 		}
 		slot = slot.UTC().Truncate(time.Second)
@@ -93,6 +95,10 @@ func (s *Store) RecordSkip(ctx context.Context, scheduleID string, slot time.Tim
 		now := s.clock()
 		m.Runs = append(m.Runs, Run{TriggerID: id, ScheduleID: scheduleID, SlotAt: slot,
 			ClaimedAt: now, EndedAt: now, State: RunSkipped, SkipReason: string(why)})
+		// A one-shot has no later slot: the recorded skip spends it.
+		if sc.Trigger.Kind == TriggerAt && sc.Trigger.IsSlot(slot) {
+			sc.Status, sc.UpdatedAt = StatusExpired, now
+		}
 		prune(m, now)
 		return nil
 	})

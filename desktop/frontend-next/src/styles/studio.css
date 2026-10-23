@@ -177,7 +177,7 @@ body { background: var(--page); }
   border-radius: 9px;
   background: var(--raised);
   color: var(--text);
-  font: var(--w-med) calc(12px * var(--fs-scale, 1))/1 var(--ui);
+  font: 500 calc(12px * var(--fs-scale, 1))/1 var(--ui);
   cursor: pointer;
   box-shadow: 0 1px 2px rgb(0 0 0 / .03);
   transition: background var(--m-line), border-color var(--m-line);
@@ -267,7 +267,7 @@ body { background: var(--page); }
 }
 .prefs-sheet {
   width: min(1080px, 100%);
-  height: min(760px, 100%);
+  height: min(820px, 100%);
   border-radius: 14px;
   background: var(--float);
   box-shadow: var(--shadow-float);
@@ -571,7 +571,7 @@ body { background: var(--page) !important; }
 .studio-brand { padding: 0 0 19px; gap: 9px; }
 .studio-new-task {
   height: 34px;
-  padding: 0 10px;
+  padding: 0 7px; gap: 9px; margin-left: -8px; width: calc(100% + 8px);
   border-color: var(--hair);
   border-radius: 7px;
   background: var(--overlay);
@@ -584,9 +584,9 @@ body { background: var(--page) !important; }
 .studio-search kbd { margin-left: auto; color: var(--faint); font: 500 calc(9px * var(--fs-scale, 1))/1 var(--mono); }
 .studio-new-task kbd { color: var(--muted); }
 .studio-search {
-  width: 100%; height: 32px; display: flex; align-items: center; gap: 9px;
-  padding: 0 9px; margin: 3px 0 10px; border: 0; border-radius: 6px;
-  background: transparent; color: var(--muted); font: 500 calc(11px * var(--fs-scale, 1))/1 var(--ui); cursor: pointer;
+  width: calc(100% + 8px); height: 32px; display: flex; align-items: center; gap: 9px;
+  padding: 0 8px; margin: 3px 0 10px -8px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--muted); font: 500 calc(12px * var(--fs-scale, 1))/1 var(--ui); cursor: pointer;
 }
 .studio-search:hover { color: var(--text); background: var(--overlay); }
 .studio-search > span { display: grid; place-items: center; }
@@ -601,7 +601,7 @@ body { background: var(--page) !important; }
 .studio-section-label button .studio-icon { width: 13px; height: 13px; }
 .studio-section-label button:hover { color: var(--text); }
 .studio-session-label { margin-top: 13px; }
-.studio-quicknav { display: grid; gap: 1px; }
+.studio-quicknav { display: grid; gap: 1px; margin: -7px 0 0 -8px; }
 .studio-quicknav button {
   width: 100%; height: 33px; display: grid; grid-template-columns: 18px minmax(0,1fr) auto;
   align-items: center; gap: 7px; padding: 0 7px; border: 0; border-radius: 6px;
@@ -609,12 +609,12 @@ body { background: var(--page) !important; }
 }
 .studio-quicknav button:hover { color: var(--text); background: var(--overlay); }
 .studio-quicknav button > span { display: grid; place-items: center; color: var(--accent); text-align: center; }
-.studio-quicknav b { min-width: 0; overflow: hidden; font: 500 calc(11px * var(--fs-scale, 1))/1.4 var(--ui); text-overflow: ellipsis; white-space: nowrap; }
+.studio-quicknav b { min-width: 0; overflow: hidden; font: 500 calc(12px * var(--fs-scale, 1))/1.4 var(--ui); text-overflow: ellipsis; white-space: nowrap; }
 .studio-new-task > .studio-label,
 .studio-search > .studio-label { min-width: 0; display: block; overflow: hidden; color: inherit; font: inherit; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
 .studio-quicknav small { color: var(--faint); font: 500 calc(9px * var(--fs-scale, 1))/1 var(--ui); }
 .studio-session-filters {
-  min-height: 31px; display: grid; grid-template-columns: minmax(0, 1fr);
+  min-height: 32px; display: grid; grid-template-columns: minmax(0, 1fr);
   align-items: center; gap: 4px; margin: 0 0 8px; padding: 0; background: transparent;
 }
 .studio-session-segments {
@@ -628,7 +628,7 @@ body { background: var(--page) !important; }
 }
 .studio-session-segments button:hover { background: var(--raised); color: var(--text); }
 .studio-session-segments button[aria-pressed="true"] { background: var(--raised); color: var(--text); font-weight: 650; }
-.studio-session-segments button > span { min-width: 0; overflow: hidden; line-height: 1.4; text-overflow: ellipsis; }
+.studio-session-segments button > span { min-width: 0; overflow: hidden; line-height: 1.4; position: relative; top: .1em; text-overflow: ellipsis; }
 .studio-session-segments b { flex: none; min-width: 8px; color: var(--faint); font: 560 calc(9px * var(--fs-scale, 1))/1 var(--ui); font-variant-numeric: tabular-nums; }
 .studio-session-segments button[aria-pressed="true"] b { color: var(--muted); }
 @container (max-width: 219px) {
@@ -713,7 +713,7 @@ body { background: var(--page) !important; }
 .srail-m[data-on] > i { background: #91a7df; }
 .srail-peek { right: 42px; width: min(300px, calc(100vw - var(--rail-w) - 78px)); }
 .flow {
-  width: min(var(--doc), calc(100% - var(--srail-w) - 44px));
+  width: min(var(--flow-w, var(--doc)), calc(100% - var(--srail-w) - 44px));
   margin-inline: auto;
   position: relative;
   left: 0;
@@ -722,7 +722,7 @@ body { background: var(--page) !important; }
 .flow[data-empty] { display: flex; align-items: center; justify-content: center; }
 .flow:not([data-empty]) {
   flex: 0 0 auto;
-  width: min(var(--doc), calc(100% - var(--srail-w) - 34px));
+  width: min(var(--flow-w, var(--doc)), calc(100% - var(--srail-w) - 34px));
   margin: 0 auto;
   padding: 28px 0 36px;
   box-sizing: border-box;
@@ -1086,14 +1086,14 @@ body { background: var(--page) !important; }
 .compose:focus-within::after { border-color: #4a4e47; }
 .compose .prompt { display: none; }
 .compose .fmain { display: block; }
-.compose textarea { min-height: 48px; color: var(--text); font-size: var(--read); line-height: 1.65; }
+.compose textarea { display: block; min-height: 48px; color: var(--text); font-size: var(--read); line-height: 1.65; }
 @media (pointer: coarse) { .compose textarea { font-size: max(calc(16px * var(--fs-scale, 1)), var(--read)); } }
 .compose textarea::placeholder { color: var(--ghost); }
 .compose .fmain { position: relative; timeline-scope: --draft; }
 :root .compose .fmain textarea[data-chips] { color: transparent; caret-color: var(--text); scroll-timeline: --draft block; }
 .chipmirror {
-  position: absolute; margin: 0; border: 0; overflow: hidden; pointer-events: none;
-  color: var(--text); white-space: pre-wrap; overflow-wrap: break-word; box-sizing: content-box;
+  position: absolute; inset: 0; margin: 0; border: 0; overflow: hidden; pointer-events: none;
+  color: var(--text); white-space: pre-wrap; overflow-wrap: break-word; box-sizing: border-box;
 }
 .chipflow { animation: chipfollow linear both; animation-timeline: --draft; }
 @keyframes chipfollow { to { transform: translateY(calc(-1 * var(--travel, 0px))); } }
@@ -1452,7 +1452,7 @@ body { background: var(--page) !important; }
   view-transition-name: none;
 }
 .prefs-sheet {
-  width: min(1080px, calc(100% - 72px)); height: min(760px, calc(100% - 56px));
+  width: min(1080px, calc(100% - 72px)); height: min(820px, calc(100% - 56px));
   border-radius: 12px; background: var(--surface); border: 1px solid var(--border);
   animation: studio-prefs-in 130ms ease-out both;
   view-transition-name: none;
@@ -1525,12 +1525,11 @@ body { background: var(--page) !important; }
 :root[data-theme="light"] .flow .tool-disclosure .dif-hd { background: var(--overlay); }
 :root[data-theme="light"] .flow .copy { color: var(--ghost); }
 :root[data-theme="light"] .flow .copy:hover { color: var(--text); }
-:root[data-theme="light"] .studio-new-task { border-color: transparent; font-weight: 590; }
+:root[data-theme="light"] .studio-new-task { border-color: transparent; }
 :root[data-theme="light"] .studio-search:hover,
 :root[data-theme="light"] .studio-settings:hover,
 :root[data-theme="light"] .studio-wallet:hover { background: var(--hair); color: var(--text); }
 :root[data-theme="light"] .rail .machrow { color: var(--text); }
-:root[data-theme="light"] .studio-wallet,
 :root[data-theme="light"] .studio-settings { color: var(--muted); }
 :root[data-theme="light"] .studio-meterrail { color: var(--ghost); }
 :root[data-theme="light"] .studio-meterrail > button { color: var(--ghost); }
@@ -2152,23 +2151,23 @@ button, input, select, textarea { font-size: calc(13.3333px * var(--fs-scale, 1)
   flex-direction: column;
   align-items: stretch;
   gap: 2px;
-  padding: 5px 14px 9px;
+  padding: 5px 22px 9px;
 }
 .studio-wallet {
-  width: 100%;
+  width: calc(100% + 8px); margin-left: -8px;
   height: 32px;
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: center;
   gap: 7px;
-  padding: 0 8px;
+  padding: 0 7px;
   border: 0;
   border-radius: 5px;
   background: transparent;
   color: var(--muted);
   text-align: left;
   cursor: pointer;
-  font: 500 calc(11px * var(--fs-scale, 1))/1.35 var(--ui);
+  font: 500 calc(12px * var(--fs-scale, 1))/1.35 var(--ui);
 }
 .studio-wallet:hover { background: var(--raised); color: var(--text); }
 .studio-wallet b { font: inherit; }
@@ -2184,7 +2183,7 @@ button, input, select, textarea { font-size: calc(13.3333px * var(--fs-scale, 1)
   border-top: 1px solid var(--hair);
 }
 .studio-user-foot .acctrow { width: 30px; min-width: 30px; height: 30px; margin: 0; padding: 0; overflow: hidden; }
-.studio-user-foot .ini { width: 28px; height: 28px; }
+.studio-user-foot .ini { width: 30px; height: 30px; border-radius: 9px; }
 .studio-workspace-kind { color: var(--faint); font: 500 calc(11px * var(--fs-scale, 1))/1.5 var(--ui); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .turntools > .attach { order: 1 !important; }
@@ -2964,16 +2963,15 @@ button, input, select, textarea { font-size: calc(13.3333px * var(--fs-scale, 1)
 .studio-search:hover,
 .studio-quicknav button:hover { color: var(--text); background: var(--overlay); }
 
-.studio-new-task { background: var(--overlay); border-color: var(--hair); color: var(--text); }
-.studio-new-task:hover { background: color-mix(in srgb, var(--overlay) 92%, var(--text)); border-color: var(--border); color: var(--text); }
-:root[data-theme="light"] .studio-new-task,
+.studio-new-task { background: transparent; border-color: transparent; color: var(--text); }
+.studio-new-task:hover { background: var(--overlay); border-color: transparent; color: var(--text); }
 :root[data-theme="light"] .studio-session-segments { background: color-mix(in oklab, var(--overlay), var(--text) 3%); }
-.studio-search,
 .studio-section-label,
 .studio-section-label button,
-.studio-quicknav button,
-.studio-wallet,
 .studio-settings { color: var(--muted); }
+.studio-search,
+.studio-quicknav button,
+.studio-wallet { color: var(--text); }
 .studio-search kbd,
 .studio-quicknav small,
 .rail .wsmeta,
@@ -3255,11 +3253,10 @@ button, input, select, textarea { font-size: calc(13.3333px * var(--fs-scale, 1)
   border-top-color: var(--hair) !important;
   color: var(--muted);
 }
-.studio-wallet { color: var(--muted); }
-.studio-wallet b { color: var(--muted); }
+.studio-wallet { color: var(--text); }
+.studio-wallet b { color: var(--text); }
 .studio-wallet small { color: var(--text); font-variant-numeric: tabular-nums; }
-.studio-wallet.studio-feedback > span, .studio-wallet.studio-feedback b { color: var(--accent-ink); }
-.studio-wallet.studio-feedback b { font-weight: 600; }
+.studio-wallet.studio-feedback > span { color: var(--accent-ink); }
 .studio-wallet:hover { background: var(--accent-wash); color: var(--text); }
 .studio-user-foot { border-top-color: var(--hair); }
 .studio-workspace-kind { color: var(--muted); }
@@ -3313,7 +3310,7 @@ button, input, select, textarea { font-size: calc(13.3333px * var(--fs-scale, 1)
    and focus, not to every card or to the whole veil. This also closes the old
    Studio prototype's fixed dark borders that survived in light mode. */
 .prefs {
-  background: color-mix(in srgb, var(--page) 58%, transparent) !important;
+  background: color-mix(in srgb, var(--page) 93%, transparent) !important;
   color: var(--text);
 }
 .prefs-sheet {
@@ -3374,9 +3371,6 @@ button, input, select, textarea { font-size: calc(13.3333px * var(--fs-scale, 1)
   background: color-mix(in srgb, var(--float) 94%, var(--accent-wash)) !important;
 }
 .advset:not(.appearance-advanced) > .grp { background: transparent !important; box-shadow: none; }
-:root[data-theme="light"] .prefs {
-  background: color-mix(in srgb, var(--page) 66%, transparent) !important;
-}
 :root[data-theme="light"] .prefs-sheet {
   box-shadow: 0 22px 60px -28px color-mix(in srgb, var(--text) 28%, transparent),
               0 1px 0 color-mix(in srgb, var(--float) 90%, transparent) inset;
@@ -3992,8 +3986,8 @@ button, input, select, textarea { font-size: calc(13.3333px * var(--fs-scale, 1)
 .studio-brand {
   height: var(--chrome-h);
   padding-block: 0;
-  padding-left: max(0px, 44px - var(--nav-w));
-  margin-bottom: 12px;
+  padding-left: 22px;
+  margin-bottom: 0;
 }
 .chrome .thbtn,
 .chrome .top-action { min-height: 30px; }

@@ -401,6 +401,9 @@ func (s *Store) RetryItem(id string) error {
 	}
 	switch next.Items[i].State {
 	case StateUncertain, StateBlocked:
+		if next.Items[i].State == StateUncertain && !next.Items[i].BlockCode.RetrySafe() {
+			return ErrRetryMayRepeat
+		}
 		next.Items[i].State = StateQueued
 		next.Items[i].BlockReason = ""
 		next.Items[i].BlockCode = ""

@@ -137,6 +137,9 @@ type controllerDeps struct {
 	// and its persistence, behind its own mutex so a per-turn goal save never
 	// stalls an approval or status poll on c.mu. See goal.go.
 	goals goalMachine
+	// goalBlock is the model's copy of the active-goal standing block, which a
+	// stopped goal must retire under the same tag. See goal_projection.go.
+	goalBlock projectionDebt
 
 	// dispatch is the state behind the cross-project dispatch tool; see peer_dispatch.go.
 	dispatch dispatchState

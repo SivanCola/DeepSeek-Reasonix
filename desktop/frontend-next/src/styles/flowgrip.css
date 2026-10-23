@@ -1,0 +1,17 @@
+.pbody { position: relative }
+
+.flowgrips { position: absolute; inset: 0; z-index: 3; pointer-events: none }
+.flowgrip {
+  position: absolute; top: 0; bottom: 0; width: 7px;
+  cursor: col-resize; touch-action: none; pointer-events: auto;
+}
+.flowgrip-l { left: calc(var(--grip-left, 0px) - 7px) }
+.flowgrip-r { right: calc(var(--grip-right, 0px) - 7px) }
+.flowgrip::before {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 1px;
+  background: transparent; transition: background var(--m-card) var(--ease);
+}
+.flowgrip:hover::before { background: var(--border) }
+body[data-flowdrag] .flowgrip::before { background: var(--accent) }
+body[data-flowdrag], body[data-flowdrag] * { cursor: col-resize }
+body[data-flowdrag] { user-select: none }

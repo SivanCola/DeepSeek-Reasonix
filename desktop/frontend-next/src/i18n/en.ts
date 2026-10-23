@@ -14,6 +14,7 @@ import { EN_WINDOW } from "./en_window";
 import { EN_GRAPH } from "./en_graph";
 import { EN_TRAJECTORY } from "./en_trajectory";
 import { EN_SETTINGS } from "./en_settings";
+import { EN_TOOL_BLURBS } from "./en_tool_blurbs";
 import { EN_PERSONA } from "./en_persona";
 import { EN_METRICS } from "./en_metrics";
 import { EN_STORAGE } from "./en_storage";
@@ -51,6 +52,7 @@ export const EN: Record<string, string> = {
   "工作台": "Workbench",
   "从右侧选择文件，或打开浏览器": "Choose a file on the right, or open a browser",
   ...EN_SETTINGS,
+  ...EN_TOOL_BLURBS,
   ...EN_PERSONA,
   ...EN_COMMUNITY,
   ...EN_SPONSOR,
@@ -86,7 +88,7 @@ export const EN: Record<string, string> = {
   "要求扩大可改范围": "Asking to widen what it may change",
   "这个子任务声明之外的文件": "A file outside this subtask's declared paths",
   "这个会话正在别处运行，这里只能看": "Running in another window — read-only here",
-  "可读取代码、查找资料、运行工具并修改文件。完整执行过程可在「轨迹」中查看。":
+  "可读取代码、查找资料、运行工具并修改文件。完整执行过程可在「运行分析」中查看。":
     "It can read code, research, run tools, and edit files. The full run stays visible in the Trajectory.",
   "等待回包 {secs}s": "Waiting for a response · {secs}s",
   "连接被中断": "Connection closed",
@@ -265,6 +267,7 @@ export const EN: Record<string, string> = {
   "收起度量栏": "Collapse the metrics rail",
   "展开度量栏": "Show the metrics rail",
   "调整工作区栏宽度": "Resize the workspace rail",
+  "调整正文字宽": "Resize the reading column",
   "调整度量栏宽度": "Resize the metrics rail",
   "从列表移除": "Remove from the list",
   "改为输入路径": "Type a path instead",
@@ -1158,6 +1161,7 @@ export const EN: Record<string, string> = {
   "已过期": "Expired",
   "无法读取记忆。": "Could not read the memory.",
   "无法读取记忆": "Memory could not be read",
+  "这些记忆无法读取": "These memories could not be read",
   "如需手动记录，请在输入框中使用 {cmd} 命令。": "To write one yourself, use {cmd} in the composer.",
   "正在读取记忆…": "Loading memory…",
 
