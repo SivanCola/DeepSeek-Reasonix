@@ -1,0 +1,2 @@
+- 修复：「在文件管理器中显示」按钮换成打开的文件夹图标，不再像分享或外链箭头。关联 #14227。
+- Fixed: the "show in file manager" button now uses an open-folder icon instead of an arrow that read as share or external link. Refs #14227.

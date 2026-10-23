@@ -1,0 +1,2 @@
+- 修复：读取被拒时不再只写“没有权限”：现在说明是哪个路径、它不在会话允许读取的文件夹里，还是在你配置的禁读列表里。关联 #14252。
+- Fixed: a refused read now says which path was refused and whether it is outside the folders the session may read or on your forbidden-read list, not just "permission denied". Refs #14252.

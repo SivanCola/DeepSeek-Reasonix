@@ -1,0 +1,2 @@
+- 新增：反馈表单的正文可以切到「预览」，先看 Markdown 渲染的样子；公开的议题仍把原文放在代码块里。修复 #14248。
+- Added: the feedback form's body can switch to a Markdown preview; a public issue still shows the original text in a code block. Fixes #14248.

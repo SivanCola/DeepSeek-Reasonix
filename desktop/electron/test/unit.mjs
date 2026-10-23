@@ -1722,6 +1722,25 @@ test("the launch credential cookie is put back when something removes it, and on
   assert.match(lines[0], /evicted/);
 });
 
+test("a refused request makes the shell check the credential cookie, and put it back only when it is missing or differs", async () => {
+  const { restoreIfStale } = require("../src/credential.js");
+  const cookie = { url: "http://127.0.0.1:5000/", name: "reasonix_token", value: "t" };
+  const run = async (held) => {
+    const sets = [];
+    const lines = [];
+    const ses = { cookies: { get: async () => held, set: async (c) => void sets.push(c) } };
+    await restoreIfStale(ses, cookie, (l) => lines.push(l));
+    return { sets, lines };
+  };
+  assert.deepEqual((await run([{ name: "reasonix_token", value: "t" }])).sets, [], "a matching cookie is left alone");
+  const missing = await run([]);
+  assert.deepEqual(missing.sets, [cookie]);
+  assert.match(missing.lines[0], /missing/);
+  const stale = await run([{ name: "reasonix_token", value: "old" }]);
+  assert.deepEqual(stale.sets, [cookie]);
+  assert.match(stale.lines[0], /differs/);
+});
+
 test("the tray has a file for every Windows scale, at exactly 16 * scale pixels", () => {
   const { trayAsset, SCALES } = require("../src/trayimage.js");
   const dim = (f) => {

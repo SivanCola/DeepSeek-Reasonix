@@ -1,0 +1,2 @@
+- 修复：插件的运行时命令不是可执行程序（例如 Windows 上的 `.sh` 脚本）时，报错直接说明需要提供原生可执行文件，不再只显示系统原话。关联 #14263。
+- Fixed: when a plugin's runtime command is not an executable program (such as a `.sh` script on Windows), the error now says the plugin must ship a native executable. Refs #14263.

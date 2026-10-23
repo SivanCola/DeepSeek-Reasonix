@@ -1,0 +1,2 @@
+- 修复：工作模式菜单中的 Ask 名称后明确标注“（未实现）”，避免误以为需要额外配置才能启用；现有模式切换和禁用行为保持不变。关联 #14028。
+- Fixed: the work-mode menu now labels the unavailable mode “Ask (Not implemented)” so it does not imply a missing configuration step. Mode switching and Ask's disabled state are unchanged. Refs #14028.

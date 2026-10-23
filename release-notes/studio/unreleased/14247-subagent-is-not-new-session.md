@@ -1,0 +1,2 @@
+- 修复：模型现在知道子代理不是新会话：由它派出、结果回到当前对话、嵌套深度受 `max_subagent_depth` 限制。关联 #14247。
+- Fixed: the model is now told a sub-agent is not a new session: it dispatches it, the answer returns here, and nesting is bounded by `max_subagent_depth`. Refs #14247.

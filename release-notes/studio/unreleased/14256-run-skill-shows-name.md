@@ -1,0 +1,2 @@
+- 修复：执行过程里调用技能的步骤会写出技能名称，不再只显示 `run_skill`。关联 #14256。
+- Fixed: a skill step in the execution process now shows which skill it ran instead of just `run_skill`. Fixes #14256.

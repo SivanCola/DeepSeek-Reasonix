@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { onSettingsWideChange, setSettingsWide, settingsWide } from "../state/settingsWide";
+import { StudioIcon } from "./StudioIcon";
 import { useModalFocus } from "./useModalFocus";
 import { SettingsLeaveContext, useSettingsLeave } from "./SettingsLeave";
 import { t } from "../i18n";
@@ -82,6 +84,7 @@ const NET_MODE: Record<string, string> = { auto: "跟随系统", env: "环境变
 export function Settings({ hub, onError, port, networkPort, localWorkspacePort, networkHost, status, theme, onTheme, contrast, onContrast, weight, onWeight, look, onLook, onClose, onChanged, onSessionsRecovered, reloadThemes, at: opened, account: acct, accountUnread, reloadAccount, workspaceRoot }: Props) {
   const navigation = useSettingsLeave();
   const close = useCallback(() => navigation.leave(onClose), [navigation.leave, onClose]);
+  const wide = useSyncExternalStore(onSettingsWideChange, settingsWide, settingsWide);
   const homePort = networkPort ?? port;
   const localPort = localWorkspacePort ?? homePort;
   const [openedSection, openedAnchor = ""] = (opened ?? "").split(":", 2);
@@ -350,7 +353,7 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
       onMouseUp={(e) => { if (veiled.current && e.target === e.currentTarget && !updatingPkg.applying) close(); }}
       data-action-mouseup="settings.close"
     >
-      <div className="prefs-sheet" role="dialog" aria-modal="true" aria-labelledby="prefs-title">
+      <div className="prefs-sheet" role="dialog" aria-modal="true" aria-labelledby="prefs-title" data-wide={wide || undefined}>
       <div className="prefs-hd">
         <h1 id="prefs-title">{t("设置")}</h1>
         {/* 原来这里挂着一句「改动立刻生效；需要重建运行时的……」。它对三档里的
@@ -375,6 +378,9 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
             }
           }}
         />
+        <button className="btn sm" type="button" data-action="settings.expand" aria-pressed={wide} aria-label={t("放大设置窗口")} title={t("放大设置窗口")} onClick={() => setSettingsWide(!wide)}>
+          <StudioIcon name="expand" />
+        </button>
         <button className="btn sm" data-action="settings.close" disabled={updatingPkg.applying} onClick={close}>
           {t("关闭")} <span className="esc">Esc</span>
         </button>

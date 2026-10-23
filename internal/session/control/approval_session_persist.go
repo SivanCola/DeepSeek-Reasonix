@@ -15,6 +15,8 @@ func (c *Controller) persistSessionGrants() {
 	if path == "" {
 		return
 	}
+	c.grantsMu.Lock()
+	defer c.grantsMu.Unlock()
 	grants := c.approval.sessionGrants()
 	sort.Strings(grants)
 	if err := sessionstore.SaveSessionGrants(path, grants); err != nil {

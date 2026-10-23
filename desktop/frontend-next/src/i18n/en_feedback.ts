@@ -60,6 +60,8 @@ export const EN_FEEDBACK: Record<string, string> = {
   "反馈内容": "Feedback details",
   "反馈类别": "Feedback category",
   "发生了什么？": "What happened?",
+  "正文预览": "Body preview",
+  "公开的议题会把原文放在代码块里，原样显示。": "A public issue shows your original text inside a code block, unrendered.",
   "描述你遇到的情况，或你希望它怎样。": "Describe what you ran into, or what you would like instead.",
   "{n} / {max} 字节": "{n} / {max} bytes",
   "昵称（登记为议题时公开）": "Nickname (public if filed as an issue)",

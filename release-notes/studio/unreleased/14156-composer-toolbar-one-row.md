@@ -1,0 +1,2 @@
+- 修复：对话栏变窄（如展开工作台）时，输入框底部的按钮条不再折成两行：模式按钮更早收成图标，模型名随栏宽收缩。关联 #14156。
+- Fixed: with the conversation column narrow (workbench open), the buttons under the composer stay on one row: the mode button collapses sooner and the model name shrinks. Refs #14156.

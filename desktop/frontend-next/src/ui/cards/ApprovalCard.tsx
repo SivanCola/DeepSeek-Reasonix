@@ -172,7 +172,7 @@ export function ApprovalCard({ item, onApprove, onFullAccess, onPlan }: Props) {
                 )}
               </div>
             )}
-            {!sealed && <RememberWhere options={remembering} target={item.a.id} />}
+            {!sealed && <RememberWhere options={remembering} target={item.a.id} tool={item.a.tool} />}
             {!sealed && confirmFullAccess && (
               <div className="apv-yolo-confirm" role="alertdialog" aria-label={t("确认切换全部放行")}>
                 <div><b>{t("全部放行会跳过后续工具确认")}</b><span>{t("拒绝规则与沙盒边界仍然生效。仅在完全信任当前工作区时使用。")}</span></div>

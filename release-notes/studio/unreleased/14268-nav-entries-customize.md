@@ -1,0 +1,2 @@
+- 新增：设置 → 外观 →「导航入口」可隐藏或调整图标栏和侧栏里的入口，两处同步；会话、反馈、账号和设置始终保留。关联 #14236、#14190。
+- Added: Settings → Appearance → Navigation entries hides or reorders the shortcuts in the icon rail and sidebar together; sessions, feedback, account and settings stay. Refs #14236, #14190.

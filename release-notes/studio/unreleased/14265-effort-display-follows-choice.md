@@ -1,0 +1,2 @@
+- 修复：选了与当前实际请求相同的思考强度（如「自动」本就等于「深入」）后，强度按钮立刻显示你的选择，不必退出重进。修复 #14173。
+- Fixed: choosing a reasoning depth that sends the same request as the current one (such as High when Auto resolves to High) now shows at once, not after a restart. Fixes #14173.

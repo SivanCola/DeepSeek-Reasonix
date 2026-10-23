@@ -1,0 +1,2 @@
+- 修复：顶栏「运行分析」的图标换成脉冲线，和旁边的图标一样大、一样粗，不再是偏小的半圆仪表盘。修复 #14222。
+- Fixed: the top bar's Run analysis icon is now a pulse line the same size and weight as its neighbours, instead of a small half-circle gauge. Fixes #14222.

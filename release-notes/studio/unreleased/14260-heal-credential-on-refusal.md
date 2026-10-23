@@ -1,0 +1,2 @@
+- 修复：内核拒绝请求后，外壳会检查本次启动的凭据，缺失就立即补回，不必重启 Studio。关联 #14260。
+- Fixed: after the kernel refuses a request the shell now checks this launch's credential cookie and restores it if missing, so no relaunch is needed. Refs #14260.

@@ -1,0 +1,2 @@
+- 修复：付费搜索、网络出站和 MCP 登录的审批卡，「始终允许」下方的说明改为写明它实际记在哪里，不再一律说成权限规则。关联 #14242。
+- Fixed: on the paid search, network egress and MCP sign-in approval cards, the note under "Always allow" now says where the answer is actually kept instead of calling it a permission rule. Refs #14242.

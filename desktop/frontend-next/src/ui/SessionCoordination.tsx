@@ -11,7 +11,7 @@ export function SessionCoordination({ port, onChanged }: { port: AgentPort; onCh
     <>
       <Group id="write-lease"
         title={t("多个会话同时写一个项目")}
-        hint={t("选择新会话的协作策略，并查看当前聊天实际采用的策略。未选择新策略时沿用兼容设置；保存不会切换正在运行的操作。")}
+        hint={t("选择新会话的协作策略，并查看当前聊天实际采用的策略。未选择新策略时沿用兼容设置，兼容设置默认开启乐观模式；保存不会切换正在运行的操作。")}
       >
         <WriteLease port={port} />
       </Group>
@@ -20,7 +20,7 @@ export function SessionCoordination({ port, onChanged }: { port: AgentPort; onCh
       </Group>
       <Group id="subagent-claims"
         title={t("子代理的写入范围")}
-        hint={t("此项仅控制兼容模式下的子代理预约。自动、共享和隔离策略使用统一的变更事务。修改会重建运行时，任务运行期间无法变更。")}
+        hint={t("此项仅控制兼容模式下的子代理预约，默认开启乐观模式：没有声明 write_paths 的子代理只占用正在写的路径。自动、共享和隔离策略使用统一的变更事务。修改会重建运行时，任务运行期间无法变更。")}
       >
         <SubagentClaims port={port} onChanged={onChanged} />
       </Group>

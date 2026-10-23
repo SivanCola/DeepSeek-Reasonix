@@ -1,0 +1,2 @@
+- 新增：设置窗口头部多了「放大设置窗口」按钮，可铺满整个窗口、内容区同步变宽；选择会记住，下次打开保持。修复 #14272。
+- Added: the settings window has an Enlarge button that fills the whole window and widens its content; the choice is remembered. Fixes #14272.

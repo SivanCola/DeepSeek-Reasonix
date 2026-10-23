@@ -1,6 +1,7 @@
 import { MARKET_ACTIONS } from "./actions_market";
 import { SCHEDULE_ACTIONS } from "./actions_schedule";
 import { DOCUMENT_ACTIONS } from "./actions_document";
+import { ISOLATION_ACTIONS } from "./actions_isolation";
 
 // The census oracle is independent of production literals so disagreements fail.
 // An id names the intent; data-target and data-value name its entity and choice.
@@ -98,6 +99,9 @@ export const ACTIONS: UIAction[] = [
   { id: "chrome.open-project", kind: "shell-native", target: "none", proof: "interaction" },
   { id: "appearance.theme", kind: "view", target: "none", proof: "interaction" },
   { id: "appearance.nav-rail", kind: "view", target: "none", proof: "interaction" },
+  { id: "appearance.nav-entry-visible", kind: "view", target: "none", proof: "interaction" },
+  { id: "appearance.nav-entry-move", kind: "view", target: "none", proof: "interaction" },
+  { id: "appearance.nav-entries-reset", kind: "view", target: "none", proof: "interaction" },
   { id: "appearance.live-grace", kind: "view", target: "none", proof: "interaction" },
   { id: "appearance.legacy-sessions", kind: "view", target: "none", proof: "interaction" },
   { id: "appearance.open-session-limit", kind: "view", target: "none", proof: "interaction" },
@@ -284,6 +288,7 @@ export const ACTIONS: UIAction[] = [
   { id: "feedback.tab", kind: "view", target: "none", proof: "interaction" },
   { id: "feedback.category", kind: "view", target: "none", proof: "interaction" },
   { id: "feedback.body", kind: "view", target: "none", proof: "interaction" },
+  { id: "feedback.preview", kind: "view", target: "none", proof: "interaction" },
   { id: "feedback.name", kind: "view", target: "none", proof: "interaction" },
   { id: "feedback.contact", kind: "view", target: "none", proof: "interaction" },
   { id: "feedback.shot.pick", kind: "view", target: "none", proof: "interaction" },
@@ -398,6 +403,7 @@ export const ACTIONS: UIAction[] = [
   // the row's own action, so this one never writes anything itself.
   { id: "tree.navigate", kind: "view", target: "none", proof: "interaction" },
   { id: "settings.close", kind: "navigation", target: "none", proof: "interaction" },
+  { id: "settings.expand", kind: "view", target: "none", proof: "interaction" },
   { id: "pane.activate", kind: "navigation", target: "none", proof: "interaction" },
   // How this session is being read. One id across a bar button and a menu row,
   // because reaching a view from the bar and from the detail menu is one intent
@@ -714,16 +720,7 @@ export const ACTIONS: UIAction[] = [
   { id: "write-lease.optimistic", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
   { id: "write-lease.collaboration", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
   { id: "write-lease.auto-integrate", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
-  { id: "isolation.refresh", kind: "repeatable", target: "none", proof: "interaction" },
-  { id: "isolation.root-recheck", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
-  { id: "isolation.root-retry", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
-  { id: "isolation.root-recover", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
-  { id: "isolation.root-cancel", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
-  { id: "isolation.recover", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
-  { id: "isolation.recover-result", kind: "kernel-mutation", target: "entity", proof: "authority-effect" },
-  { id: "isolation.discard-preview", kind: "view", target: "entity", proof: "interaction" },
-  { id: "isolation.discard-confirm", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
-  { id: "isolation.discard-cancel", kind: "view", target: "none", proof: "interaction" },
+  ...ISOLATION_ACTIONS,
   { id: "write-lease.max-wait", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
   { id: "workbench.stage-folder", kind: "kernel-mutation", target: "entity", proof: "authority-effect" },
   { id: "workbench.change-folder", kind: "view", target: "entity", proof: "interaction" },

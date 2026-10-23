@@ -9,6 +9,8 @@ import type { RemoteHost } from "../port/remote";
 import type { Adder } from "./addws";
 import { AccountRow } from "./AccountRow";
 import { ContentMatches } from "./ContentMatches";
+import { useDestinations } from "./navdest";
+import { ICON, type Section } from "./prefsnav";
 import { RailSearch } from "./railsearch";
 import { RemoteHosts, remoteProjectKey, remoteWorkspaces } from "./RemoteHosts";
 import { remoteProjects } from "./remoteProjects";
@@ -132,6 +134,7 @@ export function Sidebar({
   onError,
 }: Props) {
   const [railScope, setRailScope] = useState<"all" | "live" | "pinned" | "archived">("all");
+  const destinations = useDestinations();
   const [palette, setPalette] = useState(false);
   const [projectPicker, setProjectPicker] = useState(false);
   const [folded, setFolded] = useSidebarFolds();
@@ -266,9 +269,15 @@ export function Sidebar({
         </button>
         {!navShown && (
           <div className="studio-quicknav">
-            <button data-action="files.open" onClick={onFiles}><span aria-hidden="true"><StudioIcon name="file" /></span><b>{t("文件")}</b></button>
-            <button data-action="settings.section" data-value="ext" onClick={() => onSettings("ext")}><span aria-hidden="true"><StudioIcon name="plug" /></span><b>{t("工具与集成")}</b></button>
-            <button data-action="settings.section" data-value="remote" onClick={() => onSettings("remote")}><span aria-hidden="true"><StudioIcon name="server" /></span><b>{t("运行环境")}</b></button>
+            {destinations.filter(([mark]) => mark !== "usage").map(([mark, label, section]) => mark === "files" ? (
+              <button key={mark} data-action="files.open" onClick={onFiles}>
+                <span aria-hidden="true"><StudioIcon name="file" /></span><b>{t(label)}</b>
+              </button>
+            ) : (
+              <button key={mark} data-action="settings.section" data-value={section} onClick={() => onSettings(section)}>
+                <span aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.45} strokeLinecap="round" strokeLinejoin="round">{ICON[mark as Section]}</svg></span><b>{t(label)}</b>
+              </button>
+            ))}
           </div>
         )}
         <div className="studio-session-filters" role="group" aria-label={t("会话范围")}>
@@ -343,7 +352,7 @@ export function Sidebar({
       </RailSearch>
       </div>
       {!navShown && <div className="railfoot">
-        <button className="studio-wallet" data-action="settings.section" data-value="usage" onClick={() => onSettings("usage")}><span aria-hidden="true"><StudioIcon name="wallet" /></span><b>{t("钱包与用量")}</b>{wallet && <small>{hideAmounts ? MASK : wallet}</small>}</button>
+        {destinations.some(([mark]) => mark === "usage") && <button className="studio-wallet" data-action="settings.section" data-value="usage" onClick={() => onSettings("usage")}><span aria-hidden="true"><StudioIcon name="wallet" /></span><b>{t("钱包与用量")}</b>{wallet && <small>{hideAmounts ? MASK : wallet}</small>}</button>}
         <button className="studio-wallet studio-feedback" data-action="feedback.open" onClick={() => onFeedback(feedbackEntryTab(feedbackUnread))}>
           <span aria-hidden="true"><StudioIcon name="feedback" /></span>
           <b>{t("发送反馈")}</b>

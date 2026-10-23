@@ -38,7 +38,7 @@ const { captureHandler } = require("./capture");
 const { createPowerGuard, keepsAwake } = require("./powerguard");
 const { openLogs, redactArgv, failStartup } = require("./shelllog");
 const { raise } = require("./raise");
-const { keepCredential } = require("./credential");
+const { keepCredential, restoreIfStale } = require("./credential");
 const { actHandler } = require("./acts");
 const { crashDir, recordHostExit, pendingHostExit, clearHostExit, hostExitNotice } = require("./hostexit");
 
@@ -198,8 +198,9 @@ cua = await startEmbedded(computerDriver, contract, text => logs.host.raw(text))
   powerGuard.begin();
   // The poll alone leaves a turn unprotected for up to its period; the page's
   // own submit is the moment one starts, and this process sees it complete.
-  session.defaultSession.webRequest.onCompleted({ urls: [`${ready.origin}/*submit`] }, (details) => {
-    if (details.method === "POST" && details.statusCode < 300) void powerGuard?.refresh();
+  session.defaultSession.webRequest.onCompleted({ urls: [`${ready.origin}/*`] }, (details) => {
+    if (details.statusCode === 403) void restoreIfStale(session.defaultSession, credentialCookie, (line) => logs.shell.line(line));
+    if (details.method === "POST" && details.statusCode < 300 && details.url.endsWith("submit")) void powerGuard?.refresh();
   });
   followTheme();
   win = createWindow();
@@ -280,6 +281,8 @@ function cleanUpLegacyInstalls() {
   });
 }
 
+let credentialCookie;
+
 // Set before anything is loaded, or the first request answers 403 and the
 // window opens on a refusal. HttpOnly because nothing in the page ever reads
 // it, Strict because no cross-site navigation ever needs to carry it, and no
@@ -294,6 +297,7 @@ async function armCredential(ready) {
     secure: false,
     sameSite: "strict",
   };
+  credentialCookie = cookie;
   await session.defaultSession.cookies.set(cookie);
   keepCredential(session.defaultSession, cookie, (line) => logs.shell.line(line));
 }

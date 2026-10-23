@@ -1,0 +1,2 @@
+- 修复：设置里「多个会话同时写一个项目」和「子代理的写入范围」两处的说明改为与新的默认值（乐观模式）一致，不再写「默认严格」。关联 #14240。
+- Fixed: the settings text for sessions writing one project and for sub-agent write scope now matches the new default (optimistic mode) instead of saying "strict by default". Refs #14240.

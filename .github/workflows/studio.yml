@@ -156,6 +156,7 @@ jobs:
           node perf/mod-ui.mjs
           node perf/codeeditor-size.mjs
           node perf/composer-reflow.mjs
+          node perf/composer-toolbar-row.mjs
           node perf/action-icons.mjs
           node perf/rowhit.mjs
           node perf/tab-pip.mjs

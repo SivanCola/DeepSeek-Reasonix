@@ -34,6 +34,30 @@ describe("RememberChoice", () => {
   });
 });
 
+describe("RememberWhere for the questions that keep their answer somewhere other than a permission rule", () => {
+  const where = (tool: string, options: ("session" | "always")[] = ["session", "always"]) =>
+    render(<RememberWhere options={options} target="a1" tool={tool} />).container.textContent ?? "";
+
+  it.each([
+    ["paid_search", "[tools]"],
+    ["network_egress", "allowed_domains"],
+    ["mcp_signin", "登录状态"],
+  ])("%s says where an always answer is kept, and does not call it a permission rule", (tool, place) => {
+    const note = where(tool);
+    expect(note).toContain(place);
+    expect(note).not.toContain("权限规则");
+    expect(note).toContain("随对话保存");
+  });
+
+  it("keeps the permission-rule sentence for an ordinary tool", () => {
+    expect(where("bash")).toContain("权限规则");
+  });
+
+  it("says nothing about a place when only the session choice is offered", () => {
+    expect(where("paid_search", ["session"])).not.toContain("[tools]");
+  });
+});
+
 type Approval = Extract<Item, { t: "approval" }>;
 const draw = (a: Approval["a"], onApprove = vi.fn(async () => {})) =>
   render(<ApprovalCard item={{ t: "approval", id: "i1", a }} onApprove={onApprove} onFullAccess={async () => {}} onPlan={async () => {}} />).container;
@@ -48,7 +72,9 @@ describe("the approval card's footer", () => {
     const both = draw({ id: "a2", tool: "bash", subject: "ls", allowsSession: true, allowsPersist: true });
     expect(both.querySelector('[data-value="session"]')).not.toBeNull();
     expect(both.querySelector('[data-value="always"]')).not.toBeNull();
-    expect(both.querySelector(".apv-note")?.textContent).toContain(t("“本会话允许”只对这个对话有效，随对话保存，恢复这个对话后仍然有效；“始终允许”写入用户配置的权限规则，可在设置 → 工具与权限里撤销。"));
+    const note = both.querySelector(".apv-note")?.textContent ?? "";
+    expect(note).toContain(t("“本会话允许”只对这个对话有效，随对话保存，恢复这个对话后仍然有效。"));
+    expect(note).toContain(t("“始终允许”写入用户配置的权限规则，可在设置 → 工具与权限里撤销。"));
   });
 
   it("answers with the remembered verdict", () => {

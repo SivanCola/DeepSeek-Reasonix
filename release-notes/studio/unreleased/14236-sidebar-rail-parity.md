@@ -1,0 +1,2 @@
+- 改进：隐藏图标栏时，侧栏列出与图标栏相同的入口（文件、工具与权限、扩展、记忆、远程），名称统一；两处读同一份清单。关联 #14236。
+- Changed: with the icon rail hidden, the sidebar now lists the same destinations as the rail (Files, Tools and permissions, Extensions, Memory, Remote) under the same names, from one list. Refs #14236.

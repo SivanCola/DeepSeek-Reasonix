@@ -7,8 +7,10 @@ const ROWS = [
   ["新建会话", ".studio-new-task"],
   ["搜索与快捷操作", ".studio-search"],
   ["文件", ".studio-quicknav > button:nth-child(1)"],
-  ["工具与集成", ".studio-quicknav > button:nth-child(2)"],
-  ["运行环境", ".studio-quicknav > button:nth-child(3)"],
+  ["工具与权限", ".studio-quicknav > button:nth-child(2)"],
+  ["扩展", ".studio-quicknav > button:nth-child(3)"],
+  ["记忆", ".studio-quicknav > button:nth-child(4)"],
+  ["远程", ".studio-quicknav > button:nth-child(5)"],
   ["钱包与用量", ".studio-wallet:not(.studio-feedback)"],
   ["发送反馈", ".studio-feedback"],
 ];
