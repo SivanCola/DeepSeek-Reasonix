@@ -191,6 +191,17 @@ export class MockBoundary extends MockShell {
     return { ...this.plans };
   }
 
+  private deliveries = { enabled: false, path: "/Users/you/.reasonix/config.toml" };
+
+  async presentFiles() {
+    return { ...this.deliveries };
+  }
+
+  async savePresentFiles(enabled: boolean) {
+    this.deliveries = { ...this.deliveries, enabled };
+    return { ...this.deliveries };
+  }
+
   private modes: DefaultModeSettings = { plan: false, path: "/Users/you/.reasonix/config.toml" };
 
   async defaultMode(): Promise<DefaultModeSettings> {

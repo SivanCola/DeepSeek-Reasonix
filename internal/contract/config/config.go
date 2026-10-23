@@ -1220,7 +1220,7 @@ type ToolsConfig struct {
 	SettingTool              *bool                `toml:"setting_tool"`
 	// MCPResources offers a tool that reads a connected server's resource; user file only, off by default.
 	MCPResources bool `toml:"mcp_resources"`
-	// PresentFiles offers file-delivery cards to the model; user file only, off by default.
+	// PresentFiles offers file-delivery cards to the model; user file only, on by default.
 	PresentFiles bool `toml:"present_files"`
 	WebAccessSettings
 	// VideoNativeMaxBytes lowers the size read_video sends natively below the endpoint's limit; 0 keeps it. User file only.
@@ -1376,6 +1376,7 @@ func Default() *Config {
 		UI:      UIConfig{Theme: "auto", ShowTurnUsage: true, ShowChangedFiles: true},
 		Desktop: DesktopConfig{ConversationWidth: "standard"},
 		Billing: BillingConfig{},
+		Tools:   ToolsConfig{PresentFiles: true},
 		// Set here, not left to the zero value: an absent [secrets] still protects.
 		Secrets: SecretsConfig{ProtectCredentialFiles: true},
 		Notifications: NotificationsConfig{

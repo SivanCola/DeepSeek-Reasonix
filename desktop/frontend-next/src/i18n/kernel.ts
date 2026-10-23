@@ -27,6 +27,9 @@ export const SAVED_NOT_APPLIED: readonly string[] = ["provider.saved_while_runni
 export const savedNotApplied = (e: unknown): boolean => e instanceof HttpError && SAVED_NOT_APPLIED.includes(e.reason?.code ?? "");
 
 const SAID: Record<string, string> = {
+  "present_files.editing_disabled": "这台服务器未开放文件交付设置",
+  "present_files.save_failed": "文件交付设置未能保存：{detail}",
+  "present_files.no_enabled": "本次请求未说明开关状态，未做任何修改",
   "agent_composition.invalid": "预设内容无效，请检查标识、模块和参数",
   "agent_composition.unavailable": "组合所需模块 {module} 当前不可用：{detail}",
   "agent_composition.mcp_unavailable": "MCP 服务 {module} 不可用：{detail}。请在 MCP 设置中检查连接或认证，或在预设中取消选择该服务后重试。",

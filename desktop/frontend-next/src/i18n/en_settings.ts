@@ -2,6 +2,14 @@
 // alone — one catalogue is still the model, and this file is read as its
 // continuation: same keying by Chinese source text, same grouping by screen.
 export const EN_SETTINGS: Record<string, string> = {
+  "加载中…": "Loading…",
+  "AI 文件交付卡片": "AI file delivery cards",
+  "启用 AI 文件交付卡片": "Enable AI file delivery cards",
+  "允许 AI 将已生成的文件展示为可点击的卡片，在工作台中打开预览。仅保存到用户配置，重新打开会话后生效。": "Let AI present generated files as clickable cards that open in the workbench. Saved only to your user configuration and applied when you reopen the session.",
+  "关闭时仍可从文件树、消息链接和历史卡片预览文件。": "File previews remain available from the file tree, message links and existing cards when this is off.",
+  "无法读取文件交付设置。": "Could not read file delivery settings.",
+  "这台服务器未开放文件交付设置": "This server does not allow editing file delivery settings",
+  "文件交付设置未能保存：{detail}": "File delivery settings were not saved: {detail}",
   "「{from}」发来一条消息，等你批准": "\u201c{from}\u201d sent a message and is waiting for your approval",
   "来自 {from} 的消息": "Message from {from}",
   "来自另一个会话「{from}」的文字，不是你写的。批准后才会交给这个会话的模型。": "Text from another session, \u201c{from}\u201d; you did not write it. It reaches this session\u2019s model only after you approve it.",

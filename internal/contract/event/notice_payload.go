@@ -103,8 +103,12 @@ type JobNotice struct {
 	// knew: Signal is the signal number that ended it, zero when none did.
 	ExitCode *int `json:"exitCode,omitempty"`
 	Signal   int  `json:"signal,omitempty"`
-	// QuietSeconds is how long the job's own output has been silent, on a stalled notice only.
+	// QuietSeconds is how long the job has been inactive, on a stalled notice only.
 	QuietSeconds int `json:"quietSeconds,omitempty"`
+	// Steps is what the job had reported before it went quiet, on a stalled
+	// notice only. Zero means it never reported any, which is a different
+	// situation from a job that worked and then stopped.
+	Steps int `json:"steps,omitempty"`
 }
 
 // Encode renders the payload as the notice's Detail.

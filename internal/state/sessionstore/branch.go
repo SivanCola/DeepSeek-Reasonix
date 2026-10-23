@@ -1,6 +1,7 @@
 package sessionstore
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -183,6 +184,11 @@ func LoadBranchMeta(sessionPath string) (BranchMeta, bool, error) {
 			return BranchMeta{}, false, nil
 		}
 		return BranchMeta{}, false, err
+	}
+	// NTFS leaves a NUL-filled file when power fails between extending it and
+	// flushing its data; it records nothing, so it is an absent sidecar.
+	if len(b) > 0 && len(bytes.Trim(b, "\x00")) == 0 {
+		return BranchMeta{}, false, nil
 	}
 	var m BranchMeta
 	if err := json.Unmarshal(b, &m); err != nil {

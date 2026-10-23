@@ -1,15 +1,13 @@
 import type { SurfaceActionRequest, SurfaceActionRecord } from "./surface";
 import type { AgentComposition, AgentPresetVersion, AgentPresetCatalog, CompositionSummary } from "./composition";
 export type * from "./composition";
-import { DeliveryError, HttpError, type DeliveryFault } from "./http_error";
+export { DeliveryError, HttpError, type DeliveryFault } from "./http_error";
 import type { SideProgress } from "./side";
 
 /** What `subscribe` hands back: the disposer, and where the transport has one, a
  *  way to give its connection up and take it again without losing the cursor. */
 export type Subscription = (() => void) & { pause?: () => void; resume?: () => void; holdsConnection?: () => boolean };
 import type { Attachment, DroppedRef, KeptText } from "./attachment";
-export { DeliveryError, HttpError };
-export type { DeliveryFault };
 export type { Attachment, DroppedRef, KeptText };
 
 import type { AccountState, AccountUser, DeviceGrant } from "./account";
@@ -55,8 +53,7 @@ import type { Protocol, ProviderCheck, ProviderCheckDraft, ProviderDraft, Provid
 export type { ModelEffort, ModelLimit, ModelRate, Protocol, ProviderCheck, ProviderCheckDraft, ProviderDraft, ProviderEdit, ProviderEntry, ProviderModelCheck, ProviderModelCheckRequest, ProviderProbe, ProviderSetup, ProviderRemoval, ProviderPreset, ProviderPresetInstall } from "./provider";
 import type { StoragePlan, StorageQuery, StorageState } from "./storage";
 import type { FeedbackBoard, FeedbackBoardMe, FeedbackEnv, FeedbackImage, FeedbackLinkedInstall, FeedbackMine, FeedbackReceipt, FeedbackReplyReceipt, FeedbackRequest } from "./feedback";
-import type { PersonaDraft, PersonaSettings } from "./boundary";
-
+import type { PersonaDraft, PersonaSettings, PresentFilesSettings } from "./boundary";
 export type * from "./plugin";
 export type * from "./schedule";
 export type * from "./market";
@@ -302,6 +299,8 @@ export interface AgentPort extends WorkspacePreviewPort, IsolationPort {
   browserTools(): Promise<BrowserToolsSettings>;
   // Writes the user file, then rebuilds: the tools are bound while assembling.
   saveBrowserTools(enabled: boolean): Promise<BrowserToolsSettings>;
+  presentFiles(): Promise<PresentFilesSettings>;
+  savePresentFiles(enabled: boolean): Promise<PresentFilesSettings>;
   subagentClaims(): Promise<SubagentClaimsSettings>;
   saveSubagentClaims(optimistic: boolean): Promise<SubagentClaimsSettings>;
   subagentSteerSettings(): Promise<SubagentSteerSettings>;

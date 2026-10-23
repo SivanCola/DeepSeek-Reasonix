@@ -537,7 +537,7 @@ func RenderTOMLProjectDelta(c *Config) string {
 		(c.Tools.MCPStartupTimeoutSeconds != nil && *c.Tools.MCPStartupTimeoutSeconds > 0) ||
 		(c.Tools.MCPCallTimeoutSeconds != nil && *c.Tools.MCPCallTimeoutSeconds > 0) ||
 		c.Tools.ProtectChangedFiles != nil ||
-		c.Tools.BrowserTools != nil || c.Tools.MCPResources || c.Tools.PresentFiles || c.Tools.any() {
+		c.Tools.BrowserTools != nil || c.Tools.MCPResources || c.Tools.PresentFiles != d.Tools.PresentFiles || c.Tools.any() {
 		b.WriteString("[tools]\n")
 		renderToolLists(&b, c, false)
 		if c.Tools.BashTimeoutSeconds != nil && *c.Tools.BashTimeoutSeconds != 0 {

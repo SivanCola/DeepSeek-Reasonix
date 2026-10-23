@@ -73,6 +73,7 @@ var ChineseTraditional = Messages{
 		"unverified_change":         "有改動；沒有主機能讀作證據的檢查",
 		"unreviewed_change":         "改動後再沒看過",
 		"mod_effects_unobserved":    "有 Claude Code mod 在執行；它寫了什麼不在主機觀測範圍內",
+		"outside_observed_root":     "寫在主機觀測範圍之外；這裡沒有任何證據能說明它留下了什麼",
 		"workspace_claim_yielded":   "你在等待期間，另一個會話改動了本會話占用的路徑；之前讀到的內容可能已過時",
 		"declared_unverified":       "自己申報未驗證",
 	},

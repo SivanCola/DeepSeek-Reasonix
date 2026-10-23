@@ -1,0 +1,2 @@
+- 变更：AI 文件交付工具默认开启；已有的显式关闭选择仍然有效。下一次打开会话时增加工具定义，可能产生一次缓存未命中。关联 #14063。
+- Changed: AI file delivery defaults on; explicit off choices remain off. Newly opened sessions add its tool schema and may incur one cold prefix. Refs #14063.

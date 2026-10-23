@@ -43,7 +43,7 @@ export const NOTICE_TEXT: Record<string, string> = {
   job_finished: "后台任务已结束：{name}",
   job_killed: "后台任务已终止：{name}",
   job_failed: "后台任务 {name} 失败，需要处理",
-  job_stalled: "后台任务 {name} 已有 {quiet} 没往自己的输出里写任何内容：可能是在写文件，也可能卡住了；可以用 wait 或 bash_output 查看，或用 kill_shell 结束它",
+  job_stalled: "后台任务 {name} 已有 {quiet} 没有活动（{work}）：可能在等某个东西，也可能卡住了；可以用 wait 或 bash_output 查看，或用 kill_shell 结束它",
   compacted: "已压缩",
   compact_declined: "无需压缩：{why}",
   compact_failed: "压缩失败：{why}",

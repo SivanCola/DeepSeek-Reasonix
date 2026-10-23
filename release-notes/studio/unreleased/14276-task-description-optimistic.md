@@ -1,0 +1,2 @@
+- 修复：模型看到的「派出子代理」工具说明，按新的默认值（乐观模式）描述没声明写入范围的写入，不再说它会占住整个工作区。关联 #14240。
+- Fixed: the sub-agent tool's description the model reads now describes writes with no declared scope under the new default (optimistic mode), not as claiming the whole workspace. Refs #14240.

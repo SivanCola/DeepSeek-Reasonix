@@ -1,0 +1,2 @@
+- 新增：桌面端可连自己部署的远程网关（REASONIX_REMOTE_URL、REASONIX_REMOTE_GATEWAY_ID），手机网页按授权里的网关地址连接；非 wss:// 地址会被拒绝。关联 #14282。
+- Added: the desktop host can use a remote gateway you run (REASONIX_REMOTE_URL, REASONIX_REMOTE_GATEWAY_ID); the phone page follows the grant's gateway; non-wss:// relays are refused. Refs #14282.

@@ -893,6 +893,7 @@ export const EN: Record<string, string> = {
   "有改动；没有主机能读作证据的检查": "changed; no check the host could read as proof",
   "改动后未再检查": "changed, never looked at again",
   "有 Claude Code mod 在运行；它写了什么不在主机观测范围内": "a Claude Code mod was active; what it wrote is outside what the host observes",
+  "写在了主机观测范围之外；这里没有任何证据能说明它留下了什么": "written outside the folder this host watches; nothing here can say what it left",
   "你在等待期间，另一个会话改动了本会话占用的路径；之前读到的内容可能已过时": "another session wrote under this session's paths while it waited on you; earlier reads there may be stale",
   "自己申报未验证": "declared unverified by the turn itself",
   "同一账号的两种接入方式。当前这一种不支持联网搜索；这是协议差异，不是可配置项。": "Two ways in to the same account. This one has no web search — that is a difference between the protocols, not a setting.",
@@ -1826,8 +1827,10 @@ export const EN: Record<string, string> = {
   "后台任务已结束：{name}": "Background job finished: {name}",
   "后台任务已终止：{name}": "Background job killed: {name}",
   "后台任务 {name} 失败，需要处理": "Background job {name} failed: needs attention",
-  "后台任务 {name} 已有 {quiet} 没往自己的输出里写任何内容：可能是在写文件，也可能卡住了；可以用 wait 或 bash_output 查看，或用 kill_shell 结束它":
-    "Background job {name} has written nothing to its own output for {quiet}: it may be writing to a file, or stuck; check it with wait or bash_output, or stop it with kill_shell",
+  "后台任务 {name} 已有 {quiet} 没有活动（{work}）：可能在等某个东西，也可能卡住了；可以用 wait 或 bash_output 查看，或用 kill_shell 结束它":
+    "Background job {name} has been inactive for {quiet} ({work}): it may be waiting on something, or stuck; check it with wait or bash_output, or stop it with kill_shell",
+  "{n} 步在静默前完成": "{n} step(s) completed before going quiet",
+  "静默前没有任何进展": "no progress reported",
   "被信号 {signal} 终止": "Ended by signal {signal}",
   "退出码 {code}": "Exit code {code}",
   "已恢复 {n} 条未完成的指令。待发送已暂停，请先在输入框上方的队列里查看，再点“继续派发”": "Recovered {n} unfinished instruction(s). Sending is paused: review them in the queue above the input box, then press Release",

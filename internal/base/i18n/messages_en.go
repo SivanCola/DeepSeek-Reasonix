@@ -72,6 +72,7 @@ var English = Messages{
 		"unreviewed_change":         "changed, never looked at again",
 		"declared_unverified":       "declared unverified",
 		"mod_effects_unobserved":    "a Claude Code mod was active; what it wrote is outside what the host observes",
+		"outside_observed_root":     "written outside the folder this host watches; nothing here can say what it left",
 	},
 	NoSessionToResume:             "no saved session to resume — start a new one with `reasonix`",
 	NoSessionToResumeStartingNew:  "no saved session to resume — starting a new session",

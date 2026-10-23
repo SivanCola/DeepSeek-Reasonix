@@ -40,6 +40,7 @@ import { ConfigTrouble } from "./ConfigTrouble";
 import { Compaction } from "./Compaction";
 import { Sandbox } from "./Sandbox";
 import { BrowserTools } from "./BrowserTools";
+import { PresentFiles } from "./PresentFiles";
 import { AskTimeout } from "./AskTimeout";
 import { SessionRef } from "./SessionRef";
 import { TraceExport } from "./TraceExport";
@@ -551,6 +552,12 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
                   ))}
                 </div>
                 <p className="note">{approvalNote(status?.toolApprovalMode)}</p>
+              </Group>
+              <Group id="present-files"
+                title={t("AI 文件交付卡片")}
+                hint={t("关闭时仍可从文件树、消息链接和历史卡片预览文件。")}
+              >
+                <PresentFiles port={port} />
               </Group>
               <Group id="external-origin"
                 title={t("外部文字")}

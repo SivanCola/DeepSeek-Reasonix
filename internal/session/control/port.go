@@ -302,6 +302,8 @@ type RuntimeSettings interface {
 	SaveSandboxSettings(in SandboxSettings) error
 	BrowserToolsSettings() BrowserToolsSettings
 	SaveBrowserToolsSettings(enabled bool) error
+	PresentFilesSettings() PresentFilesSettings
+	SavePresentFilesSettings(enabled bool) error
 	SubagentClaimsSettings() SubagentClaimsSettings
 	SaveSubagentClaimsSettings(optimistic bool) error
 	SubagentSteerSettings() SubagentSteerSettings

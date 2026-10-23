@@ -697,6 +697,7 @@ export const ACTIONS: UIAction[] = [
   { id: "sandbox.add-write-root", kind: "kernel-mutation", target: "optional", proof: "authority-effect" },
   { id: "sandbox.remove-write-root", kind: "destructive", target: "entity", proof: "authority-effect" },
   { id: "browser-tools.enabled", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
+  { id: "present-files.enabled", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
   { id: "size.set", kind: "kernel-mutation", target: "none", proof: "interaction" },
   { id: "size.keep", kind: "view", target: "none", proof: "interaction" },
   { id: "size.restore", kind: "kernel-mutation", target: "none", proof: "interaction" },

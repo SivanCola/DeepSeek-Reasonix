@@ -253,6 +253,7 @@ export const SETTINGS: SettingEntry[] = [
   // every later session starts from. Machine is the wider of the two answers
   // and the one a reader cannot see from the screen.
   { section: "tools", anchor: "approval", title: "工具批准", scope: "machine", apply: "immediate", keywords: ["权限", "yolo", "询问", "放行"] },
+  { section: "tools", anchor: "present-files", title: "AI 文件交付卡片", scope: "machine", apply: "on-open", keywords: ["文件交付", "交付卡片", "文件预览", "present_files", "tools.present_files", "PDF", "CSV", "HTML", "file delivery", "preview"] },
   { section: "tools", anchor: "external-origin", title: "外部文字", scope: "machine", apply: "runtime-rebuild", keywords: ["外部", "网页", "来源", "注入", "提示注入", "origin", "yolo", "auto", "询问"] },
   { section: "tools", anchor: "plan-approval", title: "计划批准", scope: "machine", apply: "immediate", keywords: ["plan", "自动批准", "长任务", "无人值守", "plan_approval", "放行", "询问"] },
   { section: "tools", anchor: "tool-list", title: "模型可用的工具", scope: "machine", apply: "on-open", keywords: ["禁用", "关闭工具", "tools.disabled", "省 token", "提示词开销", "web_fetch", "denylist"] },
@@ -272,7 +273,6 @@ export const SETTINGS: SettingEntry[] = [
   { section: "tools", anchor: "subagent-steer", title: "给运行中子代理的指示", scope: "machine", apply: "immediate", keywords: ["subagent", "子代理", "指示", "补充", "steer", "上限", "频率", "字节"] },
   { section: "tools", anchor: "web-access", title: "联网：搜索与抓取", scope: "machine", apply: "on-open", keywords: ["搜索", "searxng", "deepseek", "抓取", "计费", "付费", "web search", "fetch"] },
   { section: "tools", anchor: "browser-tools", title: "内置浏览器", scope: "machine", apply: "runtime-rebuild", keywords: ["browser", "网页", "chrome", "浏览器工具"] },
-
   // The four blocks below carry a scope control of their own, and the kernel
   // takes that choice as a parameter — hook.Scope, McpInstallScope, the skill
   // activation scope, a memory's project/global flag. Naming one authority here

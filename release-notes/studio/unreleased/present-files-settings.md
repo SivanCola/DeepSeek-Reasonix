@@ -1,0 +1,2 @@
+- 新增：设置 → 工具与权限第二项提供「AI 文件交付卡片」开关，支持搜索并保存用户选择，重新打开会话生效。关联 #14063。
+- Added: a searchable AI file delivery switch is the second item in Tools & permissions. It saves your choice for reopened sessions. Refs #14063.
