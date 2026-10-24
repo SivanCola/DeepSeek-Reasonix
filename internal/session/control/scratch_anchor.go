@@ -20,25 +20,16 @@ type scratchAnchor struct {
 	debt projectionDebt
 }
 
-// InheritScratchFrom carries what prev's model was told across a rebuild that
-// keeps its conversation, so an unchanged block is not sent twice.
-func (c *Controller) InheritScratchFrom(prev *Controller) {
-	if prev == nil {
-		return
-	}
-	c.scratch.debt.inherit(&prev.scratch.debt)
-}
-
 // owed asks the manager rather than waiting to be told: a generation that can
 // no longer be created changes the answer, and noticing is the projection's job.
 func (s *scratchAnchor) owed() string {
 	if scratchDir(s.temp) != "" {
-		return s.debt.owed(scratchGuidance)
+		return s.debt.owed(sessionScratchTag, scratchGuidance)
 	}
-	if !s.debt.sent() {
-		return s.debt.owed("")
+	if !s.debt.visible(sessionScratchTag) {
+		return s.debt.owed(sessionScratchTag, "")
 	}
-	return s.debt.owed(scratchRetracted)
+	return s.debt.owed(sessionScratchTag, scratchRetracted)
 }
 
 // scratchDir names the current generation, creating it when no command has yet:

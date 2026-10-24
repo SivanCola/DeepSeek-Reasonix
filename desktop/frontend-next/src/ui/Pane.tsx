@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState, us
 import { streamBudget } from "../port/streambudget";
 import { loadReceiptPref, receiptPrefOf } from "../state/receiptpref";
 import { ReceiptPrefContext } from "../state/foldpref";
-import { money } from "../i18n/format";
+import { moneyList } from "../i18n/format";
 import { pushToast } from "../state/toasts";
 import { reason } from "../i18n/kernel";
 import { noteFault } from "./fault";
@@ -13,6 +13,7 @@ import { createPortal } from "react-dom";
 import type { Checkpoint, ContextBreakdown, JobEntry, McpEntry, SessionStatus, WorkspaceChanges, WorkspaceGit } from "../port/port";
 import type { TrajectoryRead } from "../port/wire";
 import { chipLabel, fromHistory, initialState, quoteAmount, reduce } from "../state/session";
+import type { CurrencyAmount } from "../state/session";
 import { pairCheckpoints } from "../state/checkpoints";
 import { useReplyActions } from "./reply";
 import { useGateActions } from "./gates";
@@ -38,6 +39,7 @@ import { useSubmit } from "./usesubmit";
 import { useSurfaceSlots } from "./usesurfaceslots";
 import { useSurfaceReplay } from "./surface-replay";
 import { MeterRail } from "./MeterRail";
+import { useAgentRequest } from "./useAgentRequest";
 import { PlanFold } from "./PlanFold";
 import { useBroughtResults } from "./useBroughtResults";
 import { RunLine } from "./RunLine";
@@ -46,13 +48,14 @@ import type { PaneProps, PaneReport } from "./panetypes";
 import { useRate, useTrail } from "./num";
 import { useCompactNow } from "./CompactNow";
 import { DOCK, Gutter } from "./Gutter";
+import { FlowGrips } from "./FlowResizer";
 import { Find } from "./Find";
 import { useFind } from "./usefind";
 import { RunAnalysis } from "./RunAnalysis";
 import { useBrowserTabs } from "./BrowserPanel";
 import { useRevealAgentPages, useRevealBrowserOpen } from "./browserreveal";
 import { WorkbenchPanel } from "./WorkbenchPanel";
-import { useBrowserWide } from "./browserwide";
+import { useBrowserFull } from "./browserfull";
 import { refreshTodos } from "../state/restore";
 import { speedOf } from "./speed";
 import { RuntimeBar } from "./RuntimeBar";
@@ -79,6 +82,7 @@ export type { PaneReport };
 // A shared constant, not `?? []`: a fresh empty array every render reads as a
 // changed prop to the rail below it.
 const NO_JOBS: JobEntry[] = [];
+const NO_COST: CurrencyAmount[] = [];
 
 type SessionRead = { kind: "pending" } | { kind: "settled"; status: SessionStatus | null };
 
@@ -92,7 +96,7 @@ const totalsOf = (st: SessionStatus) => ({
   incompleteReason: st.sessionCostQuote?.incompleteReason,
 });
 
-function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFocus, onReport, onSessionChanged, onTurnDone, pulse, findPulse, findTogglePulse = 0, filesPulse = 0, viewRequest, sessionRef, onSettings, onFeedback, onOpenSession, needsProject, onOpenProject, onKeepHere, connect, theme, dockW, dockMax, onDockW, manualBrowser = false, onManualBrowser, alert }: PaneProps) {
+function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFocus, onReport, onSessionChanged, onTurnDone, pulse, findPulse, findTogglePulse = 0, filesPulse = 0, viewRequest, sessionRef, onSettings, onFeedback, onOpenSession, needsProject, onOpenProject, onKeepHere, connect, theme, dockW, dockMax, onDockW, column, manualBrowser = false, onManualBrowser, alert }: PaneProps) {
   const [s, dispatch] = useReducer(reduce, initialState);
   const [traj, trajDispatch] = useReducer(reduceTraj, initialTraj);
   const [sessionRead, setSessionRead] = useState<SessionRead>({ kind: "pending" });
@@ -119,6 +123,7 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFoc
   const docked = manualBrowser && tab === "flow";
   const workbench = docked || tab === "browser";
   const flow = useRef<HTMLDivElement>(null);
+  const body = useRef<HTMLDivElement>(null);
   const running = s.running || !!status?.running; // A paired device can join after turn_started.
   const marker = useSyncExternalStore(onNewAnswerMarkerChange, showsNewAnswerMarker, showsNewAnswerMarker);
   const newAnswerAt = useFrozenNewAnswerAnchor(s.items, useUnreadSince(rt.sessionPath ? sessionKey(rt.host, rt.sessionPath) : undefined), running);
@@ -135,6 +140,8 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFoc
     pushToast(shown);
   }, []);
   const statusRead = useCallback(() => dispatch({ kind: "__error_clear", from: "status" } as never), []);
+  const agentRuns = useAgentRequest(port, revealBrowser);
+  const openRun = agentRuns.open;
   const conversationFiles = useConversationFiles(port, status?.workspaceRoot ?? rt.root, !!rt.host, visible && tab === "flow", revealBrowser, notify);
   const compact = useCompactNow(port, running || s.items.some((item) => item.t === "compaction" && !item.done), notify);
   // Elapsed is a clock reading and belongs on the tick. Throughput is not: it
@@ -452,9 +459,9 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFoc
   // Chinese literals that the reducer had written — a translation key deciding
   // whether the run reads as moving.
   const blocked = hasPendingDecision(status);
-  const browserSize = useBrowserWide(docked, active && visible, blocked);
+  const browserSize = useBrowserFull(docked, active && visible, blocked);
   const run = runState({ blocked, running, hasItems: s.items.length > 0, terminal: s.terminal });
-  const cost = s.metrics.coverage === "none" ? "" : money(s.metrics.cost, s.metrics.currency);
+  const cost = s.metrics.coverage === "none" ? NO_COST : s.metrics.cost;
   const contextPercent = ctx && ctx.window > 0 ? Math.min(100, Math.round((ctx.used / ctx.window) * 100)) : null;
   const walletDisplay = wallet.kind === "read" ? wallet.reading.display : "";
 
@@ -472,7 +479,7 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFoc
       steer: waiting(queue).filter((it) => it.intent === "steer").length,
       run: trustWaiting && run === "idle" ? "halt" : run,
       live: running || blocked || trustWaiting,
-      cost,
+      cost: moneyList(cost),
       contextPercent,
       context: ctx,
       mcp,
@@ -498,7 +505,8 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFoc
     >
       <Find find={find} />
 
-      <div className="pbody rewind-notice-host" data-dock={tab === "flow" ? "" : undefined} data-full={tab === "browser" ? "" : undefined}>
+      <div className="pbody rewind-notice-host" ref={body} data-dock={tab === "flow" ? "" : undefined} data-full={tab === "browser" ? "" : undefined}>
+      {column && tab === "flow" && <FlowGrips column={column} />}
       <RewindNotice key={JSON.stringify([rt.id, rt.root, status?.sessionPath ?? rt.sessionPath])} readUndo={onReadUndo} onUndo={onUndoAvailable} busy={!!restoreNotice?.working || !!reloadFailure?.working} refreshKey={checkpoints} moved={s.rewindMoved} running={running} shown={visible && tab === "flow" && !rt.readOnly} />
       <div className="pviews">
       <div className="worktree-stage-host" ref={setWorktreeTarget} hidden={tab !== "flow" || !worktreePhase}/>
@@ -508,6 +516,7 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFoc
       <LiveWork.Provider value={live}>
       <NewAnswerAnchor.Provider value={marker ? newAnswerAt : null}>
       <Transcript port={port}
+        scope={rt.sessionPath || rt.id}
         onSettings={onSettings}
         brought={brought}
         foldWork={foldWork}
@@ -553,6 +562,7 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFoc
             rows={traj.rows}
             availability={traj.availability}
             onSave={(name, content) => port.saveText(name, content)}
+            onBack={() => showView("flow")}
           />
         )}
       </div>
@@ -569,8 +579,8 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFoc
             port={port}
             hub={hub}
             fileRequest={conversationFiles.request}
+            agentRequest={agentRuns.request}
             tabs={pages}
-            wideMode={docked ? { wide: browserSize.size === "wide", onToggle: browserSize.toggle } : undefined}
             fullMode={docked ? { full: browserSize.size === "full", onToggle: browserSize.toggleFull } : undefined}
             manual={manualBrowser}
             shown={visible && workbench}
@@ -640,10 +650,11 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFoc
         {pill && <ChangedFilesPill changes={tree?.changes ?? []} onOpen={openChanges} />}
         <Composer worktreeTarget={worktreeTarget} onWorktreePhase={setWorktreePhase} port={port} fresh={ready && !rt.host && s.items.length === 0} status={status} running={running} quote={quote} restore={restored} inject={inserted} focus={askFocus} onSubmit={submit} onChanged={refreshStatus} onError={notify} onSettings={onSettings} side={sideAsk} onSide={() => setSideAsk((on) => !on)} sidePanel={sideAsk ? <SidePanel port={port} onClose={() => setSideAsk(false)} /> : null} changeCount={changeCount} countElsewhere={pill} git={git} onTreeChanged={refreshTree} pulse={pulse} draftKey={draftKey(rt.host ?? "", rt.root, rt.sessionPath || status?.sessionPath || "")} />
         <MeterRail
-          tps={tps} trail={trail} running={running} speed={speed} metrics={s.metrics} ctx={ctx} mcp={mcp} compact={compact} cost={cost}
+          tps={tps} trail={trail} running={running} speed={speed} metrics={s.metrics} ctx={ctx} mcp={mcp} compact={compact} cost={cost} turnCost={s.metrics.coverage === "none" ? NO_COST : s.metrics.turn}
           wallet={wallet} hideAmounts={hideAmounts} tasks={rail.tasks} jobs={jobs} onSettings={onSettings}
           onCancelJob={(id) => cancelJob(port, id, notify, refreshStatus).then(() => {})}
           onReadJob={readJob}
+          onOpenRun={openRun}
           usage={status?.sessionUsage} quote={status?.sessionCostQuote} tariff={status?.tariff} onTariffFlip={refreshStatus}
         />
         {reloadFailure && <ReloadNotice failure={reloadFailure} onReload={onReloadSession} />}

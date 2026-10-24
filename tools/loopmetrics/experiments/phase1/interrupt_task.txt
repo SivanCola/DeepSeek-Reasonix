@@ -1,0 +1,1 @@
+Read every Go file directly under internal/state/workspacelease and internal/state/agentpreset and summarise each file in one line.

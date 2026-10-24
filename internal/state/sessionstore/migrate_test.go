@@ -1,6 +1,7 @@
 package sessionstore
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -1178,5 +1179,200 @@ func TestTransformAndCopyJsonlFlattensNestedToolCalls(t *testing.T) {
 	// Message 3: final assistant text.
 	if msgs[3].Content != "Found the main function." {
 		t.Errorf("final content = %q", msgs[3].Content)
+	}
+}
+
+// interruptedFlatImport is the state an import killed between its snapshot save
+// (the transcript) and copyBranchMetaSidecar leaves: the transcript in its routed
+// project dir, nothing beside it, and the 1.x sidecar still only in the source.
+func interruptedFlatImport(t *testing.T, archived bool) (src, global, proj, ws, dest string) {
+	t.Helper()
+	root := testenv.TempDir(t)
+	src = filepath.Join(root, "src")
+	global = filepath.Join(root, "global")
+	ws = filepath.Join(root, "ws")
+	proj = filepath.Join(root, "proj")
+	for _, d := range []string{src, global, ws, proj} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	srcPath := filepath.Join(src, "chat-1.jsonl")
+	if err := os.WriteFile(srcPath, []byte(legacyMessageLog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveBranchMeta(srcPath, BranchMeta{
+		Scope: "project", WorkspaceRoot: ws, TopicTitle: "1.x topic",
+		Archived: archived, Pinned: true, ParentID: "parent-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	dest = filepath.Join(proj, "chat-1.jsonl")
+	if err := os.WriteFile(dest, []byte(legacyMessageLog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return src, global, proj, ws, dest
+}
+
+// The transcript is published before the sidecar that carries its meaning, so a
+// kill in that window leaves a transcript with no meta. The next run must finish
+// the sidecar; skipping the session loses its scope and returns an archived
+// conversation to the active list.
+func TestInterruptedFlatImportRetryCompletesTheBranchMeta(t *testing.T) {
+	src, global, proj, ws, dest := interruptedFlatImport(t, true)
+
+	if n, err := MigrateLegacySessions(src, global, func(string) string { return proj }); err != nil || n != 1 {
+		t.Fatalf("retry: n=%d err=%v, want 1 nil", n, err)
+	}
+	got, ok, err := LoadBranchMeta(dest)
+	if err != nil || !ok {
+		t.Fatalf("retry left the transcript without a sidecar: ok=%v err=%v", ok, err)
+	}
+	if got.Scope != "project" || got.WorkspaceRoot != ws || got.TopicTitle != "1.x topic" ||
+		!got.Archived || !got.Pinned || got.ParentID != "parent-1" {
+		t.Fatalf("completed sidecar = %+v, want the 1.x fields", got)
+	}
+
+	// Exact output: the completed sidecar is byte-for-byte what a fresh import
+	// of the same source writes, including the title it records.
+	fresh := filepath.Join(filepath.Dir(src), "fresh")
+	if err := os.MkdirAll(fresh, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if n, _, err := ImportLegacySessionsFromExplicitDir(src, fresh, func(string) string { return fresh }); err != nil || n != 1 {
+		t.Fatalf("fresh import: n=%d err=%v", n, err)
+	}
+	wantMeta, err := os.ReadFile(BranchMetaPath(filepath.Join(fresh, "chat-1.jsonl")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotMeta, err := os.ReadFile(BranchMetaPath(dest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotMeta, wantMeta) {
+		t.Fatalf("completed sidecar differs from a fresh import:\n got %s\nwant %s", gotMeta, wantMeta)
+	}
+	wantTitles, err := os.ReadFile(filepath.Join(fresh, ".titles.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotTitles, err := os.ReadFile(filepath.Join(proj, ".titles.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotTitles, wantTitles) {
+		t.Fatalf("completed title differs from a fresh import:\n got %s\nwant %s", gotTitles, wantTitles)
+	}
+}
+
+// A finished import is done: the ordinary retry must copy nothing over the
+// transcript and must leave the sidecar exactly as it was.
+func TestCompletedFlatImportIsNotReCopied(t *testing.T) {
+	root := testenv.TempDir(t)
+	src := filepath.Join(root, "src")
+	global := filepath.Join(root, "global")
+	ws := filepath.Join(root, "ws")
+	proj := filepath.Join(root, "proj")
+	for _, d := range []string{src, global, ws, proj} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	srcPath := filepath.Join(src, "chat-1.jsonl")
+	if err := os.WriteFile(srcPath, []byte(legacyMessageLog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveBranchMeta(srcPath, BranchMeta{
+		Scope: "project", WorkspaceRoot: ws, TopicTitle: "1.x topic", Archived: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	router := func(string) string { return proj }
+	if n, _, err := ImportLegacySessionsFromExplicitDir(src, global, router); err != nil || n != 1 {
+		t.Fatalf("first import: n=%d err=%v", n, err)
+	}
+	dest := filepath.Join(proj, "chat-1.jsonl")
+	pinned := time.Now().Add(-2 * time.Hour).Truncate(time.Second)
+	touched := []string{dest, BranchMetaPath(dest), filepath.Join(proj, ".titles.json")}
+	for _, p := range touched {
+		if err := os.Chtimes(p, pinned, pinned); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeMeta, err := os.ReadFile(BranchMetaPath(dest))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// An explicit import re-runs every pass, so this reaches the destination
+	// branch that must recognize a completed sidecar.
+	if n, _, err := ImportLegacySessionsFromExplicitDir(src, global, router); err != nil || n != 0 {
+		t.Fatalf("retry: n=%d err=%v, want 0 nil", n, err)
+	}
+	after, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterMeta, err := os.ReadFile(BranchMetaPath(dest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) || !bytes.Equal(beforeMeta, afterMeta) {
+		t.Fatal("a completed import was re-copied")
+	}
+	for _, p := range touched {
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.ModTime().Equal(pinned) {
+			t.Fatalf("%s was rewritten on a completed retry: mtime %s want %s", p, info.ModTime(), pinned)
+		}
+	}
+}
+
+// A sidecar that cannot be written must not let the import claim the session:
+// the marker stays off so the next run retries and completes it.
+func TestFlatImportWithholdsMarkerWhenTheSidecarCannotBeWritten(t *testing.T) {
+	src, global, proj, ws, dest := interruptedFlatImport(t, true)
+	blocked := BranchMetaPath(dest)
+	if err := os.Mkdir(blocked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := MigrateLegacySessions(src, global, func(string) string { return proj })
+	if err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("imported %d although the sidecar could not be written", n)
+	}
+	for _, marker := range []string{legacyRoutedHomeImportMarker, legacyJsonlPassMarker} {
+		if importMarkerExists(global, marker) {
+			t.Fatalf("marker %q stamped after a sidecar write failed; the session will never be retried", marker)
+		}
+	}
+
+	// Repair the destination and let the next boot finish the session.
+	if err := os.Remove(blocked); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := MigrateLegacySessions(src, global, func(string) string { return proj }); err != nil || n != 1 {
+		t.Fatalf("retry: n=%d err=%v, want 1 nil", n, err)
+	}
+	meta, ok, err := LoadBranchMeta(dest)
+	if err != nil || !ok {
+		t.Fatalf("retry left no sidecar: ok=%v err=%v", ok, err)
+	}
+	if !meta.Archived || meta.Scope != "project" || meta.WorkspaceRoot != ws {
+		t.Fatalf("completed sidecar = %+v", meta)
+	}
+	if !importMarkerExists(global, legacyRoutedHomeImportMarker) {
+		t.Fatal("marker missing after the sidecar was completed")
 	}
 }

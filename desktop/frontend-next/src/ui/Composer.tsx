@@ -559,9 +559,8 @@ export function Composer({ port, status, running, quote, restore, inject, focus,
           onKeyUp={(e) => setCaret(chips.snap(e.currentTarget, caret))}
           onClick={(e) => setCaret(chips.snap(e.currentTarget, caret))}
           data-action-paste="session.attach"
-          // Dropping is the pane's job — a one-row box is 40px to aim at, and the
-          // handler that used to live here prevented the default and then did
-          // nothing with text, which is worse than not handling it at all.
+          // Clipboard files are copied into host-owned attachments. Their native
+          // paths can belong to a source application's restricted or short-lived cache.
           onPaste={(e) => {
             if (submitting) {
               e.preventDefault();
@@ -570,7 +569,7 @@ export function Composer({ port, status, running, quote, restore, inject, focus,
             const files = [...e.clipboardData.files];
             if (files.length > 0) {
               e.preventDefault();
-              attach(files);
+              attach(files.map((file) => new File([file], file.name, { type: file.type })));
               return;
             }
             const body = e.clipboardData.getData("text/plain");
@@ -605,7 +604,7 @@ export function Composer({ port, status, running, quote, restore, inject, focus,
             }
             // Tab descends into directories; Enter confirms the highlighted reference.
             // The configured modifier chord sends the draft even with a menu open.
-            if (menu.open && (e.key === "Tab" || (e.key === "Enter" && !(sendShortcut === "modifier_enter" && sendKey))) && !e.shiftKey) {
+            if (menu.open && (e.key === "Tab" || (e.key === "Enter" && !menu.typedChosen && !(sendShortcut === "modifier_enter" && sendKey))) && !e.shiftKey) {
               e.preventDefault();
               menu.accept(undefined, e.key === "Tab" ? "descend" : "confirm");
               return;
@@ -688,7 +687,7 @@ export function Composer({ port, status, running, quote, restore, inject, focus,
               { value: "__mode", label: t("工作模式"), right: t("当前任务"), header: true },
               { value: "agent", label: "Agent", desc: t("执行任务并使用已启用工具") },
               { value: "plan", label: "Plan", desc: t("先整理步骤，不写入文件") },
-              { value: "ask", label: "Ask", desc: t("直接回答，不调用工具"), disabled: true },
+              { value: "ask", label: t("Ask（未实现）"), desc: t("直接回答，不调用工具"), disabled: true },
             ]}
             onPick={(value) => change("plan", () => port.setPlanMode(value === "plan"))}
             label={<><StudioIcon name="agent" /><span className="studio-sr-label">{t("计划")}</span><span>{status?.plan ? "Plan" : "Agent"}</span><StudioIcon name="down" /></>}

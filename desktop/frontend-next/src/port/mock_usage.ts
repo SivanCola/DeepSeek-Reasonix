@@ -1,8 +1,42 @@
-import type { UsageQuery, UsageReport } from "./port";
+import type { UsageHour, UsageQuery, UsageReport } from "./port";
 import { USAGE_PRICED, USAGE_TOKENS } from "./mock_memory";
 import { DEFAULT_USAGE_DAYS } from "./usage";
 
 const DAY_MS = 864e5;
+
+const HOUR_WEIGHTS = [0, 0, 0, 0, 0, 0, 0, 1, 2, 4, 5, 5, 4, 3, 5, 6, 4, 3, 2, 2, 1, 0, 0, 0];
+
+// The fixture's single-day window gets the same hour shape the kernel sends.
+function mockHourly(day: UsageReport["daily"][number]): UsageHour[] {
+  const sum = HOUR_WEIGHTS.reduce((a, b) => a + b, 0);
+  const amount = Number(day.cost?.[0]?.amount ?? 0);
+  const currency = day.cost?.[0]?.currency ?? "CNY";
+  const buckets = HOUR_WEIGHTS.map((weight, hour) => {
+    const total = Math.round((day.total * weight) / sum);
+    const byModel: Record<string, number> = total ? { "deepseek/deepseek-flash": total } : {};
+    const byProvider: Record<string, number> = total ? { deepseek: total } : {};
+    return {
+      hour: `${String(hour).padStart(2, "0")}:00`,
+      total,
+      byModel,
+      byProvider,
+      requests: Math.round(total / 20_000),
+      turns: Math.round(total / 150_000),
+      cacheHit: Math.round(total * 0.92),
+      cacheMiss: Math.round(total * 0.08),
+      cost: total && amount ? [{ amount: ((amount * weight) / sum).toFixed(4), currency }] : undefined,
+    };
+  });
+  // Rounding each bucket must not change the day's total the card reports.
+  const delta = day.total - buckets.reduce((a, b) => a + b.total, 0);
+  if (delta !== 0) {
+    const at = HOUR_WEIGHTS.indexOf(Math.max(...HOUR_WEIGHTS));
+    buckets[at].total += delta;
+    buckets[at].byModel["deepseek/deepseek-flash"] = (buckets[at].byModel["deepseek/deepseek-flash"] ?? 0) + delta;
+    buckets[at].byProvider.deepseek = (buckets[at].byProvider.deepseek ?? 0) + delta;
+  }
+  return buckets;
+}
 
 function parseDay(value: string): number {
   const parsed = Date.parse(`${value}T00:00:00Z`);
@@ -50,6 +84,7 @@ export function mockUsage(query: number | UsageQuery): UsageReport {
     };
   });
   const tokens = daily.reduce((a, d) => a + d.total, 0);
+  const hourly = count === 1 && daily[0] ? mockHourly(daily[0]) : undefined;
   return {
     from: daily[0]?.day ?? "", to: daily.at(-1)?.day ?? "",
     tokens, requests: daily.reduce((a, d) => a + d.requests, 0),
@@ -61,6 +96,7 @@ export function mockUsage(query: number | UsageQuery): UsageReport {
     active_days: daily.filter((d) => d.total > 0).length,
     top_model: "deepseek/deepseek-flash", top_provider: "deepseek",
     daily,
+    hourly,
     models: [
       { model: "deepseek/deepseek-flash", provider: "deepseek", tokens: Math.round(tokens * 0.597), percent: 59.7 },
       { model: "deepseek-flash/deepseek-flash", provider: "deepseek-flash", tokens: Math.round(tokens * 0.401), percent: 40.1 },

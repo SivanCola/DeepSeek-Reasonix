@@ -319,3 +319,42 @@ func TestAHandBackIsNotContinuedForAGapTheHostCouldFill(t *testing.T) {
 		t.Fatalf("receipt readiness = %+v, want the unverified change still reported", ev.Readiness)
 	}
 }
+
+// The continuation prompt is persisted with role "user", so its opening is the
+// only thing that tells a reloaded session it came from the host rather than
+// from the person at the keyboard. sessionstore matches that opening against a
+// registry; a lead-in that drifts away from its entry turns the host's own
+// account into a user turn, a preview line and a session title.
+func TestContinuationPromptIsRegisteredAsHostInjected(t *testing.T) {
+	prompt := readinessContinuationPrompt([]evidence.TodoItem{
+		{Content: "ship it", Status: "in_progress"},
+	}, "the check you ran did not pass")
+	if !sessionstore.IsSyntheticUserText(prompt) {
+		t.Errorf("a reloaded session would read the host's own prompt as user input:\n%s", prompt)
+	}
+	if sessionstore.IsUserAuthoredTurn(prompt) {
+		t.Errorf("the continuation prompt would count as a user turn and become the session title")
+	}
+	// The disclaimer is what a model read without the runtime's synthetic flag
+	// needs in order to answer the host rather than a person who said nothing.
+	if !strings.Contains(prompt, "The user did not send this") {
+		t.Errorf("continuation never says the user did not send it:\n%s", prompt)
+	}
+}
+
+// Sessions already on disk carry the prompt as it was written before the
+// attribution was added. Those messages are still persisted with role "user",
+// so the older opening has to be recognised for them to stop reading back as
+// something the person typed.
+func TestTheOlderOpeningIsAlsoReadAsHostInjected(t *testing.T) {
+	older := "This turn ended with work still outstanding:\n" +
+		"- these tasks are still incomplete:\n" +
+		"  - step 3 (in_progress)\n" +
+		"Do the remaining work, then verify it.\n"
+	if !sessionstore.IsSyntheticUserText(older) {
+		t.Errorf("a session written before the attribution reads its host prompt as user input")
+	}
+	if sessionstore.IsUserAuthoredTurn(older) {
+		t.Errorf("the older opening still counts as a user turn")
+	}
+}

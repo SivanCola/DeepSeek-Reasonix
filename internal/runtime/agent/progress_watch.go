@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -60,7 +61,7 @@ func (a *Agent) markProgressRound() progressMark {
 // settleProgressRound scores the round that just ran and reports the watch when
 // it is stalled, or when it stops being so. The error is non-nil only when the
 // user's pause setting asks for the run to end here.
-func (a *Agent) settleProgressRound(state *turnRuntime, mark progressMark) error {
+func (a *Agent) settleProgressRound(ctx context.Context, state *turnRuntime, mark progressMark) error {
 	cfg := a.progressWatchConfig()
 	if cfg.Rounds <= 0 && cfg.TokenMultiple <= 0 {
 		return nil
@@ -89,7 +90,7 @@ func (a *Agent) settleProgressRound(state *turnRuntime, mark progressMark) error
 	if !report.Pausing {
 		return nil
 	}
-	a.emitTurnShadows(a.turn.turnInput, true)
+	a.emitTurnShadows(ctx, a.turn.turnInput, true)
 	return newNoProgressPause(report)
 }
 

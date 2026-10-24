@@ -30,7 +30,7 @@ function rail(over: { usage?: SessionUsage; quote?: CostQuote; hideAmounts?: boo
   return render(
     <MeterRail
       tps={0} trail={[]} running={false} speed={{ output: 0, modelSeconds: 0, average: 0, firstToken: 0 }}
-      metrics={{ hit: 0, miss: 0 }} ctx={"ctx" in over ? (over.ctx ?? null) : context} mcp={[]} compact={{ phase: "idle" } as never} cost="" wallet={{} as never}
+      metrics={{ hit: 0, miss: 0 }} ctx={"ctx" in over ? (over.ctx ?? null) : context} mcp={[]} compact={{ phase: "idle" } as never} cost={[]} wallet={{} as never}
       hideAmounts={over.hideAmounts ?? false} tasks={[]} jobs={[]} onSettings={vi.fn()} onCancelJob={vi.fn(async () => {})}
       usage={"usage" in over ? over.usage : usage} quote={"quote" in over ? over.quote : quote()}
     />,
@@ -76,8 +76,16 @@ describe("the session overview behind the cache meter", () => {
   it("states the hit rate over what the endpoint split, and says what it left out", () => {
     rail();
     const row = within(card()).getByText("缓存命中").closest("div")!;
-    expect(row.textContent).toContain("77%");
+    expect(row.textContent).toContain("76%");
     expect(row.textContent).toContain("不含服务商未区分的 5k tokens");
+  });
+
+  it("floors the rate, so 99.6% of the split does not read as a perfect 100%", () => {
+    rail({ usage: { ...usage, cacheHit: 9960, cacheMiss: 40, cacheUnknown: 0 } });
+    const row = within(card()).getByText("缓存命中").closest("div")!;
+    expect(row.textContent).toContain("99%");
+    expect(row.textContent).not.toContain("100%");
+    expect(button().textContent).toContain("99%");
   });
 
   it("lists each source with its own cache and cost, and an unpriced one as unknown", () => {
@@ -86,7 +94,7 @@ describe("the session overview behind the cache meter", () => {
     expect(rows[0]).toContain("压缩");
     expect(rows[0]).toContain("—");
     expect(rows[1]).toContain("主代理");
-    expect(rows[1]).toContain("77%");
+    expect(rows[1]).toContain("76%");
     expect(rows[1]).toContain("¥3.20");
     const price = card().querySelectorAll(".studio-overview-row")[0]!.querySelector("b[title]");
     expect(price?.getAttribute("title")).toBe("价格未知：no_rate");
@@ -119,7 +127,7 @@ describe("the session overview behind the cache meter", () => {
 
   it("agrees with the card about the number it shows on the meter", () => {
     rail();
-    expect(button().textContent).toContain("77%");
+    expect(button().textContent).toContain("76%");
   });
 
   it("shows the context window in the same card, as the next request's content and not a running total", () => {

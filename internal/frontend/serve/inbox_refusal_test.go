@@ -27,6 +27,7 @@ func TestEveryKnownInboxRefusalCarriesItsOwnCode(t *testing.T) {
 		{sessioninbox.ErrCapacityItems, http.StatusConflict, "inbox.capacity_items"},
 		{sessioninbox.ErrCapacityBytes, http.StatusConflict, "inbox.capacity_bytes"},
 		{sessioninbox.ErrInvalidState, http.StatusConflict, "inbox.invalid_state"},
+		{sessioninbox.ErrRetryMayRepeat, http.StatusConflict, "inbox.retry_may_repeat"},
 		{sessioninbox.ErrPaused, http.StatusConflict, "inbox.paused"},
 		{sessioninbox.ErrNotFound, http.StatusConflict, "inbox.not_found"},
 		{sessioninbox.ErrIdempotencyConflict, http.StatusConflict, "inbox.idempotency_conflict"},

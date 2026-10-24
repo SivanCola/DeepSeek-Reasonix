@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -178,7 +179,7 @@ func (a *Agent) LiveContract() *taskcontract.Contract {
 // decides. blocked says the host stopped this turn at the readiness gate, so
 // the summary reports the turn that happened rather than the one the model
 // believed it had finished.
-func (a *Agent) emitTurnShadows(input string, blocked bool) {
+func (a *Agent) emitTurnShadows(ctx context.Context, input string, blocked bool) {
 	if a.task.ledger == nil {
 		return
 	}
@@ -197,12 +198,12 @@ func (a *Agent) emitTurnShadows(input string, blocked bool) {
 		}
 	}
 	event.RecordContractShadow(a.svc.sink, contractShadowAudit(c))
-	rep := completion.Build(c, a.task.ledger, a.pathInWorkspace)
+	rep := completion.Build(c, a.task.ledger, a.pathInWorkspace).WithOutsideObservedWrites(a.outsideObservedWrites())
 	a.turn.completion = &rep
 	audit := completionReportAudit(rep)
 	audit.OriginRecorded, audit.OriginMatched = a.task.origins.take()
 	event.RecordCompletionReport(a.svc.sink, audit)
-	a.sealShadowBundle(input, c, rep, a.task.ledger.Receipts(), blocked)
+	a.sealShadowBundle(ctx, input, c, rep, a.task.ledger.Receipts(), blocked)
 	a.emitCompletionSummary(c, rep, blocked)
 }
 
@@ -225,8 +226,13 @@ func (a *Agent) CompletionReceipt() *event.CompletionReceipt {
 	}
 	rep := *a.turn.completion
 	rep.Gaps = append(a.planCriterionGaps(rep.Gaps), gaps...)
-	if len(gaps) > 0 && rep.Verdict == completion.VerdictUnknown {
-		return unjudgedReceipt(gaps)
+	if rep.Verdict == completion.VerdictUnknown {
+		// Nothing to judge, but an unjudged turn carrying a gap is not a silent
+		// one: dropping the gap is how an out-of-sight write reads clean again.
+		if len(rep.Gaps) == 0 {
+			return nil
+		}
+		return unjudgedReceipt(rep.Gaps)
 	}
 	return completionReceipt(rep)
 }

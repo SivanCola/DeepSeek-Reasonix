@@ -1,0 +1,2 @@
+- 调整：移除工作台的“加宽”按钮、独立加宽模式及 Ctrl/Cmd+Shift+B 快捷键。可拖动分隔条或聚焦后用方向键调宽；工作台全屏及退出后恢复原分栏宽度保持不变。关联 #14324。
+- Changed: removed Widen mode, its button, and Ctrl/Cmd+Shift+B. Use the divider to resize; full-workbench view still restores the saved split width. Refs #14324.

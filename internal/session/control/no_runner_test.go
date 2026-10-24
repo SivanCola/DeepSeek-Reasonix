@@ -12,7 +12,7 @@ import (
 func TestATurnWithoutARunnerReportsErrNoRunner(t *testing.T) {
 	c := New(Options{})
 	defer c.Close()
-	if err := c.runSettled(context.Background(), "hello"); !errors.Is(err, ErrNoRunner) {
-		t.Fatalf("runSettled = %v, want ErrNoRunner", err)
+	if err := c.runWithRunner(context.Background(), "hello"); !errors.Is(err, ErrNoRunner) {
+		t.Fatalf("runWithRunner = %v, want ErrNoRunner", err)
 	}
 }

@@ -209,6 +209,18 @@ export class SsePort extends SseWorkspace implements AgentPort {
     if (!res.ok) await SsePort.fail("/update/install", res);
   }
 
+  // Answered once the kernel has stopped the download and discarded its
+  // partial bytes, so starting it again cannot race the abandoned attempt.
+  async cancelVersion(version: string): Promise<void> {
+    const res = await fetch("/update/cancel", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ version }),
+    });
+    if (!res.ok) await SsePort.fail("/update/cancel", res);
+  }
+
   async restartToVersion(version: string, force: boolean): Promise<void> {
     const res = await fetch("/update/restart", {
       method: "POST",

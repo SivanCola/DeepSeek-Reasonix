@@ -32,6 +32,7 @@ type ApplicationOwner interface {
 type Capability interface {
 	AcknowledgeLaunchHealth() error
 	StartInstall(install update.Install, target string) error
+	CancelInstall(target string) error
 	CommitInstall(target string) error
 	InstallProgress() update.Progress
 }

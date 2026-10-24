@@ -6,6 +6,7 @@ import "../src/styles/tokens.css";
 import "../src/styles/app.css";
 import "../src/styles/dock.css";
 import "../src/styles/studio.css";
+import "../src/styles/flowgrip.css";
 import "../src/styles/changedpill.css";
 import "../src/styles/askskip.css";
 import "../src/styles/pastekeep.css";
@@ -26,6 +27,7 @@ import "../src/styles/stophint.css";
 import "../src/styles/dialogcenter.css";
 import "../src/styles/treerows.css";
 import "../src/styles/workbench-changes.css";
+import "../src/styles/agentrun.css";
 import "../src/styles/gitgraph.css";
 import "../src/styles/tips.css";
 import "../src/styles/waitnote.css";
@@ -57,6 +59,7 @@ import type { ThemePack } from "../src/port/look";
 import type { RuntimeView, TreeWindow, TreeWorkspace } from "../src/port/hub";
 import type { WireEvent } from "../src/port/wire";
 import type { PreviewInfo } from "../src/port/workspace";
+import type { SubagentRun } from "../src/port/subagent";
 import { deliveryContents, deliveryHistory } from "./delivery-data";
 
 // Saves are coalesced (src/ui/trailing.ts), and a fixture answers too fast for
@@ -296,9 +299,35 @@ class BenchPort extends MockPort {
   }
 
   private settingCardSent = false;
+  private receiptSent = false;
+
+  async receiptSettings() {
+    const read = await super.receiptSettings();
+    return query.has("receipt") ? { ...read, show: true } : read;
+  }
+  private meterSent = false;
 
   subscribe(on: (e: WireEvent) => void) {
     this.subs.add(on);
+    if (query.has("meter") && !this.meterSent) {
+      this.meterSent = true;
+      const usage = (amount: number) => ({ cacheHitTokens: 90, cacheMissTokens: 10, completionTokens: 40, totalTokens: 140, cost: amount, currency: "CNY", currencyCode: "CNY", source: "executor" });
+      setTimeout(() => {
+        for (const [msgIndex, amount] of [[1, 1.2], [2, 0.35]] as const) {
+          this.feed({ kind: "turn_started", msgIndex } as unknown as WireEvent);
+          this.feed({ kind: "usage", usage: usage(amount) } as unknown as WireEvent);
+          this.feed({ kind: "turn_done" } as unknown as WireEvent);
+        }
+      }, 500);
+    }
+    if (query.has("receipt") && !this.receiptSent) {
+      this.receiptSent = true;
+      const script = "cd \"C:/Users/me/work\" && cat > \"$TMPDIR/check/verify_006.py\" <<'PYEOF'\n" + "import os, re, sys, unittest\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertEqual(1, 1)\n".repeat(18) + "PYEOF\npython -m unittest verify_006 2>&1 | tail -12";
+      setTimeout(() => {
+        this.feed({ kind: "turn_started", msgIndex: 9 } as unknown as WireEvent);
+        this.feed({ kind: "turn_done", receipt: { saysSomething: true, severity: "warn", gaps: [{ kind: "failed_verification", detail: script }, { kind: "inconclusive_verification", detail: "go test ./internal/... 2>&1 | tail -5" }] } } as unknown as WireEvent);
+      }, 500);
+    }
     const card = query.get("settingcard");
     if (card && !this.settingCardSent) {
       this.settingCardSent = true;
@@ -369,7 +398,7 @@ class BenchPort extends MockPort {
     const goalRuntime = usage
       ? { turnsUsed: 4, tokensUsed: 128_400, requestsUsed: 9, workDurationMs: 12 * 60_000, noProgressTurns: usage === "blocked" ? 2 : 0, ...(usage === "blocked" ? { stopCause: "goal_stuck", lastReason: "测试一直没有通过，改动没有让失败的数量减少" } : {}) }
       : undefined;
-    const st = { ...(await super.status()), ...(query.has("running") ? { running: true } : {}), ...(query.has("goal") ? { goal: query.get("goal") ?? "" } : {}), ...(usage ? { goalStatus: usage, goalRuntime } : {}), ...(query.has("trustpending") ? { toolApprovalMode: "ask" as const, approvalDefault: { defaulted: true, writesConfined: true, trust: "" as const, trustable: true } } : {}) };
+    const st = { ...(await super.status()), ...(query.has("running") ? { running: true } : {}), ...(query.has("goal") ? { goal: query.get("goal") ?? "" } : {}), ...(usage ? { goalStatus: usage, goalRuntime } : {}), ...(query.has("fullaccess") ? { toolApprovalMode: "yolo" as const } : {}), ...(query.has("effort") ? { effort: query.get("effort") ?? "" } : {}), ...(query.has("modelref") ? { modelRef: query.get("modelref") ?? "" } : {}), ...(query.has("trustpending") ? { toolApprovalMode: "ask" as const, approvalDefault: { defaulted: true, writesConfined: true, trust: "" as const, trustable: true } } : {}) };
     if (STATUS_MS > 0) await new Promise((r) => setTimeout(r, STATUS_MS));
     if (!JOBS) return st;
     const jobs = Array.from({ length: JOBS }, (_, i) => ({
@@ -562,7 +591,11 @@ declare global {
     // conversations really cost.
     __feed: (ev: WireEvent) => void;
     __panes: () => number;
+    // Answer every completion request with this one, as the kernel would for a command typed in full.
+    __complete: (answer: import("../src/port/port").Completion) => void;
     __previewFiles: (files: Record<string, { kind: PreviewInfo["kind"]; text: string }>) => void;
+    // Sub-agent runs the kernel would list, each with the conversation it would return.
+    __subagents: (runs: { run: SubagentRun; messages: HistoryMessage[] }[]) => void;
     // What folding a stored transcript into cards costs on its own, with no
     // frame in it: the step between the read answering and the first paint.
     __foldCost: () => number;
@@ -588,6 +621,14 @@ window.__previewFiles = (files) => hub.feeds.forEach((port) => {
     data: new TextEncoder().encode(files[ref.path].text).buffer, version: "fixture",
   });
 });
+window.__subagents = (runs) => hub.feeds.forEach((port) => {
+  port.subagents = async () => runs.map((r) => r.run);
+  port.subagentTranscript = async (ref) => {
+    const found = runs.find((r) => r.run.ref === ref)!;
+    return { run: found.run, messages: found.messages, after: 0, next: found.messages.length, total: found.messages.length, live: false };
+  };
+});
+window.__complete = (answer) => hub.feeds.forEach((port) => { port.complete = async () => answer; });
 window.__refuse = (method, message) => {
   (hub as unknown as Record<string, unknown>)[method] = () => Promise.reject(new Error(message));
 };

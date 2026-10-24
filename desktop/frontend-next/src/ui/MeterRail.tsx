@@ -1,10 +1,11 @@
 import { useCallback, useId, useRef, useState, type CSSProperties } from "react";
 import { t } from "../i18n";
+import { money } from "../i18n/format";
 import type { ContextBreakdown, JobEntry, JobOutput, McpEntry, SessionUsage } from "../port/port";
 import type { CostQuote } from "../port/wire";
 import { cacheRate as rateOf } from "../state/overview";
 import { SessionOverviewCard } from "./SessionOverviewCard";
-import type { Metrics } from "../state/session_types";
+import type { CurrencyAmount, Metrics } from "../state/session_types";
 import { DeckChips, type Deck } from "./DeckChips";
 import { ContextSummaryCard } from "./ContextSummaryCard";
 import type { CompactAction } from "./CompactNow";
@@ -19,7 +20,7 @@ import { MASK, type Wallet } from "./wallet";
 import type { SpeedSummary } from "./speed";
 
 /** The numbers about this turn, in one row under the composer. */
-export function MeterRail({ tps, trail, running, speed, metrics, ctx, mcp, compact, cost, wallet, hideAmounts, tasks, jobs, onSettings, onCancelJob, onReadJob, usage, quote, tariff, onTariffFlip }: {
+export function MeterRail({ tps, trail, running, speed, metrics, ctx, mcp, compact, cost, turnCost = [], wallet, hideAmounts, tasks, jobs, onSettings, onCancelJob, onReadJob, onOpenRun, usage, quote, tariff, onTariffFlip }: {
   tps: number;
   trail: number[];
   running: boolean;
@@ -28,7 +29,10 @@ export function MeterRail({ tps, trail, running, speed, metrics, ctx, mcp, compa
   ctx: ContextBreakdown | null;
   mcp: McpEntry[];
   compact: CompactAction;
-  cost: string;
+  // One entry per currency: two currencies are two amounts, never one sum.
+  cost: CurrencyAmount[];
+  // What the turn in front of you spent, restarted at each turn; the session total is cost.
+  turnCost?: CurrencyAmount[];
   wallet: Wallet;
   hideAmounts: boolean;
   tasks: Task[];
@@ -36,6 +40,7 @@ export function MeterRail({ tps, trail, running, speed, metrics, ctx, mcp, compa
   onSettings: (section?: string) => void;
   onCancelJob: (id: string) => Promise<void>;
   onReadJob?: (id: string) => Promise<JobOutput>;
+  onOpenRun?: (call: string) => Promise<boolean>;
   usage?: SessionUsage;
   quote?: CostQuote;
   tariff?: Tariff;
@@ -54,7 +59,7 @@ export function MeterRail({ tps, trail, running, speed, metrics, ctx, mcp, compa
   // The same rate the overview states: from the ledger when the kernel sends it,
   // so the meter and the card cannot disagree about one number.
   const ratio = usage && usage.requests > 0 ? rateOf(usage.cacheHit, usage.cacheMiss, usage.cacheUnknown ?? 0) : rateOf(metrics.hit, metrics.miss);
-  const cacheRate = ratio === null ? null : Math.round(ratio * 100);
+  const cacheRate = ratio === null ? null : Math.floor(ratio * 100);
   const contextPercent = ctx && ctx.window > 0 ? Math.min(100, Math.round((ctx.used / ctx.window) * 100)) : 0;
   return (
     <div className="studio-meterrail" ref={meterRef} aria-label={t("运行统计")}>
@@ -103,10 +108,11 @@ export function MeterRail({ tps, trail, running, speed, metrics, ctx, mcp, compa
         </div>
       )}
       {tariff && <TariffChip tariff={tariff} onFlip={onTariffFlip ?? (() => {})} />}
-      {cost && <span className="studio-meter-cost"><span>{t("本轮")}</span><b>{hideAmounts ? MASK : cost}</b></span>}
+      {cost.length > 0 && <span className="studio-meter-cost"><span>{t("本会话")}</span>{hideAmounts ? <b>{MASK}</b> : cost.map((m) => <b key={m.currency}>{money(m.amount, m.currency)}</b>)}</span>}
+      {cost.length > 0 && turnCost.some((m) => m.amount > 0) && <span className="studio-meter-cost"><span>{t("本轮")}</span>{hideAmounts ? <b>{MASK}</b> : turnCost.map((m) => <b key={m.currency}>{money(m.amount, m.currency)}</b>)}</span>}
       <button className="studio-meter-mask" type="button" data-action="metrics.hide-amounts" aria-pressed={hideAmounts} aria-label={hideAmounts ? t("显示金额") : t("隐藏金额")} title={hideAmounts ? t("显示金额") : t("隐藏金额")} onClick={() => setHidesAmounts(!hideAmounts)}><StudioIcon name={hideAmounts ? "eyeoff" : "eye"} /></button>
       {wallet.kind === "read" && <button className="studio-meter-wallet" data-short={wallet.reading.available ? undefined : "true"} title={wallet.reading.available ? undefined : t("余额不足")} data-action="settings.section" data-value="usage" aria-label={wallet.reading.available ? t("查看钱包余额") : `${t("查看钱包余额")}, ${t("余额不足")}`} onClick={() => onSettings("usage")}><StudioIcon name="wallet" /><b>{hideAmounts ? MASK : wallet.reading.display}</b></button>}
-      <DeckChips tasks={tasks} jobs={jobs} open={deck} onOpen={setDeck} onCancelJob={onCancelJob} onReadJob={onReadJob} />
+      <DeckChips tasks={tasks} jobs={jobs} open={deck} onOpen={setDeck} onCancelJob={onCancelJob} onReadJob={onReadJob} onOpenRun={onOpenRun} />
     </div>
   );
 }

@@ -23,6 +23,9 @@ type UpdateHost interface {
 	// once the move is under way. Which build runs and where it lives is passed
 	// in, so the hub's declared Install stays the one answer.
 	StartInstall(install update.Install, target string) error
+	// CancelInstall stops the download running for target and discards what it
+	// left in the cache. It returns once that download has stopped.
+	CancelInstall(target string) error
 	// CommitInstall installs the release StartInstall left ready and restarts
 	// into it. It is a separate act because it ends every session running here.
 	CommitInstall(target string) error
@@ -36,6 +39,9 @@ const (
 	// move already running, or fix what was asked for.
 	codeInstallRunning  = "update.install_running"
 	codeInstallRejected = "update.install_rejected"
+	// Nothing was downloading the version the request named, so there is
+	// nothing to stop; said apart from a malformed request.
+	codeNothingToCancel = "update.nothing_to_cancel"
 	// The restart is refused while work runs here unless the person saw that
 	// and asked anyway, and refused when there is nothing verified to restart into.
 	codeRestartBusy    = "update.restart_busy"
@@ -48,6 +54,7 @@ func (h *Hub) registerUpdateRoutes(mux *http.ServeMux) {
 	}
 	mux.HandleFunc("POST /update/health", h.acknowledgeLaunchHealth)
 	mux.HandleFunc("POST /update/install", h.startInstall)
+	mux.HandleFunc("POST /update/cancel", h.cancelInstall)
 	mux.HandleFunc("GET /update/install", h.readInstallProgress)
 	mux.HandleFunc("POST /update/restart", h.commitInstall)
 }
@@ -95,6 +102,27 @@ func (h *Hub) startInstall(w http.ResponseWriter, r *http.Request) {
 
 func (h *Hub) readInstallProgress(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, h.opts.Update.InstallProgress())
+}
+
+// cancelInstall stops a download the person no longer wants. It answers once
+// the kernel has stopped it and discarded its partial bytes, so a new install
+// pressed afterwards cannot race the one being abandoned.
+func (h *Hub) cancelInstall(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Version string `json:"version"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		refuse(w, http.StatusBadRequest, codeInstallRejected, err.Error(), nil)
+		return
+	}
+	switch err := h.opts.Update.CancelInstall(req.Version); {
+	case errors.Is(err, appupdate.ErrNothingToCancel):
+		refuse(w, http.StatusConflict, codeNothingToCancel, err.Error(), nil)
+	case err != nil:
+		refuse(w, http.StatusBadRequest, codeInstallRejected, err.Error(), nil)
+	default:
+		w.WriteHeader(http.StatusNoContent)
+	}
 }
 
 // commitInstall is the restart the person allowed. Work running in a local pane

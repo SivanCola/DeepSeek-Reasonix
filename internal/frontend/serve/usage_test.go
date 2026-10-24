@@ -42,6 +42,12 @@ func TestUsageAcceptsAnInclusiveDateRange(t *testing.T) {
 	if got.From != day.Format("2006-01-02") || got.To != day.Format("2006-01-02") || got.Tokens != 100 {
 		t.Fatalf("range = %s..%s tokens=%d, want that exact historical day", got.From, got.To, got.Tokens)
 	}
+	if len(got.Hourly) != 24 {
+		t.Fatalf("hourly buckets = %d, want 24", len(got.Hourly))
+	}
+	if bucket := got.Hourly[day.Hour()]; bucket.Total != 100 {
+		t.Fatalf("hour %s = %+v, want the record's 100 tokens", bucket.Hour, bucket)
+	}
 }
 
 func TestUsageRejectsInvalidExplicitRanges(t *testing.T) {

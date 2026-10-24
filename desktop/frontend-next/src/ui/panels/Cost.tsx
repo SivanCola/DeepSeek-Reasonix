@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
 import { t } from "../../i18n";
 import { Spark } from "../Spark";
-import { money, tokens } from "../../i18n/format";
-import type { Metrics } from "../../state/session";
+import { money, moneyList, tokens } from "../../i18n/format";
+import type { CurrencyAmount, Metrics } from "../../state/session";
+import { DEFAULT_CURRENCY } from "../../state/usage";
 import type { WalletLine, WalletReading } from "../../port/port";
 import { MASK, since, useHidesAmounts, type Wallet } from "../wallet";
 import { Grp, Row } from "./kit";
@@ -33,23 +34,34 @@ interface Props {
   onRefreshWallet: () => void;
 }
 
+// A session that has not been billed yet still draws its zero, as it always
+// has. The default labels that zero and nothing else: a billed round always
+// brings the code it was charged in.
+const NOTHING: CurrencyAmount[] = [{ currency: DEFAULT_CURRENCY, amount: 0 }];
+
 export function Cost({ metrics, wallet, account, onRefreshWallet }: Props) {
   const hidden = useHidesAmounts();
   const shown = (amount: number, currency: string) => (hidden ? MASK : money(amount, currency));
-  const sources = Object.entries(metrics.bySource).filter(([, v]) => v > 0);
+  // One amount per currency, never a sum of two: the usage page prints its
+  // report the same way.
+  const amounts = (list: CurrencyAmount[]) => (hidden ? MASK : moneyList(list));
+  const totals = metrics.cost.length ? metrics.cost : NOTHING;
+  const sources = Object.entries(metrics.bySource).filter(([, list]) => list.some((m) => m.amount > 0));
   const peak = metrics.rounds.length ? Math.max(...metrics.rounds) : 0;
   const avg = metrics.rounds.length ? Math.round(metrics.rounds.reduce((a, b) => a + b, 0) / metrics.rounds.length) : 0;
   return (
     <Grp id="cost" name={t("成本")} aside={t("本会话")}>
       <div className="mtop">
-        <span className="amt">{shown(metrics.cost, metrics.currency)}</span>
+        {hidden
+          ? <span className="amt">{MASK}</span>
+          : totals.map((m) => <span className="amt" key={m.currency}>{money(m.amount, m.currency)}</span>)}
         {/* 一个按公布价计出来的数和一个拿兑底表估的数是两种断言。 */}
         {sources.length > 0 && (
           <span className="pill" data-tone={metrics.estimated ? "warn" : "ok"}>
             {metrics.estimated ? t("按兜底价估算") : t("已结算")}
           </span>
         )}
-        {metrics.turn > 0 && <span className="delta">{t("本回合")}+{shown(metrics.turn, metrics.currency)}</span>}
+        {metrics.turn.some((m) => m.amount > 0) && <span className="delta">{t("本回合")}+{amounts(metrics.turn)}</span>}
         {sources.length === 0 && (
           <span className="msub">{t(REASON[metrics.incompleteReason] ?? "价目未上报")}</span>
         )}
@@ -61,7 +73,7 @@ export function Cost({ metrics, wallet, account, onRefreshWallet }: Props) {
         </div>
       )}
       {metrics.alt && <p className="mnote">{t("两种结算币种不予合并 —— 合成单一总额需要虚构一个汇率。")}</p>}
-      {sources.map(([k, v]) => <Row key={k} k={t(SRC[k] ?? k)} v={shown(v, metrics.currency)} />)}
+      {sources.map(([k, list]) => <Row key={k} k={t(SRC[k] ?? k)} v={amounts(list)} />)}
       <WalletRows wallet={wallet} account={account} onRefresh={onRefreshWallet} />
       {metrics.rounds.length > 1 && (
         <div className="sparkbox">

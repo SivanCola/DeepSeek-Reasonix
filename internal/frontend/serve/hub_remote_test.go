@@ -834,3 +834,33 @@ func TestRemotePaneCarriesTheResumePointToTheFarKernel(t *testing.T) {
 		})
 	}
 }
+
+// A window opened straight at the port reaches the first pane. When that pane
+// is driven by another machine there is no local server to route into, and the
+// request has to travel the same way the pane's own prefixed routes do.
+func TestUnprefixedRequestReachesARemotePane(t *testing.T) {
+	t.Setenv("REASONIX_HOME", testenv.TempDir(t))
+	rk := fakeRemoteKernel(t)
+	h := NewHub(HubOptions{})
+	remotePane(t, h, rk.Listener.Addr().String())
+	front := httptest.NewServer(operatorHandler(h))
+	defer front.Close()
+
+	resp, err := http.Get(front.URL + "/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unprefixed /status on a remote-only hub = %d, want 200", resp.StatusCode)
+	}
+	var body struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Path != "/status" {
+		t.Fatalf("the far kernel was asked for %q, want /status", body.Path)
+	}
+}

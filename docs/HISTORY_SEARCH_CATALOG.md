@@ -13,12 +13,34 @@ from the authoritative source only after SQLite has selected the final
 candidates. User, assistant, tool input, tool error, and tool output parts are
 indexed; ordinary tool output remains excluded by the default search kinds.
 
-Successful session persistence sends a non-blocking, path-coalesced hint after
-the authoritative commit and after file locks have been released. Continuous
-appends read only the new display-index range. Rewrites, missed notifications,
-external writers, or fingerprint mismatches rebuild that source in the
-background. Only one full transcript decoder runs at once, checkpoints are
-persisted per source, and one corrupt source cannot stop other histories.
+Successful persistence sends a non-blocking, path-coalesced hint after commit
+and after file locks have been released. Continuous appends read only the new
+display-index range.
+
+Rewrites, missed notifications, external writers, or fingerprint mismatches
+rebuild that source in the background. The catalog worker replays one source
+at a time; foreground loads can run concurrently.
+
+Checkpoints are persisted per source. Returned replay failures are isolated
+so other histories remain searchable.
+
+Legacy 1.x DAG replay retains message locations rather than all historical
+bodies, then loads the effective selected transcript. Rewinds, patches,
+redactions, and fork-specific system messages keep their original semantics.
+Message preflight scans JSON without allocating decoded copies of large strings.
+
+The encoded-log limit remains 512 MiB. Additional safety budgets are:
+
+- One encoded record: 64 MiB.
+- Aggregate retained message payloads: 64 MiB.
+- Legacy DAG metadata: 64 MiB.
+
+Payload accounting uses encoded JSON bytes, not a process-memory quota.
+Decoder overhead and concurrent foreground work consume additional memory.
+
+Exceeding a budget returns `SessionReplayLimitError`, leaves source files
+unchanged, and never falls back to an older checkpoint. The catalog records
+that source as failed while healthy sources remain indexable.
 
 The Agent `history` tool and Desktop history manager share the projection.
 Search never starts a synchronous directory scan. While indexing is incomplete,

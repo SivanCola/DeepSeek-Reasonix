@@ -160,4 +160,29 @@ describe("the download update mode", () => {
     expect(readUpdateReady()).toBe("");
     stop();
   });
+
+  it("stops watching a download the person cancelled and does not start it again", async () => {
+    const k = kernel("download");
+    const stop = startUpdateWatch(k.p);
+    await vi.advanceTimersByTimeAsync(2 * MINUTE);
+    expect(k.p.goToVersion).toHaveBeenCalledTimes(1);
+    k.say(progress("cancelled"));
+    expect(k.listening()).toBe(0);
+    await vi.advanceTimersByTimeAsync(2 * DAY);
+    expect(k.p.goToVersion).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  it("still downloads a newer release after an older one was cancelled", async () => {
+    let latest = "2.21.0";
+    const k = kernel("download", { read: () => Promise.resolve(hub({ latest })) });
+    const stop = startUpdateWatch(k.p);
+    await vi.advanceTimersByTimeAsync(2 * MINUTE);
+    k.say(progress("cancelled", "2.21.0"));
+    latest = "2.22.0";
+    await stop.refresh();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(k.p.goToVersion).toHaveBeenLastCalledWith("2.22.0");
+    stop();
+  });
 });

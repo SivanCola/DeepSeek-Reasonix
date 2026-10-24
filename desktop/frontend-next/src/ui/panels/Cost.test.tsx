@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Cost } from "./Cost";
 import { initialState } from "../../state/session";
+import { foldUsage } from "../../state/usage";
+import type { Usage } from "../../port/wire";
 import type { WalletReading } from "../../port/port";
 import { ABSENT, type Wallet } from "../wallet";
 
@@ -72,5 +74,32 @@ describe("the wallet in the cost card", () => {
     // The value column carries the mark for a number that is missing, never a
     // zero — "cannot be read" and "is empty" are opposite things.
     expect(html).toContain('<span class="v">—</span>');
+  });
+});
+
+// The session total is one amount per currency, the same split the usage page
+// prints. A mixed session must draw two figures, not one sum under one symbol.
+describe("a session billed in two currencies", () => {
+  const round = (amount: string, currency: string): Usage => ({
+    promptTokens: 100,
+    completionTokens: 20,
+    totalTokens: 120,
+    cacheHitTokens: 0,
+    cacheMissTokens: 0,
+    sessionCacheHitTokens: 0,
+    sessionCacheMissTokens: 0,
+    currencyCode: currency,
+    costQuote: { original: { amount, currency }, estimated: false, costComplete: true, coverage: "complete" },
+  });
+
+  it("draws one amount per currency instead of their sum", () => {
+    const metrics = [round("1.00", "CNY"), round("2.00", "USD")].reduce(foldUsage, initialState.metrics);
+    const html = renderToStaticMarkup(
+      <Cost metrics={metrics} wallet={ABSENT} account="deepseek" onRefreshWallet={() => {}} />,
+    );
+    expect(html.match(/class="amt"/g)).toHaveLength(2);
+    expect(html).toContain("¥1.00");
+    expect(html).toContain("US$2.00");
+    expect(html).not.toContain("¥3.00");
   });
 });

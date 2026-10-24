@@ -23,6 +23,7 @@ const portFor = (hub: VersionHub) => ({
   versions: () => Promise.resolve(hub),
   pinVersion: () => Promise.resolve(),
   goToVersion: () => Promise.resolve(),
+  cancelVersion: () => Promise.resolve(),
   restartToVersion: () => Promise.resolve(),
   onUpdateProgress: (cb: (p: UpdateProgress) => void) => {
     cb({ version: "", phase: "idle", received: 0, total: 0 });

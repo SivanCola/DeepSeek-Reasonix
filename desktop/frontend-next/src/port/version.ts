@@ -44,10 +44,12 @@ export interface VersionHub {
 // verified release waiting for the user to allow the restart, applying the
 // moment after they did. authorizing is the Linux package prompt, and idle is
 // what a kernel that has installed nothing this launch answers rather than an
-// empty body. code says why an error happened, as a dotted code.
+// empty body. cancelled is a download the person stopped: not a failure, and
+// another move may start at once. code says why an error happened, as a dotted
+// code.
 export interface UpdateProgress {
   version: string;
-  phase: "idle" | "downloading" | "verifying" | "downloaded" | "ready" | "applying" | "authorizing" | "relaunching" | "error";
+  phase: "idle" | "downloading" | "verifying" | "downloaded" | "ready" | "applying" | "authorizing" | "relaunching" | "error" | "cancelled";
   received: number;
   total: number;
   err?: string;

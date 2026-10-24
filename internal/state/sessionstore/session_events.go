@@ -174,7 +174,8 @@ func sessionEventLogOversized(logSize, contentBytes int64, msgs []provider.Messa
 // transcript up to the last cleanly applied record, plus enough bookkeeping
 // for writers to self-heal a torn tail.
 type sessionEventReplay struct {
-	msgs []provider.Message
+	msgs         []provider.Message
+	payloadBytes int64
 	// collectionItems counts the elements in every JSON array nested below a
 	// live message. Keeping this alongside msgs bounds slices such as tool calls,
 	// images, memory citations, and interrupted-turn recovery metadata without
@@ -236,25 +237,27 @@ func replaySessionEventRecords(path string, limits sessionReplayLimits) (session
 	if info.Size() > limits.maxBytes {
 		return replay, sessionReplayLimitError(path, "encoded_bytes", info.Size(), limits.maxBytes)
 	}
-	// Stat and read are not atomic across processes. LimitReader keeps a log
-	// that grows after Stat inside the same byte budget.
-	limited := &io.LimitedReader{R: limits.reader(f), N: limits.maxBytes + 1}
-	dec := json.NewDecoder(limited)
+	reader := newSessionRecordReader(limits.reader(f), path, limits.maxBytes)
 	for {
 		if err := limits.err(); err != nil {
 			return replay, err
 		}
-		var rec sessionEventWireRecord
-		if err := dec.Decode(&rec); err != nil {
+		raw, _, err := reader.next()
+		if err != nil {
 			if err := limits.err(); err != nil {
 				return replay, err
 			}
-			if limited.N == 0 {
-				return replay, sessionReplayLimitError(path, "encoded_bytes", limits.maxBytes+1, limits.maxBytes)
+			if errors.Is(err, ErrSessionReplayLimitExceeded) {
+				return replay, err
 			}
 			if errors.Is(err, io.EOF) {
 				return replay, nil
 			}
+			replay.damaged = true
+			return replay, nil
+		}
+		var rec sessionEventWireRecord
+		if err := json.Unmarshal(raw, &rec); err != nil {
 			replay.damaged = true
 			return replay, nil
 		}
@@ -266,6 +269,9 @@ func replaySessionEventRecords(path string, limits sessionReplayLimits) (session
 		}
 		switch rec.Type {
 		case sessionEventTypeReplace:
+			if err := checkSessionPayloadBytes(path, int64(len(rec.Messages))); err != nil {
+				return replay, err
+			}
 			msgs, collectionItems, err := decodeSessionEventMessages(path, rec.Messages, 0, 0, limits)
 			if err == nil {
 				collectionItems, err = resolveSessionEventImages(path, msgs, rec.ImageBlobs, collectionItems, limits)
@@ -278,12 +284,16 @@ func replaySessionEventRecords(path string, limits sessionReplayLimits) (session
 				return replay, nil
 			}
 			replay.msgs = msgs
+			replay.payloadBytes = int64(len(rec.Messages))
 			replay.collectionItems = collectionItems
 			replay.times = make([]time.Time, len(replay.msgs))
 		case sessionEventTypeAppend:
 			if rec.MessageIndex != len(replay.msgs) {
 				replay.damaged = true
 				return replay, nil
+			}
+			if err := checkSessionPayloadBytes(path, replay.payloadBytes+int64(len(rec.Messages))); err != nil {
+				return replay, err
 			}
 			msgs, collectionItems, err := decodeSessionEventMessages(
 				path, rec.Messages, len(replay.msgs), replay.collectionItems, limits,
@@ -299,6 +309,7 @@ func replaySessionEventRecords(path string, limits sessionReplayLimits) (session
 				return replay, nil
 			}
 			replay.msgs = append(replay.msgs, msgs...)
+			replay.payloadBytes += int64(len(rec.Messages))
 			replay.collectionItems = collectionItems
 			for range msgs {
 				replay.times = append(replay.times, rec.CreatedAt)
@@ -307,13 +318,13 @@ func replaySessionEventRecords(path string, limits sessionReplayLimits) (session
 			return replay, fmt.Errorf("decode session event log %s: unsupported event type %q", path, rec.Type)
 		}
 		replay.records++
-		replay.lastGoodEnd = dec.InputOffset()
+		replay.lastGoodEnd = reader.offset
 	}
 }
 
 // decodeSessionEventMessages preflights both the top-level message count and
 // every nested JSON collection before constructing provider.Message values.
-// The token walk is independent of today's provider.Message fields, so future
+// The byte walk is independent of today's provider.Message fields, so future
 // slice fields inherit the same aggregate object-graph bound automatically.
 func decodeSessionEventMessages(
 	path string,
@@ -371,100 +382,6 @@ func resolveSessionEventImages(
 		)
 	}
 	return collectionItems, resolveSessionImages(path, msgs, refs)
-}
-
-func preflightSessionEventMessages(
-	path string,
-	raw []byte,
-	existingMessages, existingCollectionItems int,
-	limits sessionReplayLimits,
-) (messageCount, collectionItems int, err error) {
-	dec := json.NewDecoder(limits.reader(bytes.NewReader(raw)))
-	tok, err := dec.Token()
-	if err != nil {
-		return 0, existingCollectionItems, err
-	}
-	if delim, ok := tok.(json.Delim); !ok || delim != '[' {
-		return 0, existingCollectionItems, fmt.Errorf("messages must be an array")
-	}
-	collectionItems = existingCollectionItems
-	for dec.More() {
-		if existingMessages+messageCount >= limits.maxMessages {
-			return 0, existingCollectionItems, sessionReplayLimitError(
-				path, "messages", int64(existingMessages+messageCount+1), int64(limits.maxMessages),
-			)
-		}
-		messageCount++
-		if err := preflightSessionEventValue(path, dec, &collectionItems, limits.maxCollectionItems); err != nil {
-			return 0, existingCollectionItems, err
-		}
-	}
-	if _, err := dec.Token(); err != nil {
-		return 0, existingCollectionItems, err
-	}
-	return messageCount, collectionItems, nil
-}
-
-// preflightSessionEventValue walks one JSON value without materializing maps or
-// slices. Each array element is charged before its value is read, so an invalid
-// over-limit element cannot allocate a typed provider collection first.
-func preflightSessionEventValue(path string, dec *json.Decoder, collectionItems *int, maxCollectionItems int) error {
-	tok, err := dec.Token()
-	if err != nil {
-		return err
-	}
-	delim, ok := tok.(json.Delim)
-	if !ok {
-		return nil
-	}
-	switch delim {
-	case '{':
-		for dec.More() {
-			key, err := dec.Token()
-			if err != nil {
-				return err
-			}
-			if _, ok := key.(string); !ok {
-				return fmt.Errorf("object key must be a string")
-			}
-			if err := preflightSessionEventValue(path, dec, collectionItems, maxCollectionItems); err != nil {
-				return err
-			}
-		}
-		end, err := dec.Token()
-		if err != nil {
-			return err
-		}
-		if end != json.Delim('}') {
-			return fmt.Errorf("object is not terminated")
-		}
-		return nil
-	case '[':
-		for dec.More() {
-			if *collectionItems >= maxCollectionItems {
-				return sessionReplayLimitError(
-					path,
-					"message_collection_items",
-					int64(*collectionItems+1),
-					int64(maxCollectionItems),
-				)
-			}
-			(*collectionItems)++
-			if err := preflightSessionEventValue(path, dec, collectionItems, maxCollectionItems); err != nil {
-				return err
-			}
-		}
-		end, err := dec.Token()
-		if err != nil {
-			return err
-		}
-		if end != json.Delim(']') {
-			return fmt.Errorf("array is not terminated")
-		}
-		return nil
-	default:
-		return fmt.Errorf("unexpected JSON delimiter %q", delim)
-	}
 }
 
 // loadSessionMessages returns the session transcript, preferring the event log

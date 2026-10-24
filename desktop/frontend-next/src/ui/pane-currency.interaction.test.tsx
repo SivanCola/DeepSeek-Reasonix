@@ -6,7 +6,7 @@ import { Pane } from "./Pane";
 import { MockPort } from "../port/mock";
 import type { AgentPort } from "../port/port";
 import type { RuntimeView } from "../port/hub";
-import type { CostQuote, WireEvent } from "../port/wire";
+import type { CostQuote, Usage, WireEvent } from "../port/wire";
 
 afterEach(cleanup);
 
@@ -56,5 +56,46 @@ describe("the session cost chip when the display currency changes", () => {
     );
     await waitFor(() => expect(container.querySelector(".studio-meterrail")).not.toBeNull());
     expect(container.querySelector(".studio-meter-cost")).toBeNull();
+  });
+});
+
+// Money is a number and a unit. A session can run on a CNY key and hand a
+// round to a USD model, and the chip must not print their sum under whichever
+// code came last.
+describe("the session cost chip when the session billed in two currencies", () => {
+  const usage = (amount: string, currency: string): Usage => ({
+    promptTokens: 100,
+    completionTokens: 20,
+    totalTokens: 120,
+    cacheHitTokens: 0,
+    cacheMissTokens: 0,
+    sessionCacheHitTokens: 0,
+    sessionCacheMissTokens: 0,
+    currencyCode: currency,
+    costQuote: quote(amount, currency),
+  });
+
+  it("draws one figure per currency", async () => {
+    const port = new MockPort();
+    let emit: (ev: WireEvent) => void = () => {};
+    const subscribe = port.subscribe.bind(port);
+    vi.spyOn(port, "subscribe").mockImplementation((onEvent, onGap, bootstrap) => {
+      emit = onEvent;
+      return subscribe(onEvent, onGap, bootstrap);
+    });
+    const { container } = render(
+      <Pane port={port as AgentPort} rt={rt} title="w" active visible sideHost={null} side={false}
+        onFocus={() => {}} onReport={() => {}} onSessionChanged={() => {}} pulse={0} findPulse={0}
+        onSettings={() => {}} needsProject={false} onOpenProject={() => {}} onKeepHere={() => {}}
+        theme="dark" dockW={560} dockMax={880} onDockW={() => {}} />,
+    );
+    await waitFor(() => expect(container.querySelector(".studio-meterrail")).not.toBeNull());
+    act(() => {
+      emit({ kind: "usage", usage: usage("2.00", "USD") } as WireEvent);
+      emit({ kind: "usage", usage: usage("1.00", "CNY") } as WireEvent);
+    });
+    const figures = (chip: number) => [...(container.querySelectorAll<HTMLElement>(".studio-meter-cost")[chip]?.querySelectorAll("b") ?? [])].map((b) => b.textContent);
+    await waitFor(() => expect(figures(0)).toEqual(["US$2.00", "¥1.00"]));
+    expect(figures(1)).toEqual(["US$2.00", "¥1.00"]);
   });
 });

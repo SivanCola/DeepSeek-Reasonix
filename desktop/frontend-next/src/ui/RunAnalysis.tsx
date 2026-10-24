@@ -4,6 +4,7 @@ import { decimals, seconds } from "../i18n/format";
 import type { TrajRow } from "../state/trajectory";
 import type { TrajectoryAvailability } from "../port/wire";
 import { categoryOf } from "./icons";
+import { StudioIcon } from "./StudioIcon";
 import { serialiseTrajectory, spanText, trajectoryFileName } from "./trajectory-export";
 
 const SIGNAL_GAP = 22;
@@ -53,10 +54,11 @@ function Inspect({ row, index }: { row: TrajRow; index: number }) {
 /** A readable first stop for a run. Raw trajectory remains available for
  *  diagnosis, but this page answers the questions people ask before reading a
  *  protocol log: where time went, what overlapped, and which round is unusual. */
-export function RunAnalysis({ rows, availability, onSave }: {
+export function RunAnalysis({ rows, availability, onSave, onBack }: {
   rows: TrajRow[];
   availability?: TrajectoryAvailability;
   onSave: (name: string, content: string) => Promise<string | null>;
+  onBack: () => void;
 }) {
   const activities = useMemo(
     () => rows.filter((r) => (r.dur ?? 0) > 0 || isRecovery(r)),
@@ -128,7 +130,7 @@ export function RunAnalysis({ rows, availability, onSave }: {
     return (
       <div className="run-empty">
         <strong>{t("还没有可分析的运行")}</strong>
-        <span>{t("发送任务后，这里会按真实轨迹显示模型、工具、重试与并行耗时。")}</span>
+        <span>{t("发送任务后，这里会按真实运行记录显示模型、工具、重试与并行耗时。")}</span>
       </div>
     );
   }
@@ -141,8 +143,11 @@ export function RunAnalysis({ rows, availability, onSave }: {
     <div className="run-analysis" ref={root}>
       <header className="run-analysis-head">
         <span>
+          <button className="run-export run-back" type="button" data-action="pane.view" data-value="flow" aria-label={t("返回正文")} title={t("返回正文")} onClick={onBack}>
+            <StudioIcon name="chevron" />
+          </button>
           <b>{t("运行分析")}</b>
-          <small>{t("本轮 · 基于真实轨迹")}</small>
+          <small>{t("本轮 · 基于真实记录")}</small>
         </span>
         <span className="run-analysis-actions">
           {saved && <small title={saved}>{t("已导出")}</small>}
@@ -154,7 +159,7 @@ export function RunAnalysis({ rows, availability, onSave }: {
               void onSave(name, serialiseTrajectory(rows, availability)).then((to) => setSaved(to ?? name));
             }}
           >
-            {t("导出轨迹")}
+            {t("导出运行记录")}
           </button>
         </span>
       </header>

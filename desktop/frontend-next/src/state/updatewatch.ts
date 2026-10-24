@@ -90,8 +90,10 @@ export function startUpdateWatch(port: UpdateWatchPort): UpdateWatch {
 
   // Follows the kernel's answer to "what is the move doing" until it ends. The
   // first answer decides whether a download is owed: nothing under way, or an
-  // earlier attempt that failed. Once started, an error ends the watch and the
-  // next daily check tries again.
+  // earlier attempt that failed. A download the person cancelled is not
+  // retried, but one cancelled for an older release does not block the one now
+  // offered. Once started, an error ends the watch and the next daily check
+  // tries again.
   const track = (version: string) => {
     if (tracking || !port.onUpdateProgress || !port.goToVersion) return;
     const goTo = port.goToVersion.bind(port);
@@ -101,18 +103,25 @@ export function startUpdateWatch(port: UpdateWatchPort): UpdateWatch {
       off?.();
       if (tracking === done) tracking = null;
     };
+    const start = () => {
+      started = true;
+      goTo(version).catch(() => {
+        done();
+        backoff();
+      });
+    };
     tracking = done;
     off = port.onUpdateProgress((p) => {
       if (stopped || tracking !== done) return;
       if (p.phase === "ready") {
         publishReady(p.version);
         done();
+      } else if (p.phase === "cancelled") {
+        if (p.version === version) done();
+        else if (!started) start();
+        else done();
       } else if ((p.phase === "idle" || p.phase === "error") && !started) {
-        started = true;
-        goTo(version).catch(() => {
-          done();
-          backoff();
-        });
+        start();
       } else if (p.phase === "error") {
         done();
       } else if (p.phase !== "idle" && p.version !== version) {

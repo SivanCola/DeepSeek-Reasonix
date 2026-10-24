@@ -1,0 +1,6 @@
+{"workspace_commit": "c9b435284b3bea9833c1653680ff4a406e421d27", "binary": "built from the same commit (kernel unchanged; only tools/loopmetrics added), darwin/arm64",
+ "model": "deepseek-flash/deepseek-flash (provider kind openai, api.deepseek.com, thinking enabled)", "reasoning_effort": "default: --effort not set, config thinking=enabled",
+ "permission": "read-only for chain/compact/interrupt; auto in a fresh temp module for unverifiable", "max_steps": 12,
+ "arms": {"A": "default composition", "M": "--agent-composition builtin:minimal", "E": "--ablate evidence"},
+ "conditions": {"chain": "8 scripted turns, one `run -c` per turn (cold resume each turn), compact_ratio default 80%", "compact": "same with compact_ratio 3% (project reasonix.toml, removed after)", "interrupt": "SIGINT after 7s then `-c Continue.`", "unverifiable": "temp module with contradictory tests, write allowed, 12 steps"},
+ "not_covered": ["other agent (dsh)", "non-DeepSeek openai provider", "single-process long session (serve)", "host_verification=off (needs a user-file edit)"]}

@@ -7,7 +7,6 @@ export const EN_WINDOW: Record<string, string> = {
   "项目列表的更多操作": "More project list actions",
   "项目与会话": "Projects and conversations",
   "选择本机文件夹": "Choose a local folder",
-  "连接与机器": "Connections and machines",
   "打开第一个项目": "Open your first project",
   "展开所有项目": "Expand all projects",
   "收起所有项目": "Collapse all projects",

@@ -194,7 +194,17 @@ func answers(ctx context.Context, network, server string) bool {
 	}
 	reply := make([]byte, 512)
 	n, err := conn.Read(reply)
-	if err != nil || n < headerLen {
+	if err != nil {
+		return false
+	}
+	// The reply is framed the way the query went out, so the header starts
+	// after the length prefix rather than at zero.
+	if strings.HasPrefix(network, "tcp") {
+		if n < 2+headerLen {
+			return false
+		}
+		reply = reply[2:]
+	} else if n < headerLen {
 		return false
 	}
 	// The transaction id, so a late answer to an earlier query is not taken for

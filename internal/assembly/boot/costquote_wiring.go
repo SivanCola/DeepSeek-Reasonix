@@ -15,7 +15,22 @@ import (
 //
 //	Coalesce → GoalUsageTee → Sync → CostQuote → [Recorder] → [OTLP] → frontend
 func quotedSink(cfg *config.Config, opts Options, trace *otlp.Exporter) (event.Sink, *event.QuoteContext) {
-	ctx := &event.QuoteContext{
+	ctx := QuoteContextFor(cfg)
+	// Innermost is the frontend sink; the recorder sits after quoting so history
+	// JSONL stores the CostQuote.
+	quoted := otlp.NewSink(opts.Sink, trace, "reasonix")
+	if opts.StatsSource.Valid() {
+		quoted = stats.NewRecorder(quoted, opts.roots().StatsDir(), opts.StatsSource.String())
+	}
+	return event.Sync(event.NewCostQuoteSink(quoted, ctx)), ctx
+}
+
+// QuoteContextFor is the one construction of the live pricing projection a
+// config implies — the same billing mode and catalog-vendor resolution the
+// assembled sink uses. It is exported for host-side emitters that price a call
+// outside that sink and must not grow a second, drifting copy of these rules.
+func QuoteContextFor(cfg *config.Config) *event.QuoteContext {
+	return &event.QuoteContext{
 		DisplayRequest: pricing.DisplayRequest{
 			Currency: cfg.ExplicitDisplayCurrency(),
 			Source:   pricing.DisplaySourceExplicit,
@@ -32,11 +47,4 @@ func quotedSink(cfg *config.Config, opts Options, trace *otlp.Exporter) (event.S
 		// its own terms.
 		CatalogProviderForModel: cfg.OfficialCatalogProvider,
 	}
-	// Innermost is the frontend sink; the recorder sits after quoting so history
-	// JSONL stores the CostQuote.
-	quoted := otlp.NewSink(opts.Sink, trace, "reasonix")
-	if opts.StatsSource.Valid() {
-		quoted = stats.NewRecorder(quoted, opts.roots().StatsDir(), opts.StatsSource.String())
-	}
-	return event.Sync(event.NewCostQuoteSink(quoted, ctx)), ctx
 }

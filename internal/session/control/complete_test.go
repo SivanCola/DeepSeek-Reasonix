@@ -138,11 +138,77 @@ func TestCompleteSlashNames(t *testing.T) {
 	}
 }
 
+func TestCompleteSlashDescriptionSearch(t *testing.T) {
+	names := []SlashItem{
+		{Label: "/writer", Insert: "/writer ", Hint: "Draft release notes", Kind: "skill"},
+		{Label: "/proofreader", Insert: "/proofreader ", Hint: "校对并翻译文档", Kind: "skill"},
+	}
+	for _, tt := range []struct {
+		query string
+		want  string
+	}{
+		{"/RELEASE", "/writer "},
+		{"/翻译", "/proofreader "},
+		{"/rls", ""},
+		{"/unrelated", ""},
+	} {
+		t.Run(tt.query, func(t *testing.T) {
+			got := Complete(tt.query, len(tt.query), CompletionData{Names: names})
+			if items := strings.Join(inserts(got.Items), "|"); items != tt.want {
+				t.Fatalf("items = %q, want %q", items, tt.want)
+			}
+			if tt.want == "" {
+				return
+			}
+			if got.Kind != CompleteSlash || got.Query != tt.query || got.Typed != nil {
+				t.Fatalf("completion = %+v, want a slash search for %q", got, tt.query)
+			}
+			if accepted := tt.query[:got.From] + got.Items[0].Insert + tt.query[got.To:]; accepted != tt.want {
+				t.Fatalf("accepted = %q, want the skill command %q", accepted, tt.want)
+			}
+		})
+	}
+}
+
+func TestCompleteSlashRanksNamesAboveDescriptions(t *testing.T) {
+	names := []SlashItem{
+		{Label: "/outline", Insert: "/outline ", Hint: "Review architecture", Kind: "skill"},
+		{Label: "/security-review", Insert: "/security-review ", Hint: "Review security", Kind: "skill"},
+		{Label: "/review-tools", Insert: "/review-tools ", Hint: "Review tools", Kind: "skill"},
+		{Label: "/notes", Insert: "/notes ", Hint: "Save review notes", Kind: "skill"},
+		{Label: "/review-tests", Insert: "/review-tests ", Kind: "skill"},
+	}
+	got := Complete("/ReV", 4, CompletionData{Names: names})
+	want := "/review-tools |/review-tests |/security-review |/outline |/notes "
+	if items := strings.Join(inserts(got.Items), "|"); items != want {
+		t.Fatalf("items = %q, want %q", items, want)
+	}
+	if all := Complete("/", 1, CompletionData{Names: names}); strings.Join(inserts(all.Items), "|") != strings.Join(inserts(names), "|") {
+		t.Fatalf("empty search reordered the catalogue: %v", inserts(all.Items))
+	}
+}
+
+func TestCompleteSlashDescriptionDoesNotReplaceTypedCommand(t *testing.T) {
+	names := []SlashItem{
+		{Label: "/guide", Insert: "/guide ", Hint: "Explain the tree", Kind: "skill"},
+		{Label: "/tree", Insert: "/tree", Hint: "Show branches", Kind: "builtin"},
+	}
+	got := Complete("/tree", 5, CompletionData{Names: names})
+	if got.Typed == nil || got.Typed.Insert != "/tree" {
+		t.Fatalf("typed = %+v, want /tree", got.Typed)
+	}
+	if items := strings.Join(inserts(got.Items), "|"); items != "/guide " {
+		t.Fatalf("items = %q, want only the description alternative /guide", items)
+	}
+}
+
 // Past the command word the menu completes arguments, replacing only the token
 // under the caret so the command itself survives.
 func TestCompleteSlashArgument(t *testing.T) {
 	line := "/skills dis"
-	got := Complete(line, len(line), CompletionData{})
+	got := Complete(line, len(line), CompletionData{Names: []SlashItem{
+		{Label: "/writer", Insert: "/writer ", Hint: "Disable skills", Kind: "skill"},
+	}})
 	if got.Kind != CompleteSlashArg {
 		t.Fatalf("kind = %q, want %q", got.Kind, CompleteSlashArg)
 	}

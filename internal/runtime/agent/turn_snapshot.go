@@ -140,15 +140,32 @@ type workspaceObservation struct {
 	WithinTurn snapshotDelta         `json:"within_turn"`
 }
 
-func (a *Agent) observeWorkspace(seal *EvidenceSeal) workspaceObservation {
-	var obs workspaceObservation
+func (a *Agent) observeWorkspace(ctx context.Context, seal *EvidenceSeal) workspaceObservation {
 	if seal.Observer == nil || seal.Root == "" {
-		return obs
+		return workspaceObservation{}
 	}
-	waitCtx, cancel := context.WithTimeout(context.Background(), snapshotWait)
+	waitCtx, cancel := context.WithTimeout(ctx, snapshotWait)
 	defer cancel()
-	before, haveBefore := a.turn.snapshot.await(waitCtx, snapshotWait)
-	after := seal.Observer.Take(waitCtx, seal.Root)
+	result := make(chan workspaceObservation, 1)
+	before := a.turn.snapshot
+	// Filesystem calls may outlive cancellation. The worker captures no mutable
+	// turn state, so a late observation cannot alter a replacement turn.
+	go func() { result <- observeSnapshots(waitCtx, seal, before) }()
+	select {
+	case obs := <-result:
+		return obs
+	case <-waitCtx.Done():
+		return workspaceObservation{
+			Unobserved: snapshotDelta{Reason: observation.IncompleteCancelled},
+			WithinTurn: snapshotDelta{Reason: observation.IncompleteCancelled},
+		}
+	}
+}
+
+func observeSnapshots(ctx context.Context, seal *EvidenceSeal, start *turnSnapshot) workspaceObservation {
+	var obs workspaceObservation
+	before, haveBefore := start.await(ctx, snapshotWait)
+	after := seal.take(ctx, seal.Root)
 	obs.After = &after
 	if !haveBefore {
 		obs.Unobserved = snapshotDelta{Reason: deltaMissingBefore}

@@ -25,6 +25,7 @@ type Port = {
   versions(refresh?: boolean): Promise<VersionHub>;
   pinVersion(v: string): Promise<void>;
   goToVersion(v: string): Promise<void>;
+  cancelVersion(v: string): Promise<void>;
   restartToVersion(v: string, force: boolean): Promise<void>;
   onUpdateProgress(cb: (p: UpdateProgress) => void): () => void;
   versionNotes?(version: string, retry?: boolean): Promise<VersionNotes>;
@@ -75,6 +76,8 @@ function say(p: UpdateProgress): string {
       return t("已下载，待重启");
     case "error":
       return t("安装失败");
+    case "cancelled":
+      return t("已取消下载");
   }
 }
 
@@ -85,6 +88,7 @@ export function Versions({ port }: { port: Port }) {
   const [hub, setHub] = useState<VersionHub | null>(null);
   const [busy, setBusy] = useState(false);
   const [starting, setStarting] = useState("");
+  const [cancelling, setCancelling] = useState("");
   const [failed, setFailed] = useState("");
   const [unread, setUnread] = useState("");
   const [uninstalled, setUninstalled] = useState(false);
@@ -122,6 +126,13 @@ export function Versions({ port }: { port: Port }) {
   // published since the last read starts downloading without a click.
   useEffect(() => { void refreshUpdateWatch(); }, []);
   useEffect(() => port.onUpdateProgress(setProgress), [port]);
+  // The kernel's next frame ends the local "取消中…" state, whatever the
+  // cancellation turned out to be.
+  useEffect(() => {
+    if (cancelling && progress?.version === cancelling && progress.phase !== "downloading" && progress.phase !== "verifying") {
+      setCancelling("");
+    }
+  }, [cancelling, progress]);
 
   // Starting ends once the kernel's own answer names the move; from then on
   // the row follows that answer rather than a local guess.
@@ -154,6 +165,21 @@ export function Versions({ port }: { port: Port }) {
     } catch (e) {
       setProgress({ version: v, phase: "error", received: 0, total: 0, err: reason(e) });
       setStarting("");
+    }
+  };
+
+  // The kernel stops the transfer and discards what it wrote. The row keeps
+  // saying "取消中…" until its progress leaves the download, so a second click
+  // cannot race the first.
+  const cancel = async (v: string) => {
+    if (cancelling) return;
+    setCancelling(v);
+    setFailed("");
+    try {
+      await port.cancelVersion(v);
+    } catch (e) {
+      setCancelling("");
+      setFailed(reason(e));
     }
   };
 
@@ -353,13 +379,24 @@ export function Versions({ port }: { port: Port }) {
             <span className="sc">{v.publishedAt ? when(v.publishedAt) : v.current ? t("未发布") : ""}</span>
             {moving === v.version && progress ? (
               <>
-                <span
-                  className="sa"
-                  data-keep=""
-                  title={progress.delta_skipped ? deltaSkippedCopy(progress.delta_skipped) : undefined}
-                  aria-describedby={progress.delta_skipped ? `delta-skipped-${v.version}` : undefined}
-                >
-                  {say(progress)}
+                <span className="sa" data-keep="">
+                  <span
+                    className="sa-txt"
+                    title={progress.delta_skipped ? deltaSkippedCopy(progress.delta_skipped) : undefined}
+                    aria-describedby={progress.delta_skipped ? `delta-skipped-${v.version}` : undefined}
+                  >
+                    {say(progress)}
+                  </span>
+                  {(progress.phase === "downloading" || progress.phase === "verifying") && (
+                    <button
+                      className="lnk"
+                      data-action="versions.cancel"
+                      onClick={() => void cancel(v.version)}
+                      disabled={cancelling !== ""}
+                    >
+                      {cancelling === v.version ? t("取消中…") : t("取消下载")}
+                    </button>
+                  )}
                 </span>
                 {progress.delta_skipped && (
                   <span id={`delta-skipped-${v.version}`} className="sr-only">

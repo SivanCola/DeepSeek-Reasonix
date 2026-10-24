@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -33,7 +34,12 @@ var (
 	ErrUnknownInstall  = errors.New("appupdate: cannot tell where this build is installed")
 	ErrInstallInFlight = errors.New("appupdate: an install is already running")
 	ErrNothingReady    = errors.New("appupdate: no verified release is waiting for a restart")
+	ErrNothingToCancel = errors.New("appupdate: no download is running for that version")
 )
+
+// errInstallCancelled is attached as the cause when the person stops a
+// download, so a cancellation is not reported as a failure.
+var errInstallCancelled = errors.New("appupdate: the download was cancelled")
 
 // installState is the one install this application may have in flight. It is a
 // sub-state rather than fields on the capability because its whole content has
@@ -43,6 +49,13 @@ type installState struct {
 	mu       sync.Mutex
 	progress update.Progress
 	ready    *readyMove // set only while progress is PhaseReady
+	// cancel stops the download running prepare, and done says it has stopped
+	// and cleaned up. Both are nil between moves.
+	cancel context.CancelCauseFunc
+	done   chan struct{}
+	// aborted makes the frames a cancelled download still emits, and a late
+	// result, unable to put it back on screen or ready to install.
+	aborted bool
 }
 
 // readyMove is a verified release and the one act that installs it. Everything
@@ -56,25 +69,73 @@ type readyMove struct {
 
 // begin claims the slot, or reports that something else holds it. Claiming and
 // checking are one act: two callers that checked first would both start.
-func (s *installState) begin(target string) bool {
+func (s *installState) begin(target string) (context.Context, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.progress.Running() {
-		return false
+	// done stays non-nil until prepare has cleaned up a cancelled move. Its
+	// finish would otherwise cancel this move's context and discard its bytes.
+	if s.progress.Running() || s.done != nil {
+		return nil, false
 	}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	s.cancel, s.done, s.aborted = cancel, make(chan struct{}), false
 	s.progress, s.ready = update.Progress{Version: target, Phase: update.PhaseDownloading}, nil
-	return true
+	return ctx, true
+}
+
+// abandon stops the download for target if that is the one running, and hands
+// back the two things the caller acts on outside the lock: the cancel that
+// stops it, and the channel closed once it has cleaned up.
+func (s *installState) abandon(target string) (context.CancelCauseFunc, chan struct{}, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cancel == nil || s.done == nil || s.aborted ||
+		!update.SameVersion(s.progress.Version, target) ||
+		(s.progress.Phase != update.PhaseDownloading && s.progress.Phase != update.PhaseVerifying) {
+		return nil, nil, false
+	}
+	s.aborted = true
+	s.progress, s.ready = update.Progress{Version: target, Phase: update.PhaseCancelled}, nil
+	return s.cancel, s.done, true
+}
+
+func (s *installState) abandoned() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.aborted
+}
+
+// finish releases the claim prepare held and tells a waiter the cleanup is
+// done. The context is cancelled here too, so a stage that returned early does
+// not leave a request running.
+func (s *installState) finish() {
+	s.mu.Lock()
+	cancel, done := s.cancel, s.done
+	s.cancel, s.done = nil, nil
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel(nil)
+	}
+	if done != nil {
+		close(done)
+	}
 }
 
 func (s *installState) set(p update.Progress) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.aborted {
+		return
+	}
 	s.progress, s.ready = p, nil
 }
 
 func (s *installState) park(mv *readyMove) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.aborted {
+		return
+	}
 	s.progress, s.ready = update.Progress{Version: mv.target, Phase: update.PhaseReady}, mv
 }
 
@@ -119,24 +180,60 @@ func (c *capability) StartInstall(install update.Install, target string) error {
 	if install.Layout.Root == "" {
 		return ErrUnknownInstall
 	}
-	if !c.install.begin(target) {
+	ctx, ok := c.install.begin(target)
+	if !ok {
 		return ErrInstallInFlight
 	}
 	// Detached from the request that asked for it: the caller is answered now,
 	// and a download that outlives its HTTP context is the point, not a leak.
-	go c.prepare(install, target)
+	go c.prepare(ctx, install, target)
 	return nil
 }
 
-func (c *capability) prepare(install update.Install, target string) {
-	ctx, cancel := context.WithTimeout(context.Background(), prepareTimeout)
+func (c *capability) prepare(parent context.Context, install update.Install, target string) {
+	defer c.install.finish()
+	ctx, cancel := context.WithTimeout(parent, prepareTimeout)
 	defer cancel()
 	mv, err := c.stage(ctx, install, target)
+	if c.install.abandoned() {
+		c.discard(target)
+		return
+	}
 	if err != nil {
 		c.install.set(failed(target, err))
 		return
 	}
 	c.install.park(mv)
+}
+
+// discard removes what a download the person stopped left behind. It is the
+// only place that knows both the cached artifact and the chunked work
+// directory belong to one attempt.
+func (c *capability) discard(target string) {
+	dir, err := update.CacheDir()
+	if err != nil {
+		return
+	}
+	update.DiscardDownload(dir, target)
+	_ = os.RemoveAll(filepath.Join(dir, deltaWorkDir))
+}
+
+// CancelInstall stops the download running for target and returns once it has
+// stopped and its partial bytes are gone. Only a download or its verification
+// can be cancelled: a verified release is already past the network, and an
+// install already applying is past the point of no return.
+func (c *capability) CancelInstall(target string) error {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return ErrNoTarget
+	}
+	cancel, done, ok := c.install.abandon(target)
+	if !ok {
+		return ErrNothingToCancel
+	}
+	cancel(errInstallCancelled)
+	<-done
+	return nil
 }
 
 // CommitInstall installs the release waiting for target and hands over to it.

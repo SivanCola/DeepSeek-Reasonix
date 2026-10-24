@@ -90,7 +90,7 @@ describe("optimising the free-text answer of a question card", () => {
     expect(screen.queryByRole("button", { name: "优化提示词" })).toBeNull();
   });
 
-  it("a card mounted again starts without a stale rewrite, and leaving aborts the one in flight", async () => {
+  it("a card mounted again keeps the typed answer but starts without a stale rewrite, and leaving aborts the one in flight", async () => {
     let signal: AbortSignal | undefined;
     const refine = vi.fn((_d: string, s?: AbortSignal) => { signal = s; return new Promise<string>(() => {}); });
     const first = render(<AskCard item={item()} onAnswer={async () => {}} refine={refine} />);
@@ -101,6 +101,6 @@ describe("optimising the free-text answer of a question card", () => {
     await waitFor(() => expect(signal?.aborted).toBe(true));
     render(<AskCard item={item()} onAnswer={async () => {}} refine={refine} />);
     expect(screen.queryByLabelText("优化后的提示词")).toBeNull();
-    expect(box().value).toBe("");
+    expect(box().value).toBe("draft");
   });
 });

@@ -7,8 +7,10 @@ import (
 	"image"
 	"image/color"
 	"image/jpeg"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestEvalStepRunsPageJavaScriptAndReturnsItsValue(t *testing.T) {
@@ -162,5 +164,65 @@ func TestScreenshotPointerMarkerIsVisible(t *testing.T) {
 	r, g, b, _ := got.At(20, 20).RGBA()
 	if r < 0xd000 || g < 0xd000 || b < 0xd000 {
 		t.Fatalf("marker center = %#04x %#04x %#04x, want a visible light center", r, g, b)
+	}
+}
+
+func TestEvaluateGivesUpOnAScriptWhosePromiseNeverSettles(t *testing.T) {
+	prev := evalTimeout
+	evalTimeout = 150 * time.Millisecond
+	t.Cleanup(func() { evalTimeout = prev })
+	var calls []string
+	ft := newFakeTransport(func(msg wireMessage) []byte {
+		calls = append(calls, msg.Method)
+		if msg.Method == "Runtime.evaluate" && !strings.Contains(string(msg.Params), "document.title") {
+			return nil
+		}
+		raw, _ := json.Marshal(map[string]any{"id": msg.ID, "result": map[string]any{}})
+		return raw
+	})
+	s := NewSession(Config{})
+	eng := &engine{conn: newConn(ft), exited: make(chan struct{}), listeners: map[int]func(event){}}
+	tb := newTab(s, eng, "t1", "target-1", "S1")
+	tb.url, tb.mainFrame = "https://example.com", "f1"
+	tb.runtime.contexts["f1"] = "context-1"
+	s.eng, s.tabs, s.active = eng, []*tab{tb}, tb
+	t.Cleanup(func() { eng.conn.shutdown() })
+
+	caller, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	_, _, err := s.Evaluate(caller, "", `await new Promise(() => {})`, "https://example.com")
+	if CodeOf(err) != CodeScriptTimeout {
+		t.Fatalf("Evaluate error = %v; want %s", err, CodeScriptTimeout)
+	}
+	if time.Since(start) > 3*time.Second {
+		t.Fatalf("Evaluate took %s; the limit is %s", time.Since(start), evalTimeout)
+	}
+	if !slices.Contains(calls, "Runtime.terminateExecution") {
+		t.Fatalf("calls = %v; want the script's execution terminated", calls)
+	}
+}
+
+func TestEvaluateKeepsTheCallersOwnCancellationDistinctFromTheScriptLimit(t *testing.T) {
+	ft := newFakeTransport(func(msg wireMessage) []byte {
+		if msg.Method == "Runtime.evaluate" && !strings.Contains(string(msg.Params), "document.title") {
+			return nil
+		}
+		raw, _ := json.Marshal(map[string]any{"id": msg.ID, "result": map[string]any{}})
+		return raw
+	})
+	s := NewSession(Config{})
+	eng := &engine{conn: newConn(ft), exited: make(chan struct{}), listeners: map[int]func(event){}}
+	tb := newTab(s, eng, "t1", "target-1", "S1")
+	tb.url, tb.mainFrame = "https://example.com", "f1"
+	tb.runtime.contexts["f1"] = "context-1"
+	s.eng, s.tabs, s.active = eng, []*tab{tb}, tb
+	t.Cleanup(func() { eng.conn.shutdown() })
+
+	caller, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+	_, _, err := s.Evaluate(caller, "", `await new Promise(() => {})`, "https://example.com")
+	if err == nil || CodeOf(err) == CodeScriptTimeout {
+		t.Fatalf("Evaluate error = %v; a stop by the caller is not the script limit", err)
 	}
 }

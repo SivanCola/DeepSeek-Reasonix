@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"reasonix/internal/base/testenv"
 	"reasonix/internal/contract/config"
@@ -120,5 +122,21 @@ func TestToolSettingsMarkARemovalOnlyTheProjectMade(t *testing.T) {
 		if s.Name == "recall" && s.ByProject {
 			t.Fatal("a removal the user file also makes is attributed to the project; the user's switch must own it")
 		}
+	}
+}
+
+func TestFirstDescriptionLineNeverCutsAMultibyteCharacter(t *testing.T) {
+	line := firstDescriptionLine(strings.Repeat("工具", 150))
+	if !utf8.ValidString(line) {
+		t.Fatalf("the cut left invalid UTF-8: %q", line)
+	}
+	if n := utf8.RuneCountInString(line); n > 201 {
+		t.Fatalf("line is %d characters, want at most 200 plus the ellipsis", n)
+	}
+	if !strings.HasSuffix(line, "…") {
+		t.Fatalf("a shortened line should say so: %q", line)
+	}
+	if got := firstDescriptionLine("short line\nsecond line"); got != "short line" {
+		t.Fatalf("first line = %q", got)
 	}
 }

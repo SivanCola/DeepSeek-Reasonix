@@ -31,6 +31,7 @@ function gapPhrase(kind: string): string {
     case "declared_unverified": return t("自己申报未验证");
     case "mod_effects_unobserved": return t("有 Claude Code mod 在运行；它写了什么不在主机观测范围内");
     case "workspace_claim_yielded": return t("你在等待期间，另一个会话改动了本会话占用的路径；之前读到的内容可能已过时");
+    case "outside_observed_root": return t("写在了主机观测范围之外；这里没有任何证据能说明它留下了什么");
     default: return kind;
   }
 }
@@ -38,6 +39,16 @@ function gapPhrase(kind: string): string {
 // A receipt long enough to scroll is a receipt nobody reads; the count keeps
 // the total honest.
 const MAX_GAPS = 5;
+
+// A command is evidence, not a document: the card shows where it starts and the
+// whole of it stays in the hover title.
+const DETAIL_CHARS = 120;
+function gapDetail(detail: string): string {
+  const first = detail.split("\n").find((line) => line.trim() !== "") ?? "";
+  const more = first.trim() !== detail.trim();
+  const line = first.trim();
+  return line.length > DETAIL_CHARS ? `${line.slice(0, DETAIL_CHARS)}…` : more ? `${line} …` : line;
+}
 
 // What carried a clean verdict, so "verified" is never an unsourced assertion.
 function evidence(r: Receipt): string[] {
@@ -85,7 +96,7 @@ export function ReceiptCard({ r }: { r: Receipt }) {
           {shown.map((g, i) => (
             <div className="find" data-lvl="warn" key={`${g.kind}:${g.detail ?? i}`} style={{ "--i": i } as React.CSSProperties}>
               <span className="t">{gapPhrase(g.kind)}</span>
-              {g.detail && <code className="gapd" title={g.detail}>{g.detail}</code>}
+              {g.detail && <code className="gapd" title={g.detail}>{gapDetail(g.detail)}</code>}
             </div>
           ))}
           {rest > 0 && <div className="rc-more">{t("另有 {n} 项", { n: rest })}</div>}

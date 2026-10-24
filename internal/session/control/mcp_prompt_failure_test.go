@@ -93,6 +93,8 @@ func newPromptFailureController(t *testing.T, getResult func() map[string]any, t
 
 func TestMCPPromptFailureReachesNextTurn(t *testing.T) {
 	c := newPromptFailureController(t, func() map[string]any { return nil })
+	var visible projectionHistory
+	c.bindProjectionSeer(visible.newest, visible.sees)
 
 	if _, found, err := c.MCPPrompt(context.Background(), "/mcp__docs__greet"); !found || err == nil {
 		t.Fatalf("MCPPrompt = found %v, err %v; want a found prompt that failed", found, err)
@@ -107,22 +109,26 @@ func TestMCPPromptFailureReachesNextTurn(t *testing.T) {
 	if strings.Contains(got, promptRefusalProse) {
 		t.Errorf("next turn carries the server's own prose: %q", got)
 	}
-	if again := c.Compose("and then"); !strings.Contains(again, "mcp__docs__greet") {
+	again := c.Compose("and then")
+	if !strings.Contains(again, "mcp__docs__greet") {
 		t.Errorf("a turn that composed but never reached the runner settled the debt: %q", again)
 	}
-	c.settleTurnProjections()
+	visible.deliver(again)
 	if after := c.Compose("and then"); strings.Contains(after, "mcp__docs__greet") {
 		t.Errorf("the failure was owed after the runner carried it: %q", after)
 	}
 }
 
-func TestMCPPromptFailureRecordedWhileComposingSurvivesSettle(t *testing.T) {
+func TestMCPPromptFailureRecordedWhileComposingSurvivesDelivery(t *testing.T) {
 	c := newPromptFailureController(t, func() map[string]any { return nil })
+	var visible projectionHistory
+	c.bindProjectionSeer(visible.newest, visible.sees)
 	_, _, _ = c.MCPPrompt(context.Background(), "/mcp__docs__greet")
-	_ = c.Compose("first")
-	_, _, _ = c.MCPPrompt(context.Background(), "/mcp__docs__greet")
-	c.settleTurnProjections()
-	if got := c.Compose("second"); !strings.Contains(got, "mcp__docs__greet") {
+	first := c.Compose("first")
+	later := (&MCPPromptError{Prompt: "mcp__docs__farewell", Server: "docs", Stage: mcpPromptStageGet, Err: errors.New("boom")}).turnNote()
+	c.mcp.promptFailures.owe(later)
+	visible.deliver(first)
+	if got := c.Compose("second"); !strings.Contains(got, "mcp__docs__farewell") {
 		t.Errorf("a failure recorded after composing was cleared with the delivered one: %q", got)
 	}
 }
@@ -149,6 +155,7 @@ func TestMCPPromptFailureDeliveredOnSubmitThenCleared(t *testing.T) {
 			}
 		})
 	})
+	c.bindProjectionSeer(func(string) (string, bool) { return "", false }, seesSession(sess))
 	_, _, _ = c.MCPPrompt(context.Background(), "/mcp__docs__greet")
 	for _, text := range []string{"first", "second"} {
 		c.Submit(text)

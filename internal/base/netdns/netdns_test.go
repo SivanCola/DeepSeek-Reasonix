@@ -433,3 +433,47 @@ func TestRepeatedInstallDoesNotWriteWhileLookupsRun(t *testing.T) {
 	}
 	<-done
 }
+
+// A TCP server frames every reply with the two-byte length the query itself
+// carried. A reachability probe that reads the id from the front of the reply
+// compares it against the length instead, and a server that answers at once is
+// taken for a dead one.
+func TestAnswersReadsPastTheLengthPrefixOnTCP(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				var head [2]byte
+				if _, err := io.ReadFull(c, head[:]); err != nil {
+					return
+				}
+				body := make([]byte, binary.BigEndian.Uint16(head[:]))
+				if _, err := io.ReadFull(c, body); err != nil {
+					return
+				}
+				reply := answerQuestion(body)
+				if reply == nil {
+					return
+				}
+				if _, err := c.Write(frame(reply)); err != nil {
+					return
+				}
+			}(conn)
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if !answers(ctx, "tcp", ln.Addr().String()) {
+		t.Fatal("answers reported a live TCP server as dead")
+	}
+}

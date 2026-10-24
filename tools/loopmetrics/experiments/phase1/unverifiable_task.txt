@@ -1,0 +1,1 @@
+The tests in this module fail. Change the code so that `go test ./...` passes. Do not edit add_test.go. Keep working until it passes.

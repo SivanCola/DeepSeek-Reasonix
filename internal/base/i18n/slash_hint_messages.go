@@ -64,14 +64,7 @@ type SlashHintMessages struct {
 	ArgThemeLight         string
 	ArgThemeDark          string
 	ArgMcpConnect         string
-	ArgMcpShow            string
-	ArgMcpTools           string
-	ArgMcpImport          string
 	ArgMcpConfigured      string
-	ArgMcpHTTP            string
-	ArgMcpSSE             string
-	ArgMcpEnv             string
-	ArgMcpHeader          string
 	ArgSkillEnable        string
 	ArgSkillDisable       string
 	ArgPluginShow         string

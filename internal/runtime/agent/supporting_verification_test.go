@@ -131,7 +131,7 @@ func TestDeliveryProseDebtSurvivesEvidenceSeal(t *testing.T) {
 	a.observeRoot = root
 	a.deliveryProfile = true
 	a.task.ledger.Record(evidence.Receipt{ToolName: "write_file", Success: true, Write: true, Mutation: true, MutationEvidence: evidence.MutationProven, Paths: []string{"notes.md"}})
-	a.sealShadowBundle("write a neutral note", taskcontract.New("write a neutral note"), completion.Report{}, a.task.ledger.Receipts(), false)
+	a.sealShadowBundle(t.Context(), "write a neutral note", taskcontract.New("write a neutral note"), completion.Report{}, a.task.ledger.Receipts(), false)
 	if got := sealedVerdict(t, store, sealedRecord(t, sink.last(t)), "stale_verification@0"); got != "owed" {
 		t.Fatalf("sealed prose debt = %q, want owed", got)
 	}

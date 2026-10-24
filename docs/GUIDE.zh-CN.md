@@ -86,12 +86,12 @@ reasoning_language = "auto"      # 可见思考过程语言：auto|zh|en
 # max_queued_inputs = 0              # 会话队列里等待发送的消息条数；0 = 不限制，队列的字节上限仍然生效（只认用户级配置）
 # max_subagent_steer_bytes = 16384    # 发给运行中子代理的单条指示的字节数，防止一条消息占满它的上下文；0 = 不限制（只认用户级配置）
 # max_subagent_steers_per_minute = 30  # 每分钟发给同一个运行中子代理的指示条数，用来刹住循环；0 = 不限制（只认用户级配置）
-# write_lease = "optimistic"          # 仅用户配置文件；没有声明路径的写入（bash、MCP）不再占住整个工作区，默认 strict
+# write_lease = "strict"              # 仅用户配置文件；默认 optimistic：没有声明路径的写入（bash、MCP）不占住整个工作区；strict 则让它占住整个工作区
 # write_lease_max_wait_minutes = 0    # 写入在另一个会话占着路径时最多等多少分钟，超时以 workspace.claim_timeout 失败；0（默认）= 一直等到本轮结束，建议值 120（只认用户级配置）
 # plan_approval = "auto"             # 仅用户配置文件；提交的计划不再等待批准点击，直接开始执行，对话里会留下说明，默认 ask
 # default_mode = "plan"              # 仅用户配置文件；新对话从计划模式开始（恢复的对话保持自己的模式；设置里有对应开关），默认 normal
-# subagent_claims = "optimistic"      # 仅用户配置文件；没有声明 write_paths 的子代理只占用正在写的路径，不占整个工作区，默认 strict
-# host_verification = "off"          # 仅用户配置文件；改过文件的回合不再被要求先做检查、复核和签收；交付回执仍如实写明检查了什么，默认 on
+# subagent_claims = "strict"          # 仅用户配置文件；默认 optimistic：没有声明 write_paths 的子代理只占用正在写的路径；strict 则让它占整个工作区
+# host_verification = "on"           # 仅用户配置文件；设为 on 时，改过文件的回合要先有检查、复核和签收才能结束；不设或设为 off 则不要求（不设时交付预设仍会要求）；交付回执始终如实写明检查了什么
 # compact_ratio 是唯一自动维护阈值（默认 0.85；预设 0.70/0.80/0.85）
 # max_output_tokens = 0            # 推荐：自动（DeepSeek 默认 high → 约 64K；不是无限）
 # max_output_tokens = 32768        # 普通编码 / 控制费用
@@ -274,6 +274,11 @@ reasonix report delete [ID]     # 不发送，直接删除
 执行 `/web`：Reasonix 会保存当前会话、恢复终端，然后打开明确的
 `/sessions/<id>#token=...` 深链。即使会话尚未产生第一轮消息，也会延续已预留的 Session ID，
 同时继续保持“空会话不提前写 transcript”的惰性落盘行为。
+
+Studio 和 Web 界面都可以在输入框旁打开**辅助会话**，只读提问，不写入主会话。
+发送后立即显示问题，回答文字随接收逐步显示，并展示当前阶段、工具名称和耗时。
+收起面板不会中断请求；关闭面板会取消请求并丢弃该辅助会话。
+请求失败时，已收到的部分回答会标记为中断，输入内容保留，方便重试。
 
 ```bash
 cd your-project
@@ -772,6 +777,10 @@ CLI/TUI 文本输入可通过 `[ui].cursor_shape` 设置光标形状，支持 `u
 | Plan 控件 | 切换 Plan 开/关 | 和 `Shift+Tab` 是同一个模式。 |
 | 协作菜单里的 Goal | 启动、查看或清除 Goal | Goal 不进入任何快捷键循环。 |
 
+Studio 会在同一浏览器或桌面配置中记住侧边栏本机和远程项目的展开、收起状态，
+包括「收起所有项目 / 展开所有项目」，重新打开后仍然保留。新项目默认展开。
+这些显示偏好仅保存在当前设备，不修改会话，也不会同步到其他客户端。
+
 #### Studio 文件附件
 
 普通本地文件（包括大型 APK）在桌面壳能取得原生路径时，直接使用路径引用。
@@ -1158,8 +1167,9 @@ OAuth client 与 token 状态保存在工作区之外、该 server 私有的 Rea
 只在用户显式浏览或安装时联网，不进入启动路径。需要 secret 或必填参数的条目只显示为手动配置，
 不会写入不完整配置；Registry 故障时可回退到同一查询的缓存结果。
 
-普通配置流程现在只有一步：使用桌面端的“添加并连接”、`/mcp add`，或直接让 Reasonix
-安装一个 package 或 URL。此类主动安装统一写入用户全局 `config.toml`，安装本身就是授权：
+普通配置流程现在只有一步：使用桌面端的“添加并连接”、终端 `/mcp` 面板的 `n`，或直接让
+Reasonix 安装一个 package 或 URL。此类主动安装写入用户全局 `config.toml`（按 `p` 写入
+`reasonix.toml`），安装本身就是授权：
 server 会在当前会话连接，现在和下次启动都不会再弹出第二套信任步骤。当前项目
 `reasonix.toml` 或 `.mcp.json` 中声明的 server 保留在项目配置中，同样默认可信，不需要额外
 启动确认。显式 deny 仍然优先；包括声明

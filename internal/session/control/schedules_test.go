@@ -187,3 +187,28 @@ func TestAScheduleOnlyEverReadsATrustedProjectAndTheBoardListsThem(t *testing.T)
 		t.Fatalf("a declined project = %v, want ErrDraftFolderUnknown", err)
 	}
 }
+
+func TestTheBoardOffersTheOpenProjectForTrustUntilItIsTrusted(t *testing.T) {
+	_, _ = schedulesController(t)
+	c := New(Options{WorkspaceRoot: testenv.TempDir(t), Posture: PostureEvidence{Home: config.RootsForHome("").Home()}})
+	t.Cleanup(c.Close)
+	ctx := context.Background()
+	board, _ := c.Schedules(ctx)
+	if board.Current == nil || board.Current.Path != c.WorkspaceRoot() || board.Current.Trust != "" || !board.Current.Trustable {
+		t.Fatalf("current = %+v, want the open project, undecided and trustable", board.Current)
+	}
+	if err := c.DecideWorkspaceTrust(config.WorkspaceTrusted); err != nil {
+		t.Fatal(err)
+	}
+	board, _ = c.Schedules(ctx)
+	if board.Current != nil {
+		t.Fatalf("current = %+v after it was trusted, want none", board.Current)
+	}
+	found := false
+	for _, f := range board.Folders {
+		found = found || f.Path == c.WorkspaceRoot()
+	}
+	if !found {
+		t.Fatalf("folders = %+v, want the trusted open project listed", board.Folders)
+	}
+}

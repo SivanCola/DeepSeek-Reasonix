@@ -45,6 +45,12 @@ func TestAutoNameFailureNamesItsCause(t *testing.T) {
 		{"model answers nothing", func(context.Context) (<-chan provider.Chunk, error) {
 			return chunks(provider.Chunk{Type: provider.ChunkText, Text: "  "}, provider.Chunk{Type: provider.ChunkDone})
 		}, "session.title_no_text", http.StatusBadGateway, ""},
+		{"model spends the budget thinking", func(context.Context) (<-chan provider.Chunk, error) {
+			return chunks(provider.Chunk{Type: provider.ChunkReasoning, Text: "let me think about a title"}, provider.Chunk{Type: provider.ChunkDone})
+		}, "session.title_thought_only", http.StatusBadGateway, ""},
+		{"model reports reasoning tokens and no text", func(context.Context) (<-chan provider.Chunk, error) {
+			return chunks(provider.Chunk{Type: provider.ChunkUsage, Usage: &provider.Usage{CompletionTokens: 60, ReasoningTokens: 60}}, provider.Chunk{Type: provider.ChunkDone})
+		}, "session.title_thought_only", http.StatusBadGateway, ""},
 		{"model too slow", func(ctx context.Context) (<-chan provider.Chunk, error) {
 			ch := make(chan provider.Chunk)
 			go func() { <-ctx.Done(); close(ch) }()

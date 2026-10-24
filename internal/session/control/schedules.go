@@ -92,6 +92,18 @@ type ScheduleBoard struct {
 	// Folders are the trusted projects a schedule may be given. A creation names
 	// one of these and nothing else.
 	Folders []ScheduleFolder `json:"folders"`
+	// Current is the open project when it is not yet one of Folders, with the
+	// person's recorded answer about it, so the list can offer the decision.
+	Current *ScheduleCurrent `json:"current,omitempty"`
+}
+
+// ScheduleCurrent is the open project a schedule cannot read yet. Trust is the
+// recorded answer: empty when undecided, "declined" after a refusal.
+type ScheduleCurrent struct {
+	Path      string `json:"path"`
+	Name      string `json:"name"`
+	Trust     string `json:"trust"`
+	Trustable bool   `json:"trustable"`
 }
 
 // ScheduleFolder is one trusted project a schedule can read.
@@ -152,6 +164,7 @@ func (c *Controller) Schedules(ctx context.Context) (ScheduleBoard, error) {
 	out := ScheduleBoard{PausedAll: m.PausedAll, PausedReason: string(m.PausedReason), Schedules: []ScheduleView{}, Runs: []ScheduleRunView{},
 		Policy: SchedulePolicyView{MinIntervalMinutes: policy.MinIntervalMinutes, MaxSchedules: policy.MaxSchedules, GlobalTokensDay: policy.GlobalTokensDay, ExpiryDays: policy.ExpiryDays}}
 	out.Folders = c.scheduleFolderViews()
+	out.Current = c.scheduleCurrentView(out.Folders)
 	for _, s := range m.Schedules {
 		out.Schedules = append(out.Schedules, scheduleView(s))
 	}
@@ -174,6 +187,19 @@ func (c *Controller) scheduleFolderViews() []ScheduleFolder {
 		out = append(out, ScheduleFolder{Path: p, Name: filepath.Base(p)})
 	}
 	return out
+}
+
+func (c *Controller) scheduleCurrentView(trusted []ScheduleFolder) *ScheduleCurrent {
+	root := c.WorkspaceRoot()
+	if root == "" {
+		return nil
+	}
+	for _, f := range trusted {
+		if f.Path == root {
+			return nil
+		}
+	}
+	return &ScheduleCurrent{Path: root, Name: filepath.Base(root), Trust: string(c.WorkspaceTrust()), Trustable: TrustableFolder(root)}
 }
 
 func scheduleView(s schedule.Schedule) ScheduleView {

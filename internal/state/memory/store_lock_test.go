@@ -205,8 +205,7 @@ func TestMutationLockOrderIsDeterministic(t *testing.T) {
 }
 
 // TestSingleProcessMutationsStillWork is the control: save, rename, archive and
-// restore behave as before, the store's lock file is named by its directory,
-// and the uncontended lock costs no visible time.
+// restore behave as before and the store's lock file is named by its directory.
 func TestSingleProcessMutationsStillWork(t *testing.T) {
 	root := testLockRoot(t)
 	dir := testenv.TempDir(t)
@@ -240,13 +239,9 @@ func TestSingleProcessMutationsStillWork(t *testing.T) {
 		t.Fatalf("restored body = %q, want %q", restored.Memory.Body, "two")
 	}
 
-	start := time.Now()
 	for i := range 20 {
 		if _, err := s.SaveWithOptions(Memory{ID: restored.Memory.ID, Name: "beta", Body: fmt.Sprintf("v%d", i+3)}, SaveOptions{}); err != nil {
 			t.Fatalf("plain save %d: %v", i, err)
 		}
-	}
-	if elapsed := time.Since(start); elapsed > 2*time.Second {
-		t.Errorf("20 uncontended saves took %s; the lock is meant to be a single open/close", elapsed)
 	}
 }

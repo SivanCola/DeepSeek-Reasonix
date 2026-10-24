@@ -97,8 +97,8 @@ func (c *Controller) SaveToolDisabled(name string, disabled bool) error {
 
 func firstDescriptionLine(s string) string {
 	line, _, _ := strings.Cut(strings.TrimSpace(s), "\n")
-	if len(line) > 200 {
-		line = line[:200]
+	if runes := []rune(line); len(runes) > 200 {
+		return string(runes[:200]) + "…"
 	}
 	return line
 }

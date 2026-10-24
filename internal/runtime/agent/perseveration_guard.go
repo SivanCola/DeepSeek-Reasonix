@@ -188,13 +188,13 @@ func (a *Agent) perseverationCut() bool {
 // calls never reach the tool round; a detection-only run was already reported
 // through the progress-watch channel, and the user's pause setting can end it
 // here. A clean round resets the strike count; cont=false ends the run with err.
-func (a *Agent) settlePerseveration(state *turnRuntime, streamed streamedTurn) (cont bool, err error) {
+func (a *Agent) settlePerseveration(ctx context.Context, state *turnRuntime, streamed streamedTurn) (cont bool, err error) {
 	if streamed.perseverationAborted {
 		return a.handlePerseverationAbort(state)
 	}
 	if streamed.perseverationDetected {
 		if a.progressWatchConfig().Pause {
-			a.emitTurnShadows(a.turn.turnInput, true)
+			a.emitTurnShadows(ctx, a.turn.turnInput, true)
 			return false, newPerseverationPause("progress_watch.pause",
 				"the model got stuck repeating the same text", "turn off progress_watch.pause")
 		}

@@ -33,6 +33,7 @@ function portWith(versionNotes: Notes, h: VersionHub = hub) {
     versions: () => Promise.resolve(h),
     pinVersion: vi.fn(() => Promise.resolve()),
     goToVersion: vi.fn(() => Promise.resolve()),
+    cancelVersion: vi.fn(() => Promise.resolve()),
     restartToVersion: vi.fn(() => Promise.resolve()),
     onUpdateProgress: (_cb: (p: UpdateProgress) => void) => () => {},
     versionNotes: vi.fn(versionNotes),

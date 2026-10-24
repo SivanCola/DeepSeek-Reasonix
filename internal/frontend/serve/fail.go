@@ -86,7 +86,7 @@ func keepRefusalStatus(status int, err error) error {
 // wherever it surfaces, and anything else keeps the old shape, so adoption is
 // incremental rather than a flag day.
 func writeErr(w http.ResponseWriter, fallback int, err error) {
-	if refuseMemoryDirectory(w, err) {
+	if refuseMemoryRead(w, err) {
 		return
 	}
 	var c *coded
@@ -110,15 +110,22 @@ func writeErr(w http.ResponseWriter, fallback int, err error) {
 // is one condition with one code across every panel that writes settings, and
 // it carries where to look rather than a parser's sentence about columns.
 func refuseUnparsedConfig(w http.ResponseWriter, err error) bool {
+	reason, ok := unparsedConfigReason(err)
+	if ok {
+		refuse(w, http.StatusConflict, reason.Code, reason.Message, reason.Params)
+	}
+	return ok
+}
+
+func unparsedConfigReason(err error) (Reason, bool) {
 	problem := control.ConfigProblemFromError(err)
 	if problem == nil {
-		return false
+		return Reason{}, false
 	}
-	refuse(w, http.StatusConflict, "config.unparsed", err.Error(), map[string]any{
+	return Reason{Code: "config.unparsed", Message: err.Error(), Params: map[string]any{
 		"path": problem.Path, "line": problem.Line, "excerpt": problem.Excerpt,
 		"repair": problem.Repair, "recovered": problem.Recovered,
-	})
-	return true
+	}}, true
 }
 
 // saveFailed refuses a settings write with an identity. A config file the
@@ -126,7 +133,7 @@ func refuseUnparsedConfig(w http.ResponseWriter, err error) bool {
 // keeps one code across every panel; anything else is that panel's own
 // rejection, carrying the kernel's words as the detail a reader acts on.
 func saveFailed(w http.ResponseWriter, status int, code string, err error) {
-	if refuseMemoryDirectory(w, err) {
+	if refuseMemoryRead(w, err) {
 		return
 	}
 	if refuseUnparsedConfig(w, err) {
@@ -135,13 +142,27 @@ func saveFailed(w http.ResponseWriter, status int, code string, err error) {
 	refuse(w, status, code, err.Error(), map[string]any{"detail": err.Error()})
 }
 
-func refuseMemoryDirectory(w http.ResponseWriter, err error) bool {
-	var directory *memory.DirectoryReadError
-	if !errors.As(err, &directory) {
-		return false
+func refuseMemoryRead(w http.ResponseWriter, err error) bool {
+	reason, ok := memoryReadReason(err)
+	if ok {
+		refuse(w, http.StatusInternalServerError, reason.Code, reason.Message, reason.Params)
 	}
-	refuse(w, http.StatusInternalServerError, "memory.directory_unreadable", err.Error(), nil)
-	return true
+	return ok
+}
+
+// memoryReadReason gives a memory read failure the code its granularity earns:
+// a directory that could not be listed is not the same condition as one fact
+// file that could not be read, and neither may reach a frontend as "not found".
+func memoryReadReason(err error) (Reason, bool) {
+	var directory *memory.DirectoryReadError
+	if errors.As(err, &directory) {
+		return Reason{Code: "memory.directory_unreadable", Message: err.Error()}, true
+	}
+	var fact *memory.FactReadError
+	if errors.As(err, &fact) {
+		return Reason{Code: "memory.fact_unreadable", Message: err.Error()}, true
+	}
+	return Reason{}, false
 }
 
 // codedRefusal is the identity a coded error carries, for the caller that has to

@@ -686,17 +686,8 @@ func (a *contextWindow) summarizeAtMode(ctx context.Context, region []provider.M
 		case chunk, ok := <-ch:
 			idle.Reset(bounds.Idle)
 			if !ok {
-				if usage != nil && usage.FinishReason == "length" {
-					return "", usage, &summaryTruncation{Cap: req.MaxTokens}
-				}
-				s := strings.TrimSpace(b.String())
-				if s == "" {
-					return "", usage, fmt.Errorf("summarizer returned empty output")
-				}
-				if reused && !hasDigestHeading(s) {
-					return "", usage, errSummaryPrefixNotDigest
-				}
-				return s, usage, nil
+				s, err := summaryAtEOF(ctx, b.String(), usage, req.MaxTokens, reused)
+				return s, usage, err
 			}
 			switch chunk.Type {
 			case provider.ChunkText:

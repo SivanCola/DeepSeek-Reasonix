@@ -168,6 +168,8 @@ func refuseTitle(w http.ResponseWriter, err error) {
 		refuse(w, http.StatusGatewayTimeout, "session.title_timeout", "the title model did not answer in time", nil)
 	case errors.Is(err, errTitleNoText):
 		refuse(w, http.StatusBadGateway, "session.title_no_text", "the title model answered with no text", nil)
+	case errors.Is(err, errTitleThought):
+		refuse(w, http.StatusBadGateway, "session.title_thought_only", "the title model spent its output budget thinking and gave no title", nil)
 	case errors.As(err, &api), errors.As(err, &auth):
 		status := 0
 		if api != nil {

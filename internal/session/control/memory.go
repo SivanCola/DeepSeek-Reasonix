@@ -72,16 +72,10 @@ func (m *memoryManager) owedInstructions() string {
 		return ""
 	}
 	block := memory.InstructionsBlockFor(opts)
-	if block == "" && m.instructions.sent() {
+	if block == "" && m.instructions.visible(projectInstructionsTag) {
 		block = instructionsClearedBlock
 	}
-	return m.instructions.owed(block)
-}
-
-// forgetDeliveredInstructions returns the block to the unknown state after a
-// fold has taken the turn that carried it out of the model's view.
-func (m *memoryManager) forgetDeliveredInstructions() {
-	m.instructions.forget()
+	return m.instructions.owed(projectInstructionsTag, block)
 }
 
 func (m *memoryManager) authorizeAutoRemember(args json.RawMessage) {

@@ -198,6 +198,11 @@ and selected states, while long titles truncate within the remaining width.
 - The mirror copies the textarea's computed metrics rather than restating them:
   the composer's font, zoom and line height are set in several places, and one
   missed rule shifts every chip.
+- The mirror's edges follow `.fmain` in CSS, so column transitions reflow it in
+  the same layout as the textarea rather than waiting for a resize observer.
+  The textarea is a block, leaving no inline baseline gap in that shared box.
+- The mirror's right padding includes the native textarea scrollbar's width;
+  a space-consuming scrollbar must not give the mirror an extra strip of text.
 - The chip's wash is a `box-shadow` spread, not padding: padding changes the
   width of the run and the caret lands a few pixels beside the letter it is on.
   Weight is left alone for the same reason.
@@ -287,18 +292,13 @@ and selected states, while long titles truncate within the remaining width.
   the global icon navigation is not visible. It follows the window's existing
   navigation visibility state, including collapsed-only mode and narrow-window
   folds, so both columns never offer the same footer actions together.
-- Browser wide mode changes the existing pane's grid tracks, keeping the
-  workbench, pages, transcript and composer in place. The conversation takes
-  34% of the pane up to 380px; the browser takes the remaining width.
-- The saved split width is untouched, and its divider is absent while wide so dragging
-  cannot silently overwrite a width that is not being drawn.
-- The compact composer's metrics row wraps inside the composer. Absolute
-  positioning below the box lets balance and task controls cross the browser seam.
-- Under the side fold, wide mode stacks the browser above the conversation and
-  composer. Two columns at phone width cannot keep either surface usable.
-- The workbench toggle and Ctrl/Cmd+Shift+B share `browser.wide`. Escape returns
-  to split before the window can close the browser or stop the run. Closing the
-  dock or leaving the conversation resets wide mode; mounting never expands it.
+- The docked workbench uses the divider's remembered width. Pointer dragging and
+  keyboard resizing share that width; there is no intermediate width preset.
+- Full-workbench view preserves the divider width and keeps the conversation and
+  composer mounted. Its button and Ctrl/Cmd+Shift+F share `browser.full`.
+- Escape restores split view before the window can close the workbench or stop
+  the run. Closing the dock resets full view; a pending decision returns to split
+  so the person can answer.
 
 - Column widths change on `.app`, so the tween belongs there and `.cols` only
   reads the result into a track. The tween must be cut during a drag: a .34s
@@ -423,6 +423,9 @@ and selected states, while long titles truncate within the remaining width.
   timeline, not a scroll listener; without one it stays at opacity 0, which is
   today's hard edge. The `@supports` guard is load-bearing — a zero-duration
   animation would otherwise pin it visible.
+- The reading column's grips draw nothing at rest and appear under the pointer, on keyboard focus and while
+  dragging. A line standing in an empty conversation reads as a rendering fault; the 7px hit area and the
+  `col-resize` cursor are what say the edge moves, so the grip stays reachable without being drawn.
 - The reading column is centred rather than right-aligned. Before the column had
   a ceiling the two were the same thing; once it narrowed they parted, and at
   1920 a right-aligned column leaves four hundred pixels on the left while the
@@ -1556,9 +1559,11 @@ A sub-agent row, by the list's own width:
 - The phone layout (`data-fold~="scene"`) shows settings full screen, so it is
   excluded.
 
-## The feedback veil
+## Settings and feedback veils
 
-- `.fbk-veil` is a flat scrim, not a blurred backdrop.
+- `.prefs` and `.fbk-veil` use the same flat, 93% page-colour scrim in both
+  themes, not a blurred backdrop. Settings stays visually separate from live
+  content without filtering that content on every frame.
 - A backdrop filter over the whole window is redone every frame while anything
   beneath it moves; a running turn's spinners are enough.
 - The scrim is opaque enough that what shows through reads as dimmed, which is

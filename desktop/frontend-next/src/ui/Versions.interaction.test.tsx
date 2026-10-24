@@ -25,6 +25,7 @@ function portAt(progress: UpdateProgress, restart = vi.fn((_v: string, _force: b
     versions: () => Promise.resolve(hub),
     pinVersion: vi.fn(() => Promise.resolve()),
     goToVersion: vi.fn(() => Promise.resolve()),
+    cancelVersion: vi.fn(() => Promise.resolve()),
     restartToVersion: restart,
     onUpdateProgress: (cb: (p: UpdateProgress) => void) => {
       cb(progress);
@@ -120,6 +121,7 @@ describe("the version list's history", () => {
     versions: () => Promise.resolve(h),
     pinVersion: vi.fn(() => Promise.resolve()),
     goToVersion: vi.fn(() => Promise.resolve()),
+    cancelVersion: vi.fn(() => Promise.resolve()),
     restartToVersion: vi.fn(() => Promise.resolve()),
     onUpdateProgress: () => () => {},
   });

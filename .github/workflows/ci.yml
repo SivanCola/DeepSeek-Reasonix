@@ -321,7 +321,9 @@ jobs:
         if: github.event_name != 'pull_request'
         env:
           REASONIX_RELEASE_CACHE_GUARD: "1"
-        run: go test -race ./...
+        # internal/assembly/boot under -race runs past ten minutes on a shared
+        # runner; the package limit leaves headroom over the default.
+        run: go test -race -timeout=25m ./...
 
   # sdk/go is a nested stdlib-only module invisible to root `go test ./...`.
   # Its DTOs are generated from internal/ext/extension/protocol, and the

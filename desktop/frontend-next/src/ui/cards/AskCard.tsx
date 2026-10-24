@@ -11,6 +11,7 @@ import { LazyMarkdown } from "../LazyMarkdown";
 import { clock, useAskCountdown } from "./useAskCountdown";
 import { AskFreeText } from "./AskFreeText";
 import type { AgentPort } from "../../port/port";
+import { clearAskDraft, readAskDraft, writeAskDraft } from "../../state/askdraft";
 
 const ADVANCE_MS = 220;
 
@@ -24,15 +25,16 @@ interface Props {
 export function AskCard({ item, onAnswer, onEngage, refine }: Props) {
   const qs = item.ask.questions;
   const answeredBy = answerSource(item.by, useViewer(), item.said);
-  const [tab, setTab] = useState(0);
-  const [picks, setPicks] = useState<string[][]>(() => qs.map(() => []));
+  const saved = useRef(readAskDraft(item.ask.id, qs.length));
+  const [tab, setTab] = useState(saved.current.tab);
+  const [picks, setPicks] = useState<string[][]>(saved.current.picks);
   // The wire carries selections as free strings and the kernel joins them into
   // the tool result untouched, so "其他" is a label like any other.
-  const [other, setOther] = useState<string[]>(() => qs.map(() => ""));
-  const [otherOn, setOtherOn] = useState<boolean[]>(() => qs.map(() => false));
+  const [other, setOther] = useState<string[]>(saved.current.other);
+  const [otherOn, setOtherOn] = useState<boolean[]>(saved.current.otherOn);
   // A pick's note is its own text: an Other answer left behind by a pick is
   // not a note, and returning to Other finds it where it was.
-  const [note, setNote] = useState<string[]>(() => qs.map(() => ""));
+  const [note, setNote] = useState<string[]>(saved.current.note);
   const [submitting, setSubmitting] = useState(false);
   // Every request is a new object, so asking for the same pane twice still moves focus.
   const [focusTo, setFocusTo] = useState<{ q: number } | null>(null);
@@ -43,6 +45,10 @@ export function AskCard({ item, onAnswer, onEngage, refine }: Props) {
   // see what was chosen for each question, and the options stay on screen with
   // the unchosen ones dimmed by the sealed styling.
   const sealed = item.answered !== undefined;
+  useEffect(() => {
+    if (sealed) clearAskDraft(item.ask.id);
+    else writeAskDraft(item.ask.id, { tab, picks, other, otherOn, note });
+  }, [sealed, item.ask.id, tab, picks, other, otherOn, note]);
   const engagement = useRef<"idle" | "pending" | "engaged">("idle");
   const [engagementError, setEngagementError] = useState("");
   const [kept, setKept] = useState(false);

@@ -333,3 +333,173 @@ func TestPrepareSessionPathKeepsTheArchivedMark(t *testing.T) {
 		t.Fatal("refreshing the copy brought an archived conversation back")
 	}
 }
+
+// An interrupted v4 import leaves the transcript and no complete sidecar. The
+// next import must complete the sidecar — keeping 1.x's archive mark — and bring
+// the copy up to the source when 1.x went on without it. The sidecar may be
+// absent outright or be one an earlier import left without its source.
+func TestInterruptedV4ImportRetryCompletesTheSidecar(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		removeSidecar bool
+	}{
+		{"sidecar missing", true},
+		{"sidecar without its import source", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, dir, sessions := v4Project(t)
+			opened, err := sessionv4.Open(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tr, err := opened.Transcript()
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := v4ImportPath(sessions, v4TestID)
+			partial := NewSession("")
+			partial.Messages = tr.Messages
+			if err := partial.SaveIfAbsent(path); err != nil {
+				t.Fatal(err)
+			}
+			if tc.removeSidecar {
+				if err := os.Remove(BranchMetaPath(path)); err != nil {
+					t.Fatal(err)
+				}
+			} else if meta, ok, err := LoadBranchMeta(path); err != nil || !ok || meta.ImportedFrom != nil {
+				t.Fatalf("setup: sidecar ok=%v importedFrom=%v err=%v, want one without its source", ok, meta.ImportedFrom != nil, err)
+			}
+			// 1.x continues the conversation while the copy has no complete
+			// sidecar.
+			s.Batch(dir, v4fixture.Ended,
+				v4fixture.Event{Kind: "message/complete", Payload: v4fixture.Msg("m9", "user", "continued in 1.x")},
+				v4fixture.Event{Kind: "message/complete", Payload: v4fixture.Msg("m10", "assistant", "answer in 1.x")},
+			)
+
+			n, skipped, err := ImportV4From(os.DirFS(s.Root), sessions, nil, func(string) BranchMeta {
+				return BranchMeta{Archived: true}
+			})
+			if err != nil || len(skipped) != 0 {
+				t.Fatalf("rerun: n=%d skipped=%v err=%v", n, skipped, err)
+			}
+			if n != 1 {
+				t.Fatalf("rerun completed %d copies, want 1", n)
+			}
+			meta, ok, err := LoadBranchMeta(path)
+			if err != nil || !ok {
+				t.Fatalf("rerun left no sidecar: ok=%v err=%v", ok, err)
+			}
+			if !meta.Archived || meta.ImportedFrom == nil {
+				t.Fatalf("completed sidecar = %+v, want archived with its import source", meta)
+			}
+			loaded, err := LoadSession(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if msgs := loaded.Snapshot(); len(msgs) != 6 || msgs[5].Content != "answer in 1.x" {
+				t.Fatalf("copy brought up to %d messages, want 6 with 1.x's tail", len(msgs))
+			}
+			if meta, _, _ := LoadBranchMeta(path); !meta.Archived {
+				t.Fatal("following 1.x dropped the archived mark")
+			}
+		})
+	}
+}
+
+// A copy with both its transcript and its sidecar is complete: a rerun must not
+// re-copy it or touch the sidecar.
+func TestCompletedV4ImportIsNotReCopied(t *testing.T) {
+	s, _, sessions := v4Project(t)
+	if n, skipped, err := ImportV4From(os.DirFS(s.Root), sessions, nil, nil); n != 1 || len(skipped) != 0 || err != nil {
+		t.Fatalf("first import: n=%d skipped=%v err=%v", n, skipped, err)
+	}
+	path := v4ImportPath(sessions, v4TestID)
+	pinned := time.Now().Add(-2 * time.Hour).Truncate(time.Second)
+	for _, p := range []string{path, BranchMetaPath(path)} {
+		if err := os.Chtimes(p, pinned, pinned); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeMeta, err := os.ReadFile(BranchMetaPath(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if n, skipped, err := ImportV4From(os.DirFS(s.Root), sessions, nil, nil); n != 0 || len(skipped) != 0 || err != nil {
+		t.Fatalf("rerun: n=%d skipped=%v err=%v, want 0 nil", n, skipped, err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterMeta, err := os.ReadFile(BranchMetaPath(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) || string(beforeMeta) != string(afterMeta) {
+		t.Fatal("a completed v4 import was re-copied")
+	}
+	for _, p := range []string{path, BranchMetaPath(path)} {
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.ModTime().Equal(pinned) {
+			t.Fatalf("%s was rewritten on a completed retry: mtime %s want %s", p, info.ModTime(), pinned)
+		}
+	}
+}
+
+// Completing an interrupted import never replays over turns the person added in
+// 2.x, and the sidecar it writes describes the copy that exists.
+func TestInterruptedV4ImportKeepsA2xTurn(t *testing.T) {
+	s, dir, sessions := v4Project(t)
+	opened, err := sessionv4.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr, err := opened.Transcript()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := v4ImportPath(sessions, v4TestID)
+	partial := NewSession("")
+	partial.Messages = tr.Messages
+	if err := partial.SaveIfAbsent(path); err != nil {
+		t.Fatal(err)
+	}
+	// The person continues in 2.x before the import gets its second run.
+	current, err := loadSessionUnlocked(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current.Add(provider.Message{Role: provider.RoleUser, Content: "from 2.x"})
+	if err := current.SaveSnapshot(path); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, skipped, err := ImportV4From(os.DirFS(s.Root), sessions, nil, func(string) BranchMeta {
+		return BranchMeta{Archived: true}
+	}); err != nil || len(skipped) != 0 {
+		t.Fatalf("rerun: skipped=%v err=%v", skipped, err)
+	}
+	loaded, err := LoadSession(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs := loaded.Snapshot()
+	if len(msgs) != 5 || !strings.Contains(msgs[4].Content, "from 2.x") {
+		t.Fatalf("the 2.x turn was lost: %+v", msgs)
+	}
+	meta, ok, err := LoadBranchMeta(path)
+	if err != nil || !ok || !meta.Archived {
+		t.Fatalf("sidecar = %+v ok=%v err=%v, want it completed and archived", meta, ok, err)
+	}
+	if meta.Turns != 2 {
+		t.Fatalf("sidecar lists %d turns, want the copy's 2", meta.Turns)
+	}
+}

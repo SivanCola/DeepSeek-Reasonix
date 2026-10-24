@@ -93,10 +93,10 @@ When absent, Studio mixes 65% `accent` with 35% `fg` (or the current text colour
 Choose these as separate contrast pairs. Older readers ignore `accentInk` and
 continue loading the other schema-version-1 tokens.
 
-The built-in **清白蓝 / Clear Blue** (`official-clear-blue`) and **茶绿 / Tea Green**
-(`official-tea-green`) are plain light/dark palettes. They use no wallpaper, sky,
-font or radius overrides. They are opt-in; an empty `desktop.theme_pack` still
-selects the unchanged default.
+The built-in **清白蓝 / Clear Blue** (`official-clear-blue`), **茶绿 / Tea Green**
+(`official-tea-green`) and **Patina** (`official-patina`) are plain light/dark
+palettes. They use no wallpaper, sky, font or radius overrides. They are opt-in;
+an empty `desktop.theme_pack` still selects the unchanged default.
 
 Foundation palettes share the default reading
 surface and respect the reader's size, weight and contrast preferences.

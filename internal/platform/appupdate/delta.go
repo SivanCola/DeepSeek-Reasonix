@@ -23,6 +23,9 @@ const (
 	maxIndexBytes  = 16 << 20
 	maxStoredChunk = 1 << 20
 	deltaFetchWait = 30 * time.Second
+	// deltaWorkDir holds the chunks and the staged tree of a chunked update
+	// until its handoff takes over. A cancelled download removes it whole.
+	deltaWorkDir = "delta"
 )
 
 // deltaBudget bounds the whole chunked attempt, and chunkFailureStreak how
@@ -107,7 +110,7 @@ func (c *capability) stageFromIndex(ctx context.Context, t update.Transport, ins
 	if !plan.Worthwhile(x) {
 		return update.TreeHandoff{}, failAs(DeltaTooLarge, fmt.Errorf("%w: %d of the release's bytes are missing here", errDeltaTooLarge, plan.MissingBytes))
 	}
-	work := filepath.Join(cacheDir, "delta")
+	work := filepath.Join(cacheDir, deltaWorkDir)
 	chunks := filepath.Join(work, "chunks")
 	progress := func(done, total int64) {
 		c.install.set(update.Progress{Version: target, Phase: update.PhaseDownloading, Received: done, Total: total})

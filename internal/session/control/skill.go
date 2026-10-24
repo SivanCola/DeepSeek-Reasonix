@@ -61,7 +61,7 @@ func (s *skillSet) owedCatalog() string {
 	}
 	listed := s.list()
 	block := skill.IndexBlock(s.pathHits.Visible(listed))
-	if block == "" && s.catalog.sent() {
+	if block == "" && s.catalog.visible(availableSkillsTag) {
 		// Silence would leave the listing the model already has standing as
 		// current. Every skill being switched off is a fact, not an absence.
 		block = skillsAllOffBlock
@@ -69,13 +69,7 @@ func (s *skillSet) owedCatalog() string {
 			block = skillsNoneEligibleBlock
 		}
 	}
-	return s.catalog.owed(block)
-}
-
-// forgetDeliveredCatalog returns the listing to the unknown state: what the
-// model was sent is no longer in the context it samples from.
-func (s *skillSet) forgetDeliveredCatalog() {
-	s.catalog.forget()
+	return s.catalog.owed(availableSkillsTag, block)
 }
 
 // list returns the enabled skills, preferring the live store.

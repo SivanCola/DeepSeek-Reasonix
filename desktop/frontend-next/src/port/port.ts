@@ -3,6 +3,7 @@ import type { AgentComposition, AgentPresetVersion, AgentPresetCatalog, Composit
 export type * from "./composition";
 import { DeliveryError, HttpError } from "./http_error";
 import type { DeliveryFault } from "./http_error";
+import type { SideProgress } from "./side";
 
 /** What `subscribe` hands back: the disposer, and where the transport has one, a
  *  way to give its connection up and take it again without losing the cursor. */
@@ -19,11 +20,11 @@ export type * from "./backup";
 export type { AdjudicationEntry, AdjudicationState, Adjudications } from "./adjudication";
 import type { HookCatalog, HookDryRun, HookEntry, HookEventInfo, HookSource } from "./hook";
 import type { CapabilityScope, McpCatalog, McpDraft, McpDraftServer, McpEntry, McpInstallResult, McpInstallScope, McpLoad, McpRisk, McpTool, ScopeLayer } from "./mcp";
-import type { MemoryCatalog, MemoryEdit, MemoryEntry } from "./memory";
+import type { MemoryCatalog, MemoryEdit, MemoryEntry, UnreadableMemory } from "./memory";
 import type { UsageQuery, UsageReport } from "./usage";
 export { DEFAULT_USAGE_DAYS } from "./usage";
 export type { MemoryEdit } from "./memory";
-export type { Money, UsageDay, UsageModel, UsageProvider, UsageQuery, UsageReport } from "./usage";
+export type { Money, UsageDay, UsageHour, UsageModel, UsageProvider, UsageQuery, UsageReport } from "./usage";
 import type { CompactionSettings, Completion, CompletionItem, ModelEntry, ModelMode, ModelPrice, RoleAssignments, RoleOverride } from "./model";
 import type { NetworkProbe, NetworkSettings } from "./network";
 import type { ApprovalDefault, ApprovalMode, WorkspaceTrust, ApprovalVerdict, BrowserTab, Checkpoint, HistoryMessage, HostTodo, JobEntry, JobOutput, Preset, RewindPlan, ToolOutputPage, RewindResult, RewindUndo, RewindScope, SessionEntry, SessionStatus, SessionUsage, SourceUsage, WalletLine, WalletReading, PlanAction } from "./session";
@@ -40,7 +41,7 @@ export type { AccountState, AccountUser, ApprovalDefault, ApprovalMode, Approval
   Checkpoint, CompactionSettings, Completion, CompletionItem, ContextBreakdown, DeviceGrant, HistoryMessage, HostTodo, BrowserTab,
   HookCatalog, HookDryRun, HookEntry, HookEventInfo, HookSource, JobEntry, JobOutput, McpCatalog, McpDraft,
   McpDraftServer, McpEntry, McpInstallResult, McpInstallScope, McpLoad, McpRisk, McpTool, MemoryCatalog,
-  MemoryEntry, ModelEntry, ModelMode, ModelPrice, NetworkProbe, NetworkSettings, Preset, RewindPlan,
+  MemoryEntry, UnreadableMemory, ModelEntry, ModelMode, ModelPrice, NetworkProbe, NetworkSettings, Preset, RewindPlan,
   RewindResult, RewindUndo, RewindScope, RoleAssignments, RoleOverride, ScopeLayer, SessionEntry, SessionStatus, SessionUsage, SourceUsage,
   ShellOption, ShellSettings, SkillCatalog, SkillEntry, SkillUpdateChange, SkillUpdatePlan, UpdateProgress, VersionEntry,
   StudioCrash, StudioLogs, UpdateMode, VersionHub, VersionNotes, WalletLine, WalletReading, ChangeDiff, CommitFile, CommitProposal, CommitRequest, CommitResult, DiscardRequest, GitCommitFiles, GitRepos, PushRequest, PushResult, PushPlan, StageRequest, WorkspaceBranch, WorkspaceBranches, WorkspaceChange, WorkspaceChanges, WorkspaceEntry, WorkspaceFile, WorkspaceFiles, WorkspaceGit, WorkspaceInfo, WorkspacePreviewPort };
@@ -55,8 +56,7 @@ import type { Protocol, ProviderCheck, ProviderCheckDraft, ProviderDraft, Provid
 export type { ModelEffort, ModelLimit, ModelRate, Protocol, ProviderCheck, ProviderCheckDraft, ProviderDraft, ProviderEdit, ProviderEntry, ProviderModelCheck, ProviderModelCheckRequest, ProviderProbe, ProviderSetup, ProviderRemoval, ProviderPreset, ProviderPresetInstall } from "./provider";
 import type { StoragePlan, StorageQuery, StorageState } from "./storage";
 import type { FeedbackBoard, FeedbackBoardMe, FeedbackEnv, FeedbackImage, FeedbackLinkedInstall, FeedbackMine, FeedbackReceipt, FeedbackReplyReceipt, FeedbackRequest } from "./feedback";
-import type { PersonaDraft, PersonaSettings } from "./boundary";
-
+import type { PersonaDraft, PersonaSettings, PresentFilesSettings } from "./boundary";
 export type * from "./plugin";
 export type * from "./schedule";
 export type * from "./market";
@@ -75,7 +75,6 @@ export type * from "./look";
 // accepted item replaces. Offsets are UTF-16 code units — the units a string
 // index uses here, converted from the kernel's bytes at the boundary.
 export type * from "./boundary";
-
 export type * from "./provider";
 
 /** A skill chip as the kernel takes it; offset only orders chips in a line. */
@@ -301,6 +300,8 @@ export interface AgentPort extends WorkspacePreviewPort {
   browserTools(): Promise<BrowserToolsSettings>;
   // Writes the user file, then rebuilds: the tools are bound while assembling.
   saveBrowserTools(enabled: boolean): Promise<BrowserToolsSettings>;
+  presentFiles(): Promise<PresentFilesSettings>;
+  savePresentFiles(enabled: boolean): Promise<PresentFilesSettings>;
   subagentClaims(): Promise<SubagentClaimsSettings>;
   saveSubagentClaims(optimistic: boolean): Promise<SubagentClaimsSettings>;
   subagentSteerSettings(): Promise<SubagentSteerSettings>;
@@ -457,9 +458,9 @@ export interface AgentPort extends WorkspacePreviewPort {
   studioLogs(): Promise<StudioLogs>;
   // Installs a published version, forward or back — the same call either way,
   // because a rollback that took a second code path would be the less-tested
-  // one. Resolves only on failure: a success ends with the process handing over
-  // to the build it just installed.
+  // one. Answered once the download is under way, not when it is installed.
   goToVersion(version: string): Promise<void>;
+  cancelVersion(version: string): Promise<void>; // discards what that download wrote
   // Installs the release goToVersion left verified and waiting, and restarts
   // into it. Refused with update.restart_busy while work runs here, unless
   // force says the person has seen that.
@@ -485,7 +486,7 @@ export interface AgentPort extends WorkspacePreviewPort {
   // A read-only question beside the session: its own conversation, never the
   // main transcript, billed to the session and gone when closed.
   openSide(): Promise<string>;
-  askSide(id: string, question: string, quotes: string[]): Promise<string>;
+  askSide(id: string, question: string, quotes: string[], onProgress?: (progress: SideProgress) => void): Promise<string>;
   closeSide(id: string): Promise<void>;
   // The same sealed envelope as a file the person saves and opens again. The
   // window only: a paired device is refused, and no account is needed.

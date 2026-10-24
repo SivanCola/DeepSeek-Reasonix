@@ -44,18 +44,17 @@ func runCLIJSONResult(t *testing.T, argv ...string) (int, map[string]any, string
 	return code, result, stderr
 }
 
-// The model finished after writing without running a check. Decision 3 of the
-// 1.x migration: that is a verdict in the result, exit 0; only
-// --fail-on-unverified turns it into the dedicated status 3.
+// The model finished after writing without running a check. Nobody asked the host
+// to verify, so the turn is not held and the result exits 0; --fail-on-unverified
+// asks, which holds the turn to its check and turns the verdict into status 3.
 func TestRunUnverifiedFinishExitsZeroUnlessAsked(t *testing.T) {
 	runWriteFileFixture(t)
 	code, result, stderr := runCLIJSONResult(t, "run", "-y", "--output-format", "json", "write it")
 	if code != 0 || result["is_error"] != false || result["subtype"] != "success" {
 		t.Fatalf("unverified finish exited %d with %v, want 0 and a successful result\nstderr:\n%s", code, result, stderr)
 	}
-	readiness, ok := result["readiness"].(map[string]any)
-	if !ok || readiness["attempts"] == nil {
-		t.Fatalf("result lacks the unmet readiness verdict: %v", result)
+	if result["readiness"] != nil {
+		t.Fatalf("a run nobody asked to verify was held to its check: %v", result)
 	}
 	if result["num_turns"] != float64(1) {
 		t.Fatalf("num_turns = %v, want 1", result["num_turns"])
@@ -63,8 +62,8 @@ func TestRunUnverifiedFinishExitsZeroUnlessAsked(t *testing.T) {
 
 	runWriteFileFixture(t)
 	code, result, _ = runCLIJSONResult(t, "run", "-y", "--fail-on-unverified", "--output-format", "json", "write it")
-	if code != runExitUnverified || result["readiness"] == nil {
-		t.Fatalf("--fail-on-unverified exited %d with %v, want %d and the same verdict", code, result, runExitUnverified)
+	if readiness, ok := result["readiness"].(map[string]any); code != runExitUnverified || !ok || readiness["attempts"] == nil {
+		t.Fatalf("--fail-on-unverified exited %d with %v, want %d and the unmet readiness verdict", code, result, runExitUnverified)
 	}
 }
 

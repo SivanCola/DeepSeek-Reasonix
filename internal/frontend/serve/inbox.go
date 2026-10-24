@@ -46,6 +46,8 @@ func writeInboxError(w http.ResponseWriter, err error) {
 		refuse(w, http.StatusConflict, "inbox.capacity_bytes", err.Error(), nil)
 	case errors.Is(err, sessioninbox.ErrInvalidState):
 		refuse(w, http.StatusConflict, "inbox.invalid_state", err.Error(), nil)
+	case errors.Is(err, sessioninbox.ErrRetryMayRepeat):
+		refuse(w, http.StatusConflict, "inbox.retry_may_repeat", err.Error(), nil)
 	case errors.Is(err, sessioninbox.ErrForeignRun):
 		refuse(w, http.StatusConflict, "inbox.foreign_run", err.Error(), nil)
 	case errors.Is(err, sessioninbox.ErrPaused):

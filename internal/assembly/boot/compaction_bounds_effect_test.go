@@ -17,6 +17,7 @@ type pacedDigestProvider struct {
 	interval time.Duration
 	words    int
 	stall    bool
+	closed   chan struct{}
 }
 
 func (p pacedDigestProvider) Name() string { return "boot-paced-digest" }
@@ -25,6 +26,9 @@ func (p pacedDigestProvider) Stream(ctx context.Context, req provider.Request) (
 	ch := make(chan provider.Chunk)
 	digest := req.Summary
 	go func() {
+		if digest && p.closed != nil {
+			defer close(p.closed)
+		}
 		defer close(ch)
 		if !digest {
 			ch <- provider.Chunk{Type: provider.ChunkText, Text: strings.Repeat("work output line with detail. ", 400)}
@@ -54,6 +58,13 @@ func (p pacedDigestProvider) Stream(ctx context.Context, req provider.Request) (
 
 func compactOnPacedProvider(t *testing.T, prov pacedDigestProvider) *noticeSink {
 	t.Helper()
+	sink := &noticeSink{}
+	compactOnDigestProvider(t, prov, sink)
+	return sink
+}
+
+func compactOnDigestProvider(t *testing.T, prov provider.Provider, sink event.Sink) {
+	t.Helper()
 	isolateConfigHome(t)
 	dir := robustTempDir(t)
 	t.Chdir(dir)
@@ -72,7 +83,6 @@ model = "x"
 context_window = 200000
 `)
 	approveWorkspace(t, dir)
-	sink := &noticeSink{}
 	ctrl, err := Build(context.Background(), Options{Sink: sink})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -82,7 +92,6 @@ context_window = 200000
 		_ = ctrl.Run(context.Background(), "keep going")
 	}
 	ctrl.Submit("/compact")
-	return sink
 }
 
 func waitNotice(t *testing.T, sink *noticeSink, codes ...string) event.Event {
@@ -136,10 +145,25 @@ func TestEffectCeilingNoticeIsItsOwnCode(t *testing.T) {
 	prev := agent.SummaryBounds
 	agent.SummaryBounds = agent.SummaryLimits{Idle: time.Second, Ceiling: 300 * time.Millisecond}
 	defer func() { agent.SummaryBounds = prev }()
-	sink := compactOnPacedProvider(t, pacedDigestProvider{interval: 30 * time.Millisecond, words: 1 << 20})
+	closed := make(chan struct{})
+	sink := &noticeSink{}
+	gate := event.FuncSink(func(e event.Event) {
+		if e.Kind == event.CompactionProgress {
+			select {
+			case <-closed:
+			case <-time.After(5 * time.Second):
+				t.Error("provider did not close after its ceiling")
+			}
+		}
+		sink.Emit(e)
+	})
+	compactOnDigestProvider(t, pacedDigestProvider{interval: 30 * time.Millisecond, words: 1 << 20, closed: closed}, gate)
 	got := waitNotice(t, sink, event.NoticeCodeCompactFailed)
 	if got.Detail != "summary_ceiling" {
 		t.Fatalf("detail = %q, want summary_ceiling", got.Detail)
+	}
+	if _, ok := sink.notice(event.NoticeCodeCompacted); ok {
+		t.Fatal("an interrupted digest was reported as successfully compacted")
 	}
 }
 

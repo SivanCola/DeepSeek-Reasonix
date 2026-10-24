@@ -25,6 +25,6 @@ func (d *dateAnchor) owed() string {
 		return ""
 	}
 	t := d.now()
-	return d.debt.owed("Today's date is " + t.Format("2006-01-02") + " (" + t.Weekday().String() +
-		"); the local time zone is UTC" + t.Format("-07:00") + ".")
+	return d.debt.owed(currentDateTag, "Today's date is "+t.Format("2006-01-02")+" ("+t.Weekday().String()+
+		"); the local time zone is UTC"+t.Format("-07:00")+".")
 }

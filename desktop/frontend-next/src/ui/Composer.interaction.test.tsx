@@ -5,6 +5,8 @@ import userEvent from "@testing-library/user-event";
 import "./testkit";
 import { Composer } from "./Composer";
 import { MockPort } from "../port/mock";
+import { SsePort } from "../port/sse";
+import { host } from "../port/host";
 import { DeliveryError, HttpError } from "../port/port";
 import type { AgentPort, ApprovalMode, Attachment, Completion, ModelEntry, Preset, SessionStatus, WorkspaceGit } from "../port/port";
 import { draftKey } from "./drafts";
@@ -670,6 +672,33 @@ describe("composer menus", () => {
 });
 
 describe("composer attachments", () => {
+  it.each(["application/pdf", ""])("stores a pasted native file as an attachment copy (%j)", async (mime) => {
+    const file = new File(["%PDF-1.7\nreport"], "海上航路规划调研报告.pdf", { type: mime });
+    const nativePath = `/private/chat-cache/${file.name}`;
+    vi.spyOn(host(), "pathsForFiles").mockImplementation((files) => files.flatMap((f) => f === file ? [nativePath] : []));
+    const saved = { path: ".reasonix/attachments/clipboard-report.pdf", ref: "@.reasonix/attachments/clipboard-report.pdf", image: false };
+    const fetched = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => Response.json(
+      String(input).endsWith("/drop") ? [{ path: nativePath, ref: "@__reasonix_external_folder/cache/report.pdf", image: false }] : saved,
+    ));
+    const port = new MockPort();
+    const intake = new SsePort("", "r1");
+    vi.spyOn(port as AgentPort, "attach").mockImplementation((...args) => intake.attach(...args));
+    const { box, onSubmit } = draw({ port });
+
+    fireEvent.paste(box, { clipboardData: { files: [file], getData: () => "" } });
+    await waitFor(() => expect(fetched).toHaveBeenCalledWith(expect.stringContaining("/attachments/upload?"), expect.objectContaining({
+      body: expect.objectContaining({ size: file.size, type: mime }),
+      headers: { "content-type": "application/octet-stream" },
+    })));
+    expect(fetched).toHaveBeenCalledOnce();
+    const query = new URL(String(fetched.mock.calls[0][0]), "http://localhost").searchParams;
+    expect(query.get("name")).toBe(file.name);
+    expect(query.get("mime")).toBe(mime);
+    await waitFor(() => expect((screen.getByRole("button", { name: "发送" }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledExactlyOnceWith(saved.ref));
+  });
+
   it("cancels an upload when its attachment is removed", async () => {
     const port = new MockPort();
     let signal: AbortSignal | undefined;
@@ -914,5 +943,46 @@ describe("send shortcut preference", () => {
     fireEvent.keyDown(box, { key: "Enter" });
     expect(onSubmit).not.toHaveBeenCalled();
     expect(screen.getByText("Ctrl Enter 插话 · Enter 换行")).toBeTruthy();
+  });
+});
+
+describe("a command typed in full beside longer commands that share its name", () => {
+  const reload = { label: "/reload", insert: "/reload", kind: "command" } as const;
+  const reloadCmd = { label: "/reload-cmd", insert: "/reload-cmd", kind: "command" } as const;
+  const answer = (items: Completion["items"], typed?: Completion["items"][number]): Completion =>
+    ({ kind: "slash", from: 0, to: 7, query: "/reload", items, ...(typed && { typed }) }) as Completion;
+
+  it("lists the typed command first, so Enter sends it instead of completing the longer one", async () => {
+    const port = new MockPort();
+    vi.spyOn(port, "complete").mockResolvedValue(answer([reloadCmd], reload));
+    const { box, onSubmit } = draw({ port });
+    fireEvent.change(box, { target: { value: "/reload", selectionStart: 7 } });
+    const options = await screen.findAllByRole("option");
+    expect(options.map((o) => o.textContent)).toEqual([expect.stringContaining("/reload"), expect.stringContaining("/reload-cmd")]);
+    expect(options[0].textContent).not.toContain("-cmd");
+    fireEvent.keyDown(box, { key: "Enter" });
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith("/reload"));
+    expect(box.value).not.toBe("/reload-cmd");
+  });
+
+  it("still completes the longer command once the person moves down to it", async () => {
+    const port = new MockPort();
+    vi.spyOn(port, "complete").mockResolvedValue(answer([reloadCmd], reload));
+    const { box, onSubmit } = draw({ port });
+    fireEvent.change(box, { target: { value: "/reload", selectionStart: 7 } });
+    await screen.findAllByRole("option");
+    fireEvent.keyDown(box, { key: "ArrowDown" });
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(box.value).toBe("/reload-cmd");
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("opens no menu when the typed command has nothing longer beside it", async () => {
+    const port = new MockPort();
+    vi.spyOn(port, "complete").mockResolvedValue(answer([], reload));
+    const { box } = draw({ port });
+    fireEvent.change(box, { target: { value: "/reload", selectionStart: 7 } });
+    await act(async () => {});
+    expect(screen.queryAllByRole("option")).toHaveLength(0);
   });
 });

@@ -360,16 +360,16 @@ func RefResourceItems(resources []plugin.Resource, server, frag string) []SlashI
 	return items
 }
 
-// FuzzySlashNames returns the catalogue entries matching query as a
-// case-insensitive subsequence of their label, prefix hits first and the
-// caller's order preserved inside each group. Typing "/modl" still finds
-// "/model". An empty query matches everything.
+// FuzzySlashNames ranks case-insensitive label prefixes before label
+// subsequences, then description substrings without the leading slash.
+// Catalogue order is preserved within each group; an empty query matches all.
 func FuzzySlashNames(items []SlashItem, query string) []SlashItem {
 	if query == "" {
 		return slices.Clone(items)
 	}
 	lq := strings.ToLower(query)
-	var prefix, rest []SlashItem
+	hintQuery := strings.TrimPrefix(lq, "/")
+	var prefix, rest, descriptions []SlashItem
 	for _, it := range items {
 		l := strings.ToLower(it.Label)
 		switch {
@@ -377,9 +377,11 @@ func FuzzySlashNames(items []SlashItem, query string) []SlashItem {
 			prefix = append(prefix, it)
 		case SubsequenceMatch(l, lq):
 			rest = append(rest, it)
+		case hintQuery != "" && strings.Contains(strings.ToLower(it.Hint), hintQuery):
+			descriptions = append(descriptions, it)
 		}
 	}
-	return append(prefix, rest...)
+	return append(append(prefix, rest...), descriptions...)
 }
 
 // SubsequenceMatch reports whether query appears in target as a subsequence —

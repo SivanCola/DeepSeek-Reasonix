@@ -57,7 +57,7 @@ func browserCloseStatus(err error) int {
 		return http.StatusNotFound
 	case browser.CodeTabClosed:
 		return http.StatusGone
-	case browser.CodeWaitTimeout, browser.CodeNavigationTimeout:
+	case browser.CodeWaitTimeout, browser.CodeNavigationTimeout, browser.CodeScriptTimeout:
 		return http.StatusGatewayTimeout
 	case "":
 		return http.StatusInternalServerError

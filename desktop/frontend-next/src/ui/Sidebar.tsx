@@ -9,12 +9,15 @@ import type { RemoteHost } from "../port/remote";
 import type { Adder } from "./addws";
 import { AccountRow } from "./AccountRow";
 import { ContentMatches } from "./ContentMatches";
+import { useDestinations } from "./navdest";
+import { ICON, type Section } from "./prefsnav";
 import { RailSearch } from "./railsearch";
 import { RemoteHosts, remoteProjectKey, remoteWorkspaces } from "./RemoteHosts";
 import { remoteProjects } from "./remoteProjects";
 import { StudioIcon } from "./StudioIcon";
 import { UpdateDot } from "./UpdateDot";
 import { useHiddenHosts } from "../state/remotehide";
+import { useSidebarFolds } from "../state/sidebarFolds";
 import { chord } from "./keys";
 import { Palette, type Command } from "./Palette";
 import { Workspaces } from "./Workspaces";
@@ -131,9 +134,10 @@ export function Sidebar({
   onError,
 }: Props) {
   const [railScope, setRailScope] = useState<"all" | "live" | "pinned" | "archived">("all");
+  const destinations = useDestinations();
   const [palette, setPalette] = useState(false);
   const [projectPicker, setProjectPicker] = useState(false);
-  const [folded, setFolded] = useState<Set<string>>(new Set());
+  const [folded, setFolded] = useSidebarFolds();
   const hideAmounts = useHidesAmounts();
   const hiddenHosts = useHiddenHosts();
   // Hidden hosts stay manageable in settings but do not contribute project rows.
@@ -205,13 +209,12 @@ export function Sidebar({
     [newSessionRoot, onNew, onOpen, onOpenRemote, runtimes, active, onFiles, onView, onSettings, onFeedback, feedbackUnread, onFind, onError],
   );
 
-  const onFold = (root: string, shut: boolean) =>
-    setFolded((prev) => {
-      const next = new Set(prev);
-      if (shut) next.add(root);
-      else next.delete(root);
-      return next;
-    });
+  const onFold = (root: string, shut: boolean) => {
+    const next = new Set(folded);
+    if (shut) next.add(root);
+    else next.delete(root);
+    setFolded(next);
+  };
   const foldable = [
     ...tree.filter((ws) => ws.sessions.length || ws.remaining).map((ws) => ws.root),
     ...shownRemotes.flatMap((host) => remoteWorkspaces(host, remoteTrees[host.name], runtimes)
@@ -219,8 +222,8 @@ export function Sidebar({
       .map((ws) => remoteProjectKey(host.name, ws.root))),
   ];
   const allFolded = foldable.length > 0 && foldable.every((key) => folded.has(key));
-  const toggleAll = () => setFolded((current) => allFolded
-    ? new Set([...current].filter((key) => !foldable.includes(key))) : new Set([...current, ...foldable]));
+  const toggleAll = () => setFolded(allFolded
+    ? new Set([...folded].filter((key) => !foldable.includes(key))) : new Set([...folded, ...foldable]));
 
 
   return (
@@ -256,18 +259,25 @@ export function Sidebar({
         <button
           className="studio-new-task"
           data-action="session.new"
+          title="Alt N"
           onClick={() => void startConversation().catch(onError)}
         >
-          <span aria-hidden="true"><StudioIcon name="plus" /></span><b className="studio-label">{t("新建会话")}</b><kbd>Alt N</kbd>
+          <span aria-hidden="true"><StudioIcon name="plus" /></span><b className="studio-label">{t("新建会话")}</b>
         </button>
-        <button className="studio-search" data-action="workspace.search" onClick={() => setPalette(true)}>
-          <span aria-hidden="true"><StudioIcon name="search" /></span><b className="studio-label">{t("搜索与快捷操作")}</b><kbd>Ctrl K</kbd>
+        <button className="studio-search" data-action="workspace.search" title="Ctrl K" onClick={() => setPalette(true)}>
+          <span aria-hidden="true"><StudioIcon name="search" /></span><b className="studio-label">{t("搜索与快捷操作")}</b>
         </button>
         {!navShown && (
           <div className="studio-quicknav">
-            <button data-action="files.open" onClick={onFiles}><span aria-hidden="true"><StudioIcon name="file" /></span><b>{t("文件")}</b></button>
-            <button data-action="settings.section" data-value="ext" onClick={() => onSettings("ext")}><span aria-hidden="true"><StudioIcon name="plug" /></span><b>{t("工具与集成")}</b><small>MCP · Skills</small></button>
-            <button data-action="settings.section" data-value="remote" onClick={() => onSettings("remote")}><span aria-hidden="true"><StudioIcon name="server" /></span><b>{t("运行环境")}</b><small>Local / SSH</small></button>
+            {destinations.filter(([mark]) => mark !== "usage").map(([mark, label, section]) => mark === "files" ? (
+              <button key={mark} data-action="files.open" onClick={onFiles}>
+                <span aria-hidden="true"><StudioIcon name="file" /></span><b>{t(label)}</b>
+              </button>
+            ) : (
+              <button key={mark} data-action="settings.section" data-value={section} onClick={() => onSettings(section)}>
+                <span aria-hidden="true"><svg viewBox="0 0 16 16" width={15} height={15} fill="none" stroke="currentColor" strokeWidth={1} strokeLinecap="round" strokeLinejoin="round">{ICON[mark as Section]}</svg></span><b>{t(label)}</b>
+              </button>
+            ))}
           </div>
         )}
         <div className="studio-session-filters" role="group" aria-label={t("会话范围")}>
@@ -341,13 +351,8 @@ export function Sidebar({
       </Workspaces>
       </RailSearch>
       </div>
-      {!navShown && (
-        <button className="projects-manage" data-action="settings.section" data-value="remote" onClick={() => onSettings("remote")}>
-          <StudioIcon name="server" /><span>{t("连接与机器")}</span><StudioIcon name="chevron" />
-        </button>
-      )}
       {!navShown && <div className="railfoot">
-        <button className="studio-wallet" data-action="settings.section" data-value="usage" onClick={() => onSettings("usage")}><span aria-hidden="true"><StudioIcon name="wallet" /></span><b>{t("钱包与用量")}</b>{wallet && <small>{hideAmounts ? MASK : wallet}</small>}</button>
+        {destinations.some(([mark]) => mark === "usage") && <button className="studio-wallet" data-action="settings.section" data-value="usage" onClick={() => onSettings("usage")}><span aria-hidden="true"><StudioIcon name="wallet" /></span><b>{t("钱包与用量")}</b>{wallet && <small>{hideAmounts ? MASK : wallet}</small>}</button>}
         <button className="studio-wallet studio-feedback" data-action="feedback.open" onClick={() => onFeedback(feedbackEntryTab(feedbackUnread))}>
           <span aria-hidden="true"><StudioIcon name="feedback" /></span>
           <b>{t("发送反馈")}</b>

@@ -33,6 +33,7 @@ describe("a read the kernel refuses", () => {
       versions: () => Promise.reject(refusal("internal.failed")),
       pinVersion: () => Promise.resolve(),
       goToVersion: () => Promise.resolve(),
+      cancelVersion: () => Promise.resolve(),
       restartToVersion: () => Promise.resolve(),
       onUpdateProgress: () => () => {},
     };
@@ -47,6 +48,7 @@ describe("a read the kernel refuses", () => {
       versions: () => Promise.reject(refusal("studio.no_install")),
       pinVersion: () => Promise.resolve(),
       goToVersion: () => Promise.resolve(),
+      cancelVersion: () => Promise.resolve(),
       restartToVersion: () => Promise.resolve(),
       onUpdateProgress: () => () => {},
     };

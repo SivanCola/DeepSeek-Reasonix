@@ -64,10 +64,7 @@ export function ChipMirror({ box, text, chips }: { box: RefObject<HTMLTextAreaEl
     if (!el || !m) return;
     const cs = getComputedStyle(el);
     for (const k of COPIED) m.style.setProperty(k, cs.getPropertyValue(k));
-    m.style.left = `${el.offsetLeft}px`;
-    m.style.top = `${el.offsetTop}px`;
-    m.style.width = `${el.clientWidth}px`;
-    m.style.height = `${el.clientHeight}px`;
+    m.style.paddingRight = `${parseFloat(cs.paddingRight) + el.offsetWidth - el.clientWidth}px`;
     m.style.setProperty("--travel", `${el.scrollHeight - el.clientHeight}px`);
   }, [box]);
   useLayoutEffect(() => {

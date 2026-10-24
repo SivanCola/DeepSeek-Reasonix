@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import "./testkit";
 import { Versions } from "./Versions";
 import { resetUpdateWatch, startUpdateWatch } from "../state/updatewatch";
@@ -28,6 +29,7 @@ function pages(mode: "manual" | "notify" | "download") {
     versions: () => Promise.resolve(hub(true)),
     pinVersion: vi.fn(() => Promise.resolve()),
     goToVersion: vi.fn(() => Promise.resolve()),
+    cancelVersion: vi.fn(() => Promise.resolve()),
     restartToVersion: vi.fn(() => Promise.resolve()),
     onUpdateProgress: (cb: (p: UpdateProgress) => void) => { queueMicrotask(() => cb(idle)); return () => {}; },
   };
@@ -77,6 +79,7 @@ describe("automatic download and the Versions page", () => {
       versions: () => Promise.resolve(hub(true)),
       pinVersion: vi.fn(() => Promise.resolve()),
       goToVersion: vi.fn(() => Promise.resolve()),
+      cancelVersion: vi.fn(() => Promise.resolve()),
       restartToVersion: vi.fn(() => Promise.resolve()),
       onUpdateProgress: (cb: (p: UpdateProgress) => void) => { queueMicrotask(() => cb(idle)); return () => {}; },
     };
@@ -84,5 +87,24 @@ describe("automatic download and the Versions page", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
     expect(watchPort.goToVersion).toHaveBeenCalledExactlyOnceWith("2.21.0");
     stop();
+  });
+
+  it("stops a background download from the same row the page shows", async () => {
+    vi.useRealTimers();
+    const cancel = vi.fn(() => Promise.resolve());
+    const pagePort = {
+      versions: () => Promise.resolve(hub(true)),
+      pinVersion: vi.fn(() => Promise.resolve()),
+      goToVersion: vi.fn(() => Promise.resolve()),
+      cancelVersion: cancel,
+      restartToVersion: vi.fn(() => Promise.resolve()),
+      onUpdateProgress: (cb: (p: UpdateProgress) => void) => {
+        queueMicrotask(() => cb({ version: "2.21.0", phase: "downloading", received: 3, total: 9 }));
+        return () => {};
+      },
+    };
+    render(<Versions port={pagePort} />);
+    await userEvent.click(await screen.findByRole("button", { name: "取消下载" }));
+    expect(cancel).toHaveBeenCalledExactlyOnceWith("2.21.0");
   });
 });

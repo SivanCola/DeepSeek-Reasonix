@@ -16,6 +16,22 @@ explicitly requested short labels, one explanatory line and less whitespace.
 This acceptance does not supersede the unrelated preset-editor findings below.
 范围：仅 Studio 工具审批；保留四种授权行为，按用户后续选择收紧文案和间距。
 
+Review follow-up / 评审修订 (2026-10-24): integrated `studio` at `ef79a2215e`.
+
+- The footer and receipt retain upstream's saved-with-conversation wording in both
+  languages, including persistence after resume and the tool-specific destinations
+  for paid search, network egress and MCP sign-in.
+- Upstream wording tests are kept; three additional card-level regressions cover
+  those destinations. The four short actions and original callbacks remain.
+  Session grant resume/revocation tests pass.
+- The October 22 screenshots below document layout only; their transient-session
+  wording is superseded. A fresh 390px browser check verifies both languages without
+  horizontal overflow.
+- The approval browser checks pass; the same seven previously recorded broader
+  output/alignment failures remain outside this change.
+
+更新说明与回执明确授权随对话保存；保留上游语义测试及四种操作，恢复/撤销测试通过。
+
 - Source visual truth: the selected four-action mock (2048 × 768), refined by
   the approved compact-layout instructions. Visual evidence belongs on the PR.
 - Full view: `approval-compact-desktop.jpg`, 1280 × 800 CSS/image pixels, 1× density.

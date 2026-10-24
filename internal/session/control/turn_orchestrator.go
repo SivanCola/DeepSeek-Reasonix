@@ -206,6 +206,7 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 			false,
 			continuation.goal,
 			GoalStatusRunning,
+			"",
 		)
 	} else {
 		input = c.compose(turn.input, turn.raw, !turn.synthetic)
@@ -269,7 +270,7 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 	if !turn.synthetic {
 		c.beginRecoveryEpisode()
 	}
-	err = c.runSettled(ctx, modelInput)
+	err = c.runWithRunner(ctx, modelInput)
 	c.captureGoalRunWorkDuration(startMessages)
 	c.persistGoalDeliveryCheckpoint()
 	if err != nil {

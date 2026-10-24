@@ -12,6 +12,7 @@
 .sidepanel > header button:hover { color: var(--text); }
 .sidebody { flex: 1; min-height: 0; overflow-y: auto; display: grid; align-content: start; gap: 10px; padding: 10px 12px; }
 .sidehint { margin: 0; color: var(--faint); font: 500 calc(11px * var(--fs-scale, 1))/1.6 var(--ui); }
+.sideprogress { flex: none; padding: 0 12px 8px; }
 .sideturn { display: grid; gap: 4px; }
 .sideturn p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 500 calc(12px * var(--fs-scale, 1))/1.6 var(--ui); }
 .sideturn[data-role="me"] p { color: var(--muted); }

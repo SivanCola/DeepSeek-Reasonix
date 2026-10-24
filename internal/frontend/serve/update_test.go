@@ -17,6 +17,8 @@ type stubUpdateHost struct {
 	started      []string
 	install      update.Install
 	startErr     error
+	cancelled    []string
+	cancelErr    error
 	committed    []string
 	commitErr    error
 	progress     update.Progress
@@ -28,6 +30,11 @@ func (s *stubUpdateHost) StartInstall(install update.Install, target string) err
 	s.install = install
 	s.started = append(s.started, target)
 	return s.startErr
+}
+
+func (s *stubUpdateHost) CancelInstall(target string) error {
+	s.cancelled = append(s.cancelled, target)
+	return s.cancelErr
 }
 
 func (s *stubUpdateHost) CommitInstall(target string) error {
@@ -192,6 +199,65 @@ func postRestart(t *testing.T, url, body string) (int, string) {
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&got)
 	return resp.StatusCode, got.Code
+}
+
+func postCancel(t *testing.T, url, body string) (int, string) {
+	t.Helper()
+	resp, err := http.Post(url+"/update/cancel", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var got struct {
+		Code string `json:"code"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&got)
+	return resp.StatusCode, got.Code
+}
+
+// Cancelling names the version being downloaded and is answered once the host
+// has stopped it, so there is no reply left to wait for.
+func TestCancelStopsTheNamedDownload(t *testing.T) {
+	t.Setenv("REASONIX_HOME", testenv.TempDir(t))
+	host := &stubUpdateHost{}
+	owned := httptest.NewServer(operatorHandler(NewHub(HubOptions{Update: host})))
+	defer owned.Close()
+
+	status, _ := postCancel(t, owned.URL, `{"version":"v2.0.0"}`)
+	if status != http.StatusNoContent {
+		t.Fatalf("POST /update/cancel = %d, want 204", status)
+	}
+	if len(host.cancelled) != 1 || host.cancelled[0] != "v2.0.0" {
+		t.Fatalf("cancelled %v, want one download of v2.0.0", host.cancelled)
+	}
+}
+
+// Nothing downloading the named version is its own answer: the panel can say
+// so instead of reporting a broken request.
+func TestCancelWithNothingRunningIsRefusedByName(t *testing.T) {
+	t.Setenv("REASONIX_HOME", testenv.TempDir(t))
+	host := &stubUpdateHost{cancelErr: appupdate.ErrNothingToCancel}
+	owned := httptest.NewServer(operatorHandler(NewHub(HubOptions{Update: host})))
+	defer owned.Close()
+
+	status, code := postCancel(t, owned.URL, `{"version":"v2.0.0"}`)
+	if status != http.StatusConflict || code != codeNothingToCancel {
+		t.Fatalf("POST /update/cancel = %d %q, want 409 %q", status, code, codeNothingToCancel)
+	}
+}
+
+// A request that names no version never reaches a download, so it is a bad
+// request rather than something to wait on.
+func TestCancelWithoutAVersionIsAMalformedRequest(t *testing.T) {
+	t.Setenv("REASONIX_HOME", testenv.TempDir(t))
+	host := &stubUpdateHost{cancelErr: appupdate.ErrNoTarget}
+	owned := httptest.NewServer(operatorHandler(NewHub(HubOptions{Update: host})))
+	defer owned.Close()
+
+	status, code := postCancel(t, owned.URL, `{"version":""}`)
+	if status != http.StatusBadRequest || code != codeInstallRejected {
+		t.Fatalf("POST /update/cancel = %d %q, want 400 %q", status, code, codeInstallRejected)
+	}
 }
 
 // Downloading and restarting are two acts: the restart reaches the host only

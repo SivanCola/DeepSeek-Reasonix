@@ -1,11 +1,19 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "./testkit";
 import { SidePanel } from "./SidePanel";
 import { MockPort } from "../port/mock";
 import type { AgentPort } from "../port/port";
+import type { SideProgress } from "../port/side";
+
+function deferred() {
+  let resolve!: (value: string) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<string>((ok, fail) => { resolve = ok; reject = fail; });
+  return { promise, resolve, reject };
+}
 
 afterEach(() => {
   cleanup();
@@ -46,6 +54,22 @@ describe("the side conversation panel", () => {
     expect(screen.getByText("这个函数做什么？")).toBeTruthy();
   });
 
+  it("draws the answer as markdown but leaves the question as typed", async () => {
+    const { port } = draw();
+    vi.spyOn(port, "askSide").mockResolvedValue("先看 **入口函数** 再看 `main`");
+    await userEvent.type(await screen.findByRole("textbox", { name: "向辅助会话提问" }), "写 **粗** 的问题");
+    await userEvent.click(screen.getByRole("button", { name: "发送" }));
+    const answer = await waitFor(() => {
+      const el = document.querySelector('.sideturn[data-role="side"]') as HTMLElement;
+      expect(el.querySelector("strong")).toBeTruthy();
+      return el;
+    });
+    expect(answer.querySelector("strong")!.textContent).toBe("入口函数");
+    expect(answer.querySelector("code")!.textContent).toBe("main");
+    expect(answer.textContent).not.toContain("**");
+    expect(document.querySelector('.sideturn[data-role="me"]')!.textContent).toContain("**粗**");
+  });
+
   it("brings the selected text of the main conversation along as a quote, once", async () => {
     const { port } = draw();
     const ask = vi.spyOn(port, "askSide");
@@ -55,7 +79,7 @@ describe("the side conversation panel", () => {
     quoted.remove();
     await userEvent.type(screen.getByRole("textbox", { name: "向辅助会话提问" }), "解释一下");
     await userEvent.click(screen.getByRole("button", { name: "发送" }));
-    await waitFor(() => expect(ask).toHaveBeenCalledWith(expect.any(String), "解释一下", ["第 3 行的 panic 是怎么来的"]));
+    await waitFor(() => expect(ask).toHaveBeenCalledWith(expect.any(String), "解释一下", ["第 3 行的 panic 是怎么来的"], expect.any(Function)));
 
     await userEvent.type(screen.getByRole("textbox", { name: "向辅助会话提问" }), "再问一个");
     await userEvent.click(screen.getByRole("button", { name: "发送" }));
@@ -71,7 +95,7 @@ describe("the side conversation panel", () => {
     await userEvent.click(screen.getByRole("button", { name: /移除引用/ }));
     await userEvent.type(screen.getByRole("textbox", { name: "向辅助会话提问" }), "问题");
     await userEvent.click(screen.getByRole("button", { name: "发送" }));
-    await waitFor(() => expect(ask).toHaveBeenCalledWith(expect.any(String), "问题", []));
+    await waitFor(() => expect(ask).toHaveBeenCalledWith(expect.any(String), "问题", [], expect.any(Function)));
   });
 
   it("discards the conversation when it is closed", async () => {
@@ -117,6 +141,113 @@ describe("the side conversation panel", () => {
     release("done");
     await screen.findByText("done");
   });
+
+  it("shows the submitted question and streamed answer before the request finishes", async () => {
+    const { port } = draw();
+    const pending = deferred();
+    let progress!: (event: SideProgress) => void;
+    vi.spyOn(port, "askSide").mockImplementation((_id, _question, _quotes, notify) => {
+      progress = notify!;
+      return pending.promise;
+    });
+    await userEvent.type(screen.getByRole("textbox", { name: "向辅助会话提问" }), "explain the failure");
+    await userEvent.click(screen.getByRole("button", { name: "发送" }));
+    expect(document.querySelector('.sideturn[data-role="me"]')?.textContent).toBe("explain the failure");
+    act(() => progress({ kind: "thinking" }));
+    expect(screen.getByRole("status").textContent).toContain("思考中");
+    act(() => progress({ kind: "tool", tool: "read_file" }));
+    expect(screen.getByRole("status").textContent).toContain("read_file");
+    act(() => progress({ kind: "text", text: "First part" }));
+    await screen.findByText("First part");
+    expect((screen.getByRole("textbox", { name: "向辅助会话提问" }) as HTMLTextAreaElement).readOnly).toBe(true);
+    pending.resolve("First part, complete");
+    await screen.findByText("First part, complete");
+    expect(screen.queryByText("First part", { exact: true })).toBeNull();
+    expect(screen.getAllByText("explain the failure")).toHaveLength(1);
+  });
+
+  it("renders Markdown while an answer is streaming and keeps the question literal", async () => {
+    const { port } = draw();
+    const pending = deferred();
+    let progress!: (event: SideProgress) => void;
+    vi.spyOn(port, "askSide").mockImplementation((_id, _question, _quotes, notify) => {
+      progress = notify!;
+      return pending.promise;
+    });
+    await userEvent.type(screen.getByRole("textbox", { name: "向辅助会话提问" }), "Explain **this**");
+    await userEvent.click(screen.getByRole("button", { name: "发送" }));
+    act(() => progress({ kind: "text", text: "**Live evidence** and `value`" }));
+    await waitFor(() => expect(document.querySelector('.sideturn[data-role="side"] strong')?.textContent).toBe("Live evidence"));
+    expect(document.querySelector('.sideturn[data-role="side"] code')?.textContent).toBe("value");
+    expect(document.querySelector('.sideturn[data-role="me"]')?.textContent).toBe("Explain **this**");
+    expect(document.querySelector('.sideturn[data-role="me"] strong')).toBeNull();
+    pending.resolve("**Complete evidence** and `result`");
+    await waitFor(() => expect(document.querySelector('.sideturn[data-role="side"] strong')?.textContent).toBe("Complete evidence"));
+    expect(document.querySelector('.sideturn[data-role="side"] code')?.textContent).toBe("result");
+    expect(screen.queryByText("Live evidence")).toBeNull();
+  });
+
+  it("keeps an interrupted partial answer distinct from a completed retry", async () => {
+    const { port } = draw();
+    const pending = deferred();
+    let progress!: (event: SideProgress) => void;
+    const ask = vi.spyOn(port, "askSide").mockImplementationOnce((_id, _question, _quotes, notify) => {
+      progress = notify!;
+      return pending.promise;
+    }).mockResolvedValueOnce("Complete retry answer");
+    const box = screen.getByRole("textbox", { name: "向辅助会话提问" }) as HTMLTextAreaElement;
+    await userEvent.type(box, "keep my question");
+    await userEvent.click(screen.getByRole("button", { name: "发送" }));
+    act(() => progress({ kind: "text", text: "Incomplete evidence" }));
+    await screen.findByText("Incomplete evidence");
+    pending.reject(new Error("connection lost"));
+    expect((await screen.findByRole("alert")).textContent).toContain("connection lost");
+    expect(screen.getByText("已中断")).toBeTruthy();
+    expect(box.readOnly).toBe(false);
+    expect(box.value).toBe("keep my question");
+    await userEvent.click(screen.getByRole("button", { name: "发送" }));
+    await screen.findByText("Complete retry answer");
+    expect(screen.queryByText("Incomplete evidence")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(document.querySelectorAll('.sideturn[data-role="me"]')).toHaveLength(1);
+    expect(ask.mock.calls[0]![0]).toBe(ask.mock.calls[1]![0]);
+  });
+
+  it("keeps streaming while collapsed and exposes that same answer when expanded", async () => {
+    const { port } = draw();
+    const pending = deferred();
+    let progress!: (event: SideProgress) => void;
+    const ask = vi.spyOn(port, "askSide").mockImplementation((_id, _question, _quotes, notify) => {
+      progress = notify!;
+      return pending.promise;
+    });
+    const close = vi.spyOn(port, "closeSide");
+    await userEvent.type(screen.getByRole("textbox", { name: "向辅助会话提问" }), "question");
+    await userEvent.click(screen.getByRole("button", { name: "发送" }));
+    await userEvent.click(screen.getByRole("button", { name: "收起辅助会话" }));
+    act(() => progress({ kind: "text", text: "Still answering" }));
+    await userEvent.click(screen.getByRole("button", { name: "展开辅助会话" }));
+    expect(screen.getByText("Still answering")).toBeTruthy();
+    expect(ask).toHaveBeenCalledOnce();
+    expect(close).not.toHaveBeenCalled();
+    pending.resolve("Final answer");
+    await screen.findByText("Final answer");
+  });
+
+  it("does not send a question after being closed while its conversation is opening", async () => {
+    const opening = deferred();
+    const { port, onClose, view } = draw({ openSide: () => opening.promise });
+    const ask = vi.spyOn(port, "askSide");
+    const close = vi.spyOn(port, "closeSide");
+    await userEvent.type(screen.getByRole("textbox", { name: "向辅助会话提问" }), "question");
+    await userEvent.click(screen.getByRole("button", { name: "发送" }));
+    await userEvent.click(screen.getByRole("button", { name: "关闭辅助会话" }));
+    expect(onClose).toHaveBeenCalledOnce();
+    view.unmount();
+    opening.resolve("closed-before-opened");
+    await waitFor(() => expect(close).toHaveBeenCalledExactlyOnceWith("closed-before-opened"));
+    expect(ask).not.toHaveBeenCalled();
+  });
 });
 
 
@@ -143,7 +274,7 @@ describe("collapsing a side question without discarding it", () => {
     expect((screen.getByRole("textbox", { name: "向辅助会话提问" }) as HTMLTextAreaElement).value).toBe("draft");
     expect(screen.getByText("keep this quote")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "发送" }));
-    await waitFor(() => expect(ask).toHaveBeenCalledWith(expect.any(String), "draft", ["keep this quote"]));
+    await waitFor(() => expect(ask).toHaveBeenCalledWith(expect.any(String), "draft", ["keep this quote"], expect.any(Function)));
   });
 
   it.each([false, true])("finishes the pending answer while collapsed (failure=%s)", async (failure) => {

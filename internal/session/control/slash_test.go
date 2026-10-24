@@ -3,6 +3,7 @@ package control
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -47,32 +48,15 @@ func TestSlashArgItems(t *testing.T) {
 		MemoryArchives:  []string{"/tmp/memory archive/cache-first.md"},
 	}
 
-	// /skills subcommands
+	// /skills offers only what the controller runs
 	items, from := SlashArgItems("/skills ", data)
 	if from != len("/skills ") {
 		t.Errorf("from = %d, want %d", from, len("/skills "))
 	}
-	for _, w := range []string{"show", "enable", "disable", "new", "paths"} {
-		if !has(items, w) {
-			t.Errorf("/skills missing subcommand %q; got %v", w, labelsOf(items))
-		}
-	}
-	if has(items, "manage") {
-		t.Errorf("/skills should hide redundant manage subcommand; got %v", labelsOf(items))
-	}
-	if has(items, "list") {
-		t.Errorf("/skills should hide redundant list subcommand; got %v", labelsOf(items))
-	}
-	// /skills show → skill names
-	items, _ = SlashArgItems("/skills show ", data)
-	if !has(items, "explore") || !has(items, "review") {
-		t.Errorf("/skills show should list skill names; got %v", labelsOf(items))
+	if got := labelsOf(items); len(got) != 2 || !has(items, "enable") || !has(items, "disable") {
+		t.Errorf("/skills should offer exactly enable and disable; got %v", got)
 	}
 	// Legacy /skill still works as an alias.
-	items, _ = SlashArgItems("/skill show ", data)
-	if !has(items, "explore") || !has(items, "review") {
-		t.Errorf("/skill show alias should list skill names; got %v", labelsOf(items))
-	}
 	items, _ = SlashArgItems("/skill disable ", data)
 	if !has(items, "explore") || has(items, "security-review") {
 		t.Errorf("/skill disable should list enabled skills only; got %v", labelsOf(items))
@@ -81,33 +65,17 @@ func TestSlashArgItems(t *testing.T) {
 	if !has(items, "security-review") || has(items, "review") {
 		t.Errorf("/skill enable should list disabled skills only; got %v", labelsOf(items))
 	}
-	// /mcp subcommands + filtering
 	items, _ = SlashArgItems("/mcp ", data)
-	if has(items, "list") {
-		t.Errorf("/mcp should hide redundant list subcommand; got %v", labelsOf(items))
-	}
-	items, _ = SlashArgItems("/mcp re", data)
-	if len(items) != 1 || items[0].Label != "remove" {
-		t.Errorf("/mcp re should filter to remove; got %v", labelsOf(items))
-	}
-	// /mcp remove → server names
-	items, _ = SlashArgItems("/mcp remove ", data)
-	if !has(items, "fs") || !has(items, "git") {
-		t.Errorf("/mcp remove should list servers; got %v", labelsOf(items))
+	if got := labelsOf(items); len(got) != 1 || got[0] != "connect" {
+		t.Errorf("/mcp should offer exactly connect; got %v", got)
 	}
 	// /mcp connect -> disconnected configured server names
 	items, _ = SlashArgItems("/mcp connect ", data)
-	if !has(items, "optional") {
+	if !has(items, "optional") || has(items, "fs") {
 		t.Errorf("/mcp connect should list disconnected configured servers; got %v", labelsOf(items))
 	}
-	// /mcp show/tools -> connected + configured server names
-	items, _ = SlashArgItems("/mcp show ", data)
-	if !has(items, "fs") || !has(items, "linear") || !has(items, "optional") {
-		t.Errorf("/mcp show should list known servers; got %v", labelsOf(items))
-	}
-	items, _ = SlashArgItems("/mcp tools ", data)
-	if !has(items, "git") || !has(items, "linear") {
-		t.Errorf("/mcp tools should list known servers; got %v", labelsOf(items))
+	if items, _ = SlashArgItems("/mcp remove ", data); len(items) != 0 {
+		t.Errorf("/mcp remove is not run by the controller and must not complete; got %v", labelsOf(items))
 	}
 	// /model → refs, current marked
 	items, _ = SlashArgItems("/model ", data)
@@ -472,6 +440,52 @@ func TestManagementHooksTrustCompatibilityNotice(t *testing.T) {
 	}
 	if len(notices) != 1 || !strings.Contains(notices[0], "enabled automatically") {
 		t.Fatalf("legacy /hooks trust notice = %v", notices)
+	}
+}
+
+func TestManagementUnknownMCPAndSkillsSubcommandsSaySo(t *testing.T) {
+	isolateControlConfigHome(t)
+	for _, line := range []string{"/mcp remove fs", "/mcp add x", "/skills show explore", "/skills new x"} {
+		var notices []string
+		c := New(Options{Sink: event.FuncSink(func(e event.Event) {
+			if e.Kind == event.Notice {
+				notices = append(notices, e.Text)
+			}
+		})})
+		if !c.managementNotice(line) {
+			t.Fatalf("%s was not handled", line)
+		}
+		if len(notices) != 1 || !strings.Contains(notices[0], "unknown /") || !strings.Contains(notices[0], "try:") {
+			t.Errorf("%s answered %v, want an unknown-subcommand notice", line, notices)
+		}
+	}
+}
+
+// Completion offers exactly the /mcp and /skills subcommands the controller
+// runs, so it is also the list a document may teach.
+func TestTheDocsNameOnlyMCPAndSkillsSubcommandsThatRun(t *testing.T) {
+	var docs []string
+	for _, pattern := range []string{"../../../docs/*.md", "../../../README*.md"} {
+		found, err := filepath.Glob(pattern)
+		if err != nil {
+			t.Fatal(err)
+		}
+		docs = append(docs, found...)
+	}
+	if len(docs) == 0 {
+		t.Fatal("no documents found")
+	}
+	named := regexp.MustCompile("`(/mcp|/skills?) ([a-z][a-z-]*)")
+	for _, path := range docs {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range named.FindAllStringSubmatch(string(body), -1) {
+			if items, _ := SlashArgItems(m[1]+" ", ArgData{}); !has(items, m[2]) {
+				t.Errorf("%s names `%s %s`, which the controller does not run", filepath.Base(path), m[1], m[2])
+			}
+		}
 	}
 }
 

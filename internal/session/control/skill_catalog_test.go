@@ -10,21 +10,25 @@ import (
 
 // The listing is delivered once, on a user turn. A fold can summarise that turn
 // away, and standing state that is only ever said once does not survive that —
-// so a completed compaction has to owe it again.
+// so the block is owed from the history, and a fold changes the answer.
 func TestSkillCatalogIsOwedAgainAfterAFold(t *testing.T) {
 	c := New(Options{Skills: []skill.Skill{{Name: "alpha", Description: "does the alpha thing"}}})
+	defer c.Close()
+	var visible projectionHistory
+	c.bindProjectionSeer(visible.newest, visible.sees)
 
 	first := c.Compose("hello")
-	c.settleTurnProjections()
 	if !strings.Contains(first, "<available-skills>") || !strings.Contains(first, "alpha") {
 		t.Fatalf("the first turn did not carry the listing: %q", first)
 	}
+	visible.deliver(first)
 	second := c.Compose("again")
-	c.settleTurnProjections()
 	if strings.Contains(second, "<available-skills>") {
 		t.Fatalf("the listing was delivered twice without anything changing: %q", second)
 	}
+	visible.deliver(second)
 
+	visible.forget() // the fold summarised the turn that carried it away
 	c.sink.Emit(event.Event{Kind: event.CompactionDone, Compaction: event.Compaction{Messages: 4}})
 
 	if after := c.Compose("after the fold"); !strings.Contains(after, "<available-skills>") || !strings.Contains(after, "alpha") {
@@ -32,11 +36,13 @@ func TestSkillCatalogIsOwedAgainAfterAFold(t *testing.T) {
 	}
 }
 
-// A turn that composed and never reached the runner delivered nothing, so the
-// debt stands. The settle point is the runner hand-off precisely because a hook
-// or an extension can still refuse the turn after it composed.
+// A turn that composed and never reached the provider delivered nothing, so the
+// debt stands until the composed text is part of the visible history.
 func TestCatalogDebtStandsUntilTheTurnCarriesIt(t *testing.T) {
 	c := New(Options{Skills: []skill.Skill{{Name: "alpha", Description: "does the alpha thing"}}})
+	defer c.Close()
+	var visible projectionHistory
+	c.bindProjectionSeer(visible.newest, visible.sees)
 
 	if first := c.Compose("hello"); !strings.Contains(first, "alpha") {
 		t.Fatalf("the first turn did not carry the listing: %q", first)
@@ -45,21 +51,25 @@ func TestCatalogDebtStandsUntilTheTurnCarriesIt(t *testing.T) {
 	if !strings.Contains(abandoned, "alpha") {
 		t.Fatalf("a composed-but-undelivered turn cleared the debt: %q", abandoned)
 	}
-	c.settleTurnProjections()
+	visible.deliver(abandoned)
 	if delivered := c.Compose("and now"); strings.Contains(delivered, "<available-skills>") {
 		t.Fatalf("the listing was re-sent after a turn carried it: %q", delivered)
 	}
 }
 
-// A fold that folded nothing — a truncated or refused digest — left the turn
-// carrying the listing verbatim, so the listing is not owed again: re-sending it
-// after every failed fold only grows the prompt the next attempt has to fold.
+// A fold that folded nothing left the turn carrying the listing verbatim, so
+// the listing is not owed again: re-sending it after every failed fold only
+// grows the prompt the next attempt has to fold.
 func TestSkillCatalogIsNotOwedAgainAfterAFoldThatFoldedNothing(t *testing.T) {
 	c := New(Options{Skills: []skill.Skill{{Name: "alpha", Description: "does the alpha thing"}}})
-	if first := c.Compose("hello"); !strings.Contains(first, "<available-skills>") {
+	defer c.Close()
+	var visible projectionHistory
+	c.bindProjectionSeer(visible.newest, visible.sees)
+	first := c.Compose("hello")
+	if !strings.Contains(first, "<available-skills>") {
 		t.Fatalf("the first turn did not carry the listing: %q", first)
 	}
-	c.settleTurnProjections()
+	visible.deliver(first)
 
 	c.sink.Emit(event.Event{Kind: event.CompactionDone, Compaction: event.Compaction{Code: "summary_truncated"}})
 

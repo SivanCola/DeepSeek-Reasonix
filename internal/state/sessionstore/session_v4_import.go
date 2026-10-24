@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"reasonix/internal/contract/provider"
 	"reasonix/internal/state/sessionv4"
 )
 
@@ -89,7 +90,16 @@ func PrepareSessionPath(path string) error {
 		return importV4(path, s)
 	}
 	meta, ok, err := LoadBranchMeta(path)
-	if err != nil || !ok || meta.ImportedFrom == nil || meta.ImportedFrom.LogSize == s.LogSize {
+	if err != nil {
+		return nil
+	}
+	if !ok || meta.ImportedFrom == nil {
+		// The transcript landed but the sidecar that records what the
+		// conversation means did not: finish it before the copy is used.
+		_, err := completeV4Import(path, s, BranchMeta{})
+		return err
+	}
+	if meta.ImportedFrom.LogSize == s.LogSize {
 		return nil
 	}
 	current, err := loadSessionUnlocked(path)
@@ -110,7 +120,7 @@ func PrepareSessionPath(path string) error {
 	// This path refreshes a copy that already exists, so its meta already carries
 	// whatever the first import decided — including the archived mark. Passing an
 	// empty start is what keeps that decision rather than resetting it.
-	return saveImportMeta(path, s, t, BranchMeta{})
+	return saveImportMeta(path, s, t, BranchMeta{}, t.Messages)
 }
 
 func importV4(path string, s sessionv4.Session) error {
@@ -129,7 +139,7 @@ func importV4As(path string, s sessionv4.Session, start BranchMeta) error {
 	if err := sess.SaveIfAbsent(path); err != nil && !os.IsExist(err) {
 		return fmt.Errorf("import 1.x session %s: %w", s.Manifest.SessionID, err)
 	}
-	return saveImportMeta(path, s, t, start)
+	return saveImportMeta(path, s, t, start, t.Messages)
 }
 
 // importedTitle is the name 1.x showed for the conversation: the title its log
@@ -161,12 +171,14 @@ func healImportedTitle(path string, s sessionv4.Session) {
 	_ = SaveBranchMeta(path, meta)
 }
 
-func saveImportMeta(path string, s sessionv4.Session, t sessionv4.Transcript, start BranchMeta) error {
+func saveImportMeta(path string, s sessionv4.Session, t sessionv4.Transcript, start BranchMeta, content []provider.Message) error {
 	digest, err := DigestSessionMessages(t.Messages)
 	if err != nil {
 		return err
 	}
-	preview, turns := SessionPreviewFromMessages(t.Messages)
+	// content is what the copy holds, which is the source's transcript on a
+	// first import and may be a superset of it on a completed interrupted one.
+	preview, turns := SessionPreviewFromMessages(content)
 	meta, _, _ := LoadBranchMeta(path)
 	meta.ID = BranchID(path)
 	meta.CreatedAt = s.Manifest.CreatedAt
@@ -183,6 +195,86 @@ func saveImportMeta(path string, s sessionv4.Session, t sessionv4.Transcript, st
 	meta.Pinned = meta.Pinned || start.Pinned
 	meta.ImportedFrom = &ImportSource{Line: importLineV4, LogSize: s.LogSize, Digest: hex.EncodeToString(digest[:])}
 	return SaveBranchMeta(path, meta)
+}
+
+// completeV4Import finishes a copy an interrupted run left behind: the transcript
+// landed, but the sidecar that carries what it cannot say — archive mark, title,
+// pin, and source — did not. A copy with a sidecar is done and is left alone;
+// one without is completed here. It reports whether it wrote the sidecar.
+func completeV4Import(path string, s sessionv4.Session, start BranchMeta) (bool, error) {
+	meta, ok, err := LoadBranchMeta(path)
+	if err != nil {
+		// A sidecar that exists but cannot be read is not one to rewrite on an
+		// import pass; leave it for the recovery path.
+		return false, nil
+	}
+	if ok && meta.ImportedFrom != nil {
+		healImportedTitle(path, s)
+		return false, nil
+	}
+	t, err := s.Transcript()
+	if err != nil {
+		return false, fmt.Errorf("import 1.x session %s: %w", s.Manifest.SessionID, err)
+	}
+	if _, turns := SessionPreviewFromMessages(t.Messages); turns == 0 {
+		// Nothing to bring over; writing counts derived from an empty source
+		// would make a copy that does have turns look empty.
+		return false, nil
+	}
+	content, err := absorbInterruptedCopy(path, t)
+	if err != nil {
+		return false, fmt.Errorf("import 1.x session %s: %w", s.Manifest.SessionID, err)
+	}
+	if err := saveImportMeta(path, s, t, start, content); err != nil {
+		return false, fmt.Errorf("import 1.x session %s: %w", s.Manifest.SessionID, err)
+	}
+	return true, nil
+}
+
+// absorbInterruptedCopy brings an interrupted import's copy up to the source
+// while it is still only a prefix of it. A copy the person continued in 2.x is
+// left as it is: its extra turns are not in 1.x, and replaying over it would
+// lose them. It returns the messages the copy holds afterwards, so the sidecar
+// describes the conversation that exists rather than the one in the source.
+func absorbInterruptedCopy(path string, t sessionv4.Transcript) ([]provider.Message, error) {
+	// sessionArtifactExists is the store's reader for this question. It answers
+	// bool, so missing and unreadable look alike; a copy that is there but
+	// cannot be read still fails when it is loaded below.
+	if !sessionArtifactExists(path) {
+		sess := NewSession("")
+		sess.Messages = t.Messages
+		if err := sess.SaveIfAbsent(path); err != nil && !os.IsExist(err) {
+			return nil, err
+		}
+		return t.Messages, nil
+	}
+	current, err := loadSessionUnlocked(path)
+	if err != nil {
+		return nil, err
+	}
+	copied := current.Snapshot()
+	if len(copied) >= len(t.Messages) || !isMessagePrefixOf(copied, t.Messages) {
+		return copied, nil
+	}
+	current.Rewrite(t.Messages, "complete an interrupted import")
+	if err := current.SaveRewrite(path); err != nil {
+		return nil, err
+	}
+	return t.Messages, nil
+}
+
+// isMessagePrefixOf reports whether copied is exactly the first len(copied)
+// messages of full, using the same digest the import records for its source.
+func isMessagePrefixOf(copied, full []provider.Message) bool {
+	if len(copied) > len(full) {
+		return false
+	}
+	have, err := DigestSessionMessages(copied)
+	if err != nil {
+		return false
+	}
+	want, err := DigestSessionMessages(full[:len(copied)])
+	return err == nil && have == want
 }
 
 // withV4Sessions adds the 1.x v4 conversations beside dir that have no import
@@ -242,8 +334,9 @@ func readV4Cwd(store fs.FS, name string) string {
 
 // ImportV4From copies the 1.x v4 conversations under store into dir. With a route
 // each goes where it is placed, and one naming no project is skipped as SkipNoProject;
-// without one everything goes to dir. Imported and empty ones are skipped silently,
-// an unreadable one becomes a SkippedSession, and importedAs supplies each copy's meta.
+// without one everything goes to dir. A finished copy is left alone, an
+// interrupted one is completed, an empty one is skipped silently, an unreadable
+// one becomes a SkippedSession, and importedAs supplies each copy's meta.
 func ImportV4From(store fs.FS, dir string, route func(V4Origin) V4Placement, importedAs func(sessionID string) BranchMeta) (int, []SkippedSession, error) {
 	entries, err := fs.ReadDir(store, ".")
 	if err != nil {
@@ -287,7 +380,18 @@ func ImportV4From(store fs.FS, dir string, route func(V4Origin) V4Placement, imp
 		}
 		path := v4ImportPath(target, id)
 		if sessionArtifactExists(path) {
-			healImportedTitle(path, s)
+			start := BranchMeta{}
+			if importedAs != nil {
+				start = importedAs(id)
+			}
+			completed, err := completeV4Import(path, s, start)
+			if err != nil {
+				skip(e.Name(), classifyWriteSkip(err))
+				continue
+			}
+			if completed {
+				imported++
+			}
 			continue
 		}
 		t, err := s.Transcript()

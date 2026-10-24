@@ -98,6 +98,9 @@ export const ACTIONS: UIAction[] = [
   { id: "chrome.open-project", kind: "shell-native", target: "none", proof: "interaction" },
   { id: "appearance.theme", kind: "view", target: "none", proof: "interaction" },
   { id: "appearance.nav-rail", kind: "view", target: "none", proof: "interaction" },
+  { id: "appearance.nav-entry-visible", kind: "view", target: "none", proof: "interaction" },
+  { id: "appearance.nav-entry-move", kind: "view", target: "none", proof: "interaction" },
+  { id: "appearance.nav-entries-reset", kind: "view", target: "none", proof: "interaction" },
   { id: "appearance.live-grace", kind: "view", target: "none", proof: "interaction" },
   { id: "appearance.legacy-sessions", kind: "view", target: "none", proof: "interaction" },
   { id: "appearance.open-session-limit", kind: "view", target: "none", proof: "interaction" },
@@ -107,6 +110,7 @@ export const ACTIONS: UIAction[] = [
   { id: "appearance.graphics", kind: "view", target: "none", proof: "interaction" },
   { id: "appearance.session-tabs", kind: "view", target: "none", proof: "interaction" },
   { id: "appearance.esc-stop", kind: "view", target: "none", proof: "interaction" },
+  { id: "appearance.page-sleep", kind: "view", target: "none", proof: "interaction" },
   { id: "workspace.configure", kind: "view", target: "none", proof: "interaction" },
   { id: "workspace.prepare-cancel", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
   { id: "workspace.prepare-details", kind: "view", target: "none", proof: "interaction" },
@@ -124,7 +128,6 @@ export const ACTIONS: UIAction[] = [
   { id: "session.batch-delete", kind: "destructive", target: "none", proof: "authority-effect" },
   { id: "chrome.settings", kind: "navigation", target: "none", proof: "interaction" },
   { id: "browser.open", kind: "view", target: "none", proof: "interaction" },
-  { id: "browser.wide", kind: "view", target: "none", proof: "interaction" },
   { id: "browser.full", kind: "view", target: "none", proof: "interaction" },
   { id: "browser.back", kind: "navigation", target: "none", proof: "interaction" },
   { id: "browser.reload", kind: "repeatable", target: "none", proof: "interaction" },
@@ -284,6 +287,7 @@ export const ACTIONS: UIAction[] = [
   { id: "feedback.tab", kind: "view", target: "none", proof: "interaction" },
   { id: "feedback.category", kind: "view", target: "none", proof: "interaction" },
   { id: "feedback.body", kind: "view", target: "none", proof: "interaction" },
+  { id: "feedback.preview", kind: "view", target: "none", proof: "interaction" },
   { id: "feedback.name", kind: "view", target: "none", proof: "interaction" },
   { id: "feedback.contact", kind: "view", target: "none", proof: "interaction" },
   { id: "feedback.shot.pick", kind: "view", target: "none", proof: "interaction" },
@@ -313,6 +317,7 @@ export const ACTIONS: UIAction[] = [
   { id: "feedback.mine", kind: "view", target: "none", proof: "interaction" },
   { id: "feedback.logs", kind: "shell-native", target: "none", proof: "interaction" },
   { id: "feedback.refresh", kind: "repeatable", target: "none", proof: "interaction" },
+  { id: "feedback.account-section", kind: "view", target: "none", proof: "interaction" },
   { id: "feedback.filter", kind: "view", target: "none", proof: "interaction" },
   { id: "feedback.account-link", kind: "view", target: "none", proof: "interaction" },
   { id: "feedback.account-link-confirm", kind: "kernel-mutation", target: "none", proof: "interaction" },
@@ -397,6 +402,7 @@ export const ACTIONS: UIAction[] = [
   // the row's own action, so this one never writes anything itself.
   { id: "tree.navigate", kind: "view", target: "none", proof: "interaction" },
   { id: "settings.close", kind: "navigation", target: "none", proof: "interaction" },
+  { id: "settings.expand", kind: "view", target: "none", proof: "interaction" },
   { id: "pane.activate", kind: "navigation", target: "none", proof: "interaction" },
   // How this session is being read. One id across a bar button and a menu row,
   // because reaching a view from the bar and from the detail menu is one intent
@@ -535,6 +541,7 @@ export const ACTIONS: UIAction[] = [
   { id: "versions.reload", kind: "repeatable", target: "none", proof: "interaction" },
   { id: "versions.pin", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
   { id: "versions.activate", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
+  { id: "versions.cancel", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
   { id: "versions.restart", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
   { id: "versions.later", kind: "view", target: "none", proof: "interaction" },
   { id: "versions.more", kind: "view", target: "none", proof: "interaction" },
@@ -576,6 +583,7 @@ export const ACTIONS: UIAction[] = [
   { id: "theme.remove", kind: "destructive", target: "entity", proof: "authority-effect" },
 
   // Usage changes what report is read, not canonical session state.
+  { id: "usage.range.today", kind: "view", target: "none", proof: "interaction" },
   { id: "usage.range.start", kind: "view", target: "none", proof: "interaction" },
   { id: "usage.range.end", kind: "view", target: "none", proof: "interaction" },
   { id: "usage.range.month", kind: "view", target: "none", proof: "interaction" },
@@ -608,6 +616,10 @@ export const ACTIONS: UIAction[] = [
   { id: "appearance.reading-size", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
   { id: "appearance.text-size", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
   { id: "appearance.measure", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
+  // Dragging the column's edge is a view adjustment held on this machine,
+  // not a setting written to the kernel: it changes what is drawn, not what
+  // the transcript says.
+  { id: "appearance.reading-width", kind: "view", target: "none", proof: "interaction" },
   { id: "appearance.background", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
   { id: "appearance.font", kind: "kernel-mutation", target: "entity", proof: "authority-effect" },
   // Kept where the window keeps them: these are this browser's, and no kernel
@@ -685,6 +697,7 @@ export const ACTIONS: UIAction[] = [
   { id: "sandbox.add-write-root", kind: "kernel-mutation", target: "optional", proof: "authority-effect" },
   { id: "sandbox.remove-write-root", kind: "destructive", target: "entity", proof: "authority-effect" },
   { id: "browser-tools.enabled", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
+  { id: "present-files.enabled", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
   { id: "size.set", kind: "kernel-mutation", target: "none", proof: "interaction" },
   { id: "size.keep", kind: "view", target: "none", proof: "interaction" },
   { id: "size.restore", kind: "kernel-mutation", target: "none", proof: "interaction" },
@@ -772,6 +785,7 @@ export const ACTIONS: UIAction[] = [
 
   // ── The two side panels. Reached from the keyboard here, and from each
   //    gutter's own grip, which this pass has not annotated yet.
+  { id: "rail.star", kind: "view", target: "none", proof: "interaction" },
   { id: "rail.toggle", kind: "view", target: "none", proof: "interaction" },
   ...SCHEDULE_ACTIONS,
   ...DOCUMENT_ACTIONS,

@@ -12,6 +12,9 @@ const (
 	PhaseAuthorizing = "authorizing"
 	PhaseRelaunching = "relaunching"
 	PhaseFailed      = "error"
+	// PhaseCancelled is a download the person stopped. It is not a failure: the
+	// release is discarded and another move may start at once.
+	PhaseCancelled = "cancelled"
 )
 
 // Progress is what a version panel renders while an install is in flight. It
@@ -39,7 +42,7 @@ type Progress struct {
 // first would have two writers for one set of files.
 func (p Progress) Running() bool {
 	switch p.Phase {
-	case "", PhaseIdle, PhaseCached, PhaseReady, PhaseFailed:
+	case "", PhaseIdle, PhaseCached, PhaseReady, PhaseFailed, PhaseCancelled:
 		return false
 	}
 	return true

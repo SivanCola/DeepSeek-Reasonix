@@ -195,11 +195,11 @@ func (g *goalMachine) setStatePath(path string) {
 	g.mu.Unlock()
 }
 
-// snapshot returns the fields Compose injects into outgoing turns.
-func (g *goalMachine) snapshot() (goal, status string) {
+// snapshot returns what Compose injects: the goal, its status and stop cause.
+func (g *goalMachine) snapshot() (goal, status, stopCause string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.goal, g.status
+	return g.goal, g.status, g.stopCause
 }
 
 func (g *goalMachine) goalText() string {

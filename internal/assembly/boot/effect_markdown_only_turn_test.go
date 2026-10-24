@@ -53,7 +53,7 @@ func TestEffectMarkdownOnlyTurnInCodeWorkspace(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Chdir(dir)
-			writeUserConfig(t, userModel+"\n[codegraph]\nenabled = false\n")
+			writeUserConfig(t, userModel+holdChangedTurns+"\n[codegraph]\nenabled = false\n")
 			registerBootTokenProfileTestProvider()
 			writeFile(t, dir, "App.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\" />\n")
 			writeFile(t, dir, "Program.cs", "class P {}\n")

@@ -501,7 +501,7 @@ func runAgent(args []string, version string) int {
 	// executor, not just the top-level one. Ask fails closed because no UI can
 	// answer; with no mode named, the build's sandbox claim and the folder's
 	// trust decide between that and auto once the controller exists.
-	overrides := runBuildOverrides(effortOverride, allowedTools, f.additionalDirs, workspaceRoot, permissions.approval, cliSessionRecoveredHandler(leases), ablated)
+	overrides := runBuildOverrides(effortOverride, allowedTools, f.additionalDirs, workspaceRoot, permissions.approval, cliSessionRecoveredHandler(leases), ablated, *f.failOnUnverified)
 	overrides.Version = version
 	overrides = withComposition(overrides, *f.agentComposition, resumeSession)
 	ctrl, err := setupProfileWithOverrides(ctx, *f.model, *f.maxSteps, true, sink, profile, overrides)

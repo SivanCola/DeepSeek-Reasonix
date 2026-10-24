@@ -92,6 +92,9 @@ type Controller struct {
 	guardianPath string // persisted guardian session file ("" when disabled)
 	systemPrompt string
 	commands     atomic.Pointer[[]command.Command]
+	// restateProjection answers "not visible" until a turn is handed to the
+	// runner; a model switch sets it. See projection_debt.go.
+	restateProjection atomic.Bool
 	// hookContexts carries one-shot lifecycle hook context into the next real
 	// user turn without changing the cache-stable system prompt.
 	hookContexts []string
@@ -189,6 +192,9 @@ type Controller struct {
 	// Not reentrant — never call snapshot (or anything that snapshots, such as
 	// recoverInterruptedTurn or maybeColdResumePrune) while holding it.
 	snapshotMu sync.Mutex
+	// grantsMu orders sidecar writes of session grants; the grants are read after
+	// it is held, so the write that runs last carries the latest answers.
+	grantsMu sync.Mutex
 	// turn counts model turns this session, passed to hooks in their payload.
 	turn int
 
@@ -481,6 +487,11 @@ func New(opts Options) *Controller {
 		providerResolver:   opts.ProviderResolver,
 		runtimeGeneration:  opts.RuntimeGeneration,
 	}
+	if c.executor != nil {
+		c.bindProjectionSeer(c.deliveredNewest, c.deliveredSees)
+	}
+	c.approval.onGrantChange = func() { go c.persistSessionGrants() }
+	c.restoreSessionGrants(opts.SessionPath)
 	c.adoptSessionResources(opts)
 	c.publishPerProjectContext(opts)
 	if opts.Extensions != nil {

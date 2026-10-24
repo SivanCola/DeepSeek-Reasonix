@@ -208,3 +208,73 @@ func TestRecordSkipBlocksTheSlot(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+// A one-shot whose only slot is recorded as missed must be spent like a claim:
+// terminal, refuse renewal, and still say in its run that it never ran.
+func TestSkippedOneShotIsSpent(t *testing.T) {
+	st, clk, _ := newTestStore(t)
+	p := DefaultPolicy()
+	req := everyReq()
+	req.Trigger = Trigger{Kind: TriggerAt, At: epoch.Add(2 * time.Hour)}
+	sc := mustCreate(t, st, p, req)
+	clk.Advance(2*time.Hour + 20*time.Minute) // past the 15 minute late grace
+
+	// What the ticker records for a slot it may no longer start.
+	if err := st.RecordSkip(t.Context(), sc.ID, sc.Trigger.At, SkipMissed); err != nil {
+		t.Fatal(err)
+	}
+
+	m, _, err := st.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Schedules[0].Status; got != StatusExpired {
+		t.Fatalf("one-shot whose only slot was skipped as missed is %q, not %q: "+
+			"the board shows it active and renew claims to extend what is already spent", got, StatusExpired)
+	}
+	if err := st.Renew(t.Context(), p, sc.ID); !errors.Is(err, ErrNotActive) {
+		t.Fatalf("renewing a spent one-shot must refuse: %v", err)
+	}
+	if run := m.Runs[0]; run.State != RunSkipped || run.SkipReason != string(SkipMissed) {
+		t.Fatalf("the run record must still say it never ran: %+v", run)
+	}
+}
+
+// A skipped slot is normal for a recurring schedule: it stays active and its
+// next slot still runs.
+func TestSkippedRecurringSlotKeepsNextSlot(t *testing.T) {
+	st, clk, _ := newTestStore(t)
+	p := DefaultPolicy()
+	sc := mustCreate(t, st, p, everyReq())
+	clk.Advance(time.Hour)
+	if err := st.RecordSkip(t.Context(), sc.ID, slotN(sc, 1), SkipMissed); err != nil {
+		t.Fatal(err)
+	}
+	m, _, _ := st.Snapshot(t.Context())
+	if m.Schedules[0].Status != StatusActive {
+		t.Fatalf("a skipped slot must not stop a recurring schedule: %s", m.Schedules[0].Status)
+	}
+	clk.Advance(time.Hour)
+	if _, err := st.Claim(t.Context(), p, sc.ID, slotN(sc, 2)); err != nil {
+		t.Fatalf("the next slot must still claim: %v", err)
+	}
+}
+
+// A one-shot still inside the grace window is not skipped: it runs late, and
+// that late claim is what spends it.
+func TestOneShotInsideGraceStillRunsLate(t *testing.T) {
+	st, clk, _ := newTestStore(t)
+	p := DefaultPolicy()
+	req := everyReq()
+	req.Trigger = Trigger{Kind: TriggerAt, At: epoch.Add(2 * time.Hour)}
+	sc := mustCreate(t, st, p, req)
+	clk.Advance(2*time.Hour + 14*time.Minute) // inside the 15 minute late grace
+
+	if _, err := st.Claim(t.Context(), p, sc.ID, sc.Trigger.At); err != nil {
+		t.Fatalf("a one-shot inside its grace window must still run late: %v", err)
+	}
+	m, _, _ := st.Snapshot(t.Context())
+	if m.Schedules[0].Status != StatusExpired {
+		t.Fatalf("the late claim spends the one-shot: %s", m.Schedules[0].Status)
+	}
+}
