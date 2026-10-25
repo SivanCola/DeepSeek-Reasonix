@@ -26,6 +26,26 @@ function draw(answer: (q?: StorageQuery) => Promise<StorageState>) {
 
 const flush = () => act(async () => { await vi.advanceTimersByTimeAsync(0); });
 
+it("keeps each root's usage, path and migration action together", async () => {
+  const roots = [root("state", { bytes: 1024, relocatable: true }), root("cache", { bytes: 2048, relocatable: true }), root("home")];
+  const plan = vi.fn(async () => ({ ok: true, bytes: 2048, files: 2 }));
+  const move = vi.fn(async () => ({ ok: true }));
+  const port = { storage: vi.fn(async () => ({ roots, editable: true })), planStorageMove: plan, moveStorage: move } as unknown as AgentPort;
+  render(<Storage port={port} hub={{} as HubPort} workspace="/project" onRecovered={() => {}} />);
+  await flush();
+  const cache = within(screen.getByRole("region", { name: "索引与缓存" }));
+  expect(cache.getByText("/data/cache")).toBeTruthy();
+  expect(cache.getByText(/2(\.0)? KB/)).toBeTruthy();
+  expect(within(screen.getByRole("region", { name: "配置与凭据" })).queryByRole("button", { name: "移动…" })).toBeNull();
+  fireEvent.click(cache.getByRole("button", { name: "移动…" }));
+  fireEvent.change(cache.getByRole("textbox"), { target: { value: "/new-cache" } });
+  await flush();
+  expect(plan).toHaveBeenCalledWith("cache", "/new-cache");
+  fireEvent.click(cache.getByRole("button", { name: "开始迁移" }));
+  await flush();
+  expect(move).toHaveBeenCalledWith("cache", "/new-cache");
+});
+
 it("shows fast roots while a slow one is still being measured", async () => {
   draw(async (q) => {
     if (q?.layout) return state([root("state", { pending: true }), root("cache", { pending: true })]);

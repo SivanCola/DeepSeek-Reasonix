@@ -50,23 +50,10 @@ export function ProgressWatch({ port }: { port: AgentPort }) {
     <div className="empty">{t("无法读取无进展设置。")}</div>
   ) : (
     <div className="box">
-      <div className="lrow">
-        <span className="tx">
-          <span className="lb">{t("长时间无进展时暂停任务")}</span>
-          <span className="ds">{t("默认关闭：只在输入框上方提示，由你决定是否停止。开启后达到下面的条件会暂停任务，已完成的工作都会保留，发一条消息即可继续。")}</span>
-        </span>
-        <Switch
-          data-action="progress-watch.pause"
-          on={state.pause}
-          busy={busy}
-          label={t("长时间无进展时暂停任务")}
-          onClick={() => void save({ ...pick(state), pause: !state.pause })}
-        />
-      </div>
       <div className="lrow threshold-row">
         <span className="tx">
           <span className="lb">{t("连续无进展轮数")}</span>
-          <span className="ds">{t("没有改动文件、没有检查或任务步骤变化、没有读到新内容、也没有子代理返回的工具轮次。默认 {n}。", { n: state.defaultRounds })}</span>
+          <span className="ds">{t("默认 {n}；可填 1 到 {max}", { n: state.defaultRounds, max: LIMIT })}</span>
         </span>
         <div className="threshold-control">
           <span className="unit-field">
@@ -82,7 +69,7 @@ export function ProgressWatch({ port }: { port: AgentPort }) {
       <div className="lrow threshold-row">
         <span className="tx">
           <span className="lb">{t("输入 token 上限")}</span>
-          <span className="ds">{t("与模型无关的后备：自上次有进展以来的累计输入达到上下文窗口的这个倍数时同样提示。默认 {n} 倍。", { n: state.defaultTokenMultiple })}</span>
+          <span className="ds">{t("默认 {n}；可填 1 到 {max}", { n: state.defaultTokenMultiple, max: LIMIT })}</span>
         </span>
         <div className="threshold-control">
           <span className="unit-field">
@@ -95,13 +82,19 @@ export function ProgressWatch({ port }: { port: AgentPort }) {
           </span>
         </div>
       </div>
+      <details className="settings-help"><summary>{t("如何判断无进展")}</summary>
+        <p>{t("没有文件改动、检查或步骤变化、读到新内容、子代理返回的工具轮次计为无进展。累计输入达到窗口容量的指定倍数也会提示；两个阈值独立。")}</p>
+        <p>{t("判断只看宿主能观察到的效果，不看命令内容；提示和暂停都不会向模型发送任何内容，也不会拒绝任何调用。")}</p>
+      </details>
       {error && <div className="why">{error}</div>}
     </div>
   );
 
   return (
-    <Group id="progress-watch" title={t("长时间无进展")}
-      hint={t("判断只看宿主能观察到的效果，不看命令内容；提示和暂停都不会向模型发送任何内容，也不会拒绝任何调用。")}>
+    <Group id="progress-watch" title={t("长时间无进展时暂停任务")}
+      hint={t("默认只提示；开启后达到下方任一阈值即暂停。已完成的工作保留，发送消息可继续。")}
+      action={state && <Switch data-action="progress-watch.pause" on={state.pause} busy={busy}
+        label={t("长时间无进展时暂停任务")} onClick={() => void save({ ...pick(state), pause: !state.pause })} />}>
       {body}
     </Group>
   );

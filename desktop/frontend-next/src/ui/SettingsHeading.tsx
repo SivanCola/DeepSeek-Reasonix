@@ -1,5 +1,5 @@
 import { t } from "../i18n";
-import { ICON, NAV, SETTINGS, type Section } from "./prefsnav";
+import { ICON, NAV, type Section } from "./prefsnav";
 
 interface Props {
   section: Section;
@@ -10,7 +10,6 @@ interface Props {
 export function SettingsHeading({ section, value, danger }: Props) {
   const group = NAV.find(([, items]) => items.some(([id]) => id === section));
   const name = group?.[1].find(([id]) => id === section)?.[1] ?? section;
-  const count = SETTINGS.filter((entry) => entry.section === section && !entry.hidden).length;
 
   return (
     <header className="prefs-intro">
@@ -22,8 +21,7 @@ export function SettingsHeading({ section, value, danger }: Props) {
         <h2>{t(name)}</h2>
       </span>
       <span className="prefs-intro-meta" data-danger={danger ? "" : undefined}>
-        {value && <strong title={value}>{value}</strong>}
-        <span>{t("设置项：{n}", { n: count })}</span>
+        {danger && value && <strong title={value}>{value}</strong>}
       </span>
     </header>
   );

@@ -12,7 +12,7 @@ export function About({ port }: { port: AgentPort }) {
   return (
     <>
       <Group id="versions"
-        title={t("版本")}
+        title={t("安装、更新与回退")}
         hint={t("当前安装的版本、可用更新，以及出现问题时如何回退。更新下载好后由你决定何时重启；回退后会固定在所选版本，不再提示新版本。")}
       >
         <Versions port={port} />
@@ -29,6 +29,8 @@ export function About({ port }: { port: AgentPort }) {
       >
         <Logs port={port} />
       </Group>
+      <details className="prefs-disclosure">
+      <summary>{t("关于 Reasonix")}</summary>
       <AuthorLine port={port} />
       <Group id="community"
         title={t("社区与贡献者")}
@@ -39,6 +41,7 @@ export function About({ port }: { port: AgentPort }) {
       <Group id="sponsor" title={t("赞助")}>
         <Sponsor port={port} />
       </Group>
+      </details>
     </>
   );
 }

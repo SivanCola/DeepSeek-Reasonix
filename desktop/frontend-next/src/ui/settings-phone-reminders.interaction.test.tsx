@@ -21,6 +21,6 @@ it("offers a phone its own reminders only on a page that controls a computer", a
 
 it("leaves the desktop's own window without a phone's reminder block", async () => {
   drawn();
-  await screen.findByRole("heading", { name: "手机访问" });
+  await screen.findByRole("heading", { name: "手机连接本机（手机 → 本机）" });
   expect(screen.queryByRole("heading", { name: "这台手机的提醒" })).toBeNull();
 });

@@ -44,8 +44,7 @@ describe("the system persona page", () => {
     await userEvent.click(screen.getByRole("button", { name: "简洁" }));
     expect((await field("系统提示词开头")).value).toBe("");
     expect((await field("补充要求")).value).toBe("Be terse.");
-    // The runtime-context switch shows the inverse of the field it writes.
-    expect(screen.getByRole("switch", { name: "不注入可选运行时上下文" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("switch", { name: "注入可选运行时上下文" }).getAttribute("aria-checked")).toBe("false");
   });
 
   it("reads 自定义 once the applied preset is edited", async () => {
@@ -58,13 +57,15 @@ describe("the system persona page", () => {
 
   it("saves supported fields and declares the next session build", async () => {
     const port = portWith();
-    render(<Persona port={port} />);
+    const { container } = render(<Persona port={port} />);
     const prefix = await field("系统提示词开头");
     expect(saveButton().disabled).toBe(true);
 
     await userEvent.type(prefix, "Lead with evidence.");
+    expect(container.querySelector(".apply")?.textContent).toContain("未保存");
+    expect(container.querySelector(".apply")?.textContent).not.toContain("已保存");
     await userEvent.type(await field("补充要求"), "Stay terse.");
-    await userEvent.click(screen.getByRole("switch", { name: "不注入可选运行时上下文" }));
+    await userEvent.click(screen.getByRole("switch", { name: "注入可选运行时上下文" }));
 
     expect(saveButton().disabled).toBe(false);
     await userEvent.click(saveButton());
@@ -73,10 +74,13 @@ describe("the system persona page", () => {
       suffix: "Stay terse.",
       include_runtime_context: false,
     });
-    expect(await screen.findByText("已保存，下次会话构建时生效")).toBeTruthy();
+    expect(container.querySelector(".apply")?.textContent).toContain("已保存 · 下次会话构建时生效");
     expect(screen.getByText("/u/config.toml")).toBeTruthy();
     // Clean again: the same bytes would be a second no-op save.
     expect(saveButton().disabled).toBe(true);
+    await userEvent.type(prefix, " More.");
+    expect(container.querySelector(".apply")?.textContent).toContain("未保存");
+    expect(container.querySelector(".apply")?.textContent).not.toContain("已保存");
   });
 
   it("shows the kernel's size refusal", async () => {

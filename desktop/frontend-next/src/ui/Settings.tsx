@@ -8,10 +8,12 @@ import { listenAction } from "./listen";
 import { useRuntimeReload } from "./RuntimeReload";
 import type { CapabilityScope, McpEntry, ModelEntry, PluginPackage, SkillEntry } from "../port/port";
 import { useSettingsSearch } from "./useSettingsSearch";
+import { useSettingLanding } from "./useSettingLanding";
 import { bytes, tokens as fmtTokens } from "../i18n/format";
-import { SECTION_NAME } from "./prefsnav";
+import { SECTION_NAME, SETTING_AT } from "./prefsnav";
+import { GeneralSettings } from "./GeneralSettings";
 import { SettingsNav } from "./SettingsNav";
-import { Group, SCOPE_SAID } from "./Group";
+import { Group, SCOPE_SAID, SettingSection } from "./Group";
 import { PlanApproval, DefaultMode } from "./PlanApproval";
 import { PeersSection } from "./PeersSection";
 import { SessionCoordination } from "./SessionCoordination";
@@ -89,7 +91,7 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
   const homePort = networkPort ?? port;
   const localPort = localWorkspacePort ?? homePort;
   const [openedSection, openedAnchor = ""] = (opened ?? "").split(":", 2);
-  const [at, setAt] = useState<Section>((openedSection as Section) || "session");
+  const [at, setAt] = useState<Section>(SETTING_AT(openedAnchor)?.section ?? ((openedSection as Section) || "session"));
   // 搜索的语料是这张表，不是屏幕上的 DOM：分区是按需挂载的，读 DOM 就只搜得到
   // 当前这一页，而为了搜索把每一页都挂起来会让隐藏页面开始发请求。
   const [query, setQuery] = useState("");
@@ -286,7 +288,7 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
     tools: ruleCount ? `${approval} · ${ruleCount}` : approval,
     peers: "",
     hooks: hookCount ? t("{n} 条", { n: hookCount }) : t("关"),
-    ext: broken ? t("{n} 个异常", { n: broken }) : packages.length ? t("{n} 个包", { n: packages.length }) : `${looseMcp.length + looseOn}`,
+    ext: broken ? t("{n} 个异常", { n: broken }) : packages.length ? t("{n} 个包", { n: packages.length }) : [looseMcp.length ? t("{n} 个服务", { n: looseMcp.length }) : "", looseOn ? t("{n} 个技能", { n: looseOn }) : ""].filter(Boolean).join(" · "),
     network: netMode,
     remote: remoteTally,
     memory: memCount ? t("{n} 条", { n: memCount }) : "",
@@ -295,6 +297,7 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
     account: acct === null ? "" : acct.signedIn ? (acct.user?.label ?? t("已登录")) : t("未登录"),
     versions: tally.versions ?? "",
     appearance: t(SCHEMES.find(([id]) => id === theme)?.[1] ?? ""),
+    general: "",
     advanced: ELSEWHERE.length ? `${ELSEWHERE.length}` : "",
   };
   const danger = (id: Section) =>
@@ -316,32 +319,7 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
       if (section === "ext") setExtTab(anchor === "market" ? "market" : "installed");
     });
   };
-  useEffect(() => {
-    if (!landed) return;
-    const el = root.current?.querySelector<HTMLElement>(`#set-${CSS.escape(landed)}`);
-    // 折叠起来的块在 DOM 里，但不在屏幕上 —— 滚过去会停在一片空白上。要开哪一
-    // 个由结构回答：不需要再维护一张「哪些设置是高级」的表，也不需要把落点穿到
-    // 每个页面里去。
-    for (let d = el?.closest("details"); d; d = d.parentElement?.closest("details") ?? null) d.open = true;
-    const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
-    const aim = () => el?.scrollIntoView({ block: "start", behavior });
-    aim();
-    // The page is still growing under the scroll: theme packs and the font list
-    // arrive late and push the anchor below a target already locked in. A jump
-    // owns its landing until it lapses, so re-aim for as long as it is owed.
-    const grew = new ResizeObserver(aim);
-    const col = root.current?.querySelector(".prefs-col");
-    if (col) grew.observe(col);
-    // 「就是这里」是一次导航反馈，不是这个设置变了 —— 所以它只是元素上短暂的
-    // 一个标记，不进 React 状态，也不用往每个块穿一个纯表现的 prop。
-    el?.setAttribute("data-landed", "");
-    const done = setTimeout(() => setLanded(""), 900);
-    return () => {
-      clearTimeout(done);
-      grew.disconnect();
-      el?.removeAttribute("data-landed");
-    };
-  }, [landed, at]);
+  useSettingLanding(root, landed, at, setLanded);
 
   return (
     <SettingsLeaveContext.Provider value={navigation.register}><div
@@ -420,9 +398,9 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
       </div>
       <ConfigTrouble port={port} onRepaired={onChanged} />
       <div className="prefs-body">
-        <SettingsNav at={at} values={nav} shown={shown} danger={danger} disabled={updatingPkg.applying} onSelect={(section) => { if (section !== at) navigation.leave(() => setAt(section)); }} />
+        <SettingsNav at={at} values={nav} shown={shown} danger={danger} disabled={updatingPkg.applying} onSelect={(section) => { if (section !== at) navigation.leave(() => { setLanded(""); setAt(section); }); }} />
 
-        <div className="prefs-main" role="tabpanel" aria-labelledby={`prefs-${at}`} data-sec={at}>
+        <div className="prefs-main" key={at} role="tabpanel" aria-labelledby={`prefs-${at}`} data-sec={at}>
           <Boundary
             fallback={
               <div className="find" data-lvl="err" role="alert">
@@ -431,9 +409,7 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
               </div>
             }
           >
-          {/* Keyed on the section: replacing this column is the navigation,
-              and it is the one thing here whose mount really is the cause. */}
-          <div className="prefs-col" key={at}>
+          <div className="prefs-col">
           <SettingsHeading section={at} value={nav[at]} danger={danger(at)} />
           {/* Every refused write on every page lands in one state, so it is
               said in one place. Copied onto the pages somebody remembered, it
@@ -447,34 +423,25 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
           )}
           {at === "session" && (
             <>
-              <Group id="preset" title={t("完成标准")} now={preset} hint={t("系统根据任务风险自动决定需要的验证程度，不再要求手动选择均衡或交付。")}>
-                <p className="note">{t("日常问答保持轻量；涉及文件修改、代码执行或明确交付物时自动增加验证与复核。")}</p>
-              </Group>
+              <Group id="preset" variant="note" title={t("完成标准")} hint={t("按任务风险自动验证；修改文件、执行代码和交付任务时增加复核。")}/>
               {/* An on/off that reverses by clicking again is a switch, not two
                   options — the same control the recipes and the sandbox's
                   network egress use. */}
-              <Group id="plan-mode" title={t("计划模式")} hint={t("开启时 agent 无法获得写权限。该限制由工具本身实施，不依赖提示词中的约定。")}>
-                <div className="lrow">
-                  <span className="tx">
-                    <span className="lb">{t("仅生成计划，不写入")}</span>
-                    <span className="ds">
-                      {t(status?.plan ? "仅生成只读计划，经你批准后由内核自动关闭" : "正常执行：已批准的写入操作直接执行")}
-                    </span>
-                  </span>
-                  <Switch
-                    data-action="plan.mode"
-                    on={status?.plan === true}
-                    busy={busy === "plan"}
-                    label={t("计划模式")}
-                    onClick={() => run("plan", () => port.setPlanMode(!status?.plan))}
-                  />
-                </div>
-              </Group><DefaultMode port={port} />
-              <DisplaySettings port={port} />
+              <Group id="plan-mode" title={t("计划模式")} hint={t("开启时 agent 无法获得写权限。该限制由工具本身实施，不依赖提示词中的约定。")}
+                action={<Switch data-action="plan.mode" on={status?.plan === true} busy={busy === "plan"}
+                  label={t("计划模式")} onClick={() => run("plan", () => port.setPlanMode(!status?.plan))} />} />
+              <SettingSection title={t("默认行为")} ids={["default-mode", "ask-timeout", "progress-watch"]}>
+              <DefaultMode port={port} />
               <AskTimeout port={port} />
-              <SessionRef port={port} />
               <ProgressWatch port={port} />
+              </SettingSection>
+              <details className="prefs-disclosure"><summary>{t("会话显示与折叠")}</summary>
+                <DisplaySettings port={port} />
+              </details>
+              <details className="prefs-disclosure"><summary>{t("历史与归档")}</summary>
+              <SessionRef port={port} />
               <AutoArchive port={port} />
+              </details>
               <Group id="session-dir" title={t("会话写入位置")}>
                 <div className="kv">
                   <span className="k">{t("工作目录")}</span>
@@ -502,7 +469,7 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
           {at === "persona" && <AgentPresets port={port} focusPersona={landed === "persona"} />}
 
           {at === "providers" && (
-            <Group id="providers" title={t("模型服务")}
+            <Group id="providers" title={t("服务连接与模型")}
               hint={t("选择一个服务查看和修改；地址、密钥与模型列表保存后生效。自定义中转站的协议与模型会在连接后自动探测。")}>
               <Providers port={port} onChanged={() => { loadModels(); onChanged(); }} onFailed={setFailed} protocol={protocol}
                 activeKindFor={(a) => kindFor(a.key)}
@@ -515,7 +482,7 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
             <>
               <Group id="model" title={t("按用途选择模型")} now={nav.model}
                 hint={t("按用途选择模型和思考强度；自动使用模型的默认档位。未选择命名模型时显示消息预览。切换会保留对话。")}>
-                <ModelUsage models={models} roles={roles} main={status?.modelRef} busy={busy} protocol={protocol}
+                <ModelUsage models={models} roles={roles} main={status?.modelRef} busy={busy} protocol={protocol} openRoles={landed === "model"}
                   onMain={(ref) => run(ref, async () => {
                     await port.setModel(ref);
                     await localPort.setDefaultModel(ref);
@@ -536,7 +503,8 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
 
           {at === "tools" && (
             <>
-              <Group id="approval" title={t("工具批准")} now={approval} hint={t("这是 agent 访问文件前的唯一审批入口，被拦截的操作没有其他途径可以绕过。")}>
+              <p className="note">{t("工具权限分三层：是否请求确认、哪些操作允许或禁止、批准后可访问的沙箱范围。")}</p>
+              <Group id="approval" title={t("工具批准")} hint={t("选择工具执行前是否请求你的确认；明确拒绝的规则与沙箱限制仍然有效。")}>
                 {/* Four rows of label-and-description was 190px for one choice,
                     and it was the only choice in this pane shaped that way. The
                     description follows the selection instead: what a档 does is
@@ -596,7 +564,9 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
                 <BrowserTools port={port} onChanged={onChanged} />
               </Group>
               <WebAccess port={port} />
-              <SessionCoordination port={port} onChanged={onChanged} />
+              <details className="prefs-disclosure"><summary>{t("会话协作与子代理")}</summary>
+                <SessionCoordination port={port} onChanged={onChanged} />
+              </details>
             </>
           )}
 
@@ -605,7 +575,7 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
           {at === "hooks" && (
             <>
               <Group id="hooks"
-                title={t("自动化")}
+                title={t("事件与命令")}
                 hint={t("在 agent 执行任务前后运行自定义命令。这些命令在本机以当前用户权限运行；可拦截 agent 的两个事件已在下方标出。")}
               >
                 <Hooks port={port} onChanged={afterExtChange} />
@@ -623,9 +593,9 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
                 {scope && <ScopeBar scope={scope} scopes={scopes} onPick={setScopeAt} />}
                 {/* 装完、改完、删完都要过这一步才算数——把它放在包列表上面，
                     因为它管的是整个运行时，不是某一个包。 */}
-                <Group id="ext-runtime"
-                  title={t("运行时")}
-                  hint={t("修改扩展代码，或安装、删除、启用或停用插件包之后，用它使改动生效。当前这一轮不受影响，下一轮开始使用新的配置。")}
+                <Group id="ext-runtime" variant="toolbar"
+                  title={t("应用扩展改动")}
+                  hint={t("当前回合不受影响，扩展改动从下一轮采用。")}
                   action={reload.action}
                 >
                   {reload.note}
@@ -634,7 +604,7 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
                 <Group id="plugins"
                   title={t("插件包")}
                   now={packages.length ? t("{n} 个", { n: packages.length }) : undefined}
-                  hint={t("一个包可以同时提供技能、命令、自动化钩子和外部服务。安装与导入是同一个操作：提供一个仓库地址，或本机的一个文件夹。")}
+                  hint={packages.length ? t("插件包可以提供技能、命令、自动化和外部服务。") : undefined}
                   action={
                     addingPkg ? undefined : (
                       <button className="act" data-action="extensions.add" disabled={!!updatingPkg.name} onClick={() => setAddingPkg(true)}>
@@ -670,7 +640,7 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
                 <Group id="mcp"
                   title={t("外部工具")}
                   now={looseMcp.length ? t("{n} 个服务", { n: looseMcp.length }) : undefined}
-                  hint={t("已接入的 MCP 服务。其提供的能力与内置工具等同，列出的每一项均可访问文件与数据。关闭后立即从本轮工具列表中移除，重启后保持关闭。")}
+                  hint={looseMcp.length ? t("MCP 服务可提供文件与数据访问等工具。关闭后立即从本轮工具列表移除，重启后保持关闭。") : undefined}
                   action={
                     adding || !live ? undefined : (
                       <button className="act" onClick={() => setAdding(true)}>
@@ -712,17 +682,17 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
           )}
           {at === "network" && (
             <Group id="network"
-              title={t("网络")}
-              hint={t("模型请求、MCP 远程服务和网页抓取都经由此处。配置错误通常表现为聊天无响应，建议先测试连接，测试会指出中断的环节。")}
+              title={t("代理与连接")}
+              hint={t("模型请求、MCP 远程服务和网页抓取使用此代理。")}
             >
               <Network port={networkPort ?? port} host={networkHost ?? ""} />
             </Group>
           )}
-          {at === "network" && <TraceExport port={port} />}
+          {at === "network" && <details className="prefs-disclosure"><summary>{t("诊断与追踪")}</summary><TraceExport port={port} /></details>}
 
           {at === "remote" && (
             <Group id="remote"
-              title={t("远程")}
+              title={t("连接远程工作区（本机 → 远程）")}
               hint={t("接入另一台机器上的工作区：内核在远程运行，界面仍在本机。远程面板与本地面板并排显示，每处都会标明所在的机器。")}
             >
               <Remotes hub={hub} onError={onError} />
@@ -734,13 +704,12 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
 
           {at === "account" && (
             <Group id="account"
-              title={t("账号")}
+              title={t("社区账号")}
               hint={t("Reasonix 本身不需要账号，仅在需要联网的功能中使用：社区发帖、崩溃问题跟进，以及后续的技能发布。")}
             >
               <Account port={port} state={acct} unread={accountUnread} reload={reloadAccount} />
             </Group>
           )}
-          {at === "account" && <Group id="backup-file" title={t("导出与导入配置")} hint={t("不用账号：把本机的模型、扩展、记忆等配置加密导出成一个文件，换机器时再导入。")}><BackupFile port={port} /></Group>}
           {at === "account" && acct?.signedIn && acct.user && (
             <Group id="backup" title={t("云备份")} hint={t("把本机的模型、扩展、记忆等配置加密保存到账号，换机器或重装后按项恢复。")}>
               <Backup port={port} />
@@ -749,7 +718,7 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
           {at === "versions" && <About port={homePort} />}
           {at === "memory" && (
             <Group id="memory"
-              title={t("记忆")}
+              title={t("已记录的事实")}
               hint={t("agent 自动记录的内容：未经配置，但会据此执行。此处按触发时机分组，并标出上一轮实际使用的条目。")}
             >
               <Memory port={localPort} />
@@ -759,12 +728,16 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
           {at === "usage" && <UsageSettings port={homePort} onChanged={onChanged} />}
 
           {at === "storage" && (
-            <Group id="storage" title={t("存储")} hint={t("数据的存储位置与占用空间。会话和索引会持续增长，配置和凭据不会，因此只有前者可以迁移。迁移在重启后生效。")}><Storage port={homePort} hub={hub} workspace={workspaceRoot ?? (homePort === port ? status?.workspaceRoot ?? "" : "")} onRecovered={() => { onChanged(); onSessionsRecovered?.(); }} /></Group>
+            <Group id="storage" variant="section" title={t("空间与位置")} hint={t("查看数据占用与存储位置；迁移完成后重启生效。")}><Storage port={homePort} hub={hub} workspace={workspaceRoot ?? (homePort === port ? status?.workspaceRoot ?? "" : "")} onRecovered={() => { onChanged(); onSessionsRecovered?.(); }} /></Group>
           )}
+          {at === "storage" && <details className="prefs-disclosure"><summary>{t("配置备份")}</summary>
+            <Group id="backup-file" variant="section" title={t("导出与导入配置")} hint={t("无需登录。把模型、扩展、记忆等配置加密导出成文件，换机时导入。")}><BackupFile port={homePort} /></Group>
+          </details>}
 
           {at === "appearance" && (
             <Appearance port={homePort} theme={theme} onTheme={onTheme} contrast={contrast} onContrast={onContrast} weight={weight} onWeight={onWeight} reloadThemes={reloadThemes} look={look} onLook={onLook} />
           )}
+          {at === "general" && <GeneralSettings port={homePort} look={look} onLook={onLook} />}
 
           {at === "advanced" && (
             <Group id="elsewhere" title={t("本版本尚未提供")} hint={t("以下项目尚未提供设置界面，此处仅说明它们当前的位置。")}>

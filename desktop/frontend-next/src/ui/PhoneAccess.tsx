@@ -303,7 +303,7 @@ export function PhoneAccess({ hub, onError }: Props) {
   return (
     <section className="grp" id="set-phone" data-setting="phone">
       <div className="grp-hd">
-        <h3>{t("手机访问")}</h3>
+        <h3>{t("手机连接本机（手机 → 本机）")}</h3>
       </div>
       <div className="grp-items share">
         <ShareBody share={share} />

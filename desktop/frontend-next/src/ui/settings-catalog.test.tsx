@@ -60,7 +60,7 @@ function rendered(): { ids: string[]; unnamed: string[] } {
         if (literal(attr(childOpen, "className")) !== "grp-hd") return false;
         let heading = false;
         walk(child, (d) => {
-          if (d.type === "JSXOpeningElement" && name(d) === "h3") heading = true;
+          if (d.type === "JSXOpeningElement" && ["h3", "h4"].includes(name(d))) heading = true;
         });
         return heading;
       });
@@ -143,18 +143,17 @@ describe("the settings catalogue", () => {
   // wording, the handler or the component: change the declaration and the row
   // changes, change anything else and it does not.
   it("reads what a change costs from the declaration and nowhere else", () => {
-    const now = renderToStaticMarkup(<Group id="preset" title="X" />);
+    const now = renderToStaticMarkup(<Group id="plan-mode" title="X" />);
     const later = renderToStaticMarkup(<Group id="storage" title="X" />);
     expect(now).toContain("立即生效");
-    expect(later).toContain("已保存 · 重启后生效");
+    expect(later).toContain("重启后生效");
+    expect(later).not.toContain("已保存");
     expect(now).not.toContain("重启");
   });
 
-  // Saved and in force are two facts, and the restart answer is the one where
-  // they come apart. A row that only said "after a restart" would leave the
-  // reader wondering whether closing this sheet loses what they just typed.
-  it("says a restart setting is already kept", () => {
-    expect(renderToStaticMarkup(<Group id="storage" title="X" />)).toContain("已保存");
+  it("only claims a save when its owner confirms it", () => {
+    expect(renderToStaticMarkup(<Group id="storage" title="X" saveState="dirty" />)).toContain("未保存");
+    expect(renderToStaticMarkup(<Group id="storage" title="X" saveState="saved" />)).toContain("已保存 · 重启后生效");
   });
 
   // Reporting blocks have nothing to apply, and must not claim otherwise.

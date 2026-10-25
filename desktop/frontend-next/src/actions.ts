@@ -306,6 +306,7 @@ export const ACTIONS: UIAction[] = [
   { id: "backup.file-export", kind: "kernel-mutation", target: "none", proof: "interaction" },
   { id: "backup.file-import", kind: "view", target: "none", proof: "interaction" },
   { id: "backup.file-choose", kind: "view", target: "none", proof: "interaction" },
+  { id: "backup.file-reload", kind: "repeatable", target: "none", proof: "interaction" },
   { id: "backup.restore", kind: "view", target: "entity", proof: "interaction" },
   { id: "backup.delete", kind: "destructive", target: "entity", proof: "interaction" },
   { id: "backup.preview", kind: "repeatable", target: "none", proof: "interaction" },

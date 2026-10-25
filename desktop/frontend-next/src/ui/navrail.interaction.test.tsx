@@ -58,9 +58,10 @@ const navEl = () => document.querySelector<HTMLElement>("nav.nav");
 const app = () => document.querySelector<HTMLElement>(".app")!;
 const toggleSidebar = () => userEvent.click(document.querySelector<HTMLElement>(".gutter-l .grip")!);
 
-async function openAppearance() {
+async function openGeneral() {
   await userEvent.click(document.querySelector<HTMLElement>('[data-action="chrome.settings"]')!);
-  await userEvent.click(await screen.findByRole("tab", { name: /外观/ }));
+  await userEvent.click(await screen.findByRole("tab", { name: /^通用/ }));
+  await userEvent.click(screen.getByText("导航与会话列表"));
   await screen.findByRole("group", { name: "图标栏" });
 }
 const choice = (name: string) => screen.getByRole("button", { name });
@@ -92,14 +93,14 @@ it.each([
 ])("reads a stored %j as %s", async (stored, mode) => {
   if (stored !== null) localStorage.setItem(KEY, stored);
   await open();
-  await openAppearance();
+  await openGeneral();
   const label = { on: "始终显示", collapsed: "仅侧栏收起时显示", off: "不显示" }[mode as "on"];
   expect(pressed(label)).toBe("true");
 });
 
 it("moves between the three states at once and keeps the choice across a reload", async () => {
   const first = await open();
-  await openAppearance();
+  await openGeneral();
   await userEvent.click(choice("不显示"));
   expect(nav()).toBeNull();
   expect(app().dataset.nav).toBe("off");
@@ -153,7 +154,7 @@ it("still reaches settings with the rail off", async () => {
   for (const name of ["钱包与用量", "发送反馈", "账号", "设置"]) {
     expect(within(footer).getByRole("button", { name: new RegExp(`^${name}`) }), name).toBeTruthy();
   }
-  await openAppearance();
+  await openGeneral();
   expect(pressed("不显示")).toBe("true");
 });
 
@@ -169,6 +170,32 @@ it.each(["on", "off"])("reaches usage, account, and settings with the rail %s", 
     await userEvent.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "设置" })).toBeNull();
   }
+});
+
+it.each(["on", "collapsed", "off"])("keeps one plugins entry under search with the icon rail %s", async (mode) => {
+  localStorage.setItem(KEY, mode);
+  await open();
+  const head = document.querySelector<HTMLElement>(".studio-rail-head")!;
+  const entry = within(head).getByRole("button", { name: "插件" });
+  expect(head.querySelector('[data-action="workspace.search"]')!.nextElementSibling).toBe(entry);
+  expect(head.querySelectorAll('[data-action="settings.section"][data-value="ext:market"]')).toHaveLength(1);
+  expect(head.querySelectorAll('.studio-quicknav [data-action="settings.section"][data-value="ext"]')).toHaveLength(mode === "on" ? 0 : 1);
+  await userEvent.click(entry);
+  expect((await screen.findByRole("tabpanel")).getAttribute("data-sec")).toBe("ext");
+  expect(within(screen.getByRole("tablist", { name: "扩展" })).getByRole("tab", { selected: true }).textContent).toBe("发现");
+  await userEvent.keyboard("{Escape}");
+  expect(screen.queryByRole("dialog", { name: "设置" })).toBeNull();
+});
+
+it("the plugins entry lands on discovery even after extensions was opened on its installed tab", async () => {
+  await open();
+  await userEvent.click(within(navEl()!).getByRole("button", { name: /^扩展/ }));
+  expect((await screen.findByRole("tabpanel")).getAttribute("data-sec")).toBe("ext");
+  const tabs = () => screen.getByRole("tablist", { name: "扩展" });
+  expect(within(tabs()).getByRole("tab", { selected: true }).textContent).toBe("已安装");
+  await userEvent.keyboard("{Escape}");
+  await userEvent.click(within(document.querySelector<HTMLElement>(".studio-rail-head")!).getByRole("button", { name: "插件" }));
+  expect(within(tabs()).getByRole("tab", { selected: true }).textContent).toBe("发现");
 });
 
 it("never draws the rail under the scene fold, in any state, and restores it after", async () => {

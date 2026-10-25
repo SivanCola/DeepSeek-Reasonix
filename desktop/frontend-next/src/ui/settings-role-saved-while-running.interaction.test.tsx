@@ -10,7 +10,7 @@ import { MockHub } from "../port/mock_hub";
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
-function draw(port: AgentPort) {
+async function draw(port: AgentPort) {
   render(
     <Settings
       hub={new MockHub() as never}
@@ -23,6 +23,7 @@ function draw(port: AgentPort) {
       account={null} accountUnread="" reloadAccount={() => {}}
     />,
   );
+  await userEvent.click(await screen.findByText("按用途指定模型"));
 }
 
 it("a role saved while the conversation is busy stays shown, since the kernel wrote it", async () => {
@@ -33,7 +34,7 @@ it("a role saved while the conversation is busy stays shown, since the kernel wr
     await real(role, ref, effort);
     throw new HttpError(409, "saved", { code: "runtime.saved_while_running", error: "saved" });
   });
-  draw(port);
+  await draw(port);
   const select = (await screen.findByRole("combobox", { name: "子代理" })) as HTMLSelectElement;
   expect(select.value).toBe("");
   const other = Array.from(select.options).find((o) => o.value)!.value;
@@ -50,7 +51,7 @@ it("says a role saved while busy is saved and not applied yet, as the provider f
     await real(role, ref, effort);
     throw new HttpError(409, "saved", { code: "runtime.saved_while_running", error: "saved" });
   });
-  draw(port);
+  await draw(port);
   const select = (await screen.findByRole("combobox", { name: "子代理" })) as HTMLSelectElement;
   await userEvent.selectOptions(select, Array.from(select.options).find((o) => o.value)!.value);
   const note = (await screen.findByText("已保存，尚未生效")).closest(".find")!;
@@ -63,7 +64,7 @@ it("says a role saved while busy is saved and not applied yet, as the provider f
 it("a role saved while idle shows no notice and keeps the new value", async () => {
   const port = new MockPort() as unknown as AgentPort;
   await port.setRole("subagent", "");
-  draw(port);
+  await draw(port);
   const select = (await screen.findByRole("combobox", { name: "子代理" })) as HTMLSelectElement;
   const other = Array.from(select.options).find((o) => o.value)!.value;
   await userEvent.selectOptions(select, other);
@@ -75,7 +76,7 @@ it("a role saved while idle shows no notice and keeps the new value", async () =
 it("a really refused role write is still a failure, not a saved notice", async () => {
   const port = new MockPort() as unknown as AgentPort;
   vi.spyOn(port, "setRole").mockRejectedValue(new HttpError(400, "no", { code: "roles.model_unknown", error: "no" }));
-  draw(port);
+  await draw(port);
   const select = (await screen.findByRole("combobox", { name: "子代理" })) as HTMLSelectElement;
   await userEvent.selectOptions(select, Array.from(select.options).find((o) => o.value)!.value);
   const alert = await screen.findByRole("alert");
@@ -92,21 +93,21 @@ it("saving one role while busy leaves the other rows and a reopened page on the 
     await real(role, ref, effort);
     throw new HttpError(409, "saved", { code: "runtime.saved_while_running", error: "saved" });
   });
-  draw(port);
+  await draw(port);
   const select = (await screen.findByRole("combobox", { name: "子代理" })) as HTMLSelectElement;
   const other = Array.from(select.options).find((o) => o.value)!.value;
   await userEvent.selectOptions(select, other);
   await screen.findByText("已保存，尚未生效");
   expect((screen.getByRole("combobox", { name: "计划" }) as HTMLSelectElement).value).toBe("");
   cleanup();
-  draw(port);
+  await draw(port);
   await waitFor(async () => expect(((await screen.findByRole("combobox", { name: "子代理" })) as HTMLSelectElement).value).toBe(other));
 });
 
 it("a default model switch refused while busy leaves the row on the kernel's default", async () => {
   const port = new MockPort() as unknown as AgentPort;
   vi.spyOn(port, "setModel").mockRejectedValue(new HttpError(409, "busy", { code: "busy.switch_model", error: "busy" }));
-  draw(port);
+  await draw(port);
   const select = (await screen.findByRole("combobox", { name: "默认模型" })) as HTMLSelectElement;
   const before = select.value;
   const other = Array.from(select.options).find((o) => o.value && o.value !== before)!.value;
@@ -118,7 +119,7 @@ it("a default model switch refused while busy leaves the row on the kernel's def
 it("a refused role write leaves the row on what the kernel still holds", async () => {
   const port = new MockPort() as unknown as AgentPort;
   vi.spyOn(port, "setRole").mockRejectedValue(new HttpError(400, "no", { code: "roles.model_unknown", error: "no" }));
-  draw(port);
+  await draw(port);
   const select = (await screen.findByRole("combobox", { name: "子代理" })) as HTMLSelectElement;
   const before = select.value;
   const other = Array.from(select.options).find((o) => o.value && o.value !== before)!.value;

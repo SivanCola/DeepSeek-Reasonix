@@ -120,7 +120,7 @@ it("a typed key, and a field the form cannot parse, both count as pending", asyn
   expect(state()).toBe("有未保存的更改");
   await userEvent.clear(key);
   expect(state()).toBe("没有更改");
-  await userEvent.click(detail().querySelector("summary")!);
+  await userEvent.click(within(detail()).getByText("思考参数与推理档位"));
   await userEvent.type(within(detail()).getByLabelText("无响应超时"), "abc");
   expect(state()).toBe("有未保存的更改");
   expect(save().disabled).toBe(true);

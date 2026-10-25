@@ -339,30 +339,6 @@ export function EditConn({
         </label>
       </div>
 
-      <div className="addp-section compact">
-        <div className="addp-section-head">
-          <div><strong>{t("模型限制")}</strong><span>{t("不要依赖接口猜测，请按模型文档填写")}</span></div>
-        </div>
-        <div className="fields token-limits">
-          <label className="grow">
-            <span>{t("上下文窗口")}</span>
-            <span className="unit-field"><input aria-label={t("上下文窗口")} inputMode="numeric" value={win} placeholder={t("未声明")} onChange={(e) => setWin(e.target.value.replace(/\D/g, ""))} /><i>tokens</i></span>
-            <i className="tip">{t("模型可承载的输入、工具结果与输出总量。")}</i>
-          </label>
-          <label className="grow">
-            <span>{t("最大输出")}</span>
-            <span className="unit-field"><input aria-label={t("最大输出")} inputMode="numeric" value={maxOut} placeholder={t("自动")} onChange={(e) => setMaxOut(e.target.value.replace(/\D/g, ""))} /><i>tokens</i></span>
-            <i className="tip">{t("单轮生成上限；留空使用内核的模型默认值。")}</i>
-          </label>
-        </div>
-        {(picked.length > 1 || picked.some((m) => entry.modelLimits?.[m])) && (
-          <ModelLimits models={picked} value={limitText} onChange={setLimitText} inherited={inheritedLimitsFor} />
-        )}
-        {picked.length > 0 && <ModelPrices models={picked} value={priceText} onChange={setPriceText} official={entry.officialPricing === true} stored={entry.modelPrices ?? {}}
-          onOpenSource={(url) => void Promise.resolve(port.openExternal(url)).catch(() => {})} />}
-        {picked.length > 0 && <div className="fields"><BillingModeField value={billing} onChange={setBilling} /></div>}
-      </div>
-
       <div className="mlist">
         <div className="mlhead">
           <span className="ttl">{t("模型")}</span>
@@ -415,6 +391,32 @@ export function EditConn({
           fetchFail={refreshFail}
         />
       </div>
+
+      <details className="addp-options provider-limits">
+        <summary><span className="tx"><strong>{t("模型限制与价格")}</strong><small>{t("上下文窗口、输出上限和各模型计费")}</small></span></summary>
+        <div className="addp-section-head">
+          <div><strong>{t("模型限制")}</strong><span>{t("不要依赖接口猜测，请按模型文档填写")}</span></div>
+        </div>
+        <div className="fields token-limits">
+          <label className="grow">
+            <span>{t("上下文窗口")}</span>
+            <span className="unit-field"><input aria-label={t("上下文窗口")} inputMode="numeric" value={win} placeholder={t("未声明")} onChange={(e) => setWin(e.target.value.replace(/\D/g, ""))} /><i>tokens</i></span>
+            <i className="tip">{t("模型可承载的输入、工具结果与输出总量。")}</i>
+          </label>
+          <label className="grow">
+            <span>{t("最大输出")}</span>
+            <span className="unit-field"><input aria-label={t("最大输出")} inputMode="numeric" value={maxOut} placeholder={t("自动")} onChange={(e) => setMaxOut(e.target.value.replace(/\D/g, ""))} /><i>tokens</i></span>
+            <i className="tip">{t("单轮生成上限；留空使用内核的模型默认值。")}</i>
+          </label>
+        </div>
+        {(picked.length > 1 || picked.some((m) => entry.modelLimits?.[m])) && (
+          <ModelLimits models={picked} value={limitText} onChange={setLimitText} inherited={inheritedLimitsFor} />
+        )}
+        {picked.length > 0 && <ModelPrices models={picked} value={priceText} onChange={setPriceText} official={entry.officialPricing === true} stored={entry.modelPrices ?? {}}
+          onOpenSource={(url) => void Promise.resolve(port.openExternal(url)).catch(() => {})} />}
+        {picked.length > 0 && <div className="fields"><BillingModeField value={billing} onChange={setBilling} /></div>}
+      </details>
+
 
       {/* Folded, and worth folding: no probe can answer these, and most
           endpoints need none of them. The fold names its contents, because a

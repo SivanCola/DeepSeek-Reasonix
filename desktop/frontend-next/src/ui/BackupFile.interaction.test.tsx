@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "./testkit";
 import { BackupFile } from "./BackupFile";
 import { MockPort } from "../port/mock";
-import type { AgentPort } from "../port/port";
+import { HttpError, type AgentPort, type BackupFileCatalog } from "../port/port";
 
 afterEach(cleanup);
 
@@ -73,13 +73,60 @@ describe("backup to a file", () => {
     await waitFor(() => expect(apply).toHaveBeenCalledWith("demo", ["memory:docs/REASONIX.md"], []));
   });
 
-  it("says nothing when the kernel does not offer files to this client", async () => {
+  it("only identifies a host-only refusal when the producer declares it", async () => {
     const port = new MockPort() as unknown as AgentPort;
-    vi.spyOn(port, "backupFileCatalog").mockRejectedValue(new Error("a paired device cannot use this"));
+    vi.spyOn(port, "backupFileCatalog").mockRejectedValue(new HttpError(404, "device", { code: "device.host_only" }));
     const view = render(<BackupFile port={port} />);
     await waitFor(() => expect(port.backupFileCatalog).toHaveBeenCalled());
     await waitFor(() => expect(view.container.textContent).toContain("本机窗口"));
     expect(screen.queryByRole("button", { name: "导出到文件…" })).toBeNull();
+  });
+
+  it.each([new Error("catalog unavailable"), new HttpError(404, "catalog unavailable")])("shows a real load failure and lets a retry recover the catalogue: %s", async (failure) => {
+    const port = new MockPort();
+    const catalog = await port.backupFileCatalog();
+    vi.spyOn(port, "backupFileCatalog").mockRejectedValueOnce(failure).mockResolvedValue(catalog);
+    render(<BackupFile port={port} />);
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", expect.stringContaining("catalog unavailable"));
+    expect(screen.queryByText("配置文件的导出与导入只在本机窗口可用。")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "重试" }));
+    expect(await screen.findByRole("button", { name: "导出到文件…" })).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it.each(["success", "failure"])("ignores an old port's late catalogue %s", async (result) => {
+    const a = new MockPort(), b = new MockPort();
+    const catalog = await a.backupFileCatalog();
+    let resolve!: (value: BackupFileCatalog) => void;
+    let reject!: (error: unknown) => void;
+    vi.spyOn(a, "backupFileCatalog").mockReturnValue(new Promise((yes, no) => { resolve = yes; reject = no; }));
+    vi.spyOn(b, "backupFileCatalog").mockResolvedValue({ ...catalog, minPassphrase: 18 });
+    const view = render(<BackupFile port={a} />);
+    view.rerender(<BackupFile port={b} />);
+    await screen.findByLabelText("加密口令（至少 18 个字符）");
+    await act(async () => result === "success" ? resolve(catalog) : reject(new Error("A late error")));
+    expect(screen.getByLabelText("加密口令（至少 18 个字符）")).toBeTruthy();
+    expect(screen.queryByText(/A late error|只在本机窗口可用/)).toBeNull();
+  });
+
+  it("does not save an old owner's export after the selected port changes", async () => {
+    const a = new MockPort(), b = new MockPort();
+    let finish!: (value: Awaited<ReturnType<typeof a.exportBackupFile>>) => void;
+    vi.spyOn(a, "exportBackupFile").mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    const save = vi.spyOn(a, "saveText");
+    const view = render(<BackupFile port={a} />);
+    await screen.findByRole("button", { name: "导出到文件…" });
+    const [pass, again] = passwordFields();
+    await userEvent.type(pass!, "long fixture passphrase");
+    await userEvent.type(again!, "long fixture passphrase");
+    await userEvent.click(screen.getByRole("button", { name: "导出到文件…" }));
+    expect(a.exportBackupFile).toHaveBeenCalledOnce();
+    view.rerender(<BackupFile port={b} />);
+    await screen.findByRole("button", { name: "导出到文件…" });
+    await act(async () => finish({ name: "old.rxcb", file: "QUJD" }));
+    expect(save).not.toHaveBeenCalled();
+    expect(passwordFields()[0]!.value).toBe("");
+    expect(screen.queryByText("已导出。")).toBeNull();
   });
 
   it("starts an import by ticking only what this machine lacks, never what it would replace", async () => {

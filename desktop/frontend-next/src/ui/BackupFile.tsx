@@ -4,13 +4,21 @@ import { reason } from "../i18n/kernel";
 import type { AgentPort, BackupCategory, BackupFileCatalog } from "../port/port";
 import { BackupRestore, CATEGORY_LABEL, type RestoreSource } from "./BackupRestore";
 import { CATEGORY_NOTE } from "./Backup";
+import { HttpError } from "../port/http_error";
 
 // The same sealed envelope the account keeps, written to a file the person
 // chooses. It asks nothing of the account: the passphrase is the only secret,
 // and the kernel offers it to this window alone.
 export function BackupFile({ port }: { port: AgentPort }) {
+  const [connection, setConnection] = useState({ port, generation: 0 });
+  if (connection.port !== port) setConnection({ port, generation: connection.generation + 1 });
+  return <BackupFileInput key={connection.generation} port={port} />;
+}
+
+function BackupFileInput({ port }: { port: AgentPort }) {
   const [catalog, setCatalog] = useState<BackupFileCatalog | null>(null);
   const [unavailable, setUnavailable] = useState(false);
+  const [readError, setReadError] = useState("");
   const [chosen, setChosen] = useState<Set<BackupCategory>>(new Set());
   const [pass, setPass] = useState("");
   const [again, setAgain] = useState("");
@@ -19,19 +27,37 @@ export function BackupFile({ port }: { port: AgentPort }) {
   const [error, setError] = useState("");
   const [source, setSource] = useState<RestoreSource | null>(null);
   const chooser = useRef<HTMLInputElement>(null);
+  const live = useRef(false);
+  const reading = useRef<object | null>(null);
 
   const load = useCallback(async () => {
+    const request = {};
+    reading.current = request;
+    setReadError("");
+    setUnavailable(false);
     try {
       const c = await port.backupFileCatalog();
+      if (reading.current !== request) return;
       setCatalog(c);
       setChosen(new Set(c.categories.filter((x) => x.defaultOn).map((x) => x.id)));
-    } catch {
-      setUnavailable(true);
+    } catch (e) {
+      if (reading.current !== request) return;
+      if (e instanceof HttpError && e.reason?.code === "device.host_only") setUnavailable(true);
+      else setReadError(reason(e));
     }
   }, [port]);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    live.current = true;
+    void load();
+    return () => { live.current = false; reading.current = null; };
+  }, [load]);
 
   if (unavailable) return <p className="acct-note">{t("配置文件的导出与导入只在本机窗口可用。")}</p>;
+  if (readError) return <div className="find" data-lvl="err" role="alert">
+    <span className="t">{t("无法读取备份配置")}</span>
+    <span className="why">{readError}</span>
+    <button className="act" data-action="backup.file-reload" onClick={() => void load()}>{t("重试")}</button>
+  </div>;
   if (!catalog) return <p className="acct-note">{t("正在读取…")}</p>;
 
   const min = catalog.minPassphrase;
@@ -56,7 +82,9 @@ export function BackupFile({ port }: { port: AgentPort }) {
     try {
       const order = catalog.categories.map((c) => c.id).filter((id) => chosen.has(id));
       const out = await port.exportBackupFile(order, pass);
+      if (!live.current) return;
       await port.saveText(out.name, out.file);
+      if (!live.current) return;
       setPass("");
       setAgain("");
       const skipped = out.omitted?.length ?? 0;
@@ -73,6 +101,7 @@ export function BackupFile({ port }: { port: AgentPort }) {
     setError("");
     try {
       const text = (await file.text()).trim();
+      if (!live.current) return;
       setSource({
         name: file.name,
         preview: (passphrase) => port.previewBackupFile(text, passphrase),

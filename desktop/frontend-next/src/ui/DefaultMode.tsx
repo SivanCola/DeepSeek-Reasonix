@@ -21,7 +21,9 @@ export function DefaultMode({ port }: { port: AgentPort }) {
   }, [port]);
 
   const group = (body: ReactNode) => (
-    <Group id="default-mode" title={t("新对话的起始模式")} hint={t("新建对话时先进入哪种模式。只影响起点，不会改动已有的对话。")}>
+    <Group id="default-mode" title={t("新对话默认进入计划模式")} hint={t("默认关闭。开启后，新会话先规划、经你批准后执行；已有会话不变，也可随时切换模式。仅保存在用户配置，项目不能更改。")}
+      action={state && <Switch data-action="default-mode.plan" on={state.plan} busy={busy}
+        label={t("新对话默认进入计划模式")} onClick={() => void flip()} />}>
       {body}
     </Group>
   );
@@ -40,22 +42,5 @@ export function DefaultMode({ port }: { port: AgentPort }) {
     }
   };
 
-  return group(
-    <div className="box">
-      <div className="lrow">
-        <span className="tx">
-          <span className="lb">{t("新对话默认进入计划模式")}</span>
-          <span className="ds">{t("新建的对话先做计划，你批准后才动手。输入框里的模式按钮仍可随时切换；已有的对话保持它自己的模式。默认关闭，只写在你自己的用户配置里，项目配置不能替你改。")}</span>
-        </span>
-        <Switch
-          data-action="default-mode.plan"
-          on={state.plan}
-          busy={busy}
-          label={t("新对话默认进入计划模式")}
-          onClick={() => void flip()}
-        />
-      </div>
-      {error && <div className="why">{error}</div>}
-    </div>,
-  );
+  return group(error ? <div className="why">{error}</div> : null);
 }

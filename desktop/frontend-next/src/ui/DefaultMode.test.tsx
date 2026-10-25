@@ -18,8 +18,8 @@ describe("the default-mode switch", () => {
     render(<DefaultMode port={p} />);
     const sw = await toggle();
     expect(sw.getAttribute("aria-checked")).toBe("false");
-    expect(screen.getByText(/已有的对话保持它自己的模式/)).toBeTruthy();
-    expect(screen.getByText(/项目配置不能替你改/)).toBeTruthy();
+    expect(screen.getByText(/已有会话不变/)).toBeTruthy();
+    expect(screen.getByText(/项目不能更改/)).toBeTruthy();
     await userEvent.click(sw);
     expect(save).toHaveBeenCalledWith(true);
     await waitFor(() => expect(sw.getAttribute("aria-checked")).toBe("true"));

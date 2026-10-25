@@ -14,7 +14,7 @@ const models: ModelEntry[] = [
 ];
 function draw(ref = "", list = models, extra: Partial<RoleAssignments> = {}) {
   const onRole = vi.fn();
-  render(<ModelUsage models={list} roles={{ ...roles, web_search: ref, ...extra }} main="chat/plain" busy="" protocol={{}} onMain={() => {}} onRole={onRole} />);
+  render(<ModelUsage models={list} roles={{ ...roles, web_search: ref, ...extra }} main="chat/plain" busy="" protocol={{}} onMain={() => {}} onRole={onRole} openRoles />);
   return onRole;
 }
 it("offers automatic search and only kernel-declared search models", async () => {
@@ -74,7 +74,7 @@ it("states the reason code the kernel reports for an unusable assignment", () =>
   expect(screen.getByText("搜索模型所在的连接没有凭据")).toBeTruthy();
 });
 it("disables the row while a turn runs", () => {
-  render(<ModelUsage models={models} roles={{ ...roles, web_search: "" }} main="chat/plain" busy="running" protocol={{}} onMain={() => {}} onRole={vi.fn()} />);
+  render(<ModelUsage models={models} roles={{ ...roles, web_search: "" }} main="chat/plain" busy="running" protocol={{}} onMain={() => {}} onRole={vi.fn()} openRoles />);
   expect((screen.getByRole("combobox", { name: "网页搜索" }) as HTMLSelectElement).disabled).toBe(true);
 });
 it("never offers a model whose connection the person has not added", () => {
@@ -86,4 +86,15 @@ it("never offers a model whose connection the person has not added", () => {
 it("keeps a saved choice listed even when its connection is no longer added", () => {
   draw("other/native", [...models, { ref: "other/native", provider: "other", model: "elsewhere", webSearch: true, notAdded: true }]);
   expect((screen.getByRole("combobox", { name: "网页搜索" }) as HTMLSelectElement).value).toBe("other/native");
+});
+
+it("keeps search failures and the effective project override visible outside the collapsed table", () => {
+  render(<ModelUsage models={models} roles={{ ...roles, web_search: "lost/model", web_search_reason: "no_credentials", web_search_effective: "search/native", web_search_source: "project" }}
+    main="chat/plain" busy="" protocol={{}} onMain={() => {}} onRole={vi.fn()} />);
+  const summary = screen.getByText("按用途指定模型").closest("summary")!;
+  expect(summary.closest("details")?.open).toBe(false);
+  expect(summary.textContent).toContain("已配置 1 个用途：网页搜索");
+  expect(summary.textContent).toContain("网页搜索由项目配置覆盖");
+  expect(screen.getByText("搜索模型所在的连接没有凭据").closest("details")).toBeNull();
+  expect(screen.getByText("项目配置覆盖：实际使用 search；此处保存的是全局设置。").closest("details")).toBeNull();
 });

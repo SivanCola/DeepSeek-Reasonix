@@ -16,19 +16,12 @@ export function LiveStreamBudgetSection() {
     setDraft(now === null ? "" : String(now));
   };
   return (
-    <Group
-      id="live-stream-budget"
-      title={t("保持实时连接的会话标签数")}
-      hint={t("默认留空：自动。浏览器对同一个地址只开约 6 个连接，会话列表占一个，所以只让少数标签保持实时连接，其余的标签在显示时从断点接着读，运行中的后台标签每 5 秒读一次状态。调高会让更多后台标签实时更新，但开太多会让停止、发送排不上队。")}
-    >
-      <div className="lrow">
-        <span className="tx">
-          <label className="lb" htmlFor="live-stream-budget-input">{t("实时连接的标签数")}</label>
-          <span className="ds">{t("留空表示自动；可填 1 到 {max}", { max: MAX_LIVE_STREAM_BUDGET })}</span>
-        </span>
+    <Group id="live-stream-budget" title={t("保持实时连接的会话标签数")} hint={t("留空表示自动；可填 1 到 {max}。其余后台标签按需更新。", { max: MAX_LIVE_STREAM_BUDGET })}
+      action={
         <span className="unit-field">
           <input
             id="live-stream-budget-input"
+            aria-label={t("实时连接的标签数")}
             type="text"
             inputMode="numeric"
             placeholder={t("自动")}
@@ -45,7 +38,6 @@ export function LiveStreamBudgetSection() {
           />
           <i>{t("个")}</i>
         </span>
-      </div>
-    </Group>
+      } />
   );
 }

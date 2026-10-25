@@ -182,9 +182,46 @@ export function Storage({ port, hub, workspace, onRecovered }: { port: AgentPort
 
   return (
     <div className="storage">
+      {state.leftBehind && <LeftBehind at={state.leftBehind} />}
+        {/* Said once for the section rather than on each row: it is one fact
+            about this kernel, not a property of any one path. Without it the
+            rows lose their 「移动…」 with nothing in its place, which is the
+            reading Row's own note exists to prevent. */}
+        {!state.editable && <p className="note">{t("这台服务器未开放存储迁移")}</p>}
+        {state.roots.map((root) => (
+          <section className="grp storage-root" key={root.id} aria-label={t(NAMED[root.id]?.[0] ?? root.id)}>
+          {(!root.missing || root.relocatable) && <Bar root={root} largest={largest} stalled={stalled.has(root.id)} />}
+          <Row
+            root={root}
+            showName={!!root.missing && !root.relocatable}
+            editable={state.editable}
+            busy={Boolean(running)}
+            open={picking === root.id}
+            target={target}
+            plan={plan}
+            inputRef={input}
+            onOpen={() => {
+              setPicking(root.id);
+              setTarget("");
+              setPlan(null);
+            }}
+            onCancel={() => {
+              setPicking(null);
+              setPlan(null);
+            }}
+            onTarget={(dir) => {
+              setTarget(dir);
+              check(root.id, dir);
+            }}
+            onStart={() => start(root.id, target)}
+          />
+          </section>
+        ))}
+      <Drives roots={state.roots} />
+
       <NativeSessionImport hub={hub} workspace={workspace} onImported={onRecovered} />
+      <details className="prefs-disclosure"><summary>{t("导入旧版会话")}</summary>
       <section className="grp">
-        <h3 className="lbl">{t("找回旧版会话")}</h3>
         <div className="item">
           <div className="l">
             <b>{t("从旧版 Reasonix 导入")}</b>
@@ -236,50 +273,7 @@ export function Storage({ port, hub, workspace, onRecovered }: { port: AgentPort
         {recovery && <LegacySkips skipped={recovery.skipped ?? []} />}
       </section>
 
-      <section className="grp">
-        <h3 className="lbl">{t("占用")}</h3>
-        {measured.map((root) => (
-          <Bar key={root.id} root={root} largest={largest} stalled={stalled.has(root.id)} />
-        ))}
-        <Drives roots={state.roots} />
-      </section>
-
-      {state.leftBehind && <LeftBehind at={state.leftBehind} />}
-
-      <section className="grp">
-        <h3 className="lbl">{t("位置")}</h3>
-        {/* Said once for the section rather than on each row: it is one fact
-            about this kernel, not a property of any one path. Without it the
-            rows lose their 「移动…」 with nothing in its place, which is the
-            reading Row's own note exists to prevent. */}
-        {!state.editable && <p className="note">{t("这台服务器未开放存储迁移")}</p>}
-        {state.roots.map((root) => (
-          <Row
-            key={root.id}
-            root={root}
-            editable={state.editable}
-            busy={Boolean(running)}
-            open={picking === root.id}
-            target={target}
-            plan={plan}
-            inputRef={input}
-            onOpen={() => {
-              setPicking(root.id);
-              setTarget("");
-              setPlan(null);
-            }}
-            onCancel={() => {
-              setPicking(null);
-              setPlan(null);
-            }}
-            onTarget={(dir) => {
-              setTarget(dir);
-              check(root.id, dir);
-            }}
-            onStart={() => start(root.id, target)}
-          />
-        ))}
-      </section>
+      </details>
 
       {state.move && <Moving move={state.move} />}
     </div>
@@ -359,6 +353,7 @@ function Drives({ roots }: { roots: StorageRoot[] }) {
 
 function Row({
   root,
+  showName = true,
   editable,
   busy,
   open,
@@ -371,6 +366,7 @@ function Row({
   onStart,
 }: {
   root: StorageRoot;
+  showName?: boolean;
   editable: boolean;
   busy: boolean;
   open: boolean;
@@ -394,8 +390,9 @@ function Row({
   return (
     <div className="item">
       <div className="l">
-        <b>{t(name)}</b>
-        {hint && <span className="hint">{t(hint)}</span>}
+        {showName && <b>{t(name)}</b>}
+        {hint && (root.relocatable ? <span className="hint">{t(hint)}</span> :
+          <details><summary>{t("用途与限制")}</summary><span className="hint">{t(hint)}</span></details>)}
         <span className="p">{root.dir}</span>
         {held && <span className="held">{held}</span>}
         {root.err && <span className="held">{root.err}</span>}

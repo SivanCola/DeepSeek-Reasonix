@@ -16,19 +16,12 @@ export function OpenSessionLimitSection() {
     setDraft(String(openSessionLimit()));
   };
   return (
-    <Group
-      id="open-session-limit"
-      title={t("同时保留的会话标签数")}
-      hint={t("默认 0：不自动收起，打开的会话都保留。设成一个数字后，打开的会话超过它时，会收起最久没动的空闲会话；对话仍在列表里，随时可以重新打开。保留得越多，占用的内存越多。")}
-    >
-      <div className="lrow">
-        <span className="tx">
-          <label className="lb" htmlFor="open-session-limit-input">{t("会话标签数上限")}</label>
-          <span className="ds">{t("0 表示不限制")}</span>
-        </span>
+    <Group id="open-session-limit" title={t("同时保留的会话标签数")} hint={t("0 表示不限制；超过上限时收起最久未使用的空闲标签，对话仍保留。")}
+      action={
         <span className="unit-field">
           <input
             id="open-session-limit-input"
+            aria-label={t("会话标签数上限")}
             type="text"
             inputMode="numeric"
             value={draft}
@@ -44,7 +37,6 @@ export function OpenSessionLimitSection() {
           />
           <i>{t("个")}</i>
         </span>
-      </div>
-    </Group>
+      } />
   );
 }

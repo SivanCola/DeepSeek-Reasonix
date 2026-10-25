@@ -78,7 +78,8 @@ it.each([false, true].flatMap((strict) => ["success", "failure", "unapplied"].ma
       return pending.promise;
     }));
     const { container, onDone, onSaved } = draw(strict, new SsePort("http://kernel.example"));
-    await userEvent.click(container.querySelector("summary")!);
+    await userEvent.click(screen.getByText("模型限制与价格"));
+    await userEvent.click(screen.getByText("思考参数与推理档位"));
     await userEvent.type(screen.getByLabelText("上下文窗口"), "1");
     const before = snapshot(container);
     await userEvent.click(screen.getByRole("button", { name: "保存" }));
@@ -123,12 +124,13 @@ it.each([false, true].flatMap((strict) => ["success", "failure", "unapplied"].ma
 it.each([false, true])("keeps normal edits and revert available before saving (StrictMode=%s)", async (strict) => {
   const fetch = vi.fn();
   vi.stubGlobal("fetch", fetch);
-  const { container, onDone, onRevert } = draw(strict, new SsePort("http://kernel.example"));
+  const { onDone, onRevert } = draw(strict, new SsePort("http://kernel.example"));
   const win = screen.getByLabelText<HTMLInputElement>("上下文窗口");
   await userEvent.clear(win);
   await userEvent.type(win, "64000");
   expect(win.value).toBe("64000");
-  await userEvent.click(container.querySelector("summary")!);
+  await userEvent.click(screen.getByText("模型限制与价格"));
+  await userEvent.click(screen.getByText("思考参数与推理档位"));
   await userEvent.selectOptions(screen.getByLabelText<HTMLSelectElement>(/^思考参数/), "none");
   expect(screen.getByLabelText<HTMLSelectElement>(/^思考参数/).value).toBe("none");
   await userEvent.click(screen.getByRole("button", { name: "还原" }));

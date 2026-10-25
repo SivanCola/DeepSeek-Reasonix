@@ -3,6 +3,7 @@ import { t } from "../i18n";
 import { tx } from "../i18n/rich";
 import { reason } from "../i18n/kernel";
 import type { AgentPort, MemoryEdit, MemoryEntry, UnreadableMemory } from "../port/port";
+import { CopyButton } from "./CopyButton";
 
 // Memory is the only thing here that changes how the agent behaves without the
 // user ever configuring it — the agent writes it. So the grouping answers the
@@ -55,7 +56,13 @@ function MemoryPanel({ port }: { port: AgentPort }) {
   // Naming it here rather than opening a second write path keeps one way in,
   // and this page had none at all: an empty store was a dead end.
   const authoring = (
-    <p className="note">{tx("如需手动记录，请在输入框中使用 {cmd} 命令。", { cmd: <code>/remember</code> })}</p>
+    <div className="memory-authoring">
+      <p className="note">{tx("如需手动记录，请在输入框中使用 {cmd} 命令。", { cmd: <code>/remember</code> })}</p>
+      <CopyButton text="/remember " label={t("复制记忆命令")} className="act" />
+      <details className="prefs-disclosure"><summary>{t("如何添加记忆")}</summary>
+        <p className="note">{t("关闭设置，在会话输入框粘贴 /remember 并写下要记住的事实。发送后由 agent 记录，可在此查看和编辑；请说明仅用于当前项目还是全局适用。")}</p>
+      </details>
+    </div>
   );
 
   // A fact file that is present but unreadable is not a fact that does not

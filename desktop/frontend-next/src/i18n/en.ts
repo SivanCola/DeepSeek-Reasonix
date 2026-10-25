@@ -1,6 +1,10 @@
 import { EN_SURFACES } from "./en_surfaces";
 import { EN_COMPOSITION } from "./en_composition";
 import { EN_DOCUMENT } from "./en_document";
+import { EN_SETTINGS_LAYOUT } from "./en_settings_layout";
+import { EN_SETTINGS_NETWORK } from "./en_settings_network";
+import { EN_SETTINGS_ROLES } from "./en_settings_roles";
+import { EN_SETTINGS_SIMPLIFIED } from "./en_settings_simplified";
 // English catalogue, keyed by the Chinese source text. A key that is missing
 // here renders as Chinese rather than as a blank, so an incomplete translation
 // degrades instead of breaking — and i18n.test.ts is what stops it from
@@ -44,6 +48,10 @@ export const EN: Record<string, string> = {
   "部分历史尚未读取": "Some history has not been read",
   "此检查点不包含文件快照": "This checkpoint contains no file snapshots",
   ...EN_SURFACES,
+  ...EN_SETTINGS_LAYOUT,
+  ...EN_SETTINGS_NETWORK,
+  ...EN_SETTINGS_ROLES,
+  ...EN_SETTINGS_SIMPLIFIED,
   "重命名聊天": "Rename chat",
   "保持简短且易于识别": "Keep it short and recognizable",
   "聊天标题": "Chat title",

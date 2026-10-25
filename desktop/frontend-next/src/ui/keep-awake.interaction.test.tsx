@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "./testkit";
-import { Appearance } from "./Appearance";
+import { GeneralSettings } from "./GeneralSettings";
 import { MockPort } from "../port/mock";
 import { boot, STORAGE, t } from "../i18n";
 import type { AgentPort } from "../port/port";
@@ -23,8 +23,7 @@ afterEach(() => {
 async function open() {
   const port = new MockPort() as unknown as AgentPort;
   render(
-    <Appearance port={port} theme="light" onTheme={() => {}} contrast="" onContrast={() => {}}
-      weight="" onWeight={() => {}} look={{}} onLook={() => {}} reloadThemes={() => {}} />,
+    <GeneralSettings port={port} look={{}} onLook={() => {}} />,
   );
   return screen.findByRole("switch", { name: t("任务运行时阻止系统休眠") });
 }

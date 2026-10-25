@@ -101,7 +101,8 @@ export function Persona({ port, onDirtyChange, onBusyChange, onSaved }: { port: 
       id="persona"
       title={t("系统人设")}
       now={now}
-      hint={t("系统人设决定 agent 的身份：前缀写在系统提示词最前面，后缀写在内置指令之后。保存不会立即重建会话；新会话及现有会话下一次重建（例如切换模型）时生效。")}
+      saveState={busy ? "saving" : changed ? "dirty" : saved ? "saved" : undefined}
+      hint={t("定义 agent 的身份与回答方式。保存不会重建当前会话；新会话或现有会话下次重建时采用。")}
     >
       {!state ? (
         <div className="empty">{t("无法读取人设设置。")}</div>
@@ -175,34 +176,27 @@ export function Persona({ port, onDirtyChange, onBusyChange, onSaved }: { port: 
 
           <div className="lrow">
             <span className="tx">
-              <span className="lb">{t("不注入可选运行时上下文")}</span>
-              <span className="ds">{t("开启后不注入探测到的运行环境与离线提示；指令、记忆与技能照常写入。")}</span>
+              <span className="lb">{t("注入可选运行时上下文")}</span>
+              <span className="ds">{t("关闭后不注入探测到的运行环境与离线提示；指令、记忆与技能照常写入。")}</span>
             </span>
             <Switch
               data-action="persona.runtime-context"
-              on={!draft.include_runtime_context}
+              on={draft.include_runtime_context}
               busy={busy}
-              label={t("不注入可选运行时上下文")}
+              label={t("注入可选运行时上下文")}
               onClick={() => change({ include_runtime_context: !draft.include_runtime_context })}
             />
           </div>
 
           <div className="lrow">
             <span className="tx">
-              <span className="lb">{t("保存")}</span>
-              <span className="ds">{t("写入用户配置，在新会话及现有会话下一次重建时生效；保存本身不会重建会话。")}</span>
+              <span className="ds">{saved ? <code>{state.path}</code> : t("写入本机用户配置")}</span>
             </span>
             <button className="act" data-action="persona.save" disabled={busy || !changed} onClick={() => void save()}>
               {t(busy ? "保存中…" : "保存")}
             </button>
           </div>
 
-          {saved && (
-            <div className="find" data-lvl="ok" role="status">
-              <span className="t">{t("已保存，下次会话构建时生效")}</span>
-              <span className="why"><code>{state.path}</code></span>
-            </div>
-          )}
           {error && (
             <div className="find" data-lvl="err" role="alert">
               <span className="t">{t("操作未完成")}</span>

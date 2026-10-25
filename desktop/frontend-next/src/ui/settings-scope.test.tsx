@@ -80,10 +80,10 @@ describe("the search result, which is where a setting has no page around it", ()
   });
 
   it("takes it from the catalogue rather than a second table of its own", () => {
-    expect(src("Settings.tsx")).toMatch(/import \{ Group, SCOPE_SAID \} from "\.\/Group"/);
+    expect(src("Settings.tsx")).toMatch(/import \{[^}]*\bGroup\b[^}]*\bSCOPE_SAID\b[^}]*\} from "\.\/Group"/);
     // One table, defined once. A second copy is how the block and the result
     // come to disagree about what a setting owns.
-    expect(src("Group.tsx").match(/SCOPE_SAID[^=]*=/g)?.length ?? 0).toBe(1);
+    expect(src("Group.tsx").match(/const SCOPE_SAID\b/g)?.length ?? 0).toBe(1);
   });
 
   // The words live in one place. Checked on the taxonomy's own ids rather than

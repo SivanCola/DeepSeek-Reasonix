@@ -77,7 +77,8 @@ it.each(["second", "remote"])("uses the active local workspace, or first local f
   expect(forgot).toHaveBeenCalledWith(expected);
   await userEvent.click(screen.getByRole("tab", { name: /模型偏好/ }));
   await waitFor(() => expect((screen.getByRole("combobox", { name: "默认模型" }) as HTMLSelectElement).value).toBe(expected));
-  await userEvent.click(screen.getByRole("tab", { name: /存储/ }));
+  await userEvent.click(screen.getByRole("tab", { name: /数据与备份/ }));
+  await userEvent.click(screen.getByText("导入旧版会话"));
   await userEvent.click(await screen.findByRole("button", { name: "选择旧版数据目录…" }));
   expect(imported).toHaveBeenCalledWith("/legacy-fixture", `/${expected}`);
   expect(storage).toHaveBeenCalled();

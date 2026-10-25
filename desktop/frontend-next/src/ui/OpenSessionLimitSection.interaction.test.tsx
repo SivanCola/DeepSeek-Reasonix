@@ -14,7 +14,7 @@ const box = () => screen.getByRole("textbox", { name: "会话标签数上限" })
 it("starts at zero, which the row says means no limit", () => {
   render(<OpenSessionLimitSection />);
   expect(box().value).toBe("0");
-  expect(screen.getByText("0 表示不限制")).toBeTruthy();
+  expect(screen.getByText(/0 表示不限制/)).toBeTruthy();
 });
 
 it("keeps only digits as they are typed and saves the number once it is committed", async () => {

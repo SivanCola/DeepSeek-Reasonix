@@ -4,7 +4,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "./testkit";
 import { App } from "./App";
-import { Appearance } from "./Appearance";
+import { GeneralSettings } from "./GeneralSettings";
 import { MockHub } from "../port/mock_hub";
 import { MockPort } from "../port/mock";
 import { setShowsSessionTabs } from "../state/prefs";
@@ -32,13 +32,16 @@ async function hub(panes = 2) {
 function draw(kernel: MockHub) {
   return render(<>
     <App hub={kernel} />
-    <Appearance port={new MockPort()} theme="light" onTheme={() => {}} contrast="" onContrast={() => {}}
-      weight="" onWeight={() => {}} look={{}} onLook={() => {}} reloadThemes={() => {}} />
+    <GeneralSettings port={new MockPort()} look={{}} onLook={() => {}} />
   </>);
 }
 
 const strip = () => screen.queryByRole("tablist", { name: "会话面板" });
-const toggle = () => screen.getByRole("switch", { name: "显示会话标签栏" });
+const toggle = () => {
+  const disclosure = screen.getByText("导航与会话列表").closest("details")!;
+  disclosure.open = true;
+  return screen.getByRole("switch", { name: "显示会话标签栏" });
+};
 const settled = () => waitFor(() => {
   if (!document.querySelector(".crumb b")?.textContent) throw new Error("the active pane has not loaded");
 });
@@ -51,7 +54,7 @@ describe("opt-in session tabs", () => {
     expect(strip()).toBeNull();
   });
 
-  it("shows and hides the open tabs immediately through the appearance switch", async () => {
+  it("shows and hides the open tabs immediately through the general settings switch", async () => {
     draw(await hub());
     await settled();
     await userEvent.click(toggle());

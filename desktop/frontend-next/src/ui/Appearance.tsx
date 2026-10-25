@@ -1,4 +1,4 @@
-import { ApplyNote } from "./Group";
+import { ApplyNote, SettingSection } from "./Group";
 import { useCallback, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { effectsMode, onEffectsChange, setEffectsMode, type EffectsMode } from "../state/prefs";
 import type { AgentPort, Appearance as Look, ThemePack } from "../port/port";
@@ -6,40 +6,15 @@ import { ZOOM_PRESETS } from "./zoom";
 import { chord } from "./keys";
 import { host } from "../port/host";
 import { MONO_FAMILIES, TEXT_STEPS, UI_FAMILIES, installed, readSizeOf, readSteps } from "./look";
-import { STORAGE as LANG_KEY, t } from "../i18n";
+import { t } from "../i18n";
 import { pct } from "../i18n/format";
 import { reason } from "../i18n/kernel";
 import { useCrop } from "./useCrop";
-import { Notifications } from "./Notifications";
-import { Folding } from "./Folding";
-import { WindowSection } from "./WindowSection";
-import { LiveGraceSection } from "./LiveGraceSection";
-import { LegacySessionsSection } from "./LegacySessionsSection";
-import { OpenSessionLimitSection } from "./OpenSessionLimitSection";
-import { LiveStreamBudgetSection } from "./LiveStreamBudgetSection";
-import { NewAnswerSection } from "./NewAnswerSection";
-import { SessionQuickSection } from "./SessionQuickSection";
-import { NavEntriesSection } from "./NavEntriesSection";
-import { NavRailSection } from "./NavRailSection";
-import { GraphicsSection } from "./GraphicsSection";
-import { SendShortcut } from "./SendShortcut";
-import { KeysSheet } from "./KeysSheet";
-import { SessionTabsSetting } from "./SessionTabsSetting";
-import { EscStopSetting } from "./EscStopSetting";
-import { PageSleepSetting } from "./PageSleepSetting";
 import { ThemeImport } from "./ThemeImport";
 import { ThemeRemove } from "./ThemeRemove";
 import { WallpaperSceneImport } from "./WallpaperSceneImport";
 import { WallpaperVolumeSlider } from "./WallpaperVolumeSlider";
 import { useThemeInventory } from "./useThemeInventory";
-
-// "" follows the machine; the rest are explicit, the same shape the light/dark
-// control uses.
-const LANGS: [string, string][] = [
-  ["", "跟随系统"],
-  ["zh", "中文"],
-  ["en", "英文"],
-];
 
 // Exported because the nav rail names the current one next to the tab.
 export const SCHEMES: [string, string][] = [
@@ -200,18 +175,6 @@ export function Appearance({ port, theme, onTheme, contrast, onContrast, weight,
   const uiFonts = useMemo(() => installed(UI_FAMILIES), []);
   const monoFonts = useMemo(() => installed(MONO_FAMILIES), []);
 
-  // Applying a language under a running tree would mean every memoised
-  // component subscribing to one, for a setting that changes once in a window's
-  // life. Storing it and reloading is the honest trade.
-  const setLang = useCallback(
-    (next: string) => {
-      localStorage.setItem(LANG_KEY, next);
-      onLook({ ...look, language: next });
-      setTimeout(() => location.reload(), 120);
-    },
-    [look, onLook],
-  );
-  const langNow = localStorage.getItem(LANG_KEY) ?? look.language ?? "";
   // Read here rather than inside the summary: these are the same three values
   // the folded blocks render, and a second reading of them is a second answer.
   const changed = [
@@ -228,9 +191,10 @@ export function Appearance({ port, theme, onTheme, contrast, onContrast, weight,
           <span className="t">{failed || unread}</span>
         </div>
       )}
+      <SettingSection title={t("主题")} ids={["mode", "scheme"]}>
       <section className="grp" id="set-mode" data-setting="mode">
         <div className="grp-hd">
-          <h3>{t("明暗")}</h3>
+          <h4>{t("明暗")}</h4>
         </div>
         <p className="hint">{t("跟随系统时会随系统主题切换；手动选择后将保持固定。")}</p>
         <div className="grp-items">
@@ -247,8 +211,7 @@ export function Appearance({ port, theme, onTheme, contrast, onContrast, weight,
 
       <section className="grp" id="set-scheme" data-setting="scheme">
         <div className="grp-hd">
-          <h3>{t("界面主题")}</h3>
-          <span className="now">{t("立即生效")}</span>
+          <h4>{t("界面主题")}</h4>
         </div>
         <p className="hint">{t("选择工作台的表面色与强调色。成功、警告和失败等状态色保持一致，代码字体在下方单独设置。")}</p>
         <div className="grp-items">
@@ -287,6 +250,8 @@ export function Appearance({ port, theme, onTheme, contrast, onContrast, weight,
         </div>
         <ApplyNote id="scheme" />
       </section>
+
+      </SettingSection>
 
       <section className="grp" id="set-code-appearance" data-setting="font">
         <div className="grp-hd">
@@ -529,45 +494,6 @@ export function Appearance({ port, theme, onTheme, contrast, onContrast, weight,
       </section>
       </details>
 
-      <section className="grp" id="set-language" data-setting="language">
-        <div className="grp-hd">
-          <h3>{t("语言")}</h3>
-        </div>
-        <p className="hint">
-          {t("界面显示语言。模型回复所用的语言与此设置无关，将跟随你发送消息时使用的语言。")}
-        </p>
-        <div className="grp-items">
-          <div className="seg" data-text role="group" aria-label={t("语言")}>
-            {LANGS.map(([id, name]) => (
-              <button key={id} data-action="appearance.language" data-value={id} aria-pressed={langNow === id} onClick={() => setLang(id)}>
-                {t(name)}
-              </button>
-            ))}
-          </div>
-          <p className="note">{t("语言更改需重启窗口后生效")}</p>
-        </div>
-        <ApplyNote id="language" />
-      </section>
-
-
-      <WindowSection port={port} />
-      <NavRailSection />
-      <NavEntriesSection />
-      <LiveGraceSection />
-      <LegacySessionsSection />
-      <OpenSessionLimitSection />
-      <LiveStreamBudgetSection />
-      <SessionQuickSection />
-      <NewAnswerSection />
-      <GraphicsSection />
-      <SendShortcut />
-      <KeysSheet />
-      <EscStopSetting />
-      <PageSleepSetting />
-      <SessionTabsSetting />
-      <Folding />
-      <Notifications port={port} />
-
       {/* What makes this page read as a console is that all of it arrives at
           once, not that any one control is obscure. The summary says what is
           folded and whether it has been changed — a disclosure hiding a value
@@ -577,9 +503,10 @@ export function Appearance({ port, theme, onTheme, contrast, onContrast, weight,
           <h3 className="grp-hd"><span>{t("高级外观")}</span></h3>
           <span className="hint">{changed.length ? t("已修改：{list}", { list: changed.join(" · ") }) : t("字体、文字粗细、文字对比度、视觉效果")}</span>
         </summary>
+        <SettingSection title={t("界面文字")} ids={["font", "weight", "contrast"]}>
         <section className="grp" id="set-font" data-setting="font">
           <div className="grp-hd">
-            <h3>{t("字体")}</h3>
+            <h4>{t("字体")}</h4>
           </div>
           <p className="hint">{t("可直接输入字体名称，或选择本机已安装的字体。下方文本会实时预览所选字体；若字体不可用，将自动使用默认字体。")}</p>
           <div className="grp-items">
@@ -597,7 +524,7 @@ export function Appearance({ port, theme, onTheme, contrast, onContrast, weight,
 
         <section className="grp" id="set-weight" data-setting="weight">
           <div className="grp-hd">
-            <h3>{t("文字粗细")}</h3>
+            <h4>{t("文字粗细")}</h4>
           </div>
           <p className="hint">{t("调整文字的笔画粗细。中文笔画密集，在小字号下加粗有助于提升清晰度。")}</p>
           <div className="grp-items">
@@ -612,6 +539,23 @@ export function Appearance({ port, theme, onTheme, contrast, onContrast, weight,
           <ApplyNote id="weight" />
         </section>
 
+        <section className="grp" id="set-contrast" data-setting="contrast">
+          <div className="grp-hd">
+            <h4>{t("文字对比度")}</h4>
+          </div>
+          <p className="hint">{t("同时调整正文与次要文字的对比度。深色主题下若觉得刺眼，可调向「柔和」。")}</p>
+          <div className="grp-items">
+            <div className="seg" data-text role="group" aria-label={t("文字对比度")}>
+              {CONTRASTS.map(([id, name, why]) => (
+                <button key={id || "auto"} data-action="appearance.contrast" data-value={id || "auto"} aria-pressed={contrast === id} title={t(why)} onClick={() => onContrast(id)}>
+                  {t(name)}
+                </button>
+              ))}
+            </div>
+          </div>
+          <ApplyNote id="contrast" />
+        </section>
+        </SettingSection>
         <section className="grp" id="set-effects" data-setting="effects">
           <div className="grp-hd">
             <h3>{t("视觉效果")}</h3>
@@ -629,22 +573,6 @@ export function Appearance({ port, theme, onTheme, contrast, onContrast, weight,
           <ApplyNote id="effects" />
         </section>
 
-        <section className="grp" id="set-contrast" data-setting="contrast">
-          <div className="grp-hd">
-            <h3>{t("文字对比度")}</h3>
-          </div>
-          <p className="hint">{t("同时调整正文与次要文字的对比度。深色主题下若觉得刺眼，可调向「柔和」。")}</p>
-          <div className="grp-items">
-            <div className="seg" data-text role="group" aria-label={t("文字对比度")}>
-              {CONTRASTS.map(([id, name, why]) => (
-                <button key={id || "auto"} data-action="appearance.contrast" data-value={id || "auto"} aria-pressed={contrast === id} title={t(why)} onClick={() => onContrast(id)}>
-                  {t(name)}
-                </button>
-              ))}
-            </div>
-          </div>
-          <ApplyNote id="contrast" />
-        </section>
       </details>
     </>
   );
