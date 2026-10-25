@@ -1,0 +1,112 @@
+name: Test v1.39.9-2 Windows x64
+
+on:
+  push:
+    branches: [test/windows-x64-v1.39.9-2]
+    paths: [.github/workflows/test-v1.39.9-2-windows.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  windows-test-package:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: esengine/DeepSeek-Reasonix
+          ref: 53b94a785e521f5638462551971e7d45db61fa62
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: desktop/go.mod
+          cache-dependency-path: |
+            go.sum
+            desktop/go.sum
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        with:
+          version: 10.34.5
+          run_install: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
+      - name: Exclude build dirs from Defender scanning
+        shell: pwsh
+        run: |
+          $paths = @($env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, $env:TEMP, (go env GOCACHE)) |
+            Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+          foreach ($p in $paths) {
+            try { Add-MpPreference -ExclusionPath $p -ErrorAction Stop }
+            catch { Write-Host "::warning::Defender exclusion failed for ${p}: $($_.Exception.Message)" }
+          }
+      - name: Verify pinned source
+        run: test "$(git rev-parse HEAD)" = 53b94a785e521f5638462551971e7d45db61fa62
+      - name: Install NSIS
+        run: pwsh -NoProfile -File scripts/install-nsis.ps1
+      - name: Verify uninstaller compilation contract
+        run: node scripts/check-windows-uninstaller.mjs
+      - name: Build unsigned test package
+        run: scripts/desktop-build.sh windows/amd64 v1.39.9-2 canary
+      - name: Verify package identity and contents
+        run: |
+          node desktop/packaging/verify.mjs dist/Reasonix-windows-amd64.zip --kind windows-portable-zip
+          node desktop/packaging/signing-files.mjs desktop/build/windows/signing-payload --check
+          git diff --exit-code
+      - name: Session switching and remote hydration regressions
+        working-directory: desktop/frontend
+        run: pnpm test:session-switch-regression
+      - name: Accept final portable archive
+        shell: pwsh
+        run: |
+          ./scripts/test-windows-startup-recovery.ps1 -PortableZip dist/Reasonix-windows-amd64.zip -ExpectedVersion v1.39.9-2 -EvidenceDirectory "$env:RUNNER_TEMP/portable-acceptance"
+      - name: Accept final installer and old-data upgrade
+        shell: pwsh
+        run: |
+          Push-Location desktop
+          go build -o "$env:RUNNER_TEMP/windows-upgrade-fixture.exe" ./cmd/windows-upgrade-fixture
+          if ($LASTEXITCODE -ne 0) { throw 'Upgrade fixture build failed' }
+          Pop-Location
+          ./scripts/test-windows-installer-startup.ps1 -InstallerPath dist/Reasonix-windows-amd64-installer.exe -ExpectedVersion v1.39.9-2 -FixtureBuilderPath "$env:RUNNER_TEMP/windows-upgrade-fixture.exe" -EvidenceDirectory "$env:RUNNER_TEMP/installer-acceptance"
+      - name: Record test build provenance and checksums
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Copy-Item dist/Reasonix-windows-amd64-installer.exe dist/Reasonix-v1.39.9-2-windows-x64-installer.exe
+          Copy-Item dist/Reasonix-windows-amd64.zip dist/Reasonix-v1.39.9-2-windows-x64-portable.zip
+          $files = @(Get-ChildItem dist/Reasonix-v1.39.9-2-windows-x64*)
+          $hashes = @($files | ForEach-Object { @{ file = $_.Name; sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(); bytes = $_.Length } })
+          $build = Get-Content desktop/build/windows/signing-payload/app/resources/build.json -Raw | ConvertFrom-Json
+          if ($build.version -ne 'v1.39.9-2' -or $build.commit -ne '53b94a785e521f5638462551971e7d45db61fa62' -or $build.channel -ne 'canary') { throw 'Build provenance mismatch' }
+          @{ version = 'v1.39.9-2'; channel = 'canary'; sourceSha = $build.commit; mainV2Sha = '53b94a785e521f5638462551971e7d45db61fa62'; workflowSha = '${{ github.sha }}'; run = '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'; signing = 'unsigned test build'; publication = $false; files = $hashes } | ConvertTo-Json -Depth 6 | Set-Content dist/test-build.json -Encoding utf8
+          $hashes | ForEach-Object { "$($_.sha256)  $($_.file)" } | Set-Content dist/SHA256SUMS.txt -Encoding ascii
+      - name: Upload verified test packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: Reasonix-v1.39.9-2-windows-x64
+          path: |
+            dist/Reasonix-v1.39.9-2-windows-x64*
+            dist/test-build.json
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: Reasonix-v1.39.9-2-windows-x64-evidence
+          path: |
+            ${{ runner.temp }}/portable-acceptance/**/*.json
+            ${{ runner.temp }}/portable-acceptance/**/*.log
+            ${{ runner.temp }}/installer-acceptance/**/*.json
+            ${{ runner.temp }}/installer-acceptance/**/*.log
+            ${{ runner.temp }}/installer-acceptance/**/*.png
+            !${{ runner.temp }}/installer-acceptance/installed/**
+            desktop/build/reports/windows-amd64/**
+          if-no-files-found: warn
+          retention-days: 14
