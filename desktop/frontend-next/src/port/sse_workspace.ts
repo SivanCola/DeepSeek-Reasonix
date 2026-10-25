@@ -1,7 +1,7 @@
 import type { ChangeDiff, StageRequest, WorkspaceBranches, WorkspaceChanges, WorkspaceGit } from "./port";
 import type { DiscardRequest, GitCommitFiles, GitHistory, GitRepos, PushPlan, PushRequest, PushResult } from "./workspace";
 import type { JobOutput, ToolOutputPage } from "./session";
-import type { SubagentHandoff, SubagentRun, SubagentTranscript } from "./subagent";
+import type { FleetRecoveryPlan, SubagentHandoff, SubagentRun, SubagentTranscript } from "./subagent";
 import { SseFeedback } from "./sse_feedback";
 import { host } from "./host";
 import { HttpError } from "./http_error";
@@ -81,6 +81,12 @@ export class SseWorkspace extends SseFeedback {
   }
   subagents() {
     return this.get<SubagentRun[]>("/subagents");
+  }
+  fleetRecoveryPlans(ref: string) {
+    return this.get<FleetRecoveryPlan[]>("/subagents/" + encodeURIComponent(ref) + "/recovery");
+  }
+  requestFleetRecovery(ref: string, id: string, snapshot: string) {
+    return this.post("/subagents/" + encodeURIComponent(ref) + "/recovery", { id, snapshot });
   }
   subagentTranscript(ref: string, after = 0, limit = 0) {
     const query = [after ? `after=${after}` : "", limit ? `limit=${limit}` : ""].filter(Boolean).join("&");

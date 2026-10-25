@@ -18,14 +18,15 @@ import (
 const fleetRecoveryLimit = 2 << 20
 
 type fleetRecoveryRecord struct {
-	Version    int             `json:"version"`
-	ID         string          `json:"id"`
-	Parent     string          `json:"parent"`
-	Workspace  string          `json:"workspace"`
-	Tasks      []fleetTaskItem `json:"tasks"`
-	Identities []string        `json:"identities"`
-	FailFast   bool            `json:"fail_fast"`
-	Attempts   []string        `json:"attempts"`
+	BudgetScope string          `json:"budget_scope,omitempty"`
+	Version     int             `json:"version"`
+	ID          string          `json:"id"`
+	Parent      string          `json:"parent"`
+	Workspace   string          `json:"workspace"`
+	Tasks       []fleetTaskItem `json:"tasks"`
+	Identities  []string        `json:"identities"`
+	FailFast    bool            `json:"fail_fast"`
+	Attempts    []string        `json:"attempts"`
 }
 
 type fleetRecoveryLease struct {

@@ -61,6 +61,7 @@ func (f *FleetTool) saveRecovery(ctx context.Context, tasks []fleetTaskItem, cal
 		return nil, err
 	}
 	r := &fleetRecoveryLease{root: root, release: release, record: fleetRecoveryRecord{Version: 1, ID: id, Parent: agent.ParentSession(ctx), Workspace: f.taskTool.workspaceRoot, Tasks: tasks, FailFast: call.plan.failFast, Attempts: []string{group}, Identities: make([]string, len(tasks))}}
+	r.record.BudgetScope = agent.SharedTaskBudgetScope(ctx)
 	for i, spec := range call.specs {
 		if tasks[i].AdoptRef != "" {
 			r.record.Identities[i] = bytesHash([]byte(call.adopted[i].answer))
@@ -193,6 +194,10 @@ func (f *FleetTool) executeRecovery(ctx context.Context, request fleetRecoveryRe
 		return "", err
 	}
 	ctx = agent.WithRawUserInput(ctx, firstNonEmpty(agent.RawUserInput(ctx, ""), "Explicit fleet recovery requested."))
+	ctx, err = agent.RestoreSharedTaskBudget(ctx, f.taskTool.executionSessionPath(ctx), r.record.BudgetScope)
+	if err != nil {
+		return "", err
+	}
 	return f.runFleet(ctx, sink, call.specs, call.plan, call.adopted, group)
 }
 

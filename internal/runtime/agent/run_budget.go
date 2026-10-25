@@ -137,7 +137,9 @@ func (a *Agent) observeRunBudget(state *turnRuntime, usage *provider.Usage) {
 		return
 	}
 	state.budget.observe(usage, a.svc.pricing)
-	state.sharedBudget.observe(usage, a.svc.pricing)
+	if !state.sharedBudget.limited() {
+		state.sharedBudget.observe(usage, a.svc.pricing)
+	}
 	if a.task.budget.started.IsZero() {
 		a.task.budget.started = state.budget.started
 	}

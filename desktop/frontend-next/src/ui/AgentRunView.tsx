@@ -7,6 +7,7 @@ import { delegateStateLabel } from "./delegation";
 import { Transcript } from "./Transcript";
 import { AgentGuidance } from "./AgentGuidance";
 import { AgentReports } from "./AgentReports";
+import { AgentRecovery } from "./AgentRecovery";
 import { useAgentHistory } from "./useAgentHistory";
 
 const noop = async () => undefined as never;
@@ -29,6 +30,7 @@ export function AgentRunView({ port, run, shown }: { port: AgentPort; run: Pick<
         {status && <span className="rt">{status}</span>}
       </div>
       {failed && <div className="workbench-error" role="alert">{failed}</div>}
+      {shown && <AgentRecovery port={port} runRef={run.ref} />}
       {!failed && !info && <div className="workbench-empty">{t("正在读取…")}</div>}
       {before > 0 && <button className="btn btn--small" data-action="agent.history-earlier" type="button" disabled={loading} onClick={() => void earlier()}>{t("加载更早的消息")}</button>}
       {info?.ref === run.ref && <AgentReports messages={messages} />}

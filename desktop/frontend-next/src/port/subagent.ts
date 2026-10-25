@@ -34,3 +34,18 @@ export interface SubagentTranscript {
   total: number;
   live: boolean;
 }
+export interface FleetRecoveryPlan {
+	legacy?: boolean;
+  id: string;
+  snapshot: string;
+  ready: boolean;
+  reason?: string;
+  tasks: { id: string; description: string; prompt: string; dependsOn: string[]; state: string; ref?: string }[];
+}
+export interface SubagentPort {
+  subagents(): Promise<SubagentRun[]>;
+  fleetRecoveryPlans(ref: string): Promise<FleetRecoveryPlan[]>;
+  requestFleetRecovery(ref: string, id: string, snapshot: string): Promise<void>;
+  subagentTranscript(ref: string, after?: number, limit?: number): Promise<SubagentTranscript>;
+  steerSubagent(ref: string, text: string, context?: SubagentHandoff): Promise<void>;
+}

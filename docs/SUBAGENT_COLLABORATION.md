@@ -193,9 +193,13 @@ Stored pages use validated byte offsets and compact timing/tool-call metadata.
 Only requested message bodies and out-of-page tool calls needed by those messages
 are decoded.
 
-Missing, stale or older derived indexes are repaired once from the
-authoritative log under save locks; loading the compact index remains O(message
-count). Live pages continue to read the in-memory session.
+The derived binary window index uses a fixed header and fixed-width entries with
+checksums. Normal reads seek only the requested page and its tool-call backlinks;
+index bytes no longer grow with total history length. Missing, stale or damaged
+indexes are repaired once from the authoritative log under save locks.
+
+Repair
+and saving still scale with history length. Live pages read the in-memory session.
 
 Graph recovery keeps dependency order distinct from actual context delivery.
 Each completed execution records its result identity before releasing the transcript,
@@ -215,18 +219,32 @@ changed execution configuration, foreign owners/workspaces, unknown formats and
 simultaneous recovery attempts are refused. Recipes contain no approval grants.
 
 Each retry checkpoints its execution ids before admission so later retries can
-reuse its completions. Old graphs without recipes require an explicit new fleet
-with `adopt_ref`.
+reuse its completions. Studio's child detail view offers **View recovery plan**
+and **Request recovery**.
 
-Recovery is available through the fleet tool; no separate Studio
-resume button is added.
+The request checks the current owner and preview snapshot
+then enters the ordinary host-authored conversation queue. Queued means requested,
+not already executed; the normal fleet tool still enforces current permissions.
+
+Paired devices cannot use these host-only routes.
+
+For older graphs without recipes, Studio can explicitly rebuild a plan only when
+the original fleet call is uniquely present in the authoritative parent transcript.
+
+Verified completed results are adopted; the rebuilt plan uses current permissions
+and a new budget. Missing or ambiguous arguments remain unavailable. Missing
+worktree bindings are never reconstructed from prose.
+
+Unknown newer recipes are
+preserved and refused rather than treated as absent legacy data.
 
 Studio 首次打开只读取最近 100 条消息，按需加载更早页并保持滚动位置；运行中的消息继续轮询。
 历史压缩或重写后会重新读取最新页，不拼接不同快照。任务图恢复区分依赖顺序和实际交接，
 在释放历史前记录执行结果标识，成员续接不会覆盖此前执行的完成状态。
 
 已落盘历史使用经校验的字节索引，只解码目标页及跨页工具结果所需的调用记录；旧版、缺失或
-过期索引在保存锁内从权威日志修复一次。紧凑索引仍需随消息总数读取，运行中历史读取内存。
+过期索引在保存锁内从权威日志修复一次。固定长度二进制索引只读取目标页及其工具调用回链，
+正常分页的索引读取量不再随总消息数增长；保存和修复仍与历史长度相关。运行中历史读取内存。
 
 根会话的 `fleet` 在执行前保存有大小和版本限制的恢复计划。通过 `recovery.action` 的
 `list` 查找 id、`inspect` 查看计划、`resume` 显式重跑未完成节点；已完成且未被续写的结果
@@ -236,9 +254,14 @@ Studio 首次打开只读取最近 100 条消息，按需加载更早页并保�
 恢复时重新解析当前角色、工具上限、上下文及写入范围，不从磁盘恢复审批授权。
 配置改变、跨会话或跨工作区、未知格式以及重复恢复会被拒绝。
 
-每次尝试先记录执行
-标识，下一次恢复可复用此次完成结果。没有恢复计划的旧图仍需显式重建 fleet 并使用
-`adopt_ref`。入口为 fleet 工具，本次未增加独立的 Studio 恢复按钮。
+每次尝试先记录执行标识，下一次恢复可复用此次完成结果。Studio 子代理详情页提供
+“查看恢复计划”和“请求恢复执行”。请求校验当前归属和预览快照后进入普通会话队列，
+保持宿主来源；“已加入队列”不等于已经执行，实际 fleet 调用仍受当前权限约束。
+配对设备不能访问这两个宿主接口。
+
+没有计划的旧任务，仅在权威父会话中唯一保存了原始 fleet 参数时允许显式重建；可验证的
+已完成结果通过 `adopt_ref` 复用，重建任务使用当前权限和新预算。参数缺失或歧义时不猜测，
+缺失的 worktree 绑定不能从文字推导。未知新版本记录会保留并拒绝，不回退成旧数据。
 
 ## Concurrency and spend / 并发与成本
 
@@ -247,22 +270,41 @@ Studio 首次打开只读取最近 100 条消息，按需加载更早页并保�
   claims are retained. Unlimited mode is restored after pressure subsides.
 - A task and its delegated execution branches share configured token, cost and
   wall-clock budgets, including background jobs and isolated workers.
-- Usage already in flight and one tool-free finalization round can exceed a
-  threshold. This is an observed-spend limit, not a prepaid reservation.
+- Each provider request, including retries and compaction, reserves estimated
+  input plus a bounded output before sending. Concurrent owners share an OS-locked
+  ledger.
+- Exact usage settles the reservation once; unknown/estimated usage,
+  interrupted streams and uncertain transport outcomes keep their reservation.
+- A final summary also needs allowance. Retries preserve the original output cap
+  or refuse rather than changing the frozen request.
 - Money uses fixed-point, currency-specific totals. Only the root budget's
   currency is compared with its cost limit; other currencies and missing usage
   cannot be treated as free or silently converted. Token budgets span models.
 
-Shared admission accounting belongs to the current task scope. It does not pool
-unrelated conversations or restore an in-flight budget after a process restart;
-the existing session usage history remains separate from this runtime gate.
+Versioned ledgers persist spend, outstanding reservations and the start time.
+Goals, saved fleet recipes and continued child transcripts reopen their original
+scope after restart.
 
-共享额度属于当前任务范围，不合并无关会话，也不在进程重启后恢复运行中的剩余额度；
-已有会话用量历史与运行时额度检查保持分离。
+A fresh user task starts a new scope; an explicit budget-stop
+Goal resume renews its slice without resetting cumulative usage. Unknown formats,
+missing bound ledgers and changed bindings fail closed.
+
+Budget state stays in host
+sidecars, outside system prompts and tool schemas. Input token estimates and
+configured prices are not a guarantee of the provider's final bill.
+
+共享额度属于任务范围，不合并无关会话。版本化账本保存已花费额度、在途预留和开始时间；
+Goal、保存的任务图和续接子代理在重启后恢复原预算。新用户任务创建新范围，预算暂停的
+Goal 经显式继续可续订额度，但不清零累计用量。未知格式、绑定账本缺失或绑定不符均拒绝。
+
+预算状态保留在宿主侧文件，不写进 system prompt 或工具定义；输入估算和配置价格不能
+保证供应商最终账单绝不超过估算。
 
 - 429／503 重试信号会降低后续任务并发，成功完成后逐步恢复，不超过配置上限，不撤销现有写锁。
 - 同一任务及其执行分支共享已配置的 token、费用和时长预算，包括后台和隔离任务。
-- 已发出的请求与一次不执行工具的总结请求可能超出阈值；这是按已观测消耗收口，并非预付费额度。
+- 请求发出前预留估算输入与有上限的输出，包括重试和压缩；不同运行实例通过文件锁共享账本。
+  精确用量只结算一次，未知用量、估算用量或中断保留预留。总结也需要额度，重试保持原输出
+  上限，否则拒绝。未获准发送的请求不消耗预留。
 - 费用按币种分别累计，仅比较根任务预算所用币种，不隐式换汇；跨模型可使用 token 预算。
 
 ## Named members / 具名成员
@@ -288,10 +330,11 @@ changes rather than widening authority.
 
 | Record / 记录 | Old data / 旧数据 | New reader / 新版本 | Previous reader / 旧版本 |
 | --- | --- | --- | --- |
-| Display index page metadata / 分页索引 | Missing fields trigger derived-index repair. 缺失时重建派生索引。 | Bounded payload reads with cross-page call context. 按范围读取并补齐工具调用。 | Ignores optional fields; can rebuild its own index. 忽略新增字段，可重建自己的索引。 |
+| Binary window index / 二进制分页索引 | Derived once from validated history. 从已校验历史派生。 | Seeks fixed entries; repairs stale or damaged data. 定位固定条目，损坏或过期时修复。 | Uses the existing JSON index; binary sidecar is optional. 继续使用已有 JSON 索引。 |
 | Isolated transcript binding / 隔离历史绑定 | No binding means no worktree continuation. 无绑定不可原地续接。 | Validates owner, workspace and original write scope; a versioned sidecar preserves binding across older metadata writers. 校验归属和原写入范围，独立版本化侧文件防止旧写入器丢失绑定。 | Bound schema identity differs, so continuation fails closed; history remains readable. 身份哈希不符而拒绝续接，历史仍可读。 |
 | Continuation fence / 续接围栏 | Existing results keep existing settlement behavior. 原结果维持原处理方式。 | Recognizes only validated version 1 records, preserving unknown records. 仅识别经校验的 v1 记录，保留未知记录。 | Existing settlement fence refuses apply/discard/cleanup of bound results. 已有围栏阻止处理或清理新结果。 |
-| Fleet recovery recipe / 图恢复计划 | Absent recipes are not guessed from history. 不从旧历史猜测执行计划。 | Strict versioned decoding; current permissions are recomputed. 严格解析并重新计算当前权限。 | Separate sidecar is ignored and never auto-executed. 忽略独立侧文件，不自动执行。 |
+| Fleet recovery recipe / 图恢复计划 | Explicit rebuild only from a unique saved call. 仅凭唯一保存的原调用显式重建。 | Strict decoding; current permissions are recomputed. 严格解析并重新计算当前权限。 | Readers without budget support reject budget-bearing recipes through strict decoding. 不支持预算的旧读取器严格拒绝带预算记录。 |
+| Task budget ledger and binding / 预算账本与绑定 | No historical spend is invented. 不推测历史消耗。 | Reopens original ledger; independent binding survives older metadata writers. 恢复原账本，独立绑定抵御旧元数据写入。 | Bound tool identity prevents ungoverned child continuation; transcripts remain readable. 身份哈希阻止绕过预算续接，历史仍可读。 |
 
 The optional transcript `snapshot` field is additive; old clients ignore it.
 Old execution journals remain readable. New terminal records add an optional
@@ -308,6 +351,52 @@ Older clients can still read their ordinary transcripts without roster controls.
 但没有成员管理操作。
 
 ## Cache and permissions / 缓存与权限
+
+Acceptance sample (2026-10-26): four bounded calls using production-prepared child
+requests and changing selected summaries reported 3,370 input tokens and 2,944
+cached tokens each (87.4%).
+
+At the [published Flash pricing](https://api-docs.deepseek.com/quick_start/pricing/),
+these counters imply about 85.6% less input cost than billing the same tokens as
+cache misses.
+
+This is a synthetic request-shape measurement, not a production
+workload average or an invoice; 64 output tokens bounded each call. Real task
+completion, recovery and permissions use separate deterministic
+runtime tests.
+
+A 64-worker/1,600-request accounting stress test settled 48,000
+tokens with no leaked reservations. Separate independent ledger owners cannot
+jointly reserve beyond the available allowance.
+
+A separate bounded live burst completed eight concurrent provider requests in
+1.386 seconds, with 26,800 input tokens, 23,552 cached tokens and 512 output tokens.
+This validates eight live connections, not the supplier's saturation limit.
+
+验收样本（2026-10-26）：4 次由实际子代理运行时生成、交接摘要不同的请求，每次输入
+3,370 tokens、缓存命中 2,944 tokens（87.4%）。按上述官方 Flash 价格计算，相较同样
+输入全部未命中，输入费用约降低 85.6%。
+
+这是合成请求结构测量，不代表生产平均收益或
+实际账单；每次输出限制 64 tokens。任务完成、恢复和权限另用确定性运行时测试验证。
+
+64 并发工作者的 1,600 次请求结算了 48,000 tokens，无预留泄漏；不同账本实例同时申请
+也不能共同预留超过剩余额度。
+
+另一次有界真实并发测量中，8 个并发请求在 1.386 秒完成；输入 26,800 tokens，缓存
+命中 23,552 tokens，输出 512 tokens。这验证了 8 路真实连接，不代表供应商饱和吞吐上限。
+
+The 100,000-message index microbenchmark (10 iterations, local ARM64 host) read
+a 20-message page in approximately 0.16 ms / 76 KB allocated, versus 116.55 ms /
+58.16 MB for decoding the former whole JSON index.
+
+This compares index paths, not
+end-to-end UI latency. Ten-message pages read 688 index bytes at both 100 and
+10,000 total messages; repair is measured separately from the normal path.
+
+10 万条消息、10 次迭代的本地 ARM64 索引微基准中，20 条消息页约耗时 0.16 ms、分配
+76 KB；旧全量 JSON 索引解码约 116.55 ms、分配 58.16 MB。该比较不代表端到端界面延迟。
+100 条和 10,000 条历史中的 10 条消息页均读取 688 字节索引，修复成本与正常分页分开衡量。
 
 Selected context and reports enter message history at turn boundaries. They never
 rewrite the system prompt or embed task IDs, result bodies, or recipients into

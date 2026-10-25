@@ -24,6 +24,8 @@ func (s *Server) registerSubagentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /subagents/{ref}/transcript", s.subagentTranscript)
 	mux.HandleFunc("POST /subagents/{ref}/steer", s.subagentSteer)
 	mux.HandleFunc("POST /subagents/{ref}/handoff", s.subagentHandoff)
+	mux.HandleFunc("GET /subagents/{ref}/recovery", s.fleetRecoveryPlans)
+	mux.HandleFunc("POST /subagents/{ref}/recovery", s.fleetRecoveryRequest)
 }
 
 type subagentRunView struct {

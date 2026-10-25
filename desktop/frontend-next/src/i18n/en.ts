@@ -27,6 +27,16 @@ import { EN_COMMUNITY } from "./en_community";
 import { EN_SPONSOR } from "./en_sponsor";
 
 export const EN: Record<string, string> = {
+  "任务图恢复": "Task graph recovery",
+  "旧计划重建：按当前权限和新预算重新确认，不推测缺失的历史参数。": "Rebuild an older plan under current permissions and a new budget. Missing historical arguments are never inferred.",
+  "查看恢复计划": "Inspect recovery plan",
+  "没有可恢复的保存计划。旧任务需要重新选择任务与已有结果。": "No saved recovery plan is available. Older tasks need an explicit selection of tasks and existing results.",
+  "复用已完成结果": "Reuse completed result",
+  "重新执行未完成任务": "Rerun unfinished task",
+  "任务内容": "Task instructions",
+  "未完成任务可能已有部分写入。恢复会检查当前权限，不会自动重复已完成节点。": "Unfinished tasks may have partial writes. Recovery checks current permissions and reuses completed nodes.",
+  "请求恢复执行": "Request recovery",
+  "恢复请求已加入当前会话，实际执行进度将在会话中显示。": "Recovery was requested in this conversation. Execution progress will appear there.",
   "追加指导": "Additional guidance",
   "交接上下文": "Hand off context",
   "上下文摘要": "Context summary",

@@ -43,6 +43,7 @@ func (t *TaskTool) prepareTranscriptRunWithPrompt(ctx context.Context, subReg *t
 	}
 	identityModel, identityEffort := t.effectiveIdentity(modelRef, effortRef)
 	spec := SubagentSpec{
+		BudgetScope:      agent.SharedTaskBudgetScope(ctx),
 		IsolationRef:     isolatedBinding(ctx).ID,
 		IsolationGrant:   isolatedBinding(ctx).Grant,
 		Kind:             kind,

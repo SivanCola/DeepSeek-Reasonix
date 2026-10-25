@@ -33,6 +33,9 @@ func metaFromSpec(ref string, status sessionstore.SubagentStatus, created, updat
 		// Older readers must refuse continuation outside the bound worktree.
 		schemaHash = bytesHash([]byte(schemaHash + "\x00" + spec.IsolationRef + "\x00" + spec.IsolationGrant))
 	}
+	if spec.BudgetScope != "" {
+		schemaHash = bytesHash([]byte(schemaHash + "\x00budget:" + spec.BudgetScope))
+	}
 	capsule := sessionstore.ContextCapsule{
 		WorkspaceRoot:      strings.TrimSpace(spec.WorkspaceRoot),
 		SystemPromptSource: systemPromptSource(spec.Kind, spec.Name, spec.SystemPrompt),
@@ -47,6 +50,7 @@ func metaFromSpec(ref string, status sessionstore.SubagentStatus, created, updat
 		Inherited:          sessionstore.InheritedContext{UpstreamFrom: spec.UpstreamFrom, ResultRefs: spec.ResultRefs},
 	}
 	return sessionstore.SubagentMeta{
+		BudgetScope:      spec.BudgetScope,
 		IsolationRef:     spec.IsolationRef,
 		IsolationGrant:   spec.IsolationGrant,
 		Ref:              ref,

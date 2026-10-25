@@ -153,6 +153,9 @@ func (s *Store) continuationIDs() []string {
 
 // ExecuteContinuation holds settlement ownership for the entire resumed run.
 func (s *Store) ExecuteContinuation(ctx context.Context, runner Runner, workspace, prompt, model, owner, id string) (string, error) {
+	if runner == nil {
+		return "", errUnavailable
+	}
 	if owner == "" {
 		return s.Execute(ctx, runner, workspace, prompt, model)
 	}
@@ -187,7 +190,10 @@ func (s *Store) ExecuteContinuation(ctx context.Context, runner Runner, workspac
 			return "", err
 		}
 	}
-	out, runErr := runRetained(ctx, runner, Run{ID: e.ID, WorkspaceRoot: e.Cand.WorkspaceRoot, Prompt: prompt, Model: model})
+	out, runErr := invokeRunner(ctx, runner, Run{ID: e.ID, WorkspaceRoot: e.Cand.WorkspaceRoot, Prompt: prompt, Model: model})
+	if errors.Is(runErr, ErrRunnerPanic) {
+		return "", s.retainInspection(e, runErr)
+	}
 	kept, finishErr := s.finishLocked(context.WithoutCancel(ctx), e)
 	if finishErr != nil {
 		return "", fmt.Errorf("isolated task inspection is incomplete; files retained as %s: %w", e.ID, errors.Join(runErr, finishErr))
@@ -196,16 +202,4 @@ func (s *Store) ExecuteContinuation(ctx context.Context, runner Runner, workspac
 		return report(e, kept, out), fmt.Errorf("isolated task %s stopped; its work is retained: %w", e.ID, runErr)
 	}
 	return report(e, kept, out), nil
-}
-
-func runRetained(ctx context.Context, runner Runner, run Run) (out Outcome, err error) {
-	defer func() {
-		if p := recover(); p != nil {
-			err = fmt.Errorf("isolated runner panic: %v", p)
-		}
-	}()
-	if runner == nil {
-		return out, errUnavailable
-	}
-	return runner(ctx, run)
 }

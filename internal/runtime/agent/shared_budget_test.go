@@ -48,7 +48,7 @@ func TestSharedBudgetStopsParentAfterChildSpendThroughRealRuns(t *testing.T) {
 	parent := New(prov, reg, sessionstore.NewSession("parent"), Options{TaskBudget: TaskBudget{Tokens: 2000}}, event.Discard)
 	err := parent.Run(context.Background(), "inspect")
 	pause, ok := InspectRunPause(err)
-	if !ok || pause.Key != "token" || probe.calls != 1 || prov.rounds.Load() != 2 {
+	if !ok || pause.Key != "token" || probe.calls != 1 || prov.rounds.Load() != 1 {
 		t.Fatalf("shared budget failed: pause=%+v calls=%d rounds=%d err=%v", pause, probe.calls, prov.rounds.Load(), err)
 	}
 }

@@ -8,6 +8,7 @@ import (
 
 // SubagentSpec describes the current invocation identity.
 type SubagentSpec struct {
+	BudgetScope      string
 	IsolationRef     string
 	IsolationGrant   string
 	Kind             string

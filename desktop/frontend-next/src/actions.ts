@@ -186,6 +186,8 @@ export const ACTIONS: UIAction[] = [
   { id: "agent.open", kind: "view", target: "entity", proof: "interaction" },
   { id: "agent.history-earlier", kind: "view", target: "entity", proof: "interaction" },
   { id: "agent.steer", kind: "kernel-mutation", target: "entity", proof: "authority-effect" },
+  { id: "agent.recovery.inspect", kind: "repeatable", target: "entity", proof: "interaction" },
+  { id: "agent.recovery.resume", kind: "kernel-mutation", target: "entity", proof: "authority-effect" },
   { id: "agent.context-toggle", kind: "view", target: "entity", proof: "interaction" },
   { id: "agent.context-summary", kind: "view", target: "entity", proof: "interaction" },
   { id: "agent.context-result", kind: "view", target: "entity", proof: "interaction" },

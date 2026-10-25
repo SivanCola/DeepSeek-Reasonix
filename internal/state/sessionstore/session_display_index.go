@@ -219,6 +219,9 @@ func WriteSessionDisplayIndex(path string, idx *SessionDisplayIndex) error {
 	if err := fileutil.AtomicWriteFile(path, b, 0o600); err != nil {
 		return fmt.Errorf("write session display index: %w", err)
 	}
+	if windowPath := store.WindowIndexForDisplayIndex(path); windowPath != "" {
+		return writeWindowIndex(windowPath, idx)
+	}
 	return nil
 }
 

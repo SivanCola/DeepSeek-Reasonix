@@ -3,6 +3,7 @@
 // code adds one here. i18n.test.ts is what stops one from being forgotten.
 
 export const EN_KERNEL: Record<string, string> = {
+  "任务恢复请求未能发送，请刷新计划后重试：{detail}": "Task recovery could not be requested. Refresh the plan and retry: {detail}",
   "历史内容已改变，正在重新读取最近的消息": "History changed. Reloading the latest messages.",
   "当前内核不支持历史分页": "This kernel does not support history paging.",
   "此会话的组合已绑定原项目，请在目标项目新建会话": "This conversation's composition is bound to its project. Start a new conversation in the target project",

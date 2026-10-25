@@ -369,6 +369,7 @@ func TestRecoveryTrashMovesSubagentSidecarDirs(t *testing.T) {
 		filepath.Join(store.SessionBlobsDir(sub), strings.Repeat("a", 64)): []byte("blob"),
 		filepath.Join(store.SessionOutputsDir(sub), "call-1.txt"):          []byte("spilled"),
 		filepath.Join(store.SessionFleetRecoveryDir(sub), "fr_saved.json"): []byte(`{"version":1}`),
+		filepath.Join(store.SessionBudgetDir(sub), "scope.json"):           []byte(`{"version":1}`),
 	} {
 		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 			t.Fatal(err)

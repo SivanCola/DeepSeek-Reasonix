@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"reasonix/internal/contract/event"
 	"reasonix/internal/contract/pricing"
@@ -21,12 +22,16 @@ func (a *Agent) finalizeSharedBudget(state *turnRuntime) {
 }
 
 type sharedBudget struct {
-	mu       sync.Mutex
-	limit    TaskBudget
-	started  time.Time
-	tokens   int
-	currency string
-	cost     map[string]pricing.Amount
+	mu              sync.Mutex
+	limit           TaskBudget
+	started         time.Time
+	tokens          int
+	currency        string
+	cost            map[string]pricing.Amount
+	path, scope     string
+	reserved        map[string]budgetReservation
+	fault           error
+	requireExisting bool
 }
 
 func newSharedBudget(limit TaskBudget, rates *provider.Pricing) *sharedBudget {
@@ -37,7 +42,7 @@ func newSharedBudget(limit TaskBudget, rates *provider.Pricing) *sharedBudget {
 			currency = "CNY"
 		}
 	}
-	return &sharedBudget{limit: limit, started: time.Now(), currency: currency, cost: map[string]pricing.Amount{}}
+	return &sharedBudget{limit: limit, started: time.Now(), currency: currency, cost: map[string]pricing.Amount{}, reserved: map[string]budgetReservation{}}
 }
 
 func (b *sharedBudget) observe(usage *provider.Usage, rates *provider.Pricing) {
@@ -62,6 +67,9 @@ func (b *sharedBudget) exceeded() (string, string) {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.fault != nil {
+		return "storage", b.fault.Error()
+	}
 	if b.limit.Tokens > 0 && b.tokens >= b.limit.Tokens {
 		return "token", fmt.Sprintf("task and delegated branches used %d tokens, reaching the shared %d budget", b.tokens, b.limit.Tokens)
 	}
@@ -91,14 +99,33 @@ func CheckSharedTaskBudget(ctx context.Context) error {
 	return nil
 }
 
-func (a *Agent) bindSharedBudget(ctx context.Context, state *turnRuntime) context.Context {
+func (a *Agent) bindSharedBudget(ctx context.Context, state *turnRuntime) (context.Context, error) {
 	b, _ := ctx.Value(sharedBudgetKey{}).(*sharedBudget)
 	if b == nil {
 		if a.task.sharedBudget == nil {
 			a.task.sharedBudget = newSharedBudget(a.taskBudgetLimit(ctx), a.svc.pricing)
+			b := a.task.sharedBudget
+			b.scope = rand.Text()
+			if scope, ok := DeliveryExecutionScopeFromContext(ctx); ok {
+				b.scope = scope.ID
+			}
+			if b.limited() {
+				b.path = budgetLedgerPath(a.sess.path, b.scope)
+				if err := b.transact(ctx, func() error { return nil }); err != nil {
+					return ctx, err
+				}
+			}
 		}
 		b = a.task.sharedBudget
 	}
 	state.sharedBudget = b
-	return context.WithValue(ctx, sharedBudgetKey{}, b)
+	return context.WithValue(ctx, sharedBudgetKey{}, b), nil
+}
+
+func SharedTaskBudgetScope(ctx context.Context) string {
+	b, _ := ctx.Value(sharedBudgetKey{}).(*sharedBudget)
+	if b == nil || b.path == "" {
+		return ""
+	}
+	return b.scope
 }

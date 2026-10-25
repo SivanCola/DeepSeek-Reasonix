@@ -2,6 +2,7 @@ package sessionstore
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +14,7 @@ import (
 type StoredMessageWindow struct {
 	HistoryPageRead
 	DecodedMessages int
+	IndexBytesRead  int
 }
 
 func addDisplayPageMetadata(index *SessionDisplayIndex, messages []provider.Message) {
@@ -46,33 +48,43 @@ func ReadStoredMessageWindow(path string, after, limit int) (StoredMessageWindow
 		return StoredMessageWindow{}, err
 	}
 	defer release()
-	index, err := currentPageIndex(path)
-	if err != nil {
-		if err := repairSessionDisplayReadModelUnlocked(path); err != nil {
-			return StoredMessageWindow{}, err
-		}
-		index, err = currentPageIndex(path)
-		if err != nil {
-			return StoredMessageWindow{}, err
-		}
+	page, err := readStoredWindow(path, after, limit)
+	if !errors.Is(err, ErrSessionDisplayReadModelDamaged) {
+		return page, err
 	}
+	if err := repairSessionDisplayReadModelUnlocked(path); err != nil {
+		return StoredMessageWindow{}, err
+	}
+	return readStoredWindow(path, after, limit)
+}
+
+func readStoredWindow(path string, after, limit int) (StoredMessageWindow, error) {
+	index, err := currentWindowIndex(path)
+	if err != nil {
+		return StoredMessageWindow{}, err
+	}
+	defer index.file.Close()
 	f, err := os.Open(path)
 	if err != nil {
 		return StoredMessageWindow{}, err
 	}
 	defer f.Close()
 	limit = min(max(limit, 1), 2000)
-	if after < 0 || after > index.MessageCount {
-		after = max(0, index.MessageCount-limit)
+	if after < 0 || after > index.count {
+		after = max(0, index.count-limit)
 	}
-	end := min(index.MessageCount, after+limit)
-	page := StoredMessageWindow{HistoryPageRead: HistoryPageRead{Identity: fmt.Sprintf("%d:%s", index.Revision, index.ContentDigest), Start: after, End: end, Total: index.MessageCount, Messages: []provider.Message{}, WorkMs: []int64{}, ToolContext: []HistoryToolContext{}}}
+	end := min(index.count, after+limit)
+	page := StoredMessageWindow{HistoryPageRead: HistoryPageRead{Identity: fmt.Sprintf("%d:%s", index.revision, index.digest), Start: after, End: end, Total: index.count, Messages: []provider.Message{}, WorkMs: []int64{}, ToolContext: []HistoryToolContext{}}}
 	decoded := map[int]provider.Message{}
 	read := func(at int) (provider.Message, error) {
 		if m, ok := decoded[at]; ok {
 			return m, nil
 		}
-		m, err := readDisplayEntry(f, index.Entries[at])
+		entry, err := index.entry(at)
+		if err != nil {
+			return provider.Message{}, err
+		}
+		m, err := readDisplayEntry(f, entry)
 		if err == nil {
 			decoded[at] = m
 			page.DecodedMessages++
@@ -86,7 +98,10 @@ func ReadStoredMessageWindow(path string, after, limit int) (StoredMessageWindow
 			return StoredMessageWindow{}, err
 		}
 		page.Messages = append(page.Messages, m)
-		entry := index.Entries[i]
+		entry, err := index.entry(i)
+		if err != nil {
+			return StoredMessageWindow{}, err
+		}
 		page.WorkMs = append(page.WorkMs, entry.WorkMs)
 		if !entry.CallKnown || entry.CallMessage >= after {
 			continue
@@ -114,6 +129,7 @@ func ReadStoredMessageWindow(path string, after, limit int) (StoredMessageWindow
 		}
 		return a.MessageIndex < b.MessageIndex
 	})
+	page.IndexBytesRead = index.readBytes
 	return page, nil
 }
 

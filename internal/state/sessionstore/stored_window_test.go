@@ -31,6 +31,9 @@ func TestStoredWindowReadsOnlyPageAndItsCrossPageCall(t *testing.T) {
 	if page.DecodedMessages != 2 {
 		t.Fatalf("decoded %d messages for a one-message page", page.DecodedMessages)
 	}
+	if page.IndexBytesRead != windowHeaderBytes+2*windowEntryBytes {
+		t.Fatalf("index read=%d, want two entries independent of history length", page.IndexBytesRead)
+	}
 	if !reflect.DeepEqual(page.Messages, s.ReadMessageWindow(-1, 1).Messages) {
 		t.Fatal("stored page changed content")
 	}
@@ -50,6 +53,9 @@ func TestStoredWindowRepairsOldMissingAndCorruptDerivedIndexes(t *testing.T) {
 				t.Fatal(err)
 			}
 			indexPath := store.SessionDisplayIndex(path)
+			if err := os.Remove(store.SessionWindowIndex(path)); err != nil {
+				t.Fatal(err)
+			}
 			raw, err := os.ReadFile(indexPath)
 			if err != nil {
 				t.Fatal(err)
@@ -78,6 +84,9 @@ func TestStoredWindowRepairsOldMissingAndCorruptDerivedIndexes(t *testing.T) {
 					t.Fatal(err)
 				}
 				if err := os.WriteFile(indexPath, raw, 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(store.SessionWindowIndex(path)); err != nil {
 					t.Fatal(err)
 				}
 			}

@@ -536,7 +536,7 @@ func (t *TaskTool) settleSpecPrompts(ctx context.Context, spec *ProfileExecSpec)
 // fleet items, and boot-wired skill runners so prompt, tools, claims, and
 // scheduling cannot drift across entry points.
 func (t *TaskTool) RunProfileSpec(ctx context.Context, spec ProfileExecSpec) (result string, err error) {
-	ctx, err = t.isolatedSpecContext(ctx, spec)
+	ctx, err = t.continuationScopeContext(ctx, spec)
 	if err != nil {
 		return "", err
 	}

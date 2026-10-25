@@ -38,6 +38,7 @@ const (
 // SubagentMeta is the sidecar for a persisted sub-agent transcript. It captures
 // the execution identity that must stay stable for continuation/fork.
 type SubagentMeta struct {
+	BudgetScope    string         `json:"budgetScope,omitempty"`
 	IsolationRef   string         `json:"isolationRef,omitempty"`
 	IsolationGrant string         `json:"isolationGrant,omitempty"`
 	Ref            string         `json:"ref"`

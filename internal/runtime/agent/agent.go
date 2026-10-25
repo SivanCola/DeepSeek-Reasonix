@@ -898,9 +898,12 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	}
 
 	_, state := a.beginRunTurn(ctx, input)
-	ctx = a.bindSharedBudget(ctx, state)
 	if state.snapshot != nil {
 		defer state.snapshot.cancel()
+	}
+	ctx, budgetErr := a.bindSharedBudget(ctx, state)
+	if budgetErr != nil {
+		return budgetErr
 	}
 	state.runMaxSteps = runMaxSteps
 	state.runMaxStepsKey = runMaxStepsKey
@@ -1203,7 +1206,7 @@ func (a *Agent) streamWithFrozen(ctx context.Context, turn int, sink event.Sink,
 	// Host stream cancels on generation drain (OpenAI/Anthropic HTTP reads).
 	defer TrackPublishedHostStream(ctx, cancel)()
 	thought := thoughtClock{begin: time.Now()}
-	ch, err := a.streamProviderRequest(ctx, req)
+	ch, err := a.streamProviderRequest(ctx, req, frozen)
 	if err != nil {
 		return streamedTurn{usage: provider.UsageWithRequestAttemptCount(ctx, nil), err: err}
 	}

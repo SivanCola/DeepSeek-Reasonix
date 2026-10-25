@@ -353,6 +353,35 @@ func SessionIsolationBinding(sessionPath string) string {
 	return sessionStem(sessionPath) + ".isolation-v1.json"
 }
 
+func SessionWindowIndex(sessionPath string) string {
+	if strings.TrimSpace(sessionPath) == "" {
+		return ""
+	}
+	return sessionStem(sessionPath) + ".window-index-v1"
+}
+
+func SessionBudgetDir(sessionPath string) string {
+	if strings.TrimSpace(sessionPath) == "" {
+		return ""
+	}
+	return sessionStem(sessionPath) + ".task-budgets-v1"
+}
+
+func SessionBudgetBinding(sessionPath string) string {
+	if strings.TrimSpace(sessionPath) == "" {
+		return ""
+	}
+	return sessionStem(sessionPath) + ".task-budget-binding-v1.json"
+}
+
+func WindowIndexForDisplayIndex(indexPath string) string {
+	stem, ok := strings.CutSuffix(indexPath, ".display-index.json")
+	if !ok {
+		return ""
+	}
+	return stem + ".window-index-v1"
+}
+
 // SessionCleanupPending is the delayed-cleanup marker (<id>.cleanup-pending.json).
 func SessionCleanupPending(sessionPath string) string {
 	sessionPath = strings.TrimSpace(sessionPath)
@@ -380,12 +409,14 @@ func SessionSidecarFiles(sessionPath string) []string {
 		SessionAdjudication(sessionPath),
 		SessionExecution(sessionPath),
 		SessionIsolationBinding(sessionPath),
+		SessionBudgetBinding(sessionPath),
 		SessionEventLog(sessionPath),
 		SessionWireLog(sessionPath),
 		SessionWireLogMeta(sessionPath),
 		SessionEventLogDamaged(sessionPath),
 		SessionEventIndex(sessionPath),
 		SessionDisplayIndex(sessionPath),
+		SessionWindowIndex(sessionPath),
 		SessionConflictLog(sessionPath),
 		SessionRecoveryState(sessionPath),
 		SessionContext(sessionPath),
@@ -402,5 +433,5 @@ func SessionSidecarDirs(sessionPath string) []string {
 	if sessionPath == "" {
 		return nil
 	}
-	return []string{SessionOutputsDir(sessionPath), SessionBlobsDir(sessionPath), SessionFleetRecoveryDir(sessionPath)}
+	return []string{SessionOutputsDir(sessionPath), SessionBlobsDir(sessionPath), SessionFleetRecoveryDir(sessionPath), SessionBudgetDir(sessionPath)}
 }

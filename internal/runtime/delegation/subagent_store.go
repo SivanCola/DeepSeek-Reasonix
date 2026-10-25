@@ -624,6 +624,9 @@ func (s *SubagentStore) LoadMeta(ref string) (sessionstore.SubagentMeta, error) 
 	if err := s.restoreIsolationBinding(&meta); err != nil {
 		return meta, &sessionstore.SubagentMetaDecodeError{Ref: ref, Err: err}
 	}
+	if err := s.restoreBudgetBinding(&meta); err != nil {
+		return meta, &sessionstore.SubagentMetaDecodeError{Ref: ref, Err: err}
+	}
 	return meta, nil
 }
 
@@ -741,6 +744,9 @@ func (s *SubagentStore) saveMeta(meta sessionstore.SubagentMeta) error {
 		return err
 	}
 	if err := s.preserveIsolationBinding(meta); err != nil {
+		return err
+	}
+	if err := s.preserveBudgetBinding(meta); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(meta, "", "  ")
