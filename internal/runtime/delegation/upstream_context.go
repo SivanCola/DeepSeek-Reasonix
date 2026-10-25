@@ -32,9 +32,6 @@ type upstreamKey struct{}
 // the write claim does: the framing is applied after the pristine task text has
 // been captured for delivery classification, not at the call site.
 func withUpstream(ctx context.Context, results []UpstreamResult) context.Context {
-	if len(results) == 0 {
-		return ctx
-	}
 	return context.WithValue(ctx, upstreamKey{}, results)
 }
 

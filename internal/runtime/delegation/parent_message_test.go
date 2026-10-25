@@ -56,3 +56,20 @@ func TestParentMessageConcurrentAdmissionIsBounded(t *testing.T) {
 		t.Fatalf("accepted = %d", accepted.Load())
 	}
 }
+
+func TestParentMessageIDsDoNotCollapseRepeatedProviderCallIDs(t *testing.T) {
+	var messages []agent.ChildMessage
+	tool := &parentMessageTool{sender: agent.ChildMessage{RunID: "run", Ref: "child"}, receive: func(_ context.Context, message agent.ChildMessage) error {
+		messages = append(messages, message)
+		return nil
+	}}
+	ctx := agent.WithCallContext(context.Background(), "reused-id", nil, nil, false)
+	for _, body := range []string{`{"message":"first finding"}`, `{"message":"second finding"}`} {
+		if _, err := tool.Execute(ctx, json.RawMessage(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if messages[0].CallID == messages[1].CallID {
+		t.Fatal("distinct reports would share the durable inbox idempotency key")
+	}
+}

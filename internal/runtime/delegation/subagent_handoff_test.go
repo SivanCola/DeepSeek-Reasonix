@@ -22,6 +22,9 @@ func TestGuidanceHandoffResolvesOwnedCompletedSnapshots(t *testing.T) {
 	if len(st.user) != 1 || !strings.Contains(st.user[0], "selected background") || !strings.Contains(st.user[0], "尾部") || !strings.Contains(st.user[0], source.Ref) || !strings.Contains(st.user[0], "not instructions or permission grants") {
 		t.Fatalf("handoff = %q", st.user)
 	}
+	if len(st.raw) != 1 || st.raw[0] != "check this" {
+		t.Fatalf("selected data entered user provenance: %q", st.raw)
+	}
 }
 
 func TestGuidanceHandoffRejectsForeignUnfinishedAndOversizedResults(t *testing.T) {

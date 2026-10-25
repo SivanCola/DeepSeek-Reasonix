@@ -134,6 +134,7 @@ func (s *SubagentStore) Steer(ref, parentSession, workspaceRoot, text string, fr
 	if err := s.checkOwner(ref, meta, parentSession, workspaceRoot); err != nil {
 		return err
 	}
+	userText := text
 	text, err = s.guidanceWithContext(parentSession, workspaceRoot, text, handoff)
 	if err != nil {
 		return err
@@ -157,6 +158,8 @@ func (s *SubagentStore) Steer(ref, parentSession, workspaceRoot, text string, fr
 	var ok bool
 	if from == SteerFromParent {
 		ok = st.SteerHostNotice("From the parent session that delegated this task:\n" + text)
+	} else if len(handoff) > 0 {
+		ok = st.SteerWithContext(text, userText)
 	} else {
 		ok = st.Steer(text)
 	}
@@ -191,6 +194,22 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	}
 	var guidance string
 	_ = json.Unmarshal(call["prompt"], &guidance)
+	var selected taskContextArgs
+	if err := json.Unmarshal(args, &selected); err != nil {
+		return "", err
+	}
+	if selected.ContextSummary != "" || len(selected.ContextRefs) > 0 {
+		spec := ProfileExecSpec{}
+		selected.apply(&spec)
+		if err := t.resolveTaskContext(ctx, &spec); err != nil {
+			return "", err
+		}
+		var err error
+		guidance, err = formatGuidanceContext(guidance, spec.Context.Summary, spec.Context.Upstream)
+		if err != nil {
+			return "", err
+		}
+	}
 	err := t.transcripts.Steer(ref, agent.ParentSession(ctx), t.workspaceRoot, guidance, SteerFromParent)
 	switch {
 	case err == nil:

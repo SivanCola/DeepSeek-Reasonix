@@ -30,6 +30,13 @@ destination or authorization argument. Each run allows at most 32 reports of
 Reports are agent-provided data, never user approval or a permission
 grant. They do not replace the final result or a structured completion report.
 
+Delivered host reports retain structured origin metadata in history, so their
+addresses are not treated as URLs supplied by the user. Distinct reports keep
+distinct inbox keys even if a provider reuses a tool-call ID in later rounds.
+
+宿主报告在历史中保留结构化来源标记，报告里的网址不会被视为用户提供的网址。
+即使厂商在后续轮次复用工具调用 ID，不同报告也有独立的收件箱去重键。
+
 普通委派任务可调用 `reply_to_parent` 发送 `message`，随后继续工作。收发身份由运行时绑定，
 工具不接受目标会话或授权参数。每次运行最多发送 32 条报告，每条最多 16 KiB。报告属于代理
 提供的数据，不能充当用户批准或扩大权限，也不替代最终答案及结构化完成报告。
@@ -61,6 +68,17 @@ and the draft stays editable. Use a shorter summary or fewer results.
 This live handoff does not change the launch-time reader or tool definitions.
 Older servers reject the dedicated `/subagents/{ref}/handoff` route rather than silently dropping
 the context from a plain steering request.
+
+The user's guidance text stays separate from selected result data for authority
+checks. Opening context also stays outside raw input in both writer and read-only
+tasks, including runs without a parent turn.
+
+Model-originated `task_id` guidance also carries selected context and enforces
+the delegating child's supplied-reference scope.
+
+用户指导原文与所选结果数据在授权检查中保持分离。可写和只读任务的初始交接内容也不会
+混入用户原文，包括没有父回合的运行。模型通过 `task_id` 追加指导时也会携带所选上下文，
+并校验该子代理只能转交已提供给它的引用。
 
 在运行中子代理的 Studio 详情中展开「交接上下文」，填写摘要、勾选已完成结果后发送。
 宿主按当前会话谱系与工作区校验引用，将完整结果快照追加到指导消息。
@@ -104,11 +122,17 @@ The reader cannot browse the parent conversation or arbitrary sibling
 results. Nested delegation may forward only references already supplied to that
 child. Each invocation has its own reader and message route.
 
+A nested task without a selection starts without its parent's result context.
+Forwarding uses the received snapshot, not a later version of the source result.
+
+嵌套任务未选择上下文时不会继承父任务的结果；转交时使用已收到的快照，不读取源结果
+后来新增的内容。
+
 依赖结果及显式引用在任务开头提供有限长度预览。`read_task_context` 按 UTF-8 字节分页读取
 本次交接的完整快照，包括预览省略的中间内容；它不能浏览父会话或任意兄弟代理的结果。
 嵌套委派只能转交已提供给当前子代理的结果引用。每次调用独立绑定读取范围及消息路由。
 
-Persisted context capsules record result references. A compatible continuation
+Persisted context capsules record result references. A root-initiated compatible continuation
 revalidates and reloads those references; it does not claim the workspace or the
 source result is unchanged. Ephemeral results remain readable only during the
 invocation that received them.
@@ -116,7 +140,7 @@ invocation that received them.
 Older records without references remain readable;
 continuation still requires compatible prompts, models, and tool schemas.
 
-持久化上下文记录保存结果引用。兼容的续接会重新校验并读取引用，不宣称代码或源结果保持
+持久化上下文记录保存结果引用。根代理发起的兼容续接会重新校验并读取引用，不宣称代码或源结果保持
 不变。临时结果只在收到它的本次调用内可读取。没有新增引用字段的旧记录仍可读取；续接仍
 要求提示词、模型和工具定义兼容。
 

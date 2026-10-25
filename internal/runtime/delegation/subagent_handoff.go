@@ -33,14 +33,7 @@ func (s *SubagentStore) guidanceWithContext(parent, workspace, text string, cont
 	if strings.TrimSpace(c.Summary) == "" && len(c.ResultRefs) == 0 {
 		return text, nil
 	}
-	type result struct {
-		Ref    string `json:"ref"`
-		Answer string `json:"answer"`
-	}
-	data := struct {
-		Summary string   `json:"summary,omitempty"`
-		Results []result `json:"results,omitempty"`
-	}{Summary: c.Summary}
+	var results []UpstreamResult
 	seen := map[string]bool{}
 	size := len(text) + len(c.Summary)
 	for _, ref := range c.ResultRefs {
@@ -66,7 +59,30 @@ func (s *SubagentStore) guidanceWithContext(parent, workspace, text string, cont
 		if size > 1<<20 {
 			return "", ErrSteerTooLarge
 		}
-		data.Results = append(data.Results, result{ref, answer})
+		results = append(results, UpstreamResult{Ref: ref, Answer: answer})
+	}
+	return formatGuidanceContext(text, c.Summary, results)
+}
+
+func formatGuidanceContext(text, summary string, results []UpstreamResult) (string, error) {
+	if strings.TrimSpace(summary) == "" && len(results) == 0 {
+		return text, nil
+	}
+	type result struct {
+		Ref    string `json:"ref"`
+		Answer string `json:"answer"`
+	}
+	data := struct {
+		Summary string   `json:"summary,omitempty"`
+		Results []result `json:"results,omitempty"`
+	}{Summary: summary}
+	size := len(text) + len(summary)
+	for _, r := range results {
+		size += len(r.Ref) + len(r.Answer)
+		if size > 1<<20 {
+			return "", ErrSteerTooLarge
+		}
+		data.Results = append(data.Results, result{r.Ref, r.Answer})
 	}
 	encoded, err := json.Marshal(data)
 	if err != nil {

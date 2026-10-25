@@ -95,10 +95,14 @@ func (t *parentMessageTool) Execute(ctx context.Context, raw json.RawMessage) (s
 		return "", fmt.Errorf("parent message limit reached; include further findings in the final result")
 	}
 	t.sent++
+	sequence := t.sent
 	t.mu.Unlock()
 	m := t.sender
 	m.Text = message
 	m.CallID, _, _, _ = agent.CallContext(ctx)
+	// Providers may reuse call IDs in later rounds of the same run. Delivery
+	// retries of this invocation keep its key; separate reports must not collide.
+	m.CallID = fmt.Sprintf("%s:%d", m.CallID, sequence)
 	if err := t.receive(ctx, m); err != nil {
 		return "", err
 	}

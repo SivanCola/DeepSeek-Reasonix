@@ -29,10 +29,10 @@ type contextSummaryKey struct{}
 type contextResultScopeKey struct{}
 
 func withTaskContext(ctx context.Context, request ContextRequest) context.Context {
-	allowed := map[string]bool{}
+	allowed := map[string]UpstreamResult{}
 	for _, r := range request.Upstream {
 		if r.Ref != "" {
-			allowed[r.Ref] = true
+			allowed[r.Ref] = r
 		}
 	}
 	ctx = context.WithValue(ctx, contextResultScopeKey{}, allowed)
@@ -75,15 +75,22 @@ func (t *TaskTool) resolveTaskContext(ctx context.Context, spec *ProfileExecSpec
 			}
 		}
 	}
+	if len(refs) > 64 {
+		return fmt.Errorf("continued context exceeds 64 results")
+	}
 	for _, raw := range refs {
 		ref := strings.TrimSpace(raw)
+		if slices.ContainsFunc(spec.Context.Upstream, func(r UpstreamResult) bool { return r.Ref == ref }) {
+			continue
+		}
 		if agent.SubagentDepth(ctx) > 0 {
-			allowed, _ := ctx.Value(contextResultScopeKey{}).(map[string]bool)
-			if !allowed[ref] {
+			allowed, _ := ctx.Value(contextResultScopeKey{}).(map[string]UpstreamResult)
+			snapshot, ok := allowed[ref]
+			if !ok {
 				return fmt.Errorf("context result %q is outside the delegating child's supplied context", ref)
 			}
-		}
-		if slices.ContainsFunc(spec.Context.Upstream, func(r UpstreamResult) bool { return r.Ref == ref }) {
+			snapshot.ID = firstNonEmpty(ids[ref], ref)
+			spec.Context.Upstream = append(spec.Context.Upstream, snapshot)
 			continue
 		}
 		answer, _, err := t.transcripts.ReadFinalAnswer(ref, agent.ParentSession(ctx), t.workspaceRoot)
