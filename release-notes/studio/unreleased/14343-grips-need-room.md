@@ -1,2 +1,0 @@
-- 修复：手机或窄窗口里，正文左右的拖动把手一碰就把正文宽度拖成 0，只能刷新才恢复；放不下可调范围时现在不再显示这两个把手。关联 #14343。
-- Fixed: on a phone or narrow window, touching the reading column's drag handles collapsed it to zero width until a reload; the handles are now hidden when there is no range to move in. Refs #14343.

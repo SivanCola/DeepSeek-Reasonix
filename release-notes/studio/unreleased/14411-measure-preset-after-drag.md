@@ -1,2 +1,0 @@
-- 修复：拖动过正文栏之后，在设置里选「铺满窗口」或「适宜阅读」不再没有反应；选了预设就以预设为准，丢掉之前拖出来的宽度。关联 #14411。
-- Fixed: choosing the full-width or reading preset in Settings did nothing once the column had been dragged; a preset now wins and drops the width you dragged. Refs #14411.

@@ -705,7 +705,7 @@
   .scroll[data-pane="browser"] { display: flex; flex-direction: column; overflow: hidden }
   .scroll[data-pane="browser"][hidden] { display: none }
 
-  .pbody { flex: 1; min-height: 0; display: flex; flex-direction: column }
+  .pbody { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative }
   .pviews { flex: 1; min-height: 0; display: flex; flex-direction: column }
   .pane > .scroll[data-pane="browser"] { flex: 1; min-height: 0 }
   /* The pages full width: the column holding the conversation is empty then,

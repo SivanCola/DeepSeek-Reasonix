@@ -49,7 +49,6 @@ import type { PaneProps, PaneReport } from "./panetypes";
 import { useRate, useTrail } from "./num";
 import { useCompactNow } from "./CompactNow";
 import { DOCK, Gutter } from "./Gutter";
-import { FlowGrips } from "./FlowResizer";
 import { Find } from "./Find";
 import { useFind } from "./usefind";
 import { RunAnalysis } from "./RunAnalysis";
@@ -97,7 +96,7 @@ const totalsOf = (st: SessionStatus) => ({
   incompleteReason: st.sessionCostQuote?.incompleteReason,
 });
 
-function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFocus, onReport, onSessionChanged, onTurnDone, pulse, findPulse, findTogglePulse = 0, filesPulse = 0, viewRequest, sessionRef, onSettings, onFeedback, onOpenSession, needsProject, onOpenProject, onKeepHere, connect, theme, dockW, dockMax, onDockW, column, manualBrowser = false, onManualBrowser, alert }: PaneProps) {
+function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFocus, onReport, onSessionChanged, onTurnDone, pulse, findPulse, findTogglePulse = 0, filesPulse = 0, viewRequest, sessionRef, onSettings, onFeedback, onOpenSession, needsProject, onOpenProject, onKeepHere, connect, theme, dockW, dockMax, onDockW, manualBrowser = false, onManualBrowser, alert }: PaneProps) {
   const [s, dispatch] = useReducer(reduce, initialState);
   const [traj, trajDispatch] = useReducer(reduceTraj, initialTraj);
   const [sessionRead, setSessionRead] = useState<SessionRead>({ kind: "pending" });
@@ -495,7 +494,6 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFoc
       <Find find={find} pending={historyPaging.hasMore || historyPaging.busy || historyPaging.failed} failed={historyPaging.failed} />
 
       <div className="pbody rewind-notice-host" ref={body} data-dock={tab === "flow" ? "" : undefined} data-full={tab === "browser" ? "" : undefined}>
-      {column && tab === "flow" && <FlowGrips column={column} />}
       <RewindNotice key={JSON.stringify([rt.id, rt.root, status?.sessionPath ?? rt.sessionPath])} readUndo={onReadUndo} onUndo={onUndoAvailable} busy={!!restoreNotice?.working || !!reloadFailure?.working} refreshKey={checkpoints} moved={s.rewindMoved} running={running} shown={visible && tab === "flow" && !rt.readOnly} />
       <div className="pviews">
       <div className="worktree-stage-host" ref={setWorktreeTarget} hidden={tab !== "flow" || !worktreePhase}/>

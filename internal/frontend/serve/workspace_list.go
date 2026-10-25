@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 	"slices"
 
@@ -63,6 +64,17 @@ func updateWorkspaceList(ctx context.Context, repair bool, mutate func(*workspac
 func isAutoWorkspace(dir string) bool {
 	auto := config.AutoWorkspaceDir()
 	return auto != "" && projectIdentity(dir) == projectIdentity(auto)
+}
+
+// ensureAutoWorkspace makes the app's own folder on demand and returns it, or ""
+// when the state root will not take it. A new session with no project behind it
+// opens there instead of being refused.
+func ensureAutoWorkspace() string {
+	auto := config.AutoWorkspaceDir()
+	if auto == "" || os.MkdirAll(auto, 0o755) != nil {
+		return ""
+	}
+	return auto
 }
 
 func rememberWorkspace(dir string) {

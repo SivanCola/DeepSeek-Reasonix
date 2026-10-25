@@ -6,7 +6,6 @@ import "../src/styles/tokens.css";
 import "../src/styles/app.css";
 import "../src/styles/dock.css";
 import "../src/styles/studio.css";
-import "../src/styles/flowgrip.css";
 import "../src/styles/changedpill.css";
 import "../src/styles/askskip.css";
 import "../src/styles/pastekeep.css";

@@ -26,7 +26,6 @@ import { useLinkRouting } from "./links";
 import { Pane, type PaneReport } from "./Pane";
 import { clearDraftForSession } from "./drafts";
 import { DOCK, Gutter, RAIL, dockMax, keepWidth, widthOf } from "./Gutter";
-import { useColumn } from "./FlowResizer";
 import { useWindowKeys, type Shortcut } from "./windowkeys";
 import { useEscStop } from "../state/escstop";
 import { startUpdateWatch } from "../state/updatewatch";
@@ -398,10 +397,6 @@ export function App({ hub }: { hub: HubPort }) {
   useEffect(() => onRoomWidth((width) => setDockLimit(dockMax(width))), []);
   const shownDockW = Math.min(dockW, dockLimit);
 
-  // The reading column owns its width and what it takes from the sidebars; the
-  // window only says how much room there is.
-  const col = useColumn(railW, shownDockW, RAIL.min, DOCK.min);
-
   const onRailW = useCallback((w: number) => { setRailW(w); keepWidth(RAIL, w); }, []);
   const onDockW = useCallback((w: number) => { setDockW(w); keepWidth(DOCK, w); }, []);
 
@@ -563,7 +558,7 @@ export function App({ hub }: { hub: HubPort }) {
       data-apv={report.status?.toolApprovalMode ?? "ask"}
       data-prefs={settings ? "" : undefined}
       data-tabs={runtimes.length > 1 ? "" : undefined}
-      style={{ "--rail-open": `${col.rail}px`, "--dock-open": `${col.dock}px`, ...(col.dragged > 0 ? { "--flow-w": `${col.width}px` } : null) } as CSSProperties}
+      style={{ "--rail-open": `${railW}px`, "--dock-open": `${shownDockW}px` } as CSSProperties}
     >
       {ask && <RemoteAsk ask={ask} onAnswer={answerRemote} />}
       <BrowserLogin />
@@ -709,10 +704,9 @@ export function App({ hub }: { hub: HubPort }) {
                   onFeedback={openFeedback}
                   onOpenSession={openSessionFor(rt.id)}
                   theme={scheme}
-                  dockW={col.dock}
+                  dockW={shownDockW}
                   dockMax={dockLimit}
                   onDockW={onDockW}
-                  column={col}
                   manualBrowser={rt.id === active && browser}
                   onManualBrowser={setBrowser}
                 />

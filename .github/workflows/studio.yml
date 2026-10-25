@@ -159,9 +159,6 @@ jobs:
           node perf/composer-toolbar-row.mjs
           node perf/action-icons.mjs
           node perf/rowhit.mjs
-          node perf/flowgrip-quiet.mjs
-          node perf/flow-narrow.mjs
-          node perf/flow-preset.mjs
           node perf/prefs-wide-centered.mjs
           node perf/tab-pip.mjs
           node perf/tab-close-inside.mjs

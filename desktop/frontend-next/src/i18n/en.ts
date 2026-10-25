@@ -303,7 +303,6 @@ export const EN: Record<string, string> = {
   "收起度量栏": "Collapse the metrics rail",
   "展开度量栏": "Show the metrics rail",
   "调整工作区栏宽度": "Resize the workspace rail",
-  "调整正文字宽": "Resize the reading column",
   "调整度量栏宽度": "Resize the metrics rail",
   "从列表移除": "Remove from the list",
   "改为输入路径": "Type a path instead",

@@ -589,7 +589,6 @@ export const ACTIONS: UIAction[] = [
   // Dragging the column's edge is a view adjustment held on this machine,
   // not a setting written to the kernel: it changes what is drawn, not what
   // the transcript says.
-  { id: "appearance.reading-width", kind: "view", target: "none", proof: "interaction" },
   { id: "appearance.background", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
   { id: "appearance.font", kind: "kernel-mutation", target: "entity", proof: "authority-effect" },
   // Kept where the window keeps them: these are this browser's, and no kernel
