@@ -202,6 +202,8 @@ func (f *FleetTool) Execute(ctx context.Context, args json.RawMessage) (result s
 				defer observer.UnregisterWriter(writerID)
 			}
 			jobCtx = agent.WithChildMessageReceiver(agent.WithParentSession(jobCtx, parentSession), agent.ChildMessageReceiverFrom(ctx))
+			jobCtx = agent.InheritTaskBudget(jobCtx, ctx)
+			jobCtx = WithExecutionSessionPath(jobCtx, f.taskTool.executionSessionPath(ctx))
 			jobCtx = evidence.WithLedger(jobCtx, backgroundEvidence)
 			defer func() { jobs.PublishEvidence(jobCtx, backgroundEvidence.Summary()) }()
 			// The job shares the Execute-level merger so the group lifecycle

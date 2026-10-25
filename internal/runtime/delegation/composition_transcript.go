@@ -11,6 +11,7 @@ import (
 func (t *TaskTool) prepareTranscriptRunWithPrompt(ctx context.Context, subReg *tool.Registry, modelRef, effortRef, parentSession, execution, parentID, continueFrom, legacyForkFrom, systemPrompt, kind, name string) (run *SubagentRun, err error) {
 	defer func() {
 		if err == nil {
+			run.executionPath = t.executionSessionPath(ctx)
 			bindChildCommunication(subReg, run, execution, upstreamFromContext(ctx))
 			if bindErr := agent.BindChildComposition(ctx, run.Session, false); bindErr != nil {
 				run.Release()
@@ -44,7 +45,7 @@ func (t *TaskTool) prepareTranscriptRunWithPrompt(ctx context.Context, subReg *t
 	spec := SubagentSpec{
 		Kind:             kind,
 		Name:             name,
-		WorkspaceRoot:    t.workspaceRoot,
+		WorkspaceRoot:    firstNonEmpty(t.transcriptRoot, t.workspaceRoot),
 		ParentSession:    parentSession,
 		ExecutionID:      execution,
 		ParentToolCallID: parentID,

@@ -793,10 +793,12 @@ results of siblings it did not declare a dependency on. A constraint that must
 reach a child today has to be in its profile body, in the task text, or on a
 `context_summary`, an explicit `context_refs` selection, or a `depends_on` edge.
 See [Subagent collaboration / 子代理协作](./SUBAGENT_COLLABORATION.md) for
-guidance, parent reports, snapshot retrieval, and their permission boundaries.
+guidance, parent reports, snapshot retrieval, isolated delegation, reusable members,
+shared task budgets and their permission boundaries.
 
 子代理的精选背景及结果引用由调用方显式提供，完整结果可按范围分页读取；指导及父子报告
-不改变稳定系统前缀，也不充当用户授权。详情及兼容性边界见上述协作文档。
+不改变稳定系统前缀，也不充当用户授权。隔离委派、可复用成员、共享任务预算及兼容性边界
+见上述协作文档。
 
 Every run records a `ContextCapsule` in its transcript sidecar: the workspace,
 the system-prompt source and hash, the resolved tool scope and schema hash, the

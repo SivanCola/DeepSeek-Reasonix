@@ -116,6 +116,10 @@ func TestSubagentRefusalsKeepTheirIdentity(t *testing.T) {
 
 func TestSubagentTranscriptPageIsBounded(t *testing.T) {
 	src := &subagentSource{}
+	get(subagentMux(src), "/subagents/sa_1/transcript?after=-1&limit=100")
+	if src.gotFrom != -1 || src.gotMax != 100 {
+		t.Fatal("latest-page request was lost")
+	}
 	get(subagentMux(src), "/subagents/sa_1/transcript?limit=99999999")
 	if src.gotMax != subagentPageMax {
 		t.Fatalf("limit reached the store as %d, want the named ceiling %d", src.gotMax, subagentPageMax)

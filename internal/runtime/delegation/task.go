@@ -81,6 +81,7 @@ type TaskTool struct {
 	resolveProvider               func(modelRef, effort string) (provider.Provider, *provider.Pricing, int, error)
 	transcripts                   *SubagentStore
 	workspaceRoot                 string
+	transcriptRoot                string
 	optimisticClaims              bool
 	extraRoots                    []string
 	baseModel, baseEffort         string
@@ -422,19 +423,12 @@ func (t *TaskTool) executeTask(ctx context.Context, args json.RawMessage) (strin
 	if strings.TrimSpace(p.Prompt) == "" {
 		return "", fmt.Errorf("prompt is required")
 	}
-	if p.Isolation != "" {
-		if p.ContextSummary != "" || len(p.ContextRefs) != 0 {
-			return "", fmt.Errorf("isolated tasks cannot take context_summary or context_refs")
-		}
-		return t.executeIsolated(ctx, isolatedCall{mode: p.Isolation, prompt: p.Prompt, model: p.Model, effort: p.Effort, maxSteps: p.MaxSteps,
-			unsupported: isolatedUnsupported(p.Profile, p.WritePaths, p.Tools, p.ContinueFrom, p.ForkFrom, p.RunInBackground)})
-	}
-
 	spec, err := t.buildTaskSpec(ctx, p.Prompt, p.Description, p.Profile, p.WritePaths, p.Tools, p.MaxSteps, p.Model, p.Effort, p.ContinueFrom, p.ForkFrom, p.RunInBackground, false)
 	if err != nil {
 		return "", err
 	}
 	p.apply(&spec)
+	spec.Sched.Isolation = p.Isolation
 	return t.RunProfileSpec(ctx, spec)
 }
 
@@ -542,8 +536,8 @@ func (t *TaskTool) settleSpecPrompts(ctx context.Context, spec *ProfileExecSpec)
 // fleet items, and boot-wired skill runners so prompt, tools, claims, and
 // scheduling cannot drift across entry points.
 func (t *TaskTool) RunProfileSpec(ctx context.Context, spec ProfileExecSpec) (result string, err error) {
-	if t == nil {
-		return "", fmt.Errorf("task tool is not configured")
+	if result, err, handled := t.dispatchProfile(ctx, spec); handled {
+		return result, err
 	}
 	// Per-child progress tracker: converts the child's reasoning/text/notice/
 	// retrying into reserved ToolProgress previews and guarantees exactly one
@@ -645,6 +639,7 @@ func (t *TaskTool) RunProfileSpec(ctx context.Context, spec ProfileExecSpec) (re
 		}
 		return t.runSubSession(t.withChildEffort(withTaskContext(writeclaim.WithSubagentWriteGrant(runCtx, writeGrant), spec.Context), ctx, modelRef, effortRef), spec.Task.Objective, subReg, sink, maxSteps, prov, pricing, ctxWin, run.Session, childDepth, recoveryTaskID, usageModelRef, mutationObserver, spec.Worker.Kind, grant, t.observeRootFor(backgroundWriter, writeGrant))
 	}
+	runSession = t.adaptiveRunner(runSession)
 
 	if spec.Sched.RunInBackground {
 		jm, ok := jobs.FromContext(ctx)
@@ -681,13 +676,12 @@ func (t *TaskTool) RunProfileSpec(ctx context.Context, spec ProfileExecSpec) (re
 		}
 		parentSession := agent.ParentSession(ctx)
 		backgroundEvidence := evidence.NewLedger()
-		// Capture acquire request by value for the job goroutine.
 		slotReq := acquireReq
 		job := jm.StartForSession(jobs.SessionFromContext(ctx), "task", label, func(jobCtx context.Context, _ io.Writer) (result string, err error) {
 			if writerRegistered {
 				defer mutationObserver.UnregisterWriter(recoveryTaskID)
 			}
-			jobCtx = agent.WithParentSession(jobCtx, parentSession)
+			jobCtx = t.backgroundContext(jobCtx, ctx, parentSession)
 			jobCtx = evidence.WithLedger(jobCtx, backgroundEvidence)
 			defer run.Release()
 			defer func() { jobs.PublishEvidence(jobCtx, backgroundEvidence.Summary()) }()

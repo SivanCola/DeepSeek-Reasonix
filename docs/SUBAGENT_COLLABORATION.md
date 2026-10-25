@@ -5,7 +5,7 @@ status: active
 reviewed: 2026-10-25
 ---
 
-# Subagent guidance and context / 子代理指导与上下文
+# Subagent collaboration / 子代理协作
 
 ## Guidance / 追加指导
 
@@ -143,6 +143,98 @@ continuation still requires compatible prompts, models, and tool schemas.
 持久化上下文记录保存结果引用。根代理发起的兼容续接会重新校验并读取引用，不宣称代码或源结果保持
 不变。临时结果只在收到它的本次调用内可读取。没有新增引用字段的旧记录仍可读取；续接仍
 要求提示词、模型和工具定义兼容。
+
+## Worktrees / 隔离工作树
+
+Root `task` calls with `isolation: "worktree"` use the ordinary profile runner
+inside a separately rooted kernel. Profiles, tool ceilings, declared write paths,
+selected context, reports, transcripts and scheduler admission follow the same
+delegation contracts.
+
+Changes remain pending until `apply_isolated` or `discard_isolated` settles them.
+Background execution retains this contract. Nested workers cannot create another
+isolated kernel. A transcript cannot resume in a fresh worktree; select its result
+as context for a new task instead.
+
+根代理的 `task` 使用 `isolation: "worktree"` 时，在独立工作区内调用普通委派运行器，
+统一遵守角色、工具上限、写入路径、上下文、报告、历史和调度约定。后台执行同样生效。
+更改仍需通过 `apply_isolated` 或 `discard_isolated` 处理，不会自动写回源工作区。
+
+嵌套代理不能另建隔离内核；旧历史不能在新建工作树中直接续接，可选择其结果作为新任务上下文。
+
+## History and recovery / 历史与恢复
+
+Studio opens the latest 100 messages and loads earlier pages on request, preserving
+the viewport. Live polling appends new pages. A rewrite changes the snapshot identity
+and reloads the latest page instead of joining different histories.
+
+Graph recovery keeps dependency order distinct from actual context delivery.
+Each completed execution records its result identity before releasing the transcript,
+so reusing a member's transcript does not erase earlier execution outcomes.
+
+Studio 首次打开只读取最近 100 条消息，按需加载更早页并保持滚动位置；运行中的消息继续轮询。
+历史压缩或重写后会重新读取最新页，不拼接不同快照。任务图恢复区分依赖顺序和实际交接，
+在释放历史前记录执行结果标识，成员续接不会覆盖此前执行的完成状态。
+
+## Concurrency and spend / 并发与成本
+
+- HTTP 429/503 retry signals halve future admissions. Successful completions
+  restore capacity gradually, never above configured ceilings. Active write
+  claims are retained. Unlimited mode is restored after pressure subsides.
+- A task and its delegated execution branches share configured token, cost and
+  wall-clock budgets, including background jobs and isolated workers.
+- Usage already in flight and one tool-free finalization round can exceed a
+  threshold. This is an observed-spend limit, not a prepaid reservation.
+- Money uses fixed-point, currency-specific totals. Only the root budget's
+  currency is compared with its cost limit; other currencies and missing usage
+  cannot be treated as free or silently converted. Token budgets span models.
+
+Shared admission accounting belongs to the current task scope. It does not pool
+unrelated conversations or restore an in-flight budget after a process restart;
+the existing session usage history remains separate from this runtime gate.
+
+共享额度属于当前任务范围，不合并无关会话，也不在进程重启后恢复运行中的剩余额度；
+已有会话用量历史与运行时额度检查保持分离。
+
+- 429／503 重试信号会降低后续任务并发，成功完成后逐步恢复，不超过配置上限，不撤销现有写锁。
+- 同一任务及其执行分支共享已配置的 token、费用和时长预算，包括后台和隔离任务。
+- 已发出的请求与一次不执行工具的总结请求可能超出阈值；这是按已观测消耗收口，并非预付费额度。
+- 费用按币种分别累计，仅比较根任务预算所用币种，不隐式换汇；跨模型可使用 token 预算。
+
+## Named members / 具名成员
+
+The root conversation can invoke `team` on demand:
+
+| Action | Behavior / 行为 |
+| --- | --- |
+| `create` | Start a named task with an optional model and tool ceiling. 创建具名任务，可选择模型和工具范围。 |
+| `list` | Read this conversation's members. 查看当前会话成员。 |
+| `send` | Guide an active member or continue its compatible transcript. 向运行中成员追加指导，或续接兼容历史。 |
+| `retire` | Retire a finished member while retaining history. 退役已结束成员，保留历史。 |
+
+Membership uses persisted child records, not extra autonomous processes. Reports
+go to the owning parent; it coordinates follow-up work. Children cannot manage
+the roster. Reuse preserves model/tools and refuses incompatible prompt or schema
+changes rather than widening authority.
+
+成员信息使用持久化子代理记录，不额外启动常驻自治进程。报告交给所属父代理协调后续工作，
+子代理不能管理成员目录。续接保持模型和工具范围；提示词或工具定义不兼容时明确拒绝。
+
+## Compatibility / 兼容性
+
+The optional transcript `snapshot` field is additive; old clients ignore it.
+Old execution journals remain readable. New terminal records add an optional
+`result` snapshot; older readers ignore it and may show less precise historical
+graphs, but append-only writers do not rewrite existing records.
+
+分页接口新增可选 `snapshot` 字段，旧客户端可忽略。旧执行日志仍可读取；新终态记录增加
+可选 `result` 快照，旧版本忽略该信息，历史图可能不够精确，但追加式写入不会改写已有记录。
+
+Members use `member` and `retired-member` values in the existing kind field.
+Older clients can still read their ordinary transcripts without roster controls.
+
+成员在已有 kind 字段使用 `member` 和 `retired-member`，旧客户端仍可读取普通历史，
+但没有成员管理操作。
 
 ## Cache and permissions / 缓存与权限
 

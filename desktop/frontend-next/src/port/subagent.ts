@@ -26,6 +26,7 @@ export interface SubagentRun {
 /** One page of a run's conversation: GET /subagents/{ref}/transcript. Rows keep
  *  the run's own indices; next is where the following page starts. */
 export interface SubagentTranscript {
+	 snapshot?: string;
   run: SubagentRun;
   messages: HistoryMessage[];
   after: number;

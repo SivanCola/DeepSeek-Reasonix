@@ -5,10 +5,12 @@ import (
 	"fmt"
 
 	"reasonix/internal/runtime/agent"
+	"reasonix/internal/runtime/delegation"
 )
 
 func (c *Controller) withDelegationContext(ctx context.Context, parent string) context.Context {
 	ctx = agent.WithParentSession(ctx, parent)
+	ctx = delegation.WithExecutionSessionPath(ctx, c.SessionPath())
 	return agent.WithChildMessageReceiver(ctx, func(ctx context.Context, message agent.ChildMessage) error {
 		if err := ctx.Err(); err != nil {
 			return err

@@ -52,8 +52,9 @@ type SubagentRun struct {
 	Meta       sessionstore.SubagentMeta
 	ForkedFrom string
 
-	store   *SubagentStore
-	release func()
+	store         *SubagentStore
+	release       func()
+	executionPath string
 }
 
 func (r *SubagentRun) Release() {
@@ -86,8 +87,9 @@ type SubagentStore struct {
 	// cleanupBeforeReread is a test seam for deterministic lease interleavings.
 	cleanupBeforeReread func(parentSession, ref string)
 
-	mu     sync.Mutex
-	locked map[string]bool
+	mu      sync.Mutex
+	locked  map[string]bool
+	members map[string]bool
 	// live holds the conversation of every run this process is executing, so a
 	// reader sees a child while it works: its file is written only at the end.
 	live  map[string]*liveRun
@@ -334,6 +336,7 @@ func (s *SubagentStore) PrepareContinue(ref string, spec SubagentSpec) (*Subagen
 	}
 	meta.ParentSession = spec.ParentSession
 	meta.ParentToolCallID = spec.ParentToolCallID
+	meta.ExecutionID = spec.ExecutionID
 	return &SubagentRun{Ref: ref, Session: sess, Meta: meta, store: s, release: release}, nil
 }
 
@@ -594,7 +597,11 @@ func (s *SubagentStore) SaveCompleted(run *SubagentRun) error {
 	meta.Status = sessionstore.SubagentCompleted
 	meta.UpdatedAt = time.Now().UTC()
 	run.Meta = meta
-	return s.saveMeta(meta)
+	err := s.saveMeta(meta)
+	if err == nil {
+		run.recordExecutionOutcome()
+	}
+	return err
 }
 
 func (s *SubagentStore) SaveFailed(run *SubagentRun) error {
@@ -788,13 +795,5 @@ func bytesHash(data []byte) string {
 }
 
 func sameStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(a, b)
 }

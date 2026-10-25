@@ -184,6 +184,7 @@ export const ACTIONS: UIAction[] = [
   { id: "tool.show-all", kind: "view", target: "none", proof: "interaction" },
   { id: "tool.show-full", kind: "view", target: "none", proof: "interaction" },
   { id: "agent.open", kind: "view", target: "entity", proof: "interaction" },
+  { id: "agent.history-earlier", kind: "view", target: "entity", proof: "interaction" },
   { id: "agent.steer", kind: "kernel-mutation", target: "entity", proof: "authority-effect" },
   { id: "agent.context-toggle", kind: "view", target: "entity", proof: "interaction" },
   { id: "agent.context-summary", kind: "view", target: "entity", proof: "interaction" },

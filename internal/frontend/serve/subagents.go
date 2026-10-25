@@ -40,6 +40,7 @@ type subagentRunView struct {
 }
 
 type subagentTranscriptView struct {
+	Snapshot string           `json:"snapshot,omitempty"`
 	Run      subagentRunView  `json:"run"`
 	Messages []historyMessage `json:"messages"`
 	After    int              `json:"after"`
@@ -74,23 +75,33 @@ func (s *Server) subagentRuns(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) subagentTranscript(w http.ResponseWriter, r *http.Request) {
 	after, _ := strconv.Atoi(r.URL.Query().Get("after"))
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	after = max(after, 0)
+	if after != -1 {
+		after = max(after, 0)
+	}
 	limit = min(max(limit, 0), subagentPageMax)
 	page, err := s.ctl().SubagentTranscript(r.PathValue("ref"), after, limit)
 	if err != nil {
 		refuseSubagent(w, err)
 		return
 	}
-	rows := historyMessages(provider.RedactMessages(page.Messages))
+	calls := map[string]provider.ToolCall{}
+	for _, ref := range page.ToolContext {
+		masked := provider.RedactMessages([]provider.Message{{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{ref.Call}}})
+		calls[ref.Call.ID] = masked[0].ToolCalls[0]
+	}
+	worked := page.WorkMs
+	if len(worked) != len(page.Messages) {
+		worked = make([]int64, len(page.Messages))
+	}
+	rows := historyMessageWindow(provider.RedactMessages(page.Messages), nil, page.After, worked, calls)
 	shown := make([]historyMessage, 0, len(rows))
 	for _, m := range rows {
 		if m.Role == string(provider.RoleSystem) {
 			continue
 		}
-		m.MsgIndex += page.After
 		shown = append(shown, m)
 	}
-	writeJSON(w, subagentTranscriptView{Run: subagentRunOf(page.Info), Messages: shown, After: page.After, Next: page.Next, Total: page.Total, Live: page.Live})
+	writeJSON(w, subagentTranscriptView{Snapshot: page.Snapshot, Run: subagentRunOf(page.Info), Messages: shown, After: page.After, Next: page.Next, Total: page.Total, Live: page.Live})
 }
 
 // subagentSteer sends the person's guidance to a running sub-agent. It is the

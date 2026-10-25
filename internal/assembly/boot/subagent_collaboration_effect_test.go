@@ -14,6 +14,7 @@ import (
 )
 
 type collaborationProbe struct {
+	isolated bool
 	mu       sync.Mutex
 	requests []provider.Request
 }
@@ -31,6 +32,9 @@ func (p *collaborationProbe) Stream(_ context.Context, req provider.Request) (<-
 		{ID: "read", Name: "read_file", Arguments: `{"path":"source.txt"}`},
 	}
 	if i < len(calls) {
+		if i == 0 && p.isolated {
+			calls[0].Arguments = strings.Replace(calls[0].Arguments, `"prompt":"Inspect`, `"isolation":"worktree","prompt":"Inspect`, 1)
+		}
 		ch <- provider.Chunk{Type: provider.ChunkToolCall, ToolCall: &calls[i]}
 	} else {
 		ch <- provider.Chunk{Type: provider.ChunkText, Text: "Inspection complete."}

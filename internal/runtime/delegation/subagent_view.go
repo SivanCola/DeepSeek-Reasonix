@@ -58,12 +58,15 @@ type RunInfo struct {
 // RunTranscript is one page of a run's conversation: Messages are those from
 // index After, Next is where the following page starts, Total how many exist now.
 type RunTranscript struct {
-	Info     RunInfo
-	Messages []provider.Message
-	After    int
-	Next     int
-	Total    int
-	Live     bool
+	Snapshot    string
+	ToolContext []sessionstore.HistoryToolContext
+	WorkMs      []int64
+	Info        RunInfo
+	Messages    []provider.Message
+	After       int
+	Next        int
+	Total       int
+	Live        bool
 }
 
 func (s *SubagentStore) setLive(ref string, sess *sessionstore.Session) {
@@ -162,12 +165,10 @@ func (s *SubagentStore) Transcript(ref, parentSession, workspaceRoot string, aft
 	if err := s.checkOwner(ref, meta, parentSession, workspaceRoot); err != nil {
 		return RunTranscript{}, err
 	}
-	if after < 0 {
-		after = 0
-	}
 	if limit <= 0 {
 		limit = defaultTranscriptPage
 	}
+	limit = min(limit, 2000)
 	out := RunTranscript{Info: s.infoOf(meta), After: after}
 	sess := s.liveSession(ref)
 	if sess != nil {
@@ -181,8 +182,13 @@ func (s *SubagentStore) Transcript(ref, parentSession, workspaceRoot string, aft
 		}
 		sess = loaded
 	}
-	out.Total = sess.Len()
-	out.Messages = sess.MessageRange(after, after+limit)
-	out.Next = after + len(out.Messages)
+	page := sess.ReadMessageWindow(after, limit)
+	out.Snapshot = page.Identity
+	if !out.Live {
+		out.Snapshot = meta.UpdatedAt.UTC().Format(time.RFC3339Nano)
+	}
+	out.After, out.Next, out.Total = page.Start, page.End, page.Total
+	out.Messages, out.ToolContext = page.Messages, page.ToolContext
+	out.WorkMs = page.WorkMs
 	return out, nil
 }
