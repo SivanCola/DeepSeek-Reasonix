@@ -46,4 +46,9 @@ export const EN_TOOL_BLURBS: Record<string, string> = {
   "派出一个子代理处理一项专项子任务，只返回它的最终答案。": "Start a sub-agent for a focused sub-task and return only its final answer.",
   "获取一个网址并返回文本内容；HTML 会被精简为可读文本。": "Fetch a URL and return its text; HTML is reduced to readable text.",
   "搜索网页获取最新信息，返回摘要和来源。": "Search the web for current information and return a summary with sources.",
+  "向更强的模型求助：它读完到目前为止的对话后，用方案、诊断或审查回答你的问题；它自己不执行任何东西。": "Ask a stronger model for advice: it reads the conversation so far and answers with a plan, a diagnosis or a review; it runs nothing itself.",
+  "把一个明确的编码任务并行做 2–4 遍，每遍在独立的 git 工作树里；再由评审比较，只把最好的一份写回工作区。": "Run one well-specified coding task 2–4 times in parallel, each in its own git worktree, then have a judge compare them and write only the best back into the workspace.",
+  "把已有的最终文件以可点击的卡片展示给你，包括命令行生成的文档；路径须在工作区或已授权的文件夹内，打开的是当前文件而不是快照，也不保证内容正确。": "Present existing final files to you as clickable cards, including shell-created documents; paths must be in the workspace or authorized folders, it opens the current files rather than snapshots, and it does not certify correctness.",
+  "读取已连接的 MCP 服务器自己列出的一份资源（文档、记录、文件）；服务器没列出的地址会被拒绝，返回的是服务器的数据，不是你的指令。": "Read one resource (a document, a record, a file) that a connected MCP server lists itself; an address the server does not list is refused, and what comes back is the server's data, not your instructions.",
+  "运行一小段 Starlark（类 Python）脚本来调用多个工具，几步相互依赖的操作只需一次往返，只返回脚本打印的内容；每次调用都和模型直接调用一样受检查和审批。": "Run a short Starlark (Python-like) script that calls several tools, so dependent steps take one round trip and only what the script prints comes back; every call is checked and approved as if the model made it directly.",
 };

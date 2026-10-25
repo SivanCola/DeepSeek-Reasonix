@@ -164,6 +164,7 @@ jobs:
           node perf/flow-preset.mjs
           node perf/prefs-wide-centered.mjs
           node perf/tab-pip.mjs
+          node perf/tab-close-inside.mjs
           node perf/context-card-hover.mjs
           node perf/sessquick.mjs
           node perf/sessionrows.mjs

@@ -1,0 +1,2 @@
+- 改进：顶栏右上角不再常驻「沙盒」按钮，它只是跳到「工具与权限」的快捷入口，同一入口已在左侧图标栏和侧栏里，可在导航入口设置里显示或隐藏。关联 #14439。
+- Changed: the top bar no longer has a permanent Sandbox button, only a shortcut to Tools and permissions, which is in the rail and sidebar and can be hidden under Navigation entries. Refs #14439.

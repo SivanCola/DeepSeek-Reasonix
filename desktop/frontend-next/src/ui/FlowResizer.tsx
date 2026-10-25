@@ -156,6 +156,13 @@ export function useColumn(railW: number, dockW: number, railMin: number, dockMin
  *  down: a child's layout effects run before its parent's ref is attached, so
  *  asking the parent through a ref would read null and never try again. */
 export function FlowGrips({ column }: { column: Column }) {
+  // No range, no handle: a window whose sidebars already fill it leaves 0..0 to
+  // move in, and a drag across that wrote a zero width the window kept until a
+  // reload.
+  return column.ceiling > column.min ? <PlacedGrips column={column} /> : null;
+}
+
+function PlacedGrips({ column }: { column: Column }) {
   const grips = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {

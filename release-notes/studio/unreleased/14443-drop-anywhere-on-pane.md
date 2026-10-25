@@ -1,0 +1,2 @@
+- 改进：把文件拖进会话时，不必再精确拖到输入框里，放到会话面板的任意位置都会作为附件或引用加入；嵌套的拖放区（如侧栏）仍优先。关联 #14443。
+- Improved: a file dropped anywhere on the conversation pane is now attached or referenced, instead of only on the composer; nested drop zones such as the sidebar still win. Refs #14443.

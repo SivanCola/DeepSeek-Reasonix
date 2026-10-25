@@ -63,6 +63,14 @@ func (s *Store) acquireResultOperation(ctx context.Context, id string, try bool)
 		release()
 		return nil, operationAdmissionError(id, err)
 	}
+	if err := s.checkSettlementFence(id); err != nil {
+		release()
+		return nil, operationAdmissionError(id, err)
+	}
+	if err := ctx.Err(); err != nil {
+		release()
+		return nil, operationAdmissionError(id, err)
+	}
 	return release, nil
 }
 

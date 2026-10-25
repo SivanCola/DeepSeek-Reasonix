@@ -133,6 +133,27 @@ describe("the column's remembered width", () => {
   });
 });
 
+describe("a window with no room to give", () => {
+  const column = (over: Partial<Column> = {}): Column => ({
+    width: 0, floor: 0, min: 0, ceiling: 0, rail: 316, dock: 316, dragged: 0,
+    commit: () => {},
+    fit: (w) => barsFit(400, w, 316, 316, RAIL_MIN, DOCK_MIN),
+    ...over,
+  });
+
+  it("draws no handles when the range is empty, so a touch cannot write a zero width", () => {
+    // 400px with both sidebars at their floors leaves a range of 0..0, and a
+    // drag across it painted `--flow-w: 0px` onto the window until a reload.
+    const { container } = render(<FlowGrips column={column()} />);
+    expect(container.querySelector(".flowgrip")).toBeNull();
+  });
+
+  it("draws both handles once there is a range to move in", () => {
+    const { container } = render(<FlowGrips column={column({ width: 760, floor: 760, min: 640, ceiling: 1048 })} />);
+    expect(container.querySelectorAll(".flowgrip")).toHaveLength(2);
+  });
+});
+
 describe("a drag that ends without a release", () => {
   const into = (over: Partial<Column> = {}) => {
     const box = document.createElement("div");

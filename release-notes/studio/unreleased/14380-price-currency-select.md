@@ -1,0 +1,2 @@
+- 修复：模型价格里的币种下拉框不再是系统自带的黑框样式，边框、背景和字体与旁边的输入框一致，浅色和深色主题下都协调。关联 #14380。
+- Fixed: the currency dropdown in model prices no longer shows the system's default black-bordered look; it matches the inputs beside it in both light and dark themes. Refs #14380.

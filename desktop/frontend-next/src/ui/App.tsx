@@ -574,7 +574,6 @@ export function App({ hub }: { hub: HubPort }) {
         status={report.status}
         title={tabs.find((tab) => tab.rt.id === active)?.title ?? report.title}
         steer={report.steer}
-        onSettings={showPrefs}
         account={account}
         theme={scheme}
         onTheme={() => setTheme(scheme === "dark" ? "light" : "dark")}

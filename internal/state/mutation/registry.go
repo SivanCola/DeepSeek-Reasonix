@@ -1,9 +1,12 @@
 package mutation
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -52,11 +55,11 @@ func (c *Coordinator) records() ([]record, error) {
 			return nil, err
 		}
 		var r record
-		if err := json.Unmarshal(data, &r); err != nil {
-			return nil, errors.Join(ErrProtocol, err)
+		if err := decodeCoordinationRecord(data, &r); err != nil {
+			return nil, fmt.Errorf("%w: record %q: %w", ErrProtocol, entry.Name(), err)
 		}
 		if r.ID != id || r.Order == 0 || !validRecordResources(r) {
-			return nil, ErrProtocol
+			return nil, fmt.Errorf("%w: record %q has unsupported identity or resources", ErrProtocol, entry.Name())
 		}
 		for _, path := range r.Paths {
 			if !filepath.IsAbs(path) {
@@ -79,6 +82,18 @@ func (c *Coordinator) records() ([]record, error) {
 		records = append(records, r)
 	}
 	return records, nil
+}
+
+func decodeCoordinationRecord(data []byte, r *record) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(r); err != nil {
+		return err
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("record must contain one JSON value: %w", ErrProtocol)
+	}
+	return nil
 }
 
 func (c *Coordinator) save(r record) error {
