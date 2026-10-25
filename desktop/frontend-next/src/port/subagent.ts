@@ -4,6 +4,11 @@ import type { HistoryMessage } from "./session";
  *  whose owner is gone without a result. */
 export type SubagentState = "running" | "completed" | "failed" | "cancelled" | "interrupted";
 
+export interface SubagentHandoff {
+  summary: string;
+  resultRefs: string[];
+}
+
 /** One sub-agent run a conversation spawned: GET /subagents. */
 export interface SubagentRun {
   ref: string;

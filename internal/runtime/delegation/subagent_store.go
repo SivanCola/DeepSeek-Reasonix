@@ -717,7 +717,7 @@ func (s *SubagentStore) lock(ref string) (func(), error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.locked[ref] {
-		return nil, fmt.Errorf("subagent reference %q is already running; retry after it finishes", ref)
+		return nil, fmt.Errorf("%w: subagent reference %q is already running; retry after it finishes", ErrSubagentBusy, ref)
 	}
 	s.locked[ref] = true
 	return func() {

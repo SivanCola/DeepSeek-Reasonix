@@ -112,6 +112,7 @@ export const EN_KERNEL: Record<string, string> = {
   "读取子代理记录失败：{detail}": "Could not read the sub-agent record: {detail}",
   "这个子代理已经不在运行，读不到新的指示": "That sub-agent is no longer running, so it cannot read new guidance",
   "指示不能是空的": "Guidance cannot be empty",
+  "上下文交接未能发送：{detail}": "Context handoff could not be sent: {detail}",
   "这条指示太长了，超过了发给子代理的单条上限": "That guidance is longer than the limit for one message to a sub-agent",
   "短时间内发给这个子代理的指示太多了，请稍后再发": "Too much guidance was sent to this sub-agent a moment ago; send it again shortly",
   "你停止了这条调用，它在外部已经做了什么无法确定": "You stopped this call; what it had already done outside the workspace is unknown",

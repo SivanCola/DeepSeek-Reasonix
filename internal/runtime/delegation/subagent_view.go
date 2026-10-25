@@ -20,6 +20,7 @@ var errLineageUnproven = errors.New("session lineage not established")
 var (
 	ErrSubagentNotFound = errors.New("no sub-agent run answers to that reference")
 	ErrSubagentNotOwned = errors.New("that sub-agent run does not belong to this conversation")
+	ErrSubagentBusy     = errors.New("subagent run is busy")
 )
 
 // RunState is what a reader is told about a run. Running means this process is

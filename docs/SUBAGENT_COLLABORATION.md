@@ -50,6 +50,39 @@ return their final result instead of exposing this reporting tool.
 
 ## Selected context / 精选上下文
 
+In a running child's Studio detail pane, expand **Hand off context**, enter a
+summary and/or select completed results, then send. The host resolves references
+in the current conversation lineage and workspace.
+
+Full result snapshots are appended to the guidance; existing size/rate limits
+apply to the expanded message. Oversized handoffs are rejected without truncation
+and the draft stays editable. Use a shorter summary or fewer results.
+
+This live handoff does not change the launch-time reader or tool definitions.
+Older servers reject the dedicated `/subagents/{ref}/handoff` route rather than silently dropping
+the context from a plain steering request.
+
+在运行中子代理的 Studio 详情中展开「交接上下文」，填写摘要、勾选已完成结果后发送。
+宿主按当前会话谱系与工作区校验引用，将完整结果快照追加到指导消息。
+
+现有大小及频率限制作用于展开后的消息。超限会拒绝而不截断，并保留可编辑草稿，
+可缩短摘要或减少选择。
+运行中交接不会改变启动时快照读取器或工具定义。
+
+旧服务器对专用交接路由返回错误，不会把带上下文的请求当作普通指导成功接收后丢掉上下文。
+
+The **Subagent reports** section reads report calls and their receipts from the
+child's paged transcript, including after reopening it. The parent's live tool
+cards also show child reports without opening raw arguments.
+
+Queued means accepted by the delivery route, not read or approved by the parent.
+Pending and failed sends stay distinct; report text is rendered as untrusted text.
+
+「子代理报告」区从子代理分页记录读取报告调用与回执，重新打开后仍可查看。
+父代理的实时工具卡片也直接展示子代理报告，无需展开原始参数。「已排队」只表示投递
+路径已接收，不表示父代理已读取或批准；等待回执与发送失败分别展示，正文作为不可信
+纯文本显示。
+
 `task`, `read_only_task`, and runnable `fleet` items accept:
 
 - `context_summary`: selected background and prior decisions, at most 16 KiB.

@@ -23,10 +23,12 @@ type subagentSource struct {
 	gotFrom int
 	gotMax  int
 	steered []string
+	handoff []delegation.GuidanceContext
 }
 
-func (c *subagentSource) SteerSubagent(ref, text string) error {
+func (c *subagentSource) SteerSubagent(ref, text string, handoff ...delegation.GuidanceContext) error {
 	c.steered = append(c.steered, ref+": "+text)
+	c.handoff = handoff
 	return c.err
 }
 

@@ -118,7 +118,7 @@ func (s *SubagentStore) admit(ref, text string) error {
 // next tool boundary. Only the conversation that owns the run may, the limits
 // apply before anything is queued, and a child that is not inside a run to take
 // it refuses (ErrSubagentNotRunning) rather than holding text no one will read.
-func (s *SubagentStore) Steer(ref, parentSession, workspaceRoot, text string, from SteerSource) error {
+func (s *SubagentStore) Steer(ref, parentSession, workspaceRoot, text string, from SteerSource, handoff ...GuidanceContext) error {
 	if s == nil || !sessionstore.ValidSubagentRef(strings.TrimSpace(ref)) {
 		return ErrSubagentNotFound
 	}
@@ -132,6 +132,10 @@ func (s *SubagentStore) Steer(ref, parentSession, workspaceRoot, text string, fr
 	}
 	meta.Ref = ref
 	if err := s.checkOwner(ref, meta, parentSession, workspaceRoot); err != nil {
+		return err
+	}
+	text, err = s.guidanceWithContext(parentSession, workspaceRoot, text, handoff)
+	if err != nil {
 		return err
 	}
 	text = strings.TrimSpace(text)
