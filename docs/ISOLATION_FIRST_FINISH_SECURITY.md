@@ -39,7 +39,9 @@ does not exercise this fault because `Execute` uses `context.WithoutCancel`.
 
 Inspection-pending results use a separate `inspection.json` marker with integer
 `version: 1` and an `entry` containing the existing snapshot/candidate identity.
-Only failed, already-returned runners produce it.
+Failed returned runners and
+[recovered runner panics](ISOLATION_RUNNER_PANIC_SECURITY.md) produce it only
+after their call stack has unwound.
 
 This is not a running-task
 lifecycle record. No legacy-looking marker is published for that incomplete
@@ -124,8 +126,8 @@ errors retain their Go error identities through `errors.Join`.
 ## Limits and later units / 限制与后续层
 
 - Begin still has no durable running identity. Crashes before this error handler,
-  runner panic, OS execution identity, background/nested jobs and root budgets
-  remain separate lifecycle work.
+  OS execution identity, background/nested jobs and root budgets remain separate
+  lifecycle work. Runner panic retention does not establish process completion.
 - Successful legacy results still have their existing age policy. This change
   is not whole-store retention, archival or an automatic integration policy.
 - Snapshot/empty-result fidelity remains the separate snapshot-content change;

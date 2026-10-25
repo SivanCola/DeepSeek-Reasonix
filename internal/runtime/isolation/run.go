@@ -40,7 +40,10 @@ func (s *Store) Execute(ctx context.Context, runner Runner, workspaceRoot, promp
 	if err != nil {
 		return "", err
 	}
-	out, runErr := runner(ctx, Run{WorkspaceRoot: e.Cand.WorkspaceRoot, Prompt: prompt, Model: model})
+	out, runErr := invokeRunner(ctx, runner, Run{WorkspaceRoot: e.Cand.WorkspaceRoot, Prompt: prompt, Model: model})
+	if errors.Is(runErr, ErrRunnerPanic) {
+		return "", s.retainRunnerPanic(context.WithoutCancel(ctx), e, runErr)
+	}
 	kept, finishErr := s.Finish(context.WithoutCancel(ctx), e)
 	if finishErr != nil {
 		return "", fmt.Errorf("isolated task inspection is incomplete; files retained as %s; retry apply_isolated or discard_isolated after resolving the inspection error: %w", e.ID, errors.Join(runErr, finishErr))
