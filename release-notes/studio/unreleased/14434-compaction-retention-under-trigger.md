@@ -1,0 +1,2 @@
+- 修复：大窗口模型下，用户消息很大的长会话会反复报"折叠后仍不低于压缩阈值"，自动压缩和 `/compact` 都卡住；现在原样保留的用户消息按压缩触发线封顶。关联 #14434。
+- Fixed: on large-window models, long sessions with big user messages got stuck on "still at or above the compaction threshold"; verbatim user turns are now capped by the trigger. Refs #14434.
