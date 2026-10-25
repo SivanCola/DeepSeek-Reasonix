@@ -27,7 +27,7 @@ function fixture(contents = false) {
   const generation = { current: 0 };
   const release = vi.fn();
   const land = vi.fn();
-  const paging: HistoryPaging = { snapshot: "one", revision: 1, hasMore: true, busy: false, failed: false, more: vi.fn(async () => {}), reload: vi.fn(async () => {}) };
+  const paging: HistoryPaging = { snapshot: "one", revision: 1, hasMore: true, busy: false, failed: false, earlier: 0, more: vi.fn(async () => {}), reload: vi.fn(async () => {}) };
   const hook = renderHook(({ revision, snapshot = "one", hidden = false }) => useHistoryAnchor({ ...paging, revision, snapshot }, scroll, [[item]], hidden, generation, release, land),
     { initialProps: { revision: 1, snapshot: "one", hidden: false } });
   return { ...hook, generation, land, paging };

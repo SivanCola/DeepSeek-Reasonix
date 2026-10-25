@@ -1662,6 +1662,51 @@ sources are merged; on a name collision `reasonix.toml` wins.
 keep working — move them into `reasonix.toml`'s `[[plugins]]` or a `.mcp.json` when
 convenient.
 
+## Custom instructions / 提示词怎么注入
+
+Choose the scope before adding a prompt.
+
+### One task / 单次任务
+
+Type the instructions in chat. For a reusable prompt you invoke explicitly,
+use a [custom slash command](#slash-commands).
+
+直接在聊天框输入要求。需要反复手动调用的提示词可写成[自定义斜杠命令](#slash-commands)。
+
+### Repository rules / 仓库规则
+
+- Create `AGENTS.md`, or use the repository's existing `REASONIX.md` / `CLAUDE.md`,
+  at the workspace root. For example: `- Run the project tests before reporting completion.`
+- Use `AGENTS.local.md` for personal rules in that directory, or an instruction
+  file in your Reasonix home for user-global rules.
+- See [standing-instruction resolution](./SESSION_MEMORY_RETRIEVAL.md#instruction-resolution)
+  for hierarchy, imports, and `/memory instructions` to inspect what loaded.
+
+- 在工作区根目录创建 `AGENTS.md`，或沿用仓库已有的 `REASONIX.md` / `CLAUDE.md`。
+  例如添加 `- 完成前运行项目测试。`。
+- 当前目录的个人规则可放在 `AGENTS.local.md`；跨项目的用户规则放在 Reasonix 主目录中的指令文件。
+- 层级、导入及查看已加载内容的 `/memory instructions` 命令见
+  [常驻指令文档](./SESSION_MEMORY_RETRIEVAL.md#instruction-resolution)。
+
+### User-wide persona / 用户级人设
+
+1. In Studio, open **Settings → Persona → System persona**.
+2. Fill **Start of the system prompt** and/or **Additional instructions**, then **Save**.
+3. Start a new session, or wait for the existing session's next rebuild
+   (for example, a model switch). Saving does **not** change the running session's prompt.
+
+These settings supplement built-in guidance; they do not replace it. They are
+stored in your user configuration, not a project's `reasonix.toml`.
+See [System persona](./PERSONA.md) for configuration fields and limits.
+
+1. 在 Studio 打开**设置 → 人设 → 系统人设**。
+2. 填写**系统提示词开头**和/或**补充要求**，点击**保存**。
+3. 新建会话，或等现有会话下一次重建（例如切换模型）后生效。
+   **保存不会改变正在运行的会话提示词**。
+
+这些设置补充而非替换内置指令，写入用户配置，不由项目 `reasonix.toml` 设置。
+配置字段及限制见[系统人设](./PERSONA.md)。
+
 ## Slash commands
 
 In an interactive `reasonix` session, built-in commands (`/compact`, `/context`, `/new`, `/clear`, `/rewind`,

@@ -471,7 +471,7 @@ export function Transcript({ items, port, historyPaging, entering, onEntered, br
       ref={scroll}
       hidden={hidden}
     >
-      <Rail marks={marks} total={items.length} scroll={scroll} flow={flow} onJump={jumpTo} bound={!hidden} scope={scope} />
+      <Rail marks={marks} total={items.length} scroll={scroll} flow={flow} onJump={jumpTo} bound={!hidden} scope={scope} earlier={historyPaging?.earlier ?? 0} onLoadEarlier={historyPaging?.hasMore ? loadOlder : undefined} />
       <div className="flow-edge" aria-hidden="true" />
       {/* 空转录是「窗口的空白」，壁纸该在那儿；一有内容它就是内容了。 */}
       <div className="flow" ref={flow} data-empty={items.length === 0 && !historyPaging?.hasMore && !historyPaging?.busy && !historyPaging?.failed ? "" : undefined}>

@@ -759,6 +759,7 @@ export const ACTIONS: UIAction[] = [
   // ── The two side panels. Reached from the keyboard here, and from each
   //    gutter's own grip, which this pass has not annotated yet.
   { id: "rail.star", kind: "view", target: "none", proof: "interaction" },
+  { id: "rail.pick", kind: "view", target: "none", proof: "interaction" },
   { id: "rail.toggle", kind: "view", target: "none", proof: "interaction" },
   ...SCHEDULE_ACTIONS,
   ...DOCUMENT_ACTIONS,

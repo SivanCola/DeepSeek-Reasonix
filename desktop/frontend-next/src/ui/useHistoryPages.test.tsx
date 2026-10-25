@@ -127,7 +127,7 @@ it("continues searching when fast page responses batch busy state transitions", 
 
 it("searches the next page when a committed revision is the only changed read state", () => {
   const more = vi.fn(async () => {});
-  const paging = { snapshot: "one", revision: 1, hasMore: true, busy: false, failed: false, more, reload: vi.fn(async () => {}) };
+  const paging = { snapshot: "one", revision: 1, hasMore: true, busy: false, failed: false, earlier: 0, more, reload: vi.fn(async () => {}) };
   const { rerender } = renderHook(({ revision }) => useHistorySearch({ ...paging, revision }, true, "needle"), { initialProps: { revision: 1 } });
   expect(more).toHaveBeenCalledTimes(1);
   rerender({ revision: 2 });

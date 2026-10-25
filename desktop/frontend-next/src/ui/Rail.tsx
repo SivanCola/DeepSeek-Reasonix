@@ -37,6 +37,11 @@ interface Props {
   // Only the transcript on screen answers the keys; a pane on another tab keeps
   // its rail but must not fight for them.
   bound: boolean;
+  /** Raw messages still unloaded before the first mark. A paged conversation
+   *  mounts only its tail, so the rail would otherwise look complete while most
+   *  of the conversation is still on disk. */
+  earlier?: number;
+  onLoadEarlier?: () => void;
 }
 
 // The native scrollbar owns continuous position. The semantic rail is a compact
@@ -147,13 +152,17 @@ export function railLocalY(clientY: number, rectTop: number, rectHeight: number,
   return (clientY - rectTop) * (railHeight / rectHeight);
 }
 
-export function Rail({ marks, total, scroll, flow, onJump, bound, scope }: Props) {
+export function Rail({ marks, total, scroll, flow, onJump, bound, scope, earlier = 0, onLoadEarlier }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const [tops, setTops] = useState<number[]>([]);
   // Null while every question keeps its own line; a list once they have to
   // share, because reading them apart has stopped working.
   const [groups, setGroups] = useState<RailView[] | null>(null);
   const [at, setAt] = useState(-1);
+  // Which folded run has been opened into its own questions. A run is one line
+  // standing for many; without this a press can only mean "the first of them",
+  // which is not the question the reader pointed at.
+  const [opened, setOpened] = useState<number | null>(null);
   // Which mark the keys last walked to. Kept apart from `at`, which the pointer
   // owns: hovering somewhere else must not move where the keys resume from.
   const here = useRef(-1);
@@ -316,11 +325,24 @@ export function Rail({ marks, total, scroll, flow, onJump, bound, scope }: Props
   };
 
   if (marks.length === 0) return null;
-  const shown = at >= 0 && at < view.length ? view[at] : null;
+  const shown = opened === null && at >= 0 && at < view.length ? view[at] : null;
   const head = shown ? marks[shown.from] : null;
 
   return (
     <div className="railhost" ref={host} aria-hidden={undefined}>
+      {/* A paged conversation mounts only its tail. Without this the rail ends
+          where the loaded window begins and reads as a short conversation. */}
+      {earlier > 0 && onLoadEarlier && (
+        <button
+          type="button"
+          className="srail-earlier"
+          style={{ top: Math.max(6, (view[0]?.top ?? PAD) - 14) }}
+          aria-label={t("更早还有 {n} 条消息，点击加载", { n: earlier })}
+          title={t("更早还有 {n} 条消息，点击加载", { n: earlier })}
+          data-action="history.more"
+          onClick={onLoadEarlier}
+        />
+      )}
       <nav
         className="srail"
         aria-label={t("你说过的话")}
@@ -362,7 +384,11 @@ export function Rail({ marks, total, scroll, flow, onJump, bound, scope }: Props
               title={m.msgIndex === undefined ? undefined : starred ? t("右键取消这处星标") : t("右键给这处加星标")}
               onFocus={() => setAt(i)}
               onBlur={() => setAt(-1)}
-              onClick={() => onJump(m)}
+              onClick={() => {
+                if (!folded) { onJump(m); return; }
+                if (opened === i) { setOpened(null); onJump(m); return; }
+                setOpened(i);
+              }}
               onContextMenu={(e) => {
                 e.preventDefault();
                 star(m.msgIndex);
@@ -382,6 +408,32 @@ export function Rail({ marks, total, scroll, flow, onJump, bound, scope }: Props
           );
         })}
       </nav>
+      {/* A folded run is one line standing for many, so a press on it can only
+          guess. Opening it first lets the reader pick the question they meant;
+          every row is one mark, and the run closes on the way out. */}
+      {opened !== null && view[opened] && !view[opened].single && (
+        <div
+          className="srail-sub"
+          style={{ top: Math.min(Math.max(view[opened].top, 60), Math.max(60, geom.current.rail - 60)) }}
+        >
+          <div className="srail-subhd">{t("第 {a} 至 {b} 条", { a: view[opened].from + 1, b: view[opened].to + 1 })}</div>
+          {Array.from({ length: view[opened].to - view[opened].from + 1 }, (_, k) => {
+            const mk = marks[view[opened]!.from + k];
+            if (!mk) return null;
+            return (
+              <button
+                key={mk.id}
+                type="button"
+                className="srail-subrow"
+                data-action="rail.pick"
+                onClick={() => { setOpened(null); onJump(mk); }}
+              >
+                {mk.text.slice(0, 60)}
+              </button>
+            );
+          })}
+        </div>
+      )}
       {/* 贴着轨道两端的那几条，预览要收进容器里 —— 否则它会被裁掉一半 */}
       {shown && (
         <div

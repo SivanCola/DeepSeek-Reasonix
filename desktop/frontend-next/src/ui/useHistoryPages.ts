@@ -9,6 +9,10 @@ export interface HistoryPaging {
   hasMore: boolean;
   busy: boolean;
   failed: boolean;
+  /** How many raw messages sit before the loaded window. The rail draws only
+   *  what is mounted, so without this a paged conversation looks shorter than
+   *  it is until someone scrolls up. */
+  earlier: number;
   more: () => Promise<void>;
   reload: () => Promise<void>;
 }
@@ -41,7 +45,7 @@ export function useHistoryPages(port: Pick<AgentPort, "history" | "historyPage">
   const owner = useMemo(() => ({ epoch: 0, cursor: "", snapshot: "", before: 0, total: 0, paging: !!port.historyPage, more: null as Promise<void> | null }), [port]);
   const current = useRef(owner);
   current.current = owner;
-  const [state, setState] = useState({ snapshot: "", revision: 0, hasMore: false, busy: false, failed: false });
+  const [state, setState] = useState({ snapshot: "", revision: 0, hasMore: false, busy: false, failed: false, earlier: 0 });
   useEffect(() => () => { owner.epoch++; }, [owner]);
 
   const load = useCallback(async (applies: () => boolean = () => true) => {
@@ -67,7 +71,7 @@ export function useHistoryPages(port: Pick<AgentPort, "history" | "historyPage">
       owner.before = page?.start ?? 0;
       owner.total = page?.total ?? 0;
       dispatch({ kind: "__restore", ...restored });
-      setState((old) => ({ snapshot: owner.snapshot, revision: old.revision + 1, hasMore: !!owner.cursor, busy: false, failed: false }));
+      setState((old) => ({ snapshot: owner.snapshot, revision: old.revision + 1, hasMore: !!owner.cursor, busy: false, failed: false, earlier: owner.before }));
     } catch (error) {
       if (valid()) setState((old) => ({ ...old, busy: false, failed: true }));
       throw error;
@@ -90,7 +94,7 @@ export function useHistoryPages(port: Pick<AgentPort, "history" | "historyPage">
       owner.before = page.start;
       owner.more = null;
       dispatch({ kind: "__history_prepend", ...projection(page) });
-      setState((old) => ({ ...old, revision: old.revision + 1, hasMore: !!owner.cursor, busy: false, failed: false }));
+      setState((old) => ({ ...old, revision: old.revision + 1, hasMore: !!owner.cursor, busy: false, failed: false, earlier: owner.before }));
     }).catch(async (error) => {
       if (!valid()) return;
       if (error instanceof HttpError && error.reason?.code === "history.snapshot_changed") { await load(); return; }

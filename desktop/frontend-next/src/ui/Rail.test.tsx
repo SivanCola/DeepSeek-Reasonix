@@ -86,6 +86,37 @@ describe("a rail longer than it can show", () => {
     // that holds the thousandth rather than on the thousandth itself.
     expect(Math.abs(picked - 1000)).toBeLessThanOrEqual(40);
   });
+
+  it("opens a folded run instead of guessing which question it stands for", async () => {
+    const { view, onJump } = await rail(2000);
+    const run = view.container.querySelector<HTMLElement>(".srail-m[data-folded]");
+    expect(run, "2000 questions in 600px must fold").not.toBeNull();
+
+    // First press: nothing jumps, because the run names a range and the reader
+    // has not said which question in it yet.
+    fireEvent.click(run!);
+    expect(onJump).not.toHaveBeenCalled();
+    const rows = view.container.querySelectorAll<HTMLElement>(".srail-subrow");
+    expect(rows.length).toBeGreaterThan(1);
+
+    // Second press, on a row: that question, exactly.
+    const label = rows[1].textContent ?? "";
+    fireEvent.click(rows[1]);
+    expect(onJump).toHaveBeenCalledTimes(1);
+    expect((onJump.mock.calls[0][0] as RailMark).text).toBe(label);
+    expect(view.container.querySelector(".srail-sub")).toBeNull();
+  });
+
+  it("jumps on the second press when the run is already open", async () => {
+    const { view, onJump } = await rail(2000);
+    const run = view.container.querySelector<HTMLElement>(".srail-m[data-folded]")!;
+    fireEvent.click(run);
+    fireEvent.click(run);
+    // Open, then the same line again: the contract the run carried before rows
+    // existed, kept so a fast second press is not a dead click.
+    expect(onJump).toHaveBeenCalledTimes(1);
+    expect(view.container.querySelector(".srail-sub")).toBeNull();
+  });
 });
 
 describe("a star belongs to the question, not the row id", () => {

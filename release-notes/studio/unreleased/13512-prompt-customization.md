@@ -1,0 +1,2 @@
+- 文档：用户指南新增「提示词怎么注入」快速说明，区分聊天要求、仓库常驻指令和用户级人设，并说明设置入口及人设保存后的生效时机。关联 #13512。
+- Docs: added a prompt-customization quick start covering chat, repository rules and user-wide personas, including settings navigation and save timing. Refs #13512.

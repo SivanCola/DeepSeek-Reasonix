@@ -59,6 +59,7 @@ export const EN: Record<string, string> = {
   "正在读取历史消息…": "Reading history messages…",
   "历史加载失败 · 重试": "History could not be loaded · Retry",
   "加载更早的消息": "Load earlier messages",
+  "更早还有 {n} 条消息，点击加载": "{n} more messages before these — click to load",
   "正在查找较早消息…": "Searching earlier messages…",
   "部分历史尚未读取": "Some history has not been read",
   "此检查点不包含文件快照": "This checkpoint contains no file snapshots",
