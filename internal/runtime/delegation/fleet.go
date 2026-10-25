@@ -9,6 +9,7 @@ import (
 	"io"
 	"reasonix/internal/runtime/agent"
 	"reasonix/internal/runtime/writeclaim"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -60,6 +61,8 @@ func (*FleetTool) Schema() json.RawMessage {
         "id":{"type":"string","description":"Optional stable id for this task, referenced by other tasks' depends_on. Defaults to the 1-based position."},
         "depends_on":{"type":"array","items":{"type":"string"},"description":"Ids of tasks that must complete before this one starts. This task begins with each dependency's final answer in its context, bounded and split evenly across them, so it need not re-derive their work. Unknown ids, self-edges, and cycles fail preflight. A task whose dependency fails or is skipped is skipped too. Ordered tasks may share write_paths; only tasks that can run at the same time need disjoint claims."},
         "description":{"type":"string","description":"Optional short label shown in the job list."},
+        "context_summary":{"type":"string","description":"Optional selected background, up to 16384 UTF-8 bytes; not a permission grant."},
+        "context_refs":{"type":"array","items":{"type":"string"},"maxItems":64,"description":"Completed sa_... results from this conversation to supply as context, in addition to depends_on results."},
         "profile":{"type":"string","description":"Optional runAs=subagent profile name."},
         "write_paths":{"type":"array","items":{"type":"string"},"description":"Write targets for this item, as file paths when the targets are known: a directory overlaps every path beneath it and serializes writers. Writers that can run at the same time must declare non-overlapping paths; writers ordered by depends_on may share them. Omitting write_paths claims the whole workspace (not under write_lease = optimistic); two concurrent whole-workspace claims (or any overlap between concurrent writers) fail preflight and start nothing."},
         "read_only":{"type":"boolean","description":"Force the read-only registry even if the profile is writable."},
@@ -80,6 +83,7 @@ func (*FleetTool) Schema() json.RawMessage {
 func (*FleetTool) ReadOnly() bool { return false }
 
 type fleetTaskItem struct {
+	taskContextArgs
 	Prompt      string   `json:"prompt"`
 	AdoptRef    string   `json:"adopt_ref"`
 	ID          string   `json:"id"`
@@ -197,7 +201,7 @@ func (f *FleetTool) Execute(ctx context.Context, args json.RawMessage) (result s
 			if writerRegistered {
 				defer observer.UnregisterWriter(writerID)
 			}
-			jobCtx = agent.WithParentSession(jobCtx, parentSession)
+			jobCtx = agent.WithChildMessageReceiver(agent.WithParentSession(jobCtx, parentSession), agent.ChildMessageReceiverFrom(ctx))
 			jobCtx = evidence.WithLedger(jobCtx, backgroundEvidence)
 			defer func() { jobs.PublishEvidence(jobCtx, backgroundEvidence.Summary()) }()
 			// The job shares the Execute-level merger so the group lifecycle
@@ -270,6 +274,10 @@ func (f *FleetTool) buildItemSpecs(ctx context.Context, items []fleetTaskItem, a
 		forceBackgroundClaim := !item.ReadOnly
 		spec, err := f.taskTool.buildTaskSpec(ctx, item.Prompt, item.Description, item.Profile, item.WritePaths, item.Tools, item.MaxSteps, item.Model, item.Effort, "", "", false, item.ReadOnly)
 		if err != nil {
+			return nil, nil, fmt.Errorf("task %d: %w", i+1, err)
+		}
+		item.apply(&spec)
+		if err := f.taskTool.resolveTaskContext(ctx, &spec); err != nil {
 			return nil, nil, fmt.Errorf("task %d: %w", i+1, err)
 		}
 		if forceBackgroundClaim && !spec.Grant.ReadOnly && spec.Grant.WritePaths.Empty() {
@@ -345,7 +353,7 @@ func (f *FleetTool) runFleet(ctx context.Context, sink event.Sink, specs []Profi
 
 	startOne := func(idx int) {
 		spec := specs[idx]
-		spec.Context.Upstream = f.upstreamFor(plan, idx, results)
+		spec.Context.Upstream = append(slices.Clone(spec.Context.Upstream), f.upstreamFor(plan, idx, results)...)
 		label := spec.Task.Description
 		subID := fleetNodeID(parentID, idx)
 		spec.Sched.Priority = plan.rank[idx]

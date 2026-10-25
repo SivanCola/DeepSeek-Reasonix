@@ -5,3 +5,8 @@
 .agentrun-hd .rt { margin-left: auto; flex: none; font: var(--w-reg) var(--fs-meta) var(--mono); color: var(--faint); }
 .agentrun[data-state="running"] .agentrun-hd .rt { color: var(--net); }
 .agentrun > .scroll { flex: 1; min-height: 0; overflow-y: auto; }
+.agentrun-guidance { flex: none; padding: 10px 14px; border-top: 1px solid var(--hair); display: flex; flex-direction: column; gap: 8px; }
+.agentrun-guidance label { display: flex; flex-direction: column; gap: 6px; font: var(--w-reg) var(--fs-ui) var(--ui); }
+.agentrun-guidance textarea { width: 100%; min-width: 0; box-sizing: border-box; resize: vertical; padding: 8px; border: 1px solid var(--hair); border-radius: var(--r-sm); background: var(--surface); color: var(--text); font: inherit; }
+.agentrun-guidance-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.agentrun-guidance-note, .agentrun-guidance p { margin: 0; font: var(--w-reg) var(--fs-meta) var(--ui); color: var(--faint); }

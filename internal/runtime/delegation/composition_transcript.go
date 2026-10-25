@@ -11,6 +11,7 @@ import (
 func (t *TaskTool) prepareTranscriptRunWithPrompt(ctx context.Context, subReg *tool.Registry, modelRef, effortRef, parentSession, execution, parentID, continueFrom, legacyForkFrom, systemPrompt, kind, name string) (run *SubagentRun, err error) {
 	defer func() {
 		if err == nil {
+			bindChildCommunication(subReg, run, execution, upstreamFromContext(ctx))
 			if bindErr := agent.BindChildComposition(ctx, run.Session, false); bindErr != nil {
 				run.Release()
 				run = nil
@@ -54,6 +55,7 @@ func (t *TaskTool) prepareTranscriptRunWithPrompt(ctx context.Context, subReg *t
 		Effort:           identityEffort,
 		ResumedFrom:      firstNonEmpty(continueFrom, legacyForkFrom),
 		UpstreamFrom:     upstreamSources(upstreamFromContext(ctx)),
+		ResultRefs:       upstreamRefs(upstreamFromContext(ctx)),
 	}
 	if continueFrom != "" {
 		return t.transcripts.PrepareContinue(continueFrom, spec)

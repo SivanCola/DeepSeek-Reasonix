@@ -27,6 +27,12 @@ import { EN_COMMUNITY } from "./en_community";
 import { EN_SPONSOR } from "./en_sponsor";
 
 export const EN: Record<string, string> = {
+  "追加指导": "Additional guidance",
+  "补充要求或调整任务方向…": "Add requirements or adjust the task…",
+  "发送给当前子代理": "Send to this subagent",
+  "发送指导": "Send guidance",
+  "子代理已结束，未发送的指导保留在此。": "The subagent has finished. Unsent guidance is kept here.",
+  "指导已排队，将在下一个可处理的边界读取。": "Guidance queued for the next available processing boundary.",
   "部分历史摘要暂不可用，可继续打开会话": "Some history summaries are unavailable. You can still open conversations.",
   "仍在搜索部分历史会话…": "Still searching some historical conversations…",
   "正在读取历史摘要…": "Reading history summaries…",

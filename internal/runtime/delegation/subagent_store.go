@@ -42,6 +42,7 @@ type SubagentSpec struct {
 	// ResumedFrom and UpstreamFrom feed the context capsule only.
 	ResumedFrom  string
 	UpstreamFrom []string
+	ResultRefs   []sessionstore.ContextResultRef
 }
 
 // SubagentRun is a prepared transcript run. Call Release exactly once.

@@ -154,6 +154,8 @@ type CapabilityGrant struct {
 // is given: a prior transcript to resume, and the answers of the dependencies
 // that had to finish first.
 type ContextRequest struct {
+	Summary    string
+	ResultRefs []string
 	// ContinueFrom / ForkFrom are transcript continuation refs (writer path).
 	ContinueFrom string
 	ForkFrom     string

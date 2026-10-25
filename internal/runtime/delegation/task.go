@@ -353,6 +353,8 @@ func (*ReadOnlyTaskTool) Schema() json.RawMessage {
 "properties":{
   "prompt":{"type":"string","description":"What the read-only sub-agent should investigate. Be specific about the evidence or summary to return — the sub-agent does not see this conversation."},
   "description":{"type":"string","description":"Short label for the read-only sub-task (3-7 words). Surfaced in the dispatch line so the user sees what's running."},
+  "context_summary":{"type":"string","description":"Optional selected background, up to 16384 UTF-8 bytes; not a permission grant."},
+  "context_refs":{"type":"array","items":{"type":"string"},"maxItems":64,"description":"Completed sa_... results from this conversation to supply as context, readable in full through a scoped reader."},
   "tools":{"type":"array","items":{"type":"string"},"description":"Optional read-only tool whitelist. Writer, installer, memory mutation, background job, and delegation tools are never exposed."},
   "max_steps":{"type":"integer","description":"Optional cap on tool-call rounds. Defaults to half the parent's cap (min 5).","minimum":1},
   "model":{"type":"string","description":"Optional model override for the sub-agent (a configured provider/model name)."},
@@ -374,6 +376,7 @@ func (r *ReadOnlyTaskTool) Execute(ctx context.Context, args json.RawMessage) (s
 		return "", fmt.Errorf("read_only_task is not configured")
 	}
 	var p struct {
+		taskContextArgs
 		Prompt      string   `json:"prompt"`
 		Description string   `json:"description"`
 		Tools       []string `json:"tools"`
@@ -392,12 +395,14 @@ func (r *ReadOnlyTaskTool) Execute(ctx context.Context, args json.RawMessage) (s
 		return "", err
 	}
 	spec.Worker.SystemPrompt = DefaultReadOnlyTaskSystemPrompt
+	p.apply(&spec)
 	spec.Context.Ephemeral = true
 	return r.task.RunProfileSpec(ctx, spec)
 }
 
 func (t *TaskTool) executeTask(ctx context.Context, args json.RawMessage) (string, error) {
 	var p struct {
+		taskContextArgs
 		Prompt          string   `json:"prompt"`
 		Description     string   `json:"description"`
 		Profile         string   `json:"profile"`
@@ -418,6 +423,9 @@ func (t *TaskTool) executeTask(ctx context.Context, args json.RawMessage) (strin
 		return "", fmt.Errorf("prompt is required")
 	}
 	if p.Isolation != "" {
+		if p.ContextSummary != "" || len(p.ContextRefs) != 0 {
+			return "", fmt.Errorf("isolated tasks cannot take context_summary or context_refs")
+		}
 		return t.executeIsolated(ctx, isolatedCall{mode: p.Isolation, prompt: p.Prompt, model: p.Model, effort: p.Effort, maxSteps: p.MaxSteps,
 			unsupported: isolatedUnsupported(p.Profile, p.WritePaths, p.Tools, p.ContinueFrom, p.ForkFrom, p.RunInBackground)})
 	}
@@ -426,6 +434,7 @@ func (t *TaskTool) executeTask(ctx context.Context, args json.RawMessage) (strin
 	if err != nil {
 		return "", err
 	}
+	p.apply(&spec)
 	return t.RunProfileSpec(ctx, spec)
 }
 
@@ -516,7 +525,7 @@ func (t *TaskTool) resolveWriterClaims(writePaths []string, requireClaim bool) (
 // settleSpecPrompts rejects a run with nothing to do and fills in the system
 // prompt a plain task inherits. A profile that declared one and lost it is an
 // error rather than a fallback: it would run under the wrong instructions.
-func (t *TaskTool) settleSpecPrompts(spec *ProfileExecSpec) error {
+func (t *TaskTool) settleSpecPrompts(ctx context.Context, spec *ProfileExecSpec) error {
 	if strings.TrimSpace(spec.Task.Objective) == "" {
 		return fmt.Errorf("prompt is required")
 	}
@@ -526,7 +535,7 @@ func (t *TaskTool) settleSpecPrompts(spec *ProfileExecSpec) error {
 		}
 		spec.Worker.SystemPrompt = t.sysPrompt
 	}
-	return nil
+	return t.resolveTaskContext(ctx, spec)
 }
 
 // RunProfileSpec executes a unified profile/task specification. Shared by task,
@@ -553,7 +562,7 @@ func (t *TaskTool) RunProfileSpec(ctx context.Context, spec ProfileExecSpec) (re
 		}
 		trk.finish(ctx.Err(), err)
 	}()
-	if err := t.settleSpecPrompts(&spec); err != nil {
+	if err := t.settleSpecPrompts(ctx, &spec); err != nil {
 		return "", err
 	}
 	ctx = agent.BindTaskImages(ctx, spec.Task.Objective)
@@ -568,7 +577,7 @@ func (t *TaskTool) RunProfileSpec(ctx context.Context, spec ProfileExecSpec) (re
 	// same object, so a path the user granted is not reported as an escape.
 	writeGrant := writeclaim.NewWriteGrant(spec.Grant.WritePaths)
 	modelRef, effortRef := t.childRuntimeRef(ctx, spec.Worker.Model, spec.Worker.Effort)
-	subReg, err := t.childRegistry(&spec, childDepth, writeGrant, modelRef)
+	subReg, err := t.collaboratingChildRegistry(ctx, &spec, childDepth, writeGrant, modelRef)
 	if err != nil {
 		return "", err
 	}
@@ -632,9 +641,9 @@ func (t *TaskTool) RunProfileSpec(ctx context.Context, spec ProfileExecSpec) (re
 			defer mutationObserver.UnregisterWriter(recoveryTaskID)
 		}
 		if spec.Grant.ReadOnly {
-			return t.runReadOnlySubSession(withUpstream(runCtx, spec.Context.Upstream), spec.Task.Objective, subReg, sink, maxSteps, prov, pricing, ctxWin, run.Session, childDepth, recoveryTaskID, usageModelRef, mutationObserver, "read_only_"+spec.Worker.Kind, grant)
+			return t.runReadOnlySubSession(withTaskContext(runCtx, spec.Context), spec.Task.Objective, subReg, sink, maxSteps, prov, pricing, ctxWin, run.Session, childDepth, recoveryTaskID, usageModelRef, mutationObserver, "read_only_"+spec.Worker.Kind, grant)
 		}
-		return t.runSubSession(t.withChildEffort(withUpstream(writeclaim.WithSubagentWriteGrant(runCtx, writeGrant), spec.Context.Upstream), ctx, modelRef, effortRef), spec.Task.Objective, subReg, sink, maxSteps, prov, pricing, ctxWin, run.Session, childDepth, recoveryTaskID, usageModelRef, mutationObserver, spec.Worker.Kind, grant, t.observeRootFor(backgroundWriter, writeGrant))
+		return t.runSubSession(t.withChildEffort(withTaskContext(writeclaim.WithSubagentWriteGrant(runCtx, writeGrant), spec.Context), ctx, modelRef, effortRef), spec.Task.Objective, subReg, sink, maxSteps, prov, pricing, ctxWin, run.Session, childDepth, recoveryTaskID, usageModelRef, mutationObserver, spec.Worker.Kind, grant, t.observeRootFor(backgroundWriter, writeGrant))
 	}
 
 	if spec.Sched.RunInBackground {

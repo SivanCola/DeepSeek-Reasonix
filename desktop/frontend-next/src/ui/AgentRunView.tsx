@@ -6,6 +6,7 @@ import type { AgentPort, HistoryMessage } from "../port/port";
 import type { SubagentRun } from "../port/subagent";
 import { delegateStateLabel } from "./delegation";
 import { Transcript } from "./Transcript";
+import { AgentGuidance } from "./AgentGuidance";
 
 const POLL_MS = 1500;
 const noop = async () => undefined as never;
@@ -19,13 +20,17 @@ export function AgentRunView({ port, run, shown }: { port: AgentPort; run: Pick<
   const [info, setInfo] = useState<SubagentRun>();
   const [failed, setFailed] = useState("");
   const scroll = useRef<HTMLDivElement>(null);
+  const loadedRef = useRef("");
 
   useEffect(() => {
     let current = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    setMessages([]);
-    setInfo(undefined);
-    setFailed("");
+    if (loadedRef.current !== run.ref) {
+      loadedRef.current = run.ref;
+      setMessages([]);
+      setInfo(undefined);
+      setFailed("");
+    }
     const read = async (after: number) => {
       try {
         const page = await port.subagentTranscript(run.ref, after);
@@ -61,6 +66,7 @@ export function AgentRunView({ port, run, shown }: { port: AgentPort; run: Pick<
         <Transcript items={items} {...none} scroll={scroll} revision={messages.length} hidden={false} focus={null} onApprove={noop} onFullAccess={noop} onPlan={noop} onAnswer={noop} onForget={noop}
           onExtSubmit={noop} onPrepareRewind={noop} onCommitRewind={noop} onPrepareFileRevert={noop} onCommitFileRevert={noop} port={port} turnRunning={info.state === "running"} />
       )}
+      {info?.ref === run.ref && <AgentGuidance key={run.ref} port={port} runRef={run.ref} running={info.state === "running"} />}
     </div>
   );
 }

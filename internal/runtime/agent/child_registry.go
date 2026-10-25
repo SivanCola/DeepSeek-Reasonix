@@ -28,6 +28,8 @@ var subagentRecursiveTools = []string{
 }
 
 var subagentAlwaysHiddenTools = []string{
+	"reply_to_parent",
+	"read_task_context",
 	"parallel_tasks",
 	"fleet",
 	"read_subagent_result",

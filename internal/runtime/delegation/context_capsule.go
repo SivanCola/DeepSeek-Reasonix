@@ -40,7 +40,7 @@ func metaFromSpec(ref string, status sessionstore.SubagentStatus, created, updat
 		ParentSession:      strings.TrimSpace(spec.ParentSession),
 		ParentToolCallID:   strings.TrimSpace(spec.ParentToolCallID),
 		ResumedFrom:        strings.TrimSpace(spec.ResumedFrom),
-		Inherited:          sessionstore.InheritedContext{UpstreamFrom: spec.UpstreamFrom},
+		Inherited:          sessionstore.InheritedContext{UpstreamFrom: spec.UpstreamFrom, ResultRefs: spec.ResultRefs},
 	}
 	return sessionstore.SubagentMeta{
 		Ref:              ref,
