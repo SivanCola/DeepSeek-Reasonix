@@ -536,6 +536,10 @@ func (t *TaskTool) settleSpecPrompts(ctx context.Context, spec *ProfileExecSpec)
 // fleet items, and boot-wired skill runners so prompt, tools, claims, and
 // scheduling cannot drift across entry points.
 func (t *TaskTool) RunProfileSpec(ctx context.Context, spec ProfileExecSpec) (result string, err error) {
+	ctx, err = t.isolatedSpecContext(ctx, spec)
+	if err != nil {
+		return "", err
+	}
 	if result, err, handled := t.dispatchProfile(ctx, spec); handled {
 		return result, err
 	}
@@ -621,11 +625,7 @@ func (t *TaskTool) RunProfileSpec(ctx context.Context, spec ProfileExecSpec) (re
 
 	recoveryTaskID := subagentRecoveryTaskID(ctx, run.Ref)
 	backgroundWriter := (spec.Sched.RunInBackground || spec.Sched.BackgroundWriter) && !spec.Grant.ReadOnly
-	var mutationObserver *checkpoint.MutationObserver
-	if t.mutationObserver != nil {
-		turn := t.mutationObserver.OwnershipTurn()
-		mutationObserver = t.mutationObserver.CloneForSubagent(recoveryTaskID, turn, backgroundWriter)
-	}
+	mutationObserver := t.childMutationObserver(recoveryTaskID, backgroundWriter)
 	runSession := func(runCtx context.Context, sink event.Sink, writerAlreadyRegistered bool) (string, error) {
 		if mutationObserver != nil && backgroundWriter && !writerAlreadyRegistered {
 			turn := mutationObserver.OwnershipTurn()

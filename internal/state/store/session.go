@@ -337,6 +337,22 @@ func SessionInboxDir(sessionPath string) string {
 	return sessionStem(sessionPath) + ".inbox"
 }
 
+// SessionFleetRecoveryDir holds explicit replay recipes, never startup actions.
+func SessionFleetRecoveryDir(sessionPath string) string {
+	if strings.TrimSpace(sessionPath) == "" {
+		return ""
+	}
+	return sessionStem(sessionPath) + ".fleet-recovery-v1"
+}
+
+// SessionIsolationBinding preserves a child's retained-environment identity.
+func SessionIsolationBinding(sessionPath string) string {
+	if strings.TrimSpace(sessionPath) == "" {
+		return ""
+	}
+	return sessionStem(sessionPath) + ".isolation-v1.json"
+}
+
 // SessionCleanupPending is the delayed-cleanup marker (<id>.cleanup-pending.json).
 func SessionCleanupPending(sessionPath string) string {
 	sessionPath = strings.TrimSpace(sessionPath)
@@ -363,6 +379,7 @@ func SessionSidecarFiles(sessionPath string) []string {
 		SessionGoalState(sessionPath),
 		SessionAdjudication(sessionPath),
 		SessionExecution(sessionPath),
+		SessionIsolationBinding(sessionPath),
 		SessionEventLog(sessionPath),
 		SessionWireLog(sessionPath),
 		SessionWireLogMeta(sessionPath),
@@ -385,5 +402,5 @@ func SessionSidecarDirs(sessionPath string) []string {
 	if sessionPath == "" {
 		return nil
 	}
-	return []string{SessionOutputsDir(sessionPath), SessionBlobsDir(sessionPath)}
+	return []string{SessionOutputsDir(sessionPath), SessionBlobsDir(sessionPath), SessionFleetRecoveryDir(sessionPath)}
 }

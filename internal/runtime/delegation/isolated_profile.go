@@ -33,9 +33,14 @@ func (t *TaskTool) runIsolatedProfile(ctx context.Context, spec ProfileExecSpec)
 	if t.isolated == nil || t.isolated.profile == nil {
 		return "", tool.Refusal{Code: isolation.CodeUnavailable, Message: "worktree isolation is not enabled in this session ([agent] worktree_isolation)"}
 	}
-	if spec.Context.ContinueFrom != "" || spec.Context.ForkFrom != "" {
-		return "", tool.Refusal{Code: codeIsolationUnsupported, Message: "continue_from and fork_from cannot resume in a fresh worktree; start a new task with selected context"}
+	meta, err := t.isolatedContinuation(ctx, &spec)
+	if err != nil {
+		return "", err
 	}
+	if spec.Context.ForkFrom != "" || (spec.Context.ContinueFrom != "" && meta.IsolationRef == "") {
+		return "", tool.Refusal{Code: codeIsolationUnsupported, Message: "continue_from must name a retained isolated task; fork_from cannot copy a worktree"}
+	}
+	binding := isolatedRunBinding{Grant: isolationGrant(spec)}
 	if err := t.settleSpecPrompts(ctx, &spec); err != nil {
 		return "", err
 	}
@@ -64,7 +69,11 @@ func (t *TaskTool) runIsolatedProfile(ctx context.Context, spec ProfileExecSpec)
 		if err := agent.CheckSharedTaskBudget(runCtx); err != nil {
 			return "", err
 		}
-		return t.isolated.store.Execute(runCtx, func(childCtx context.Context, run isolation.Run) (isolation.Outcome, error) {
+		return t.isolated.store.ExecuteContinuation(runCtx, func(childCtx context.Context, run isolation.Run) (isolation.Outcome, error) {
+			binding := binding
+			binding.ID = run.ID
+			binding.Source, binding.Worktree = t.workspaceRoot, run.WorkspaceRoot
+			childCtx = context.WithValue(childCtx, isolatedRunKey{}, binding)
 			childSpec := spec
 			claim, err := relocateClaim(spec.Grant.WritePaths, t.workspaceRoot, run.WorkspaceRoot)
 			if err != nil {
@@ -72,7 +81,7 @@ func (t *TaskTool) runIsolatedProfile(ctx context.Context, spec ProfileExecSpec)
 			}
 			childSpec.Grant.WritePaths = claim
 			return t.isolated.profile(childCtx, run, childSpec)
-		}, t.isolated.root, spec.Task.Objective, spec.Worker.Model)
+		}, t.isolated.root, spec.Task.Objective, spec.Worker.Model, agent.ParentSession(runCtx), meta.IsolationRef)
 	}
 	if !background {
 		return execute(ctx)
@@ -94,6 +103,15 @@ func (t *TaskTool) runIsolatedProfile(ctx context.Context, spec ProfileExecSpec)
 }
 
 func relocateClaim(claim writeclaim.WritePathSet, source, target string) (writeclaim.WritePathSet, error) {
+	resolved, err := filepath.EvalSymlinks(source)
+	if err != nil {
+		return writeclaim.WritePathSet{}, err
+	}
+	source = resolved
+	target, err = filepath.EvalSymlinks(target)
+	if err != nil {
+		return writeclaim.WritePathSet{}, err
+	}
 	if claim.WholeWorkspace {
 		claim.WorkspaceRoot = target
 		return claim, nil

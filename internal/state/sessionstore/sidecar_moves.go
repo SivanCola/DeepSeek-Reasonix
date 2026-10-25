@@ -8,6 +8,9 @@ import "reasonix/internal/state/store"
 func sessionSidecarMoves(oldPath, newPath string) [][2]string {
 	return [][2]string{
 		{store.SessionGoalState(oldPath), store.SessionGoalState(newPath)},
+		{store.SessionExecution(oldPath), store.SessionExecution(newPath)},
+		{store.SessionIsolationBinding(oldPath), store.SessionIsolationBinding(newPath)},
+		{store.SessionFleetRecoveryDir(oldPath), store.SessionFleetRecoveryDir(newPath)},
 		{store.SessionBlobsDir(oldPath), store.SessionBlobsDir(newPath)},
 		{store.SessionEventLog(oldPath), store.SessionEventLog(newPath)},
 		{store.SessionEventLogDamaged(oldPath), store.SessionEventLogDamaged(newPath)},

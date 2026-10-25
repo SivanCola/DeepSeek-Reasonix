@@ -33,7 +33,7 @@ func (t *TaskTool) withIsolation(schema json.RawMessage) json.RawMessage {
 	if err := json.Unmarshal(schema, &s); err != nil {
 		return schema
 	}
-	s.Properties["isolation"] = json.RawMessage(`{"type":"string","enum":["worktree"],"description":"Run in a fresh git worktree with the same delegation controls, selected context and reporting. Changes stay under an iso_ id for apply_isolated or discard_isolated. Existing transcripts cannot resume in a different worktree."}`)
+	s.Properties["isolation"] = json.RawMessage(`{"type":"string","enum":["worktree"],"description":"Run in a git worktree with the same delegation controls, selected context and reporting. Changes stay under an iso_ id for apply_isolated or discard_isolated. A compatible continue_from resumes its original retained worktree, even when isolation is omitted; repeat the original tools, model and write_paths. Applied/discarded worktrees and fork_from cannot be resumed."}`)
 	out, err := json.Marshal(s)
 	if err != nil {
 		return schema

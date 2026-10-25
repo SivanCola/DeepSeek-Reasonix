@@ -176,11 +176,14 @@ func (s *SubagentStore) Transcript(ref, parentSession, workspaceRoot string, aft
 		// only one that still says running is being written.
 		out.Live = meta.Status == sessionstore.SubagentRunning
 	} else {
-		loaded, err := sessionstore.LoadSession(s.sessionPath(ref))
+		page, err := sessionstore.ReadStoredMessageWindow(s.sessionPath(ref), after, limit)
 		if err != nil {
 			return RunTranscript{}, fmt.Errorf("load subagent transcript %q: %w", ref, err)
 		}
-		sess = loaded
+		out.Snapshot = page.Identity
+		out.After, out.Next, out.Total = page.Start, page.End, page.Total
+		out.Messages, out.ToolContext, out.WorkMs = page.Messages, page.ToolContext, page.WorkMs
+		return out, nil
 	}
 	page := sess.ReadMessageWindow(after, limit)
 	out.Snapshot = page.Identity

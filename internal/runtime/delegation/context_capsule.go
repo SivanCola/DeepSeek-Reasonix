@@ -29,6 +29,10 @@ func systemPromptSource(kind, name, systemPrompt string) string {
 // continuation must match, plus the capsule describing the context it was given.
 func metaFromSpec(ref string, status sessionstore.SubagentStatus, created, updated time.Time, spec SubagentSpec) sessionstore.SubagentMeta {
 	scope, schemaHash := toolIdentity(spec.Registry, spec.ToolContext)
+	if spec.IsolationRef != "" {
+		// Older readers must refuse continuation outside the bound worktree.
+		schemaHash = bytesHash([]byte(schemaHash + "\x00" + spec.IsolationRef + "\x00" + spec.IsolationGrant))
+	}
 	capsule := sessionstore.ContextCapsule{
 		WorkspaceRoot:      strings.TrimSpace(spec.WorkspaceRoot),
 		SystemPromptSource: systemPromptSource(spec.Kind, spec.Name, spec.SystemPrompt),
@@ -43,6 +47,8 @@ func metaFromSpec(ref string, status sessionstore.SubagentStatus, created, updat
 		Inherited:          sessionstore.InheritedContext{UpstreamFrom: spec.UpstreamFrom, ResultRefs: spec.ResultRefs},
 	}
 	return sessionstore.SubagentMeta{
+		IsolationRef:     spec.IsolationRef,
+		IsolationGrant:   spec.IsolationGrant,
 		Ref:              ref,
 		CreatedAt:        created,
 		UpdatedAt:        updated,

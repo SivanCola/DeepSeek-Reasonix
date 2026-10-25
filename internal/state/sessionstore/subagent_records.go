@@ -38,10 +38,12 @@ const (
 // SubagentMeta is the sidecar for a persisted sub-agent transcript. It captures
 // the execution identity that must stay stable for continuation/fork.
 type SubagentMeta struct {
-	Ref       string         `json:"ref"`
-	CreatedAt time.Time      `json:"createdAt"`
-	UpdatedAt time.Time      `json:"updatedAt"`
-	Status    SubagentStatus `json:"status"`
+	IsolationRef   string         `json:"isolationRef,omitempty"`
+	IsolationGrant string         `json:"isolationGrant,omitempty"`
+	Ref            string         `json:"ref"`
+	CreatedAt      time.Time      `json:"createdAt"`
+	UpdatedAt      time.Time      `json:"updatedAt"`
+	Status         SubagentStatus `json:"status"`
 	// TerminalReason refines a terminal status the way its producer meant it,
 	// so a reader tells a deadline from a cancellation without a second status.
 	TerminalReason string `json:"terminalReason,omitempty"`

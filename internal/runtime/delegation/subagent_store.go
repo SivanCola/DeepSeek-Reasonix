@@ -1,7 +1,6 @@
 package delegation
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -19,31 +18,8 @@ import (
 
 	"reasonix/internal/base/fileutil"
 	fileencoding "reasonix/internal/base/fileutil/encoding"
-	"reasonix/internal/contract/tool"
 	"reasonix/internal/state/store"
 )
-
-// SubagentSpec describes the current invocation identity.
-type SubagentSpec struct {
-	Kind             string
-	Name             string
-	WorkspaceRoot    string
-	ParentSession    string
-	ParentToolCallID string
-	SystemPrompt     string
-	// ExecutionID is the execution this run belongs to, allocated before the
-	// work was opened. A store ref cannot stand in for it: work the scheduler
-	// is holding back has an execution and no transcript yet.
-	ExecutionID string
-	Registry    *tool.Registry
-	ToolContext context.Context
-	Model       string
-	Effort      string
-	// ResumedFrom and UpstreamFrom feed the context capsule only.
-	ResumedFrom  string
-	UpstreamFrom []string
-	ResultRefs   []sessionstore.ContextResultRef
-}
 
 // SubagentRun is a prepared transcript run. Call Release exactly once.
 type SubagentRun struct {
@@ -644,6 +620,10 @@ func (s *SubagentStore) LoadMeta(ref string) (sessionstore.SubagentMeta, error) 
 	if err := json.Unmarshal(data, &meta); err != nil {
 		return meta, &sessionstore.SubagentMetaDecodeError{Ref: ref, Err: err}
 	}
+	meta.Ref = ref
+	if err := s.restoreIsolationBinding(&meta); err != nil {
+		return meta, &sessionstore.SubagentMetaDecodeError{Ref: ref, Err: err}
+	}
 	return meta, nil
 }
 
@@ -758,6 +738,9 @@ func (s *SubagentStore) metaPath(ref string) string    { return filepath.Join(s.
 
 func (s *SubagentStore) saveMeta(meta sessionstore.SubagentMeta) error {
 	if err := os.MkdirAll(s.dir, 0o755); err != nil {
+		return err
+	}
+	if err := s.preserveIsolationBinding(meta); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(meta, "", "  ")

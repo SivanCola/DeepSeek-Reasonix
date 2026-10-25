@@ -65,7 +65,7 @@ func (t *TaskTool) resolveTaskContext(ctx context.Context, spec *ProfileExecSpec
 		if err != nil {
 			return err
 		}
-		if err := t.transcripts.checkOwner(ref, meta, agent.ParentSession(ctx), t.workspaceRoot); err != nil {
+		if err := t.transcripts.checkOwner(ref, meta, agent.ParentSession(ctx), firstNonEmpty(t.transcriptRoot, t.workspaceRoot)); err != nil {
 			return err
 		}
 		for _, source := range meta.Capsule.Inherited.ResultRefs {
@@ -93,7 +93,7 @@ func (t *TaskTool) resolveTaskContext(ctx context.Context, spec *ProfileExecSpec
 			spec.Context.Upstream = append(spec.Context.Upstream, snapshot)
 			continue
 		}
-		answer, _, err := t.transcripts.ReadFinalAnswer(ref, agent.ParentSession(ctx), t.workspaceRoot)
+		answer, _, err := t.transcripts.ReadFinalAnswer(ref, agent.ParentSession(ctx), firstNonEmpty(t.transcriptRoot, t.workspaceRoot))
 		if err != nil {
 			return fmt.Errorf("context result %q: %w", ref, err)
 		}

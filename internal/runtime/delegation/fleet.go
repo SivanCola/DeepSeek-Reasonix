@@ -48,6 +48,7 @@ func (*FleetTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
 "type":"object",
 "properties":{
+	"recovery":{"type":"object","description":"Explicit recovery of a saved fleet in this root conversation. list discovers ids; inspect shows tasks and reused results; resume reruns unfinished work under current permissions, retaining completed answers. Unfinished tasks may have partial writes. Mutually exclusive with tasks, fail_fast and run_in_background; never runs on startup.","properties":{"action":{"type":"string","enum":["list","inspect","resume"]},"id":{"type":"string"}},"required":["action"],"additionalProperties":false},
   "tasks":{
     "type":"array",
     "description":"Array of 2–64 sub-tasks to run under the session scheduler.",
@@ -76,7 +77,7 @@ func (*FleetTool) Schema() json.RawMessage {
   "fail_fast":{"type":"boolean","description":"Stop starting new tasks after the first failure. Tasks already running are left to finish so partial writes are not abandoned mid-flight. Omitted (the default) means independent branches keep going; a failed task's dependents are skipped either way."},
   "run_in_background":{"type":"boolean","description":"Run the whole fleet asynchronously and return a job id collectable with wait. Items queue for concurrency/write slots inside the job."}
 },
-"required":["tasks"]
+"anyOf":[{"required":["tasks"]},{"required":["recovery"]}]
 }`)
 }
 
@@ -108,6 +109,33 @@ type fleetItemResult struct {
 	ref     string
 }
 
+type fleetParams struct {
+	Recovery        *fleetRecoveryRequest `json:"recovery"`
+	Tasks           []fleetTaskItem       `json:"tasks"`
+	FailFast        bool                  `json:"fail_fast"`
+	RunInBackground bool                  `json:"run_in_background"`
+}
+
+func decodeFleetParams(args json.RawMessage) (fleetParams, error) {
+	var params fleetParams
+	dec := json.NewDecoder(bytes.NewReader(args))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&params); err != nil {
+		return params, fmt.Errorf("invalid args: %w", err)
+	}
+	if dec.Decode(new(any)) != io.EOF {
+		return params, fmt.Errorf("expected one fleet request")
+	}
+	if params.Recovery != nil {
+		if params.Tasks != nil || params.FailFast || params.RunInBackground {
+			return params, fmt.Errorf("recovery is mutually exclusive with tasks, fail_fast and run_in_background")
+		}
+	} else if n := len(params.Tasks); n < fleetMinTasks || n > fleetMaxTasks {
+		return params, fmt.Errorf("fleet requires between %d and %d tasks (got %d)", fleetMinTasks, fleetMaxTasks, n)
+	}
+	return params, nil
+}
+
 func (f *FleetTool) Execute(ctx context.Context, args json.RawMessage) (result string, err error) {
 	if f == nil || f.taskTool == nil {
 		return "", fmt.Errorf("fleet is not configured")
@@ -123,6 +151,7 @@ func (f *FleetTool) Execute(ctx context.Context, args json.RawMessage) (result s
 		groupParentID = "fleet"
 		groupSink = event.Discard
 	}
+	groupParentID = f.recoveryGroup(ctx, groupParentID)
 	// The merger emits already-namespaced group/child IDs, so it must use the
 	// raw call sink. A nested subSink would prefix the group ID a second time
 	// (group/group), leaving the frontend unable to match its lifecycle card.
@@ -142,18 +171,12 @@ func (f *FleetTool) Execute(ctx context.Context, args json.RawMessage) (result s
 	}()
 	ctx = withSubagentProgressMerger(ctx, merger)
 
-	var params struct {
-		Tasks           []fleetTaskItem `json:"tasks"`
-		FailFast        bool            `json:"fail_fast"`
-		RunInBackground bool            `json:"run_in_background"`
+	params, err := decodeFleetParams(args)
+	if err != nil {
+		return "", err
 	}
-	dec := json.NewDecoder(bytes.NewReader(args))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&params); err != nil {
-		return "", fmt.Errorf("invalid args: %w", err)
-	}
-	if n := len(params.Tasks); n < fleetMinTasks || n > fleetMaxTasks {
-		return "", fmt.Errorf("fleet requires between %d and %d tasks (got %d)", fleetMinTasks, fleetMaxTasks, n)
+	if params.Recovery != nil {
+		return f.executeRecovery(ctx, *params.Recovery)
 	}
 
 	call, err := f.preflight(ctx, params.Tasks, params.FailFast)
@@ -161,6 +184,12 @@ func (f *FleetTool) Execute(ctx context.Context, args json.RawMessage) (result s
 		return "", err
 	}
 	plan, specs, adopted := call.plan, call.specs, call.adopted
+	recovery, err := f.saveRecovery(ctx, params.Tasks, call, groupParentID)
+	if err != nil {
+		return "", err
+	}
+	recoveryHandoff := false
+	defer recovery.finish(&result, &recoveryHandoff)
 
 	if params.RunInBackground {
 		for i := range specs {
@@ -194,6 +223,7 @@ func (f *FleetTool) Execute(ctx context.Context, args json.RawMessage) (result s
 			}
 		}
 		job := jm.StartForSession(jobs.SessionFromContext(ctx), "fleet", label, func(jobCtx context.Context, _ io.Writer) (string, error) {
+			defer recovery.close()
 			// Execute returns as soon as the job is registered, so the job owns
 			// the handed-off merger until every child preview and terminal has
 			// flushed. Closing it in Execute would strand child cards at running.
@@ -201,9 +231,7 @@ func (f *FleetTool) Execute(ctx context.Context, args json.RawMessage) (result s
 			if writerRegistered {
 				defer observer.UnregisterWriter(writerID)
 			}
-			jobCtx = agent.WithChildMessageReceiver(agent.WithParentSession(jobCtx, parentSession), agent.ChildMessageReceiverFrom(ctx))
-			jobCtx = agent.InheritTaskBudget(jobCtx, ctx)
-			jobCtx = WithExecutionSessionPath(jobCtx, f.taskTool.executionSessionPath(ctx))
+			jobCtx = agent.WithChildMessageReceiver(f.taskTool.backgroundContext(jobCtx, ctx, parentSession), agent.ChildMessageReceiverFrom(ctx))
 			jobCtx = evidence.WithLedger(jobCtx, backgroundEvidence)
 			defer func() { jobs.PublishEvidence(jobCtx, backgroundEvidence.Summary()) }()
 			// The job shares the Execute-level merger so the group lifecycle
@@ -216,6 +244,7 @@ func (f *FleetTool) Execute(ctx context.Context, args json.RawMessage) (result s
 		// still closes the merger after the synchronous call returns.
 		lifecycleHandoff = true
 		mergerCloseHandoff = true
+		recoveryHandoff = true
 		return fmt.Sprintf("Started background fleet %q (%s). Collect results with wait; you will be notified when it finishes.", job.ID, label), nil
 	}
 

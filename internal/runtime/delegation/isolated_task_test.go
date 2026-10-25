@@ -65,7 +65,7 @@ func TestIsolatedTaskRefusals(t *testing.T) {
 		return isolation.Outcome{}, nil
 	})
 	_, err = tt.Execute(ctx, json.RawMessage(`{"prompt":"x","isolation":"worktree","continue_from":"sa_previous"}`))
-	if refusalCode(err) != codeIsolationUnsupported || !strings.Contains(err.Error(), "continue_from") || ran {
+	if err == nil || !strings.Contains(err.Error(), "continue_from") || ran {
 		t.Fatalf("unsupported args: err = %v, ran = %v", err, ran)
 	}
 	_, err = tt.Execute(ctx, json.RawMessage(`{"prompt":"x","isolation":"copy"}`))

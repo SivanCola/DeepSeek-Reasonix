@@ -43,6 +43,8 @@ func (t *TaskTool) prepareTranscriptRunWithPrompt(ctx context.Context, subReg *t
 	}
 	identityModel, identityEffort := t.effectiveIdentity(modelRef, effortRef)
 	spec := SubagentSpec{
+		IsolationRef:     isolatedBinding(ctx).ID,
+		IsolationGrant:   isolatedBinding(ctx).Grant,
 		Kind:             kind,
 		Name:             name,
 		WorkspaceRoot:    firstNonEmpty(t.transcriptRoot, t.workspaceRoot),

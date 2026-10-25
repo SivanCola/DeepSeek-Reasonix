@@ -153,14 +153,35 @@ delegation contracts.
 
 Changes remain pending until `apply_isolated` or `discard_isolated` settles them.
 Background execution retains this contract. Nested workers cannot create another
-isolated kernel. A transcript cannot resume in a fresh worktree; select its result
-as context for a new task instead.
+isolated kernel.
+
+`continue_from` resumes a compatible transcript in its original
+retained worktree, including after restart. The host routes it there even when
+`isolation` is omitted. Repeat the original tool/model/write scope; a mismatch,
+foreign owner, applied/discarded result, or `fork_from` is refused.
+
+Bound failed or interrupted runs can continue after acquiring the worktree and
+transcript locks; ordinary stopped transcripts keep their existing refusal.
+Transcript loading repairs unfinished tool exchanges before replay.
+
+The operation
+lock covers the entire run, excluding apply, discard and expiry cleanup. Empty
+resumable worktrees are retained too. Older isolated results without a binding
+remain readable and settleable, but cannot be resumed this way.
 
 根代理的 `task` 使用 `isolation: "worktree"` 时，在独立工作区内调用普通委派运行器，
 统一遵守角色、工具上限、写入路径、上下文、报告、历史和调度约定。后台执行同样生效。
 更改仍需通过 `apply_isolated` 或 `discard_isolated` 处理，不会自动写回源工作区。
 
-嵌套代理不能另建隔离内核；旧历史不能在新建工作树中直接续接，可选择其结果作为新任务上下文。
+嵌套代理不能另建隔离内核。`continue_from` 可在重启后续接兼容历史及原 worktree，遗漏
+`isolation` 也不会回到主工作区。需保持原工具、模型与写入范围；归属不符、已应用或丢弃、
+使用 `fork_from` 均拒绝。
+
+带隔离绑定的失败或中断任务，在取得工作树和历史锁后也可续接；加载时修复未完成的工具交互。
+普通失败或中断历史仍维持原有拒绝行为。
+
+运行全程持有操作锁，阻止应用、丢弃及过期清理；无文件修改的
+可续接 worktree 也会保留。旧版本未记录隔离绑定的结果仍可读取及处理，但不能原地续接。
 
 ## History and recovery / 历史与恢复
 
@@ -168,13 +189,56 @@ Studio opens the latest 100 messages and loads earlier pages on request, preserv
 the viewport. Live polling appends new pages. A rewrite changes the snapshot identity
 and reloads the latest page instead of joining different histories.
 
+Stored pages use validated byte offsets and compact timing/tool-call metadata.
+Only requested message bodies and out-of-page tool calls needed by those messages
+are decoded.
+
+Missing, stale or older derived indexes are repaired once from the
+authoritative log under save locks; loading the compact index remains O(message
+count). Live pages continue to read the in-memory session.
+
 Graph recovery keeps dependency order distinct from actual context delivery.
 Each completed execution records its result identity before releasing the transcript,
 so reusing a member's transcript does not erase earlier execution outcomes.
 
+Root `fleet` calls persist bounded, versioned recovery recipes before execution.
+Use `fleet {"recovery":{"action":"list"}}` to discover recovery ids, then
+`inspect` with `id` to see the plan and `resume` with `id` to explicitly execute
+unfinished nodes.
+
+Completed, unchanged results are adopted; an entirely completed
+graph executes nothing. Unfinished tasks start fresh and may already have partial
+writes: inspect their state before resuming. Recovery never runs at startup.
+
+The current runtime recompiles profiles, tool ceilings, context and write claims;
+changed execution configuration, foreign owners/workspaces, unknown formats and
+simultaneous recovery attempts are refused. Recipes contain no approval grants.
+
+Each retry checkpoints its execution ids before admission so later retries can
+reuse its completions. Old graphs without recipes require an explicit new fleet
+with `adopt_ref`.
+
+Recovery is available through the fleet tool; no separate Studio
+resume button is added.
+
 Studio 首次打开只读取最近 100 条消息，按需加载更早页并保持滚动位置；运行中的消息继续轮询。
 历史压缩或重写后会重新读取最新页，不拼接不同快照。任务图恢复区分依赖顺序和实际交接，
 在释放历史前记录执行结果标识，成员续接不会覆盖此前执行的完成状态。
+
+已落盘历史使用经校验的字节索引，只解码目标页及跨页工具结果所需的调用记录；旧版、缺失或
+过期索引在保存锁内从权威日志修复一次。紧凑索引仍需随消息总数读取，运行中历史读取内存。
+
+根会话的 `fleet` 在执行前保存有大小和版本限制的恢复计划。通过 `recovery.action` 的
+`list` 查找 id、`inspect` 查看计划、`resume` 显式重跑未完成节点；已完成且未被续写的结果
+直接复用，全部完成时不执行。
+
+未完成节点可能已有部分写入，恢复前应检查现场；启动应用不会自动重跑。
+恢复时重新解析当前角色、工具上限、上下文及写入范围，不从磁盘恢复审批授权。
+配置改变、跨会话或跨工作区、未知格式以及重复恢复会被拒绝。
+
+每次尝试先记录执行
+标识，下一次恢复可复用此次完成结果。没有恢复计划的旧图仍需显式重建 fleet 并使用
+`adopt_ref`。入口为 fleet 工具，本次未增加独立的 Studio 恢复按钮。
 
 ## Concurrency and spend / 并发与成本
 
@@ -221,6 +285,13 @@ changes rather than widening authority.
 子代理不能管理成员目录。续接保持模型和工具范围；提示词或工具定义不兼容时明确拒绝。
 
 ## Compatibility / 兼容性
+
+| Record / 记录 | Old data / 旧数据 | New reader / 新版本 | Previous reader / 旧版本 |
+| --- | --- | --- | --- |
+| Display index page metadata / 分页索引 | Missing fields trigger derived-index repair. 缺失时重建派生索引。 | Bounded payload reads with cross-page call context. 按范围读取并补齐工具调用。 | Ignores optional fields; can rebuild its own index. 忽略新增字段，可重建自己的索引。 |
+| Isolated transcript binding / 隔离历史绑定 | No binding means no worktree continuation. 无绑定不可原地续接。 | Validates owner, workspace and original write scope; a versioned sidecar preserves binding across older metadata writers. 校验归属和原写入范围，独立版本化侧文件防止旧写入器丢失绑定。 | Bound schema identity differs, so continuation fails closed; history remains readable. 身份哈希不符而拒绝续接，历史仍可读。 |
+| Continuation fence / 续接围栏 | Existing results keep existing settlement behavior. 原结果维持原处理方式。 | Recognizes only validated version 1 records, preserving unknown records. 仅识别经校验的 v1 记录，保留未知记录。 | Existing settlement fence refuses apply/discard/cleanup of bound results. 已有围栏阻止处理或清理新结果。 |
+| Fleet recovery recipe / 图恢复计划 | Absent recipes are not guessed from history. 不从旧历史猜测执行计划。 | Strict versioned decoding; current permissions are recomputed. 严格解析并重新计算当前权限。 | Separate sidecar is ignored and never auto-executed. 忽略独立侧文件，不自动执行。 |
 
 The optional transcript `snapshot` field is additive; old clients ignore it.
 Old execution journals remain readable. New terminal records add an optional
