@@ -10,7 +10,7 @@
     "start": "electron .",
     "build:host": "node packaging/build-host.js",
     "build:linux-payload": "node packaging/linux-payload.js",
-    "test": "node --test test/unit.mjs test/linux-packaging.test.mjs",
+    "test": "node --test test/unit.mjs test/linux-packaging.test.mjs test/frameguard.test.mjs",
     "build:app": "electron-builder --dir",
     "build:dist": "electron-builder",
     "smoke": "electron test/smoke.js",
