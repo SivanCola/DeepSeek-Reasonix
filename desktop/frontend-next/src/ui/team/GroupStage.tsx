@@ -67,8 +67,8 @@ function GroupChat({ group, view, team, onAdoptPane, onSaved }: {
   const [settings, setSettings] = useState(false);
   const [older, setOlder] = useState(false);
   const [paging, setPaging] = useState(false);
-  const end = useRef<HTMLDivElement>(null);
   const log = useRef<HTMLDivElement>(null);
+  const following = useRef(true);
   const anchor = useRef<number | null>(null);
   const agents = new Map(view.agents.map((a) => [a.id, a]));
   const nameOf = (id: string) => (id === "user" ? t("你") : agents.get(id)?.name ?? t("另一个 Agent"));
@@ -89,8 +89,11 @@ function GroupChat({ group, view, team, onAdoptPane, onSaved }: {
     );
     return () => { live = false; };
   }, [group.id, group.lastSeq, view.revision]);
-  useEffect(() => {
-    if (anchor.current === null) end.current?.scrollIntoView?.({ block: "end" });
+  // A new line is followed only by someone already at the end; reading older
+  // lines is never interrupted by one arriving.
+  useLayoutEffect(() => {
+    const el = log.current;
+    if (el && anchor.current === null && following.current) el.scrollTop = el.scrollHeight;
   }, [lines.at(-1)?.seq]);
   // Lines paged in above keep the ones on screen where they were.
   useLayoutEffect(() => {
@@ -118,6 +121,7 @@ function GroupChat({ group, view, team, onAdoptPane, onSaved }: {
     const body = text.trim();
     if (!body || busy) return;
     setBusy(true);
+    following.current = true;
     try {
       await team.postGroup(group.id, body, mentions.filter((m) => m !== EVERYONE), mentions.includes(EVERYONE));
       setText("");
@@ -161,7 +165,8 @@ function GroupChat({ group, view, team, onAdoptPane, onSaved }: {
           <StudioIcon name="close" />
         </button>
       </header>
-      <div className="team-stage-log" role="log" aria-live="polite" ref={log}>
+      <div className="team-stage-log" role="log" aria-live="polite" ref={log} data-action="team.group-scroll" data-target={group.id}
+        onScroll={(ev) => { const el = ev.currentTarget; following.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48; }}>
         {older && (
           <button type="button" className="sessmore" data-action="team.group-older" data-target={group.id} disabled={paging} onClick={() => void loadOlder()}>
             {t("加载更早的消息")}
@@ -200,7 +205,6 @@ function GroupChat({ group, view, team, onAdoptPane, onSaved }: {
             </div>
           ),
         )}
-        <div ref={end} />
       </div>
       {(speaking || group.round.working.length > 0 || waiting.length > 0) && (
         <div className="team-dock" role="status">
