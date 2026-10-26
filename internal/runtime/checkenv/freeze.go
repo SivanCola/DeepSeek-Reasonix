@@ -9,7 +9,6 @@ import (
 	"io/fs"
 	"os"
 	"slices"
-	"strings"
 	"time"
 )
 
@@ -26,6 +25,10 @@ type treeEntry struct {
 	Link     string
 	Digest   string
 }
+
+// unreproducedModeBits are not copied into a frozen tree; an unprivileged
+// payload cannot use them, so they are not part of a verification input.
+const unreproducedModeBits = fs.ModeSetuid | fs.ModeSetgid | fs.ModeSticky
 
 func scanTree(ctx context.Context, directory string, policy treePolicy) ([]treeEntry, error) {
 	root, err := os.OpenRoot(directory)
@@ -48,13 +51,11 @@ func scanTree(ctx context.Context, directory string, policy treePolicy) ([]treeE
 			}
 			return nil
 		}
-		for _, deny := range policy.denied {
-			if path == deny || strings.HasPrefix(path, deny+"/") {
-				if d.IsDir() {
-					return fs.SkipDir
-				}
-				return nil
+		if deniedPath(path, policy.denied) {
+			if d.IsDir() {
+				return fs.SkipDir
 			}
+			return nil
 		}
 		if len(entries) >= 200_000 {
 			return errors.New("verification input exceeds entry limit")
@@ -63,7 +64,7 @@ func scanTree(ctx context.Context, directory string, policy treePolicy) ([]treeE
 		if err != nil {
 			return err
 		}
-		entry := treeEntry{Path: path, Mode: info.Mode(), Size: info.Size(), Modified: info.ModTime().UnixNano()}
+		entry := treeEntry{Path: path, Mode: info.Mode() &^ unreproducedModeBits, Size: info.Size(), Modified: info.ModTime().UnixNano()}
 		switch {
 		case info.Mode().IsRegular():
 			total += info.Size()

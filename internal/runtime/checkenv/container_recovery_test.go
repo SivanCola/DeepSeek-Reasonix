@@ -206,3 +206,21 @@ func TestContainerCapturedGoCheckUsesHostCriterion(t *testing.T) {
 		t.Fatal("criterion rewrote host source", err)
 	}
 }
+
+func TestOneUnrecoverableJournalDoesNotBlockLaterChecks(t *testing.T) {
+	storage := t.TempDir()
+	stale := filepath.Join(storage, "check-newer")
+	if err := os.Mkdir(stale, 0700); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"version":999}`)
+	if err := os.WriteFile(filepath.Join(stale, "container.json"), body, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := recoverContainerJournals(t.Context(), storage, filepath.Join(storage, "check-current"), nil); err != nil {
+		t.Fatalf("a retained journal blocked every later check: %v", err)
+	}
+	if after, err := os.ReadFile(filepath.Join(stale, "container.json")); err != nil || string(after) != string(body) {
+		t.Fatal("unrecoverable journal was not retained", err)
+	}
+}

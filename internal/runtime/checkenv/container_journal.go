@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,7 +54,10 @@ func recoverContainerJournals(ctx context.Context, storage, current string, clie
 			continue
 		}
 		if err := recoverContainerJournal(ctx, directory, client); err != nil {
-			return err
+			if ctx.Err() != nil {
+				return err
+			}
+			slog.Warn("verification recovery journal retained", "directory", directory, "err", err)
 		}
 	}
 	return nil

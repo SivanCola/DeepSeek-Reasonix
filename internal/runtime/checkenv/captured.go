@@ -51,10 +51,8 @@ func (s Spec) applyCapture(ctx context.Context, frozen string, policy treePolicy
 			return "", errors.New("captured criterion is outside verification source")
 		}
 		path = filepath.ToSlash(path)
-		for _, denied := range append([]string{".git"}, policy.denied...) {
-			if path == denied || strings.HasPrefix(path, denied+"/") {
-				return "", errors.New("captured criterion intersects a forbidden input")
-			}
+		if deniedPath(path, append([]string{".git"}, policy.denied...)) {
+			return "", errors.New("captured criterion intersects a forbidden input")
 		}
 		if err := replaceCaptured(frozen, path, s.capture.body); err != nil {
 			return "", err

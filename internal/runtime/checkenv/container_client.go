@@ -141,8 +141,20 @@ func containerEnv(environment []string, name string) string {
 	return ""
 }
 
+const containerCommandTimeout = 20 * time.Second
+
 func (c *containerClient) run(ctx context.Context, input io.Reader, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	return c.runWithin(ctx, containerCommandTimeout, input, args...)
+}
+
+// transferTimeout bounds an engine call that moves size bytes at no less than
+// 8 MiB/s on top of the ordinary command allowance.
+func transferTimeout(size int64) time.Duration {
+	return containerCommandTimeout + time.Duration(size/(8<<20))*time.Second
+}
+
+func (c *containerClient) runWithin(ctx context.Context, timeout time.Duration, input io.Reader, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	body, err := boundedContainerOutput(c.command(ctx, args...), input)
 	if err != nil {
