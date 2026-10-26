@@ -108,9 +108,9 @@ Extensions with the `session.read` capability read the session (`host/session/re
 
 A queued prompt is the host's message about the extension, labelled with its source, never the user's words; the host may refuse it with a `refused` identity in the result (`submit_per_turn`, `submit_bytes`, `no_session`).
 
-Extensions with the `ui` capability publish `status`, `card`, `form`, `notification`, `panel`, and `view` payloads (`host/ui/publish`) and ask questions (`host/ui/request`: confirm, input, select, multiselect).
+Extensions with the `ui` capability publish `status`, `card`, `form`, `notification`, `panel`, `view` and `frame` payloads (`host/ui/publish`) and ask questions (`host/ui/request`: confirm, input, select, multiselect).
 
-Surfaces are **structured only**: no HTML, CSS, JavaScript, remote scripts, arbitrary frontend components, or uncontrolled URLs; Markdown renders through each frontend's existing safe renderer.
+Protocol messages are **structured only**: no HTML, CSS, JavaScript, remote scripts, arbitrary frontend components, or uncontrolled URLs; Markdown renders through each frontend's existing safe renderer. A `frame` names a document the installed package ships; the markup never crosses the protocol (see Frames).
 
 Every surface update carries the plugin ID, surface ID, session ID, and runtime generation; stale-generation updates are dropped so late results after a tab switch or reload can never overwrite current state.
 
@@ -136,6 +136,40 @@ A `view` names where it would like to stand in `slot` (at most 64 bytes), or rep
 Actions declared at initialize are namespaced `/<plugin>:<action>` and are
 invoked via `extension/ui/action`; form submissions arrive via
 `extension/ui/submit`.
+
+### Frames
+
+A frame is an HTML document the package declares under `contributes.frames` (`{id, entry, title}`) and the host draws in an isolated frame. Publishing one sends only JSON:
+
+| Field | Rule |
+| --- | --- |
+| `frame` | A declared id, `^[a-z][a-z0-9-]{0,31}$`; an undeclared one fails with `capability_not_declared`. |
+| `slot` | As for a view, except `session.header`, which falls back to `rail`. Frames take no `anchor`. |
+| `title` | Required, at most 200 characters. |
+| `fallback` | Required plain text, at most 600 bytes: what a frontend that cannot draw a frame shows instead. |
+| `props` | Optional JSON object, at most 64 KiB. Every string in it is credential-redacted before it reaches a frontend. |
+
+1. `HostCapabilities.uiFrames` is true when the host accepts frame surfaces; `ManifestExpectation.uiFrames` lists the declared ids.
+2. A session keeps at most six live frame surfaces; a seventh new one is refused. Republishing a surface id updates its props in place.
+3. The host serves the document at `GET /extensions/frames/{plugin}/{frame}?generation=N`, only for the current generation of a live plugin, from the package the runtime runs.
+4. The response's CSP is `sandbox allow-scripts` with `default-src 'none'`, `connect-src 'none'`, `form-action 'none'` and `frame-ancestors 'self'`.
+5. The document must be self-contained: inline scripts and styles, images and fonts as `data:` URIs, at most 2 MiB of UTF-8.
+6. Refusals are typed: `ui.frame_stale`, `ui.frame_not_declared`, `ui.frame_missing`, `ui.frame_outside_root`, `ui.frame_too_large`, `ui.frame_not_utf8`.
+7. ACP and terminal frontends show `title` and `fallback` as text.
+
+The document talks to its host over `reasonix.frame.v1`. The host posts `{type: "connect", protocol}` with a `MessagePort`; every later message uses that port.
+
+| Direction | Message | Limits |
+| --- | --- | --- |
+| host → frame | `init {protocol, props, theme {scheme, tokens}, locale, readOnly, state?, reason}` | once per load, after `ready`; `reason` is `publish` or `remount` |
+| host → frame | `props {props}`, `theme {theme}` | the document is not reloaded |
+| frame → host | `ready {}` | first message |
+| frame → host | `size {height}` | ≤ 10/s, clamped to the place's range |
+| frame → host | `action {actionId, args?}` | a declared action of the same plugin; `args` ≤ 16 string pairs of ≤ 1 KiB; ≤ 5/s |
+| frame → host | `submit {values}` | delivered as `extension/ui/submit` for the frame's surface; ≤ 64 KiB; ≤ 1/s |
+| frame → host | `state {value}` | ≤ 16 KiB; kept in renderer memory and handed back on remount |
+
+Any other message, an extra field or an over-limit value is dropped; three drops in ten seconds close the channel and the host shows the fallback. No message submits a prompt, answers an approval, changes a setting, reads the session or opens a URL.
 
 ## Tools
 

@@ -23,6 +23,8 @@ async function mount({ active = true, slots = {} as Record<string, string> } = {
     emit = onEvent;
     return () => true;
   });
+  vi.spyOn(port, "extensionFrameUrl").mockImplementation((plugin, frame, generation) => `/rt/r1/extensions/frames/${plugin}/${frame}?generation=${generation}`);
+  const invoke = vi.spyOn(port, "invokeExtensionAction").mockResolvedValue("");
   const host = document.createElement("span");
   host.dataset.testHeader = "";
   document.body.append(host);
@@ -32,7 +34,7 @@ async function mount({ active = true, slots = {} as Record<string, string> } = {
     onOpenProject={() => {}} onKeepHere={() => {}} theme="light" dockW={320} dockMax={640} onDockW={() => {}} />);
   await act(async () => {});
   const publish = (extension: ExtensionSurface) => act(() => emit({ kind: "extension_surface", extension }));
-  return { assign, publish };
+  return { assign, publish, invoke };
 }
 
 const view = (surfaceId: string, slot: string | undefined, value: string): ExtensionSurface => ({
@@ -93,3 +95,34 @@ async function within(root: HTMLElement, text: string) {
   await waitFor(() => expect(root.textContent).toContain(text));
   return true;
 }
+
+describe("a frame publication in a pane", () => {
+  it("opens as its own workbench tab, loads its document, and its actions reach only its plugin", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("<p>ok</p>", { status: 200 })));
+    try {
+      const { publish, invoke } = await mount();
+      publish({
+        pluginId: "board", surfaceId: "kanban", sessionId: "s1", generation: 3, kind: "frame",
+        frame: { frame: "board", slot: "pane.tab", title: "Task board", fallback: "3 cards", props: { n: 3 } },
+      });
+      await waitFor(() => expect(tabs()).toContain("Task board"));
+      const iframe = await waitFor(() => {
+        const el = document.querySelector<HTMLIFrameElement>(".workbench iframe");
+        if (!el) throw new Error("no frame yet");
+        return el;
+      });
+      expect(iframe.getAttribute("src")).toBe("/rt/r1/extensions/frames/board/board?generation=3");
+      const posted = vi.spyOn(iframe.contentWindow!, "postMessage");
+      fireEvent.load(iframe);
+      const port = (posted.mock.calls.at(-1) as unknown as [unknown, string, MessagePort[]])[2][0];
+      await act(async () => {
+        port.postMessage({ type: "ready" });
+        port.postMessage({ type: "action", actionId: "refresh", args: { all: "1" } });
+        await new Promise((r) => setTimeout(r, 0));
+      });
+      expect(invoke).toHaveBeenCalledExactlyOnceWith("/board:refresh", { all: "1" });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});

@@ -41,8 +41,13 @@ export function key(ext: ExtensionSurface): string {
  *  extension asked for, and where this frontend puts things it was told nothing
  *  about. A name none of us knows resolves to the next answer rather than nowhere. */
 export function placement(ext: ExtensionSurface, assigned: Record<string, string>): Slot {
-  return known(assigned[key(ext)]) ?? known(ext.view?.slot) ?? DEFAULT_SLOT;
+  const slot = known(assigned[key(ext)]) ?? known(ext.view?.slot ?? ext.frame?.slot) ?? DEFAULT_SLOT;
+  return fits(slot, ext) ? slot : DEFAULT_SLOT;
 }
+
+/** fits says whether a place can hold a surface: a frame is a document, and
+ *  the one-line title bar has no room for one. */
+export const fits = (slot: Slot, ext: ExtensionSurface) => !(ext.kind === "frame" && slot === "session-header");
 
 // Code units rather than a collator: the order must not change with the locale.
 const units = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);

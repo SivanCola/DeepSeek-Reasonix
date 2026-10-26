@@ -111,3 +111,28 @@ describe("moving a view", () => {
     expect(await screen.findByText("k: v")).toBeTruthy();
   });
 });
+
+describe("a frame among the views", () => {
+  const frame = (slot?: string): ExtensionSurface => ({
+    pluginId: "board", surfaceId: "kanban", kind: "frame",
+    frame: { frame: "board", slot, title: "Task board", fallback: "3 cards" },
+  });
+
+  it("stands where it asked, except in the one-line title bar, where it goes to the rail", () => {
+    expect(placement(frame("pane.tab"), {})).toBe("pane-tab");
+    expect(placement(frame("composer.above"), {})).toBe("composer-trailing");
+    expect(placement(frame("session.header"), {})).toBe("sidebar");
+    expect(placement(frame("pane.tab"), { "board:kanban": "session-header" })).toBe("sidebar");
+  });
+
+  it("is not offered the title bar when moved", () => {
+    render(<SlottedView ext={frame("pane.tab")} onAction={() => {}} onMove={() => {}} />);
+    const items = screen.getAllByRole("menuitemradio", { hidden: true }).map((b) => b.textContent);
+    expect(items).toEqual(["扩展页签", "输入框上方", "单独的页签"]);
+  });
+
+  it("shows its fallback where no frame host is given", () => {
+    render(<SlottedView ext={frame("pane.tab")} onAction={() => {}} onMove={() => {}} />);
+    expect(screen.getByText("3 cards")).toBeTruthy();
+  });
+});

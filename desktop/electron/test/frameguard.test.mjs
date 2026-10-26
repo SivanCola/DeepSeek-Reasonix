@@ -11,6 +11,11 @@ const FRAME = `${ORIGIN}/extensions/frames/board/kanban?generation=3`;
 
 test("an extension frame is a document on this origin under the frame route, and nothing else", () => {
   assert.equal(isFrameUrl(ORIGIN, FRAME), true);
+  assert.equal(isFrameUrl(ORIGIN, `${ORIGIN}/rt/r1/extensions/frames/board/kanban?generation=3`), true);
+  assert.equal(isFrameUrl(ORIGIN, `${ORIGIN}/rt/r1/x/extensions/frames/board/kanban`), false);
+  assert.equal(isFrameUrl(ORIGIN, `${ORIGIN}/extensions/frames/board/kanban/../../../status`), false);
+  assert.equal(isFrameUrl(ORIGIN, `${ORIGIN}/extensions/frames/board`), false);
+  assert.equal(isFrameUrl(ORIGIN, "not a url"), false);
   assert.equal(isFrameUrl(ORIGIN, `${ORIGIN}/extensions/surfaces`), false);
   assert.equal(isFrameUrl(ORIGIN, `http://127.0.0.1:9999/extensions/frames/board/kanban`), false);
   assert.equal(isFrameUrl("", "/extensions/frames/board/kanban"), false);

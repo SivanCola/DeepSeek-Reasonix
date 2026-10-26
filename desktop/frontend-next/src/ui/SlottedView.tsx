@@ -2,19 +2,23 @@ import { useRef, useState } from "react";
 import { t } from "../i18n";
 import type { ExtensionSurface, ExtensionViewNode } from "../port/wire";
 import { ExtensionView } from "./cards/ExtensionView";
-import { SLOTS, placement } from "./slots";
+import { SLOTS, fits, placement } from "./slots";
+import { FrameView, type FrameHost } from "./frame/FrameView";
 
 // A view plus the one control the host adds to it: where it goes. The handle is
 // the host's, not the extension's — an extension asks for a place, and this is
 // where the user overrules it. It stays hidden until the surface is hovered,
 // because the common case is reading the thing, not moving it.
 export function SlottedView({
-  ext, body, assigned = {}, onAction, onMove,
+  ext, body, assigned = {}, frames, onAction, onMove,
 }: {
   ext: ExtensionSurface;
   // What a narrow place can draw of the view, when it cannot draw all of it.
   body?: ExtensionViewNode[];
   assigned?: Record<string, string>;
+  // Where a frame surface reaches its document and its plugin; without it a
+  // frame shows its fallback text.
+  frames?: FrameHost;
   onAction: (actionId: string) => void;
   onMove: (slot: string) => void;
 }) {
@@ -26,7 +30,13 @@ export function SlottedView({
   const close = (then: () => void) => { setOpen(false); grip.current?.focus(); then(); };
   return (
     <div className="slotted">
-      <ExtensionView body={body ?? ext.view?.body ?? []} onAction={onAction} />
+      {ext.kind !== "frame" ? (
+        <ExtensionView body={body ?? ext.view?.body ?? []} onAction={onAction} />
+      ) : frames ? (
+        <FrameView ext={ext} slot={here} host={frames} />
+      ) : (
+        <p className="xframe-fb">{ext.frame?.fallback}</p>
+      )}
       <button
         ref={grip}
         className="movegrip"
@@ -40,7 +50,7 @@ export function SlottedView({
           anything to animate on the way out. */}
       <div className="movemenu" role="menu" hidden={!open}>
         <span className="who">{ext.pluginId}</span>
-        {SLOTS.map((slot) => (
+        {SLOTS.filter((slot) => fits(slot.id, ext)).map((slot) => (
           <button
             key={slot.id}
             role="menuitemradio"

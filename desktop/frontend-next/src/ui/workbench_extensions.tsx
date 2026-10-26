@@ -3,6 +3,7 @@ import { Extensions } from "./panels/Extensions";
 import { SlottedView } from "./SlottedView";
 import { DEFAULT_SLOT } from "./slots";
 import type { Surface } from "./workbench_tabs";
+import type { FrameHost } from "./frame/FrameView";
 
 /** WorkbenchExtensions is what a pane hands its workbench of the extension
  *  surfaces: the rail's views and panels, and the views that asked for a tab. */
@@ -11,6 +12,7 @@ export interface WorkbenchExtensions {
   panels: ExtensionSurface[];
   tabs: ExtensionSurface[];
   assigned: Record<string, string>;
+  frames?: FrameHost;
   onInvoke: (actionId: string) => void;
   onMove: (ext: ExtensionSurface, slot: string) => void;
 }
@@ -35,14 +37,14 @@ export function WorkbenchExtensionBody({ surface, ext }: { surface: Surface; ext
   if (surface.kind === "extensions") {
     return (
       <div className="workbench-ext">
-        <Extensions panels={ext.panels} views={ext.rail} assigned={ext.assigned} onInvoke={ext.onInvoke} onMove={ext.onMove} />
+        <Extensions panels={ext.panels} views={ext.rail} assigned={ext.assigned} frames={ext.frames} onInvoke={ext.onInvoke} onMove={ext.onMove} />
       </div>
     );
   }
   if (surface.kind !== "extension") return null;
   return (
     <div className="workbench-ext">
-      <SlottedView ext={surface.ext} assigned={ext.assigned} onAction={ext.onInvoke} onMove={(slot) => ext.onMove(surface.ext, slot)} />
+      <SlottedView ext={surface.ext} assigned={ext.assigned} frames={ext.frames} onAction={ext.onInvoke} onMove={(slot) => ext.onMove(surface.ext, slot)} />
     </div>
   );
 }

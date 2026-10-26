@@ -154,6 +154,7 @@ var mirroredWireTypes = []wireMirror{
 	{"internal/session/control/mods.go", "ModStatus", tsBoundaryFile, "ModStatus"},
 	{"internal/session/control/mods.go", "ModRuntime", tsBoundaryFile, "ModRuntime"},
 	{"internal/session/control/mods.go", "ModsSettings", tsBoundaryFile, "ModsSettings"},
+	{"internal/ext/installsource/plugin_frames.go", "FramePlanInfo", tsPluginFile, "PluginFrame"},
 	{"internal/ext/modpreview/types.go", "Preview", tsPluginFile, "ModPreview"},
 	{"internal/ext/modpreview/types.go", "Event", tsPluginFile, "ModPreviewEvent"},
 	{"internal/ext/modpreview/types.go", "Call", tsPluginFile, "ModPreviewCall"},

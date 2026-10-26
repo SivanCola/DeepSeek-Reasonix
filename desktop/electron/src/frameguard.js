@@ -2,11 +2,18 @@
 // shell keeps them on that route and keeps every subframe away from its own
 // authority: IPC, permissions and navigation.
 
-const FRAME_ROUTE = "/extensions/frames/";
+// The route a runtime serves, optionally under the hub's /rt/<id> mount.
+const FRAME_PATH = /^(?:\/rt\/[^/]+)?\/extensions\/frames\/[^/]+\/[^/]+$/;
 
 /** isFrameUrl says whether url is an extension frame document on origin. */
 function isFrameUrl(origin, url) {
-  return typeof url === "string" && origin !== "" && url.startsWith(origin + FRAME_ROUTE);
+  if (typeof url !== "string" || origin === "") return false;
+  try {
+    const u = new URL(url);
+    return u.origin === new URL(origin).origin && FRAME_PATH.test(u.pathname);
+  } catch {
+    return false;
+  }
 }
 
 /** fromMainFrame answers the window when the IPC came from its top document,
@@ -39,4 +46,4 @@ function guardPermissions(ses) {
   ses.setPermissionCheckHandler((_contents, _permission, _origin, details) => details?.isMainFrame === true);
 }
 
-module.exports = { FRAME_ROUTE, isFrameUrl, fromMainFrame, frameNavigationAllowed, guardFrames, guardPermissions };
+module.exports = { isFrameUrl, fromMainFrame, frameNavigationAllowed, guardFrames, guardPermissions };

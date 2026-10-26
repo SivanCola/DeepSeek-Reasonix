@@ -25,7 +25,7 @@ export function labelOf(s: Surface, hosts: Record<string, string>) {
     case "browser": return s.tab.title || s.tab.url || t("空白页");
     case "agent": return s.name;
     case "file": return s.path.split("/").at(-1) || s.path;
-    case "extension": return s.ext.pluginId;
+    case "extension": return s.ext.frame?.title || s.ext.pluginId;
     case "extensions": return t("扩展");
   }
 }

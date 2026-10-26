@@ -1,6 +1,7 @@
 import type { ExtensionSurface } from "../../port/wire";
 import { t } from "../../i18n";
 import { SlottedView } from "../SlottedView";
+import type { FrameHost } from "../frame/FrameView";
 
 // Standing surfaces an extension published. They live here rather than in the
 // transcript because they describe a state that is still true — a watcher, a
@@ -9,6 +10,7 @@ export function Extensions({
   panels,
   views = [],
   assigned,
+  frames,
   onInvoke,
   onMove,
 }: {
@@ -18,6 +20,7 @@ export function Extensions({
   // when no one said otherwise.
   views?: ExtensionSurface[];
   assigned?: Record<string, string>;
+  frames?: FrameHost;
   onInvoke: (name: string) => void;
   onMove?: (ext: ExtensionSurface, slot: string) => void;
 }) {
@@ -32,6 +35,7 @@ export function Extensions({
           <SlottedView
             ext={v}
             assigned={assigned}
+            frames={frames}
             onAction={onInvoke}
             onMove={(slot) => onMove?.(v, slot)}
           />

@@ -31,6 +31,7 @@ import { draftKey } from "./drafts";
 import { Queue, waiting } from "./Queue";
 import { SlottedView } from "./SlottedView";
 import { headerBody, key as slotKey } from "./slots";
+import type { FrameHost } from "./frame/FrameView";
 import { Metrics } from "./Metrics";
 import { railOf } from "./panels/derive";
 import { accountOf, useHidesAmounts, useWallet } from "./wallet";
@@ -419,9 +420,14 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, heade
     fail,
     onRevise: () => setAskFocus((n) => n + 1),
   });
+  const frames = useMemo<FrameHost>(() => ({
+    url: (ext) => port.extensionFrameUrl(ext.pluginId, ext.frame?.frame ?? "", ext.generation ?? 0),
+    act: (ext, actionId, args) => onExtInvoke(`/${ext.pluginId}:${actionId}`, args),
+    submit: (ext, values) => void onExtSubmit(ext.pluginId, ext.surfaceId, values).catch(() => {}),
+  }), [port, onExtInvoke, onExtSubmit]);
   const extensions = useMemo(
-    () => ({ rail: bySlot.sidebar, panels: s.panels, tabs: bySlot["pane-tab"], assigned: slots, onInvoke: onExtInvoke, onMove: moveSurface }),
-    [bySlot, s.panels, slots, onExtInvoke, moveSurface],
+    () => ({ rail: bySlot.sidebar, panels: s.panels, tabs: bySlot["pane-tab"], assigned: slots, frames, onInvoke: onExtInvoke, onMove: moveSurface }),
+    [bySlot, s.panels, slots, frames, onExtInvoke, moveSurface],
   );
 
   const receiptPref = receiptPrefOf(port);
@@ -631,6 +637,7 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, heade
                   key={slotKey(ext)}
                   ext={ext}
                   assigned={slots}
+                  frames={frames}
                   onAction={(id) => void port.invokeExtensionAction(id).catch(notify)}
                   onMove={(slot) => void moveSurface(ext, slot)}
                 />
