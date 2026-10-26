@@ -14,6 +14,7 @@
     "build:app": "electron-builder --dir",
     "build:dist": "electron-builder",
     "smoke": "electron test/smoke.js",
+    "frame-isolation-live": "electron test/frame_isolation_live.js",
     "browser-live": "electron test/browser_live.js",
     "browser-resize-live": "electron test/browser_resize_live.js",
     "browser-fit-live": "electron test/browser_fit_live.js",

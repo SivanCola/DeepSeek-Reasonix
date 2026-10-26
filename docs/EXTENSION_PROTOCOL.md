@@ -150,7 +150,7 @@ A frame is an HTML document the package declares under `contributes.frames` (`{i
 | `props` | Optional JSON object, at most 64 KiB. Every string in it is credential-redacted before it reaches a frontend. |
 
 1. `HostCapabilities.uiFrames` is true when the host accepts frame surfaces; `ManifestExpectation.uiFrames` lists the declared ids.
-2. A session keeps at most six live frame surfaces; a seventh new one is refused. Republishing a surface id updates its props in place.
+2. A session keeps at most six live frame surfaces; admission and storage share one lock. Changing another surface kind to a frame consumes a slot; republishing an existing live frame does not.
 3. The host serves the document at `GET /extensions/frames/{plugin}/{frame}?generation=N`, only for the current generation of a live plugin, from the package the runtime runs.
 4. The response's CSP is `sandbox allow-scripts` with `default-src 'none'`, `connect-src 'none'`, `form-action 'none'` and `frame-ancestors 'self'`.
 5. The document must be self-contained: inline scripts and styles, images and fonts as `data:` URIs, at most 2 MiB of UTF-8.
@@ -163,13 +163,27 @@ The document talks to its host over `reasonix.frame.v1`. The host posts `{type: 
 | --- | --- | --- |
 | host → frame | `init {protocol, props, theme {scheme, tokens}, locale, readOnly, state?, reason}` | once per load, after `ready`; `reason` is `publish` or `remount` |
 | host → frame | `props {props}`, `theme {theme}` | the document is not reloaded |
-| frame → host | `ready {}` | first message |
+| frame → host | `ready {}` | first message, accepted once per document load |
 | frame → host | `size {height}` | ≤ 10/s, clamped to the place's range |
 | frame → host | `action {actionId, args?}` | a declared action of the same plugin; `args` ≤ 16 string pairs of ≤ 1 KiB; ≤ 5/s |
 | frame → host | `submit {values}` | delivered as `extension/ui/submit` for the frame's surface; ≤ 64 KiB; ≤ 1/s |
-| frame → host | `state {value}` | ≤ 16 KiB; kept in renderer memory and handed back on remount |
+| frame → host | `state {value}` | ≤ 16 KiB, ≤ 10/s; kept within the owning pane/runtime and handed back on remount |
 
 Any other message, an extra field or an over-limit value is dropped; three drops in ten seconds close the channel and the host shows the fallback. No message submits a prompt, answers an approval, changes a setting, reads the session or opens a URL.
+
+Bridge values must be JSON, with at most 32 nested levels and 4096 visited values; byte limits use UTF-8. Cycles, BigInt and non-JSON objects are dropped.
+
+Document identity includes the host, session, generation, plugin, surface and frame. Replacing it closes the old channel; retiring the surface clears its saved state. Moving a live surface within its pane preserves state.
+
+桥接消息只接受 JSON，最多嵌套 32 层、访问 4096 个值，字节限制按 UTF-8 计算；循环引用、BigInt 和非 JSON 对象会被丢弃。
+
+文档身份包含宿主、会话、代次、插件、界面和文档 ID；身份变化立即关闭旧通道，界面退役清除保存状态，同一窗格内移动仍保留状态。`ready` 每次加载只接受一次；六个界面的配额检查与写入原子执行，其他类型改成 frame 也占用配额。
+
+Native validation: build the Studio host and frontend, then run `cd desktop/electron && pnpm frame-isolation-live`. It installs the SDK example in a disposable home and drives the real kernel, sandbox, CSP, action path, reload and malformed-message shutdown.
+
+Set `REASONIX_FRAME_EVIDENCE` to an external directory to capture the running frame.
+
+原生验证：构建 Studio 宿主与前端后执行 `cd desktop/electron && pnpm frame-isolation-live`。脚本使用临时数据目录安装 SDK 示例，验证真实内核、沙箱、CSP、动作调用、重载和非法消息关闭；可设置 `REASONIX_FRAME_EVIDENCE` 到仓库外目录保存截图。
 
 ## Tools
 

@@ -33,18 +33,18 @@ export function releaseTabs(targets: Surface[], ext: WorkbenchExtensions | undef
   return targets.filter((s) => s.kind !== "extension" && s.kind !== "extensions");
 }
 
-export function WorkbenchExtensionBody({ surface, ext }: { surface: Surface; ext: WorkbenchExtensions }) {
+export function WorkbenchExtensionBody({ surface, ext, shown }: { surface: Surface; ext: WorkbenchExtensions; shown: boolean }) {
   if (surface.kind === "extensions") {
     return (
       <div className="workbench-ext">
-        <Extensions panels={ext.panels} views={ext.rail} assigned={ext.assigned} frames={ext.frames} onInvoke={ext.onInvoke} onMove={ext.onMove} />
+        <Extensions panels={ext.panels} views={ext.rail} assigned={ext.assigned} frames={ext.frames} onInvoke={ext.onInvoke} onMove={ext.onMove} shown={shown} />
       </div>
     );
   }
   if (surface.kind !== "extension") return null;
   return (
     <div className="workbench-ext">
-      <SlottedView ext={surface.ext} assigned={ext.assigned} frames={ext.frames} onAction={ext.onInvoke} onMove={(slot) => ext.onMove(surface.ext, slot)} />
+      <SlottedView ext={surface.ext} assigned={ext.assigned} frames={ext.frames} onAction={ext.onInvoke} onMove={(slot) => ext.onMove(surface.ext, slot)} shown={shown} />
     </div>
   );
 }

@@ -266,9 +266,6 @@ func (h *Hub) publish(pluginID string, _ context.Context, p protocol.UIPublishPa
 		return protocol.UIPublishResult{Accepted: false}, nil
 	}
 	payload, err := decodePublishEvent(pluginID, p)
-	if err == nil {
-		err = h.admitFrame(pluginID, payload)
-	}
 	if err != nil {
 		return protocol.UIPublishResult{}, err
 	}

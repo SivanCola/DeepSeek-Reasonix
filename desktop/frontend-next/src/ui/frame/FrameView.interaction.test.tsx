@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "../testkit";
 import { FrameView, type FrameHost } from "./FrameView";
+import { FrameState } from "./state";
 import type { ExtensionSurface } from "../../port/wire";
 
 const frame = (props: Record<string, unknown> = { cards: 3 }, generation = 4): ExtensionSurface => ({
@@ -12,6 +13,7 @@ const frame = (props: Record<string, unknown> = { cards: 3 }, generation = 4): E
 
 function host() {
   return {
+    state: new FrameState(),
     url: (ext: ExtensionSurface) => `/rt/r1/extensions/frames/${ext.pluginId}/${ext.frame!.frame}?generation=${ext.generation}`,
     act: vi.fn<FrameHost["act"]>(),
     submit: vi.fn<FrameHost["submit"]>(),
@@ -117,6 +119,7 @@ describe("a frame document in Studio", () => {
   it("keeps the frame's height inside its place", async () => {
     render(<FrameView ext={frame()} slot="sidebar" host={host()} />);
     const { say, iframe } = await connect();
+    await say({ type: "ready" });
     await say({ type: "size", height: 4000 });
     expect(iframe.style.height).toBe("640px");
   });

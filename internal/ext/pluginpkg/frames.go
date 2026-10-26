@@ -135,7 +135,7 @@ func (p Package) FrameDocument(id string) ([]byte, error) {
 	}
 	root, err := os.OpenRoot(p.Root)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrFrameMissing, err)
+		return nil, fmt.Errorf("%w: %w", ErrFrameMissing, err)
 	}
 	defer root.Close()
 	rel := filepath.FromSlash(f.Entry)
@@ -144,7 +144,7 @@ func (p Package) FrameDocument(id string) ([]byte, error) {
 	case errors.Is(err, fs.ErrNotExist):
 		return nil, fmt.Errorf("%w: %q", ErrFrameMissing, f.Entry)
 	case err != nil:
-		return nil, fmt.Errorf("%w: %v", ErrFrameOutsideRoot, err)
+		return nil, fmt.Errorf("%w: %w", ErrFrameOutsideRoot, err)
 	case info.Mode()&fs.ModeSymlink != 0, !info.Mode().IsRegular():
 		return nil, fmt.Errorf("%w: %q is not a regular file", ErrFrameOutsideRoot, f.Entry)
 	case info.Size() > MaxFrameDocumentBytes:
@@ -152,12 +152,12 @@ func (p Package) FrameDocument(id string) ([]byte, error) {
 	}
 	file, err := root.Open(rel)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrFrameOutsideRoot, err)
+		return nil, fmt.Errorf("%w: %w", ErrFrameOutsideRoot, err)
 	}
 	defer file.Close()
 	data, err := io.ReadAll(io.LimitReader(file, MaxFrameDocumentBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrFrameMissing, err)
+		return nil, fmt.Errorf("%w: %w", ErrFrameMissing, err)
 	}
 	if len(data) > MaxFrameDocumentBytes {
 		return nil, fmt.Errorf("%w: more than %d bytes", ErrFrameTooLarge, MaxFrameDocumentBytes)

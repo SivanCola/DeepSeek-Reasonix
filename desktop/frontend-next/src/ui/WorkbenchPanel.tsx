@@ -577,7 +577,7 @@ export function WorkbenchPanel({
               onOpenDocument={(path) => port.openDocument(path)}
             />
           )}
-          {extensions && active && <WorkbenchExtensionBody surface={active} ext={extensions} />}
+          {extensions && active && <WorkbenchExtensionBody surface={active} ext={extensions} shown={shown && !launcher} />}
           {active?.kind === "agent" && <AgentRunView key={active.ref} port={port} run={active} shown={shown && !launcher && !showFiles} />}
           {active?.kind === "file" && (
             <>

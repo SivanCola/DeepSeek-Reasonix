@@ -32,6 +32,7 @@ import { Queue, waiting } from "./Queue";
 import { SlottedView } from "./SlottedView";
 import { headerBody, key as slotKey } from "./slots";
 import type { FrameHost } from "./frame/FrameView";
+import { FrameState } from "./frame/state";
 import { Metrics } from "./Metrics";
 import { railOf } from "./panels/derive";
 import { accountOf, useHidesAmounts, useWallet } from "./wallet";
@@ -420,11 +421,14 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, heade
     fail,
     onRevise: () => setAskFocus((n) => n + 1),
   });
+  const frameState = useMemo(() => new FrameState(), [port]);
+  useEffect(() => frameState.retain(s.views), [frameState, s.views]);
   const frames = useMemo<FrameHost>(() => ({
+    state: frameState,
     url: (ext) => port.extensionFrameUrl(ext.pluginId, ext.frame?.frame ?? "", ext.generation ?? 0),
     act: (ext, actionId, args) => onExtInvoke(`/${ext.pluginId}:${actionId}`, args),
     submit: (ext, values) => void onExtSubmit(ext.pluginId, ext.surfaceId, values).catch(() => {}),
-  }), [port, onExtInvoke, onExtSubmit]);
+  }), [port, frameState, onExtInvoke, onExtSubmit]);
   const extensions = useMemo(
     () => ({ rail: bySlot.sidebar, panels: s.panels, tabs: bySlot["pane-tab"], assigned: slots, frames, onInvoke: onExtInvoke, onMove: moveSurface }),
     [bySlot, s.panels, slots, frames, onExtInvoke, moveSurface],
@@ -638,7 +642,8 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, heade
                   ext={ext}
                   assigned={slots}
                   frames={frames}
-                  onAction={(id) => void port.invokeExtensionAction(id).catch(notify)}
+                  onAction={onExtInvoke}
+                  shown={visible && tab === "flow"}
                   onMove={(slot) => void moveSurface(ext, slot)}
                 />
               ))}
@@ -673,7 +678,7 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, heade
         <span className="slothead">
           {bySlot["session-header"].map((ext) => (
             <SlottedView key={slotKey(ext)} ext={ext} body={headerBody(ext.view?.body ?? [])} assigned={slots}
-              onAction={(id) => void port.invokeExtensionAction(id).catch(notify)} onMove={(slot) => void moveSurface(ext, slot)} />
+              onAction={onExtInvoke} onMove={(slot) => void moveSurface(ext, slot)} />
           ))}
         </span>,
         headerHost,

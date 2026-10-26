@@ -53,29 +53,23 @@ func (h *Hub) FrameDocument(pluginID, frameID string, generation uint64) ([]byte
 	return pkg.FrameDocument(frameID)
 }
 
-// admitFrame refuses a frame the plugin's package does not declare, and a new
-// frame surface past the session's limit.
-func (h *Hub) admitFrame(pluginID string, p *event.ExtensionSurfacePayload) error {
+// admitFrameLocked shares the surface write's lock, including kind transitions.
+func (h *Hub) admitFrameLocked(p *event.ExtensionSurfacePayload) error {
 	if p.Frame == nil {
 		return nil
 	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	pkg, ok := h.frames[pluginID]
+	pkg, ok := h.frames[p.PluginID]
 	if _, declared := pkg.Frame(p.Frame.Frame); !ok || !declared {
 		return &protocol.ProtocolError{
 			Reason:  protocol.ErrCapabilityNotDeclared,
-			Message: "frame " + p.Frame.Frame + " is not declared by plugin " + pluginID,
+			Message: "frame " + p.Frame.Frame + " is not declared by plugin " + p.PluginID,
 		}
 	}
 	key := p.PluginID + "\x00" + p.SurfaceID
-	if _, exists := h.surfaces[key]; exists {
-		return nil
-	}
 	live := 0
-	for _, record := range h.surfaces {
+	for id, record := range h.surfaces {
 		var kind struct{ Kind, Code string }
-		if record.session == h.sessionID && json.Unmarshal(record.data, &kind) == nil && kind.Kind == event.ExtensionSurfaceFrame && kind.Code == "" {
+		if id != key && record.session == h.sessionID && record.generation == h.generation && json.Unmarshal(record.data, &kind) == nil && kind.Kind == event.ExtensionSurfaceFrame && kind.Code == "" {
 			live++
 		}
 	}

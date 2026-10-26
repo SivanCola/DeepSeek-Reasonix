@@ -13,6 +13,7 @@ export function Extensions({
   frames,
   onInvoke,
   onMove,
+  shown = true,
 }: {
   panels: ExtensionSurface[];
   // Composed views that landed here: either the user put them here, or nobody
@@ -23,6 +24,7 @@ export function Extensions({
   frames?: FrameHost;
   onInvoke: (name: string) => void;
   onMove?: (ext: ExtensionSurface, slot: string) => void;
+  shown?: boolean;
 }) {
   if (panels.length === 0 && views.length === 0) return null;
   return (
@@ -36,6 +38,7 @@ export function Extensions({
             ext={v}
             assigned={assigned}
             frames={frames}
+            shown={shown}
             onAction={onInvoke}
             onMove={(slot) => onMove?.(v, slot)}
           />

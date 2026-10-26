@@ -1,4 +1,5 @@
 import type { Slot } from "../slots";
+import { fitsJSON, fitsString, isRecord } from "./json";
 
 export const FRAME_PROTOCOL = "reasonix.frame.v1";
 
@@ -18,16 +19,14 @@ const MAX_ARG_BYTES = 1024;
 const MAX_SUBMIT_BYTES = 64 * 1024;
 const MAX_STATE_BYTES = 16 * 1024;
 
-const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const only = (v: Record<string, unknown>, ...keys: string[]) => Object.keys(v).every((k) => keys.includes(k));
-const bytes = (v: unknown) => new TextEncoder().encode(JSON.stringify(v) ?? "").length;
 
 function args(v: unknown): Record<string, string> | null {
   if (!isRecord(v)) return null;
   const entries = Object.entries(v);
   if (entries.length > MAX_ARG_PAIRS) return null;
   for (const [k, value] of entries) {
-    if (typeof value !== "string" || k.length > MAX_ARG_BYTES || value.length > MAX_ARG_BYTES) return null;
+    if (typeof value !== "string" || !fitsString(k, MAX_ARG_BYTES) || !fitsString(value, MAX_ARG_BYTES)) return null;
   }
   return v as Record<string, string>;
 }
@@ -50,17 +49,17 @@ export function decodeFrameMessage(data: unknown): FrameMessage | null {
       return a ? { type: "action", actionId: data.actionId, args: a } : null;
     }
     case "submit":
-      return only(data, "type", "values") && isRecord(data.values) && bytes(data.values) <= MAX_SUBMIT_BYTES
+      return only(data, "type", "values") && isRecord(data.values) && fitsJSON(data.values, MAX_SUBMIT_BYTES)
         ? { type: "submit", values: data.values }
         : null;
     case "state":
-      return only(data, "type", "value") && "value" in data && bytes(data.value) <= MAX_STATE_BYTES ? { type: "state", value: data.value } : null;
+      return only(data, "type", "value") && "value" in data && fitsJSON(data.value, MAX_STATE_BYTES) ? { type: "state", value: data.value } : null;
     default:
       return null;
   }
 }
 
-const PER_SECOND: Record<FrameMessage["type"], number> = { ready: Infinity, size: 10, action: 5, submit: 1, state: 10 };
+const PER_SECOND: Record<FrameMessage["type"], number> = { ready: 1, size: 10, action: 5, submit: 1, state: 10 };
 
 /** RateGate holds each message kind to its rate over a sliding second. */
 export class RateGate {
