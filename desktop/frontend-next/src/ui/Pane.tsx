@@ -631,7 +631,8 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, heade
                   key={slotKey(ext)}
                   ext={ext}
                   assigned={slots}
-                  onAction={(id) => void port.invokeExtensionAction(id).catch(notify)}
+                  onAction={onExtInvoke}
+                  shown={visible && tab === "flow"}
                   onMove={(slot) => void moveSurface(ext, slot)}
                 />
               ))}
@@ -666,7 +667,7 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, heade
         <span className="slothead">
           {bySlot["session-header"].map((ext) => (
             <SlottedView key={slotKey(ext)} ext={ext} body={headerBody(ext.view?.body ?? [])} assigned={slots}
-              onAction={(id) => void port.invokeExtensionAction(id).catch(notify)} onMove={(slot) => void moveSurface(ext, slot)} />
+              onAction={onExtInvoke} onMove={(slot) => void moveSurface(ext, slot)} />
           ))}
         </span>,
         headerHost,

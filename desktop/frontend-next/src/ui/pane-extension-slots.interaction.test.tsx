@@ -18,6 +18,7 @@ async function mount({ active = true, slots = {} as Record<string, string> } = {
   vi.spyOn(port, "history").mockResolvedValue([]);
   vi.spyOn(port, "surfaceSlots").mockResolvedValue(slots);
   const assign = vi.spyOn(port, "assignSurface").mockResolvedValue();
+  const invoke = vi.spyOn(port, "invokeExtensionAction").mockResolvedValue("Review action completed");
   let emit: (ev: WireEvent) => void = () => {};
   vi.spyOn(port, "subscribe").mockImplementation((onEvent) => {
     emit = onEvent;
@@ -32,7 +33,7 @@ async function mount({ active = true, slots = {} as Record<string, string> } = {
     onOpenProject={() => {}} onKeepHere={() => {}} theme="light" dockW={320} dockMax={640} onDockW={() => {}} />);
   await act(async () => {});
   const publish = (extension: ExtensionSurface) => act(() => emit({ kind: "extension_surface", extension }));
-  return { assign, publish };
+  return { assign, invoke, publish };
 }
 
 const view = (surfaceId: string, slot: string | undefined, value: string): ExtensionSurface => ({
@@ -42,6 +43,17 @@ const view = (surfaceId: string, slot: string | undefined, value: string): Exten
 const tabs = () => [...document.querySelectorAll("[role=tab]")].map((e) => e.textContent?.trim());
 
 describe("a pane's extension views in every place this window has", () => {
+  it.each(["pane.tab", "rail", "session.header", "composer.above"])("preserves action feedback in %s", async (slot) => {
+    const { publish, invoke } = await mount();
+    publish({ pluginId: "review", surfaceId: "action", kind: "view", view: {
+      slot, body: [{ kind: "button", label: "Run review action", actionId: "/review:run" }],
+    } });
+    const button = await screen.findByRole("button", { name: "Run review action" });
+    await act(async () => { fireEvent.click(button); });
+    expect(invoke).toHaveBeenCalledWith("/review:run");
+    expect(screen.queryByText("Review action completed")).not.toBeNull();
+  });
+
   it("draws each view where it asked to stand", async () => {
     const { publish } = await mount();
     publish(view("hdr", "session.header", "62%"));
@@ -51,6 +63,18 @@ describe("a pane's extension views in every place this window has", () => {
     expect(await within(header(), "hdr: 62%")).toBeTruthy();
     expect(document.querySelector(".slotrail")?.textContent).toContain("cmp");
     expect(tabs()).toEqual(["p", "扩展"]);
+  });
+
+  it.each(["pane.tab", "rail", "session.header", "composer.above"])("shows a refused action in %s", async (slot) => {
+    const { publish, invoke } = await mount();
+    invoke.mockRejectedValueOnce(new Error("Review action refused"));
+    publish({ pluginId: "review", surfaceId: "action", kind: "view", view: {
+      slot, body: [{ kind: "button", label: "Run review action", actionId: "/review:run" }],
+    } });
+    const button = await screen.findByRole("button", { name: "Run review action" });
+    await act(async () => { fireEvent.click(button); });
+    expect(invoke).toHaveBeenCalledWith("/review:run");
+    expect(screen.queryByText("Review action refused")).not.toBeNull();
   });
 
   it("puts nothing in the header of a pane that is not the one in front", async () => {
@@ -72,7 +96,7 @@ describe("a pane's extension views in every place this window has", () => {
     publish(view("hdr", "session.header", "62%"));
     await within(header(), "hdr: 62%");
     fireEvent.click(screen.getByRole("button", { name: "移动 p 的界面" }));
-    fireEvent.click(screen.getByRole("menuitemradio", { name: "输入框上方" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "输入框上方" }));
     expect(document.querySelector(".slotrail")?.textContent).toContain("hdr");
     expect(header().textContent).toBe("");
     expect(assign).toHaveBeenCalledExactlyOnceWith("p:hdr", "composer-trailing");

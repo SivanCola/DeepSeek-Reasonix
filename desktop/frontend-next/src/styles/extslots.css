@@ -1,7 +1,8 @@
 .chrome .crumb-slot { display: flex; align-items: center; min-width: 0; overflow: hidden; }
 .chrome .crumb-slot:empty { display: none; }
-.slothead { display: flex; align-items: center; gap: 12px; min-width: 0; padding-left: 6px; }
-.slothead .slotted { flex: none; max-width: 220px; overflow: hidden; }
+.slothead { display: flex; flex: 1; align-items: center; gap: 12px; min-width: 0; padding-left: 6px; }
+.slothead .slotted { min-width: 0; max-width: 220px; overflow: hidden; }
+.slothead .slotted > .surface-kit { min-width: 0; overflow: hidden; }
 .slothead .xview, .slothead .xv-stack { flex-direction: row; align-items: center; gap: 6px; white-space: nowrap; }
 .slothead .xv-t { overflow: hidden; text-overflow: ellipsis; }
 .slothead .xv-meter { width: 48px; }

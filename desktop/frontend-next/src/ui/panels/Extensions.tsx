@@ -11,6 +11,7 @@ export function Extensions({
   assigned,
   onInvoke,
   onMove,
+  shown = true,
 }: {
   panels: ExtensionSurface[];
   // Composed views that landed here: either the user put them here, or nobody
@@ -20,6 +21,7 @@ export function Extensions({
   assigned?: Record<string, string>;
   onInvoke: (name: string) => void;
   onMove?: (ext: ExtensionSurface, slot: string) => void;
+  shown?: boolean;
 }) {
   if (panels.length === 0 && views.length === 0) return null;
   return (
@@ -32,6 +34,7 @@ export function Extensions({
           <SlottedView
             ext={v}
             assigned={assigned}
+            shown={shown}
             onAction={onInvoke}
             onMove={(slot) => onMove?.(v, slot)}
           />

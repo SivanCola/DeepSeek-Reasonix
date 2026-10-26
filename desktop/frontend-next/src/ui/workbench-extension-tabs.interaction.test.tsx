@@ -18,8 +18,8 @@ function extensions(over: Partial<WorkbenchExtensions> = {}): WorkbenchExtension
   return { rail: [], panels: [], tabs: [], assigned: {}, onInvoke: vi.fn(), onMove: vi.fn(), ...over };
 }
 
-function Bench({ ext, onSurfaces = vi.fn() }: { ext: WorkbenchExtensions; onSurfaces?: (n: number) => void }) {
-  return <WorkbenchPanel scheme="dark" shown changes={[]} onSurfaces={onSurfaces} onCloseManual={vi.fn()} onExternal={vi.fn()} manual tabs={[]} port={new MockPort()} extensions={ext} />;
+function Bench({ ext, shown = true, onSurfaces = vi.fn() }: { ext: WorkbenchExtensions; shown?: boolean; onSurfaces?: (n: number) => void }) {
+  return <WorkbenchPanel scheme="dark" shown={shown} changes={[]} onSurfaces={onSurfaces} onCloseManual={vi.fn()} onExternal={vi.fn()} manual tabs={[]} port={new MockPort()} extensions={ext} />;
 }
 
 const tabs = () => [...document.querySelectorAll("[role=tab]")].map((e) => e.textContent?.trim());
@@ -27,6 +27,22 @@ const selected = () => document.querySelector("[role=tab][aria-selected=true]")?
 afterEach(cleanup);
 
 describe("extension surfaces in the workbench", () => {
+  it.each(["rail", "tabs"] as const)("closes a %s menu when its workbench is hidden without remounting the view", async (place) => {
+    const ext = extensions({ [place]: [view("board", "kanban", "3 cards")] });
+    const { rerender } = render(<Bench ext={ext} />);
+    await screen.findByText("3 cards");
+    const body = document.querySelector(".xview");
+    await userEvent.click(screen.getByRole("button", { name: "移动 board 的界面" }));
+    expect(screen.getByRole("menu")).toBeTruthy();
+    rerender(<Bench ext={ext} shown={false} />);
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.querySelector(".xview")).toBe(body);
+    rerender(<Bench ext={ext} />);
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.querySelector(".xview")).toBe(body);
+    expect(ext.onMove).not.toHaveBeenCalled();
+  });
+
   it("gives a view that asked for its own tab a tab named for its plugin, holding the view", async () => {
     const onSurfaces = vi.fn();
     render(<Bench ext={extensions({ tabs: [view("board", "kanban", "3 cards")] })} onSurfaces={onSurfaces} />);
