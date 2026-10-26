@@ -8,23 +8,30 @@ import (
 	"reasonix/internal/contract/tool"
 )
 
-// maskedProgress masks what a shell tool streams to the window with the same
-// snapshot that masks what it returns. A value split across two chunks is not
-// recognised in either; what the tool returns is masked whole.
-func maskedProgress(ctx context.Context, m *secrets.Mask) context.Context {
-	if m == nil {
-		return ctx
-	}
-	if emit, ok := tool.ProgressFrom(ctx); ok {
-		return tool.WithProgress(ctx, func(chunk string) { emit(m.String(chunk)) })
-	}
-	return ctx
+type progressWriter func(string)
+
+func (w progressWriter) Write(p []byte) (int, error) {
+	w(string(p))
+	return len(p), nil
 }
 
-// maskedShell runs a tool that reads a shell's output under one snapshot of the
-// values the host holds for the person.
+// maskedProgress masks what a shell tool streams to the window, holding back a
+// fragment that could begin a value until the rest arrives; flush passes on
+// what is left once the tool returns.
+func maskedProgress(ctx context.Context) (context.Context, func()) {
+	emit, ok := tool.ProgressFrom(ctx)
+	if !ok {
+		return ctx, func() {}
+	}
+	s := secrets.NewStream(progressWriter(emit))
+	return tool.WithProgress(ctx, func(chunk string) { _, _ = s.Write([]byte(chunk)) }), func() { _ = s.Flush() }
+}
+
+// maskedShell runs a tool that reads a shell's output with what it streams and
+// what it returns masked.
 func maskedShell(ctx context.Context, args json.RawMessage, run func(context.Context, json.RawMessage) (string, error)) (string, error) {
-	m := secrets.Masker()
-	out, err := run(maskedProgress(ctx, m), args)
-	return m.String(out), err
+	ctx, flush := maskedProgress(ctx)
+	out, err := run(ctx, args)
+	flush()
+	return secrets.Masker().String(out), err
 }

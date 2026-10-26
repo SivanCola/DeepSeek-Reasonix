@@ -161,7 +161,12 @@ func (b bash) ExecutionDescriptor(args json.RawMessage) *tool.ShellExecution {
 // metadata for host UI / session persistence. Provider-visible output stays in
 // DetailedResult.Output; metadata never enters tool schemas.
 func (b bash) ExecuteDetailed(ctx context.Context, args json.RawMessage) (tool.DetailedResult, error) {
-	res, err := b.executeDetailed(maskedProgress(ctx, secrets.Masker()), args)
+	if err := refuseMaskedCommand(args); err != nil {
+		return tool.DetailedResult{}, err
+	}
+	ctx, flush := maskedProgress(ctx)
+	res, err := b.executeDetailed(ctx, args)
+	flush()
 	// Taken after the command read its secrets, so a value saved meanwhile is in it.
 	m := secrets.Masker()
 	res.Output = m.String(res.Output)

@@ -53,7 +53,7 @@ export function SecretList({ team, view }: { team: TeamPort; view: TeamView }) {
       {!readOnly && book.requests.map((q) => (
         <div key={`${q.name}-${q.agent}`} className="team-secret" role="group" aria-label={t("{agent} 需要 {name}", { agent: agentName(q.agent), name: q.name })}>
           <b>{t("{agent} 需要 {name}", { agent: agentName(q.agent), name: q.name })}</b>
-          <SecretForm team={team} name={q.name} purpose={q.purpose} agent={q.agent} current={book.secrets.find((s) => s.name === q.name)} nameOf={agentName} onDone={() => setRound((n) => n + 1)} />
+          <SecretForm team={team} name={q.name} purpose={q.purpose} agent={q.agent} current={book.secrets.find((s) => s.name === q.name)} guarded={book.guarded} nameOf={agentName} onDone={() => setRound((n) => n + 1)} />
         </div>
       ))}
       {book.secrets.length === 0 ? (

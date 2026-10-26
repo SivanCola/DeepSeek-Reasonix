@@ -30,12 +30,13 @@ function scopes(agent: string, current: TeamSecret | undefined, nameOf: (id: str
 
 // Filling in a secret an agent asked for. The value lives in this form only
 // until it is sent; nothing reads it back.
-export function SecretForm({ team, name, purpose, agent, current, nameOf, onDone }: {
+export function SecretForm({ team, name, purpose, agent, current, guarded, nameOf, onDone }: {
   team: TeamPort;
   name: string;
   purpose?: string;
   agent: string;
   current?: TeamSecret;
+  guarded: boolean;
   nameOf: (id: string) => string;
   onDone: (outcome: "saved" | "declined") => void;
 }) {
@@ -72,6 +73,7 @@ export function SecretForm({ team, name, purpose, agent, current, nameOf, onDone
         ))}
       </div>
       <p className="team-note">{t("命令以 ${env} 读到它；Reasonix 发给模型的内容里，它显示为 [secret:{name}]。命令能读出并转写它，所以只交给你信任的 Agent。", { name, env: `REASONIX_SECRET_${name}` })}</p>
+      {!guarded && <p className="team-error" role="alert">{t("这台机器上，Agent 的命令读得到存机密的文件（Windows，或沙箱没有开启）：保存在这里的值，任何 Agent 都可能读到。")}</p>}
       {plainOverNetwork() && <p className="team-error">{t("这个页面没有加密，密钥会以明文经过网络")}</p>}
       {error && <p className="team-error" role="alert">{error}</p>}
       <div className="team-secret-actions">

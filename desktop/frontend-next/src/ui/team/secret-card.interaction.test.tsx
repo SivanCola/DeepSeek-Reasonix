@@ -103,3 +103,15 @@ it("settings list what was saved, never its value, and remove it with two presse
   await waitFor(() => expect(team.calls.at(-1)).toEqual({ method: "forgetRetiredSecrets", args: [] }));
   await waitFor(() => expect(screen.queryByText(/已停用、仍在遮住/)).toBeNull());
 });
+
+it("on a host that does not keep agents out of the file, the card says any agent can read it", async () => {
+  await asked("a-1", (team) => team.unguardSecrets());
+  const card = await screen.findByRole("group", { name: "Ada 需要 SHOP_KEY" });
+  expect(within(card).getByRole("alert").textContent).toBe("这台机器上，Agent 的命令读得到存机密的文件（Windows，或沙箱没有开启）：保存在这里的值，任何 Agent 都可能读到。");
+});
+
+it("on a host that does, the card raises no such warning", async () => {
+  await asked();
+  const card = await screen.findByRole("group", { name: "Ada 需要 SHOP_KEY" });
+  expect(within(card).queryByRole("alert")).toBeNull();
+});

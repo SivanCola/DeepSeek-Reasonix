@@ -188,6 +188,7 @@ export const EN_TEAM: Record<string, string> = {
   "只给 {name}": "Only {name}",
   "命令以 ${env} 读到它；Reasonix 发给模型的内容里，它显示为 [secret:{name}]。命令能读出并转写它，所以只交给你信任的 Agent。": "Commands read it as ${env}; in what Reasonix sends to a model it reads [secret:{name}]. A command can read it out and transform it, so give it only to agents you trust.",
   "已经保存过 {name}，保存会替换它的值": "{name} is already saved; saving replaces its value",
+  "这台机器上，Agent 的命令读得到存机密的文件（Windows，或沙箱没有开启）：保存在这里的值，任何 Agent 都可能读到。": "On this machine agents' commands can read the file secrets are kept in (Windows, or the sandbox is off): any agent may read a value saved here.",
   "已保存 {name}，但没有给 {agent}": "Saved {name}, but not for {agent}",
   "删除后命令不再收到它；值会留在本机，只用来继续遮住已经出现过它的对话。": "Once deleted, no command receives it; the value stays on this machine only to keep masking the conversations it already appeared in.",
   "已停用、仍在遮住：{names}": "Retired, still masked: {names}",

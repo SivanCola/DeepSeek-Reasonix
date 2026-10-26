@@ -179,6 +179,8 @@ export interface TeamSecrets {
   secrets: TeamSecret[];
   requests: TeamSecretRequest[];
   retired: TeamRetiredSecret[];
+  // Whether agents' commands on this host are denied the file the values live in.
+  guarded: boolean;
 }
 
 // What the window sends to save a secret.

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"io"
+
+	"reasonix/internal/base/secrets"
 )
 
 // launchJob runs j in its own goroutine. Joining the wait group and seeing the
@@ -25,7 +27,11 @@ func (m *Manager) launchJob(ctx context.Context, j *Job, run func(context.Contex
 	m.mu.Unlock()
 	go func() {
 		defer m.wg.Done()
-		result, err := runRecovered(ctx, jobWriter{j}, run)
+		// The tail, the watchers and the log on disk all read what passes here.
+		out := secrets.NewStream(jobWriter{j})
+		result, err := runRecovered(ctx, out, run)
+		_ = out.Flush()
+		result = secrets.Masker().String(result)
 		cleanupErr := j.finalize(Finalization{Invoked: true, Err: err})
 		if cleanupErr != nil {
 			err = errors.Join(err, cleanupErr)

@@ -3,7 +3,10 @@ package serve
 import (
 	"encoding/json"
 	"net/http"
+	"runtime"
 
+	"reasonix/internal/contract/config"
+	"reasonix/internal/safety/sandbox"
 	"reasonix/internal/state/teamroster"
 )
 
@@ -34,6 +37,21 @@ type secretsView struct {
 	Secrets  []secretView        `json:"secrets"`
 	Requests []secretRequestView `json:"requests"`
 	Retired  []retiredView       `json:"retired"`
+	// Guarded says agents' commands here are denied the file the values live in.
+	Guarded bool `json:"guarded"`
+}
+
+// secretsGuarded is whether an OS sandbox that confines reads is enforced for
+// commands on this host. Windows confines writes only, so there it never is.
+func secretsGuarded() bool {
+	if runtime.GOOS == "windows" {
+		return false
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return false
+	}
+	return cfg.BashMode() == "enforce" && sandbox.AvailableFor(sandbox.Spec{Network: cfg.Sandbox.Network})
 }
 
 // The largest body a secret's save carries: the value and a little around it.
@@ -45,7 +63,7 @@ func (t *hubTeam) secrets(w http.ResponseWriter, _ *http.Request) {
 		teamError(w, err)
 		return
 	}
-	out := secretsView{Secrets: []secretView{}, Requests: []secretRequestView{}, Retired: []retiredView{}}
+	out := secretsView{Secrets: []secretView{}, Requests: []secretRequestView{}, Retired: []retiredView{}, Guarded: secretsGuarded()}
 	for _, sc := range book.Secrets {
 		out.Secrets = append(out.Secrets, secretView{Name: sc.Name, Purpose: sc.Purpose, Agents: sc.Agents, RequestedBy: sc.RequestedBy, UpdatedAt: sc.UpdatedAt.UnixMilli()})
 	}

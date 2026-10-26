@@ -94,3 +94,20 @@ func TestAWriteCarryingASecretsMarkIsRefused(t *testing.T) {
 		t.Fatalf("the file changed: %q", data)
 	}
 }
+
+// A command carrying a mark would act on the mark, not the value: it is
+// refused before anything runs, and told how to read the value instead.
+func TestAShellCommandCarryingASecretsMarkIsRefused(t *testing.T) {
+	secretstest.Hold("CMD_KEY", "sk-command-0123456789")
+	dir := t.TempDir()
+	b := bash{workDir: dir}
+	args, _ := json.Marshal(map[string]string{"command": "echo 'KEY=[secret:CMD_KEY]' > " + filepath.Join(dir, "out.env")})
+	_, err := b.Execute(context.Background(), args)
+	var refusal tool.Refusal
+	if !errors.As(err, &refusal) || refusal.Code != CodeMaskedSecretCommand || !strings.Contains(refusal.Message, "$REASONIX_SECRET_CMD_KEY") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "out.env")); statErr == nil {
+		t.Fatal("the command ran")
+	}
+}

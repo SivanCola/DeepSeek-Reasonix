@@ -304,6 +304,7 @@ func (a *Agent) executeBatch(ctx context.Context, turn *turnRuntime, calls []pro
 		}
 	}
 	markDeferredAfterDecision(barrier+1, calls, results, outcomes, durations)
+	maskResults(results, outcomes)
 
 	for i, c := range calls {
 		o := outcomes[i]

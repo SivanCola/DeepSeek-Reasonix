@@ -21,7 +21,7 @@ export class MockTeam implements TeamPort {
 
   private prefs: TeamPrefs = { memoryReview: true };
   private tasks: TeamSchedule[] = [];
-  private vault: TeamSecrets = { secrets: [], requests: [], retired: [] };
+  private vault: TeamSecrets = { secrets: [], requests: [], retired: [], guarded: true };
 
   async secrets(): Promise<TeamSecrets> {
     return structuredClone(this.vault);
@@ -51,6 +51,12 @@ export class MockTeam implements TeamPort {
   async forgetRetiredSecrets() {
     this.record("forgetRetiredSecrets");
     this.vault.retired = [];
+    this.bump();
+  }
+
+  /** Says the host does not deny agents' commands the secrets file, for tests. */
+  unguardSecrets() {
+    this.vault.guarded = false;
     this.bump();
   }
 
