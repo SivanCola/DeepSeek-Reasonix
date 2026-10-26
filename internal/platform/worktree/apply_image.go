@@ -106,6 +106,9 @@ func publishImage(root, rel string, before, after fileImage) error {
 		return err
 	case "file":
 		if before.Kind == "" {
+			if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
+				return err
+			}
 			return fileutil.AtomicCreateFile(path, after.Data, after.Mode)
 		}
 		return fileutil.AtomicWriteFileStrictValidated(path, after.Data, after.Mode, validate)
@@ -117,7 +120,7 @@ func publishImage(root, rel string, before, after fileImage) error {
 }
 
 func publishLink(path, target string, absent bool, validate func() error) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
 		return err
 	}
 	dir, err := os.MkdirTemp(filepath.Dir(path), ".reasonix-link-")
@@ -178,7 +181,7 @@ func targetImage(ctx context.Context, repo gitcmd.Repo, path string, target gitF
 	if target == absent {
 		return fileImage{}, nil
 	}
-	image := fileImage{Kind: "file", Mode: 0644}
+	image := fileImage{Kind: "file", Mode: os.FileMode(newFileMode())}
 	args := []string{"cat-file", "--filters", "--path=" + path, target.Blob}
 	switch target.Mode {
 	case "120000":
