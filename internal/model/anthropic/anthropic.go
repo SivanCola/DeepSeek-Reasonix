@@ -290,7 +290,7 @@ var bufPool = sync.Pool{
 }
 
 func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
-	req = provider.MaskOutbound(req)
+	req = provider.MaskOutbound(req, provider.Signed{Reasoning: true})
 	requestCtx := provider.WithRequestAttemptCounter(ctx)
 	buf := bufPool.Get().(*bytes.Buffer)
 	buf.Reset()

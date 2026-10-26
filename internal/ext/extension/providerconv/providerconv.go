@@ -18,7 +18,10 @@ import (
 
 // MessagesToProtocol copies provider messages into their public wire form,
 // dropping the local-only UI metadata fields that never belong on the wire.
+// Every crossing into an extension process passes here, so values the host
+// holds for the person are masked here.
 func MessagesToProtocol(msgs []provider.Message) []protocol.ProviderMessage {
+	msgs = provider.MaskMessages(msgs, provider.Signed{})
 	out := make([]protocol.ProviderMessage, 0, len(msgs))
 	for _, m := range msgs {
 		out = append(out, protocol.ProviderMessage{
@@ -55,6 +58,9 @@ func MessagesFromProtocol(msgs []protocol.ProviderMessage) []provider.Message {
 
 // ToolCallsToProtocol copies tool calls into their provider-visible wire form.
 func ToolCallsToProtocol(calls []provider.ToolCall) []protocol.ProviderToolCall {
+	if masked := provider.MaskMessages([]provider.Message{{ToolCalls: calls}}, provider.Signed{}); len(masked) == 1 {
+		calls = masked[0].ToolCalls
+	}
 	if len(calls) == 0 {
 		return nil
 	}

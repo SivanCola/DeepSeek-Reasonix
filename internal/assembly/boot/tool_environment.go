@@ -21,10 +21,8 @@ import (
 	"reasonix/internal/runtime/agent"
 	"reasonix/internal/safety/egress"
 	"reasonix/internal/safety/sandbox"
-	"reasonix/internal/session/team"
 	"reasonix/internal/state/observation"
 	"reasonix/internal/state/sessiontemp"
-	"reasonix/internal/state/teamroster"
 	"reasonix/internal/state/trustedstate"
 	"reasonix/internal/tools/builtin"
 )
@@ -63,9 +61,7 @@ func resolveToolEnvironment(opts Options, cfg *config.Config, roots config.Roots
 			_ = os.MkdirAll(dir, 0o700)
 		}
 	}
-	if dir := roots.TeamDir(); dir != "" {
-		team.WatchSecrets(teamroster.Store{Dir: dir})
-	}
+	watchTeamSecrets(roots)
 	env := toolEnvironment{
 		forbidReadRoots: RuntimeForbidReadRoots(cfg, root),
 		network:         cfg.Sandbox.Network,

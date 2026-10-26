@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"reasonix/internal/base/secrets"
-	"reasonix/internal/base/textutil"
 	"reasonix/internal/contract/hostframe"
 	"reasonix/internal/state/teamroster"
 )
@@ -30,7 +29,10 @@ func (s *Service) RequestSecret(ctx context.Context, c Caller, name, purpose str
 	if n == "" {
 		return "", &teamroster.FieldError{Field: "name", Err: teamroster.ErrInvalid}
 	}
-	purpose = textutil.ClipGraphemes(strings.TrimSpace(purpose), teamroster.MaxSecretPurposeRunes, "…")
+	purpose = strings.TrimSpace(purpose)
+	if r := []rune(purpose); len(r) > teamroster.MaxSecretPurposeRunes {
+		purpose = string(r[:teamroster.MaxSecretPurposeRunes])
+	}
 	held := false
 	err := s.store.EditSecrets(ctx, func(b *teamroster.SecretBook) error {
 		if i := slices.IndexFunc(b.Secrets, func(sc teamroster.Secret) bool { return sc.Name == n }); i >= 0 && allowed(b.Secrets[i], c.Agent) {
@@ -38,10 +40,11 @@ func (s *Service) RequestSecret(ctx context.Context, c Caller, name, purpose str
 			return nil
 		}
 		b.Requests = slices.DeleteFunc(b.Requests, func(q teamroster.SecretRequest) bool { return q.Name == n && q.Agent == c.Agent })
-		b.Requests = append(b.Requests, teamroster.SecretRequest{Name: n, Purpose: purpose, Agent: c.Agent, At: s.now()})
-		if over := len(b.Requests) - teamroster.MaxSecretRequests; over > 0 {
-			b.Requests = slices.Delete(b.Requests, 0, over)
+		if mine := slices.IndexFunc(b.Requests, func(q teamroster.SecretRequest) bool { return q.Agent == c.Agent }); mine >= 0 &&
+			countRequests(b.Requests, c.Agent) >= teamroster.MaxSecretRequests {
+			b.Requests = slices.Delete(b.Requests, mine, mine+1)
 		}
+		b.Requests = append(b.Requests, teamroster.SecretRequest{Name: n, Purpose: purpose, Agent: c.Agent, At: s.now()})
 		return nil
 	})
 	if err != nil {
@@ -52,6 +55,16 @@ func (s *Service) RequestSecret(ctx context.Context, c Caller, name, purpose str
 		return fmt.Sprintf("The user already saved %s for you. Shell commands read it as $%s%s; you cannot see its value, and must never print it.", n, SecretEnvPrefix, n), nil
 	}
 	return fmt.Sprintf("Asked the user for %s. End your turn now: they are shown a card to fill it in, and you get a message when they save or decline it. You never see the value; once saved, shell commands read it as $%s%s.", n, SecretEnvPrefix, n), nil
+}
+
+func countRequests(qs []teamroster.SecretRequest, agent string) int {
+	n := 0
+	for _, q := range qs {
+		if q.Agent == agent {
+			n++
+		}
+	}
+	return n
 }
 
 func allowed(sc teamroster.Secret, agent string) bool {
@@ -110,6 +123,9 @@ func (s *Service) UserSaveSecret(ctx context.Context, name, value, purpose strin
 	}
 	var errs []error
 	for _, a := range askers {
+		if _, ok := r.Agent(a); !ok {
+			continue
+		}
 		if !allowed(saved, a) {
 			errs = append(errs, s.tellSecret(ctx, a, n, "withheld", fmt.Sprintf("The user saved %s, but did not give it to you: your commands do not receive it. Say what you cannot do without it.", n)))
 			continue

@@ -118,6 +118,28 @@ func TestEveryAgentThatAskedHearsTheAnswer(t *testing.T) {
 	}
 }
 
+// A request left by an agent since deleted closes with the save, and its
+// missing seat does not turn a committed save into an error.
+func TestADeletedAgentsRequestClosesQuietly(t *testing.T) {
+	h := newHarness(t, "Chief", "Ada")
+	ctx := context.Background()
+	if err := h.store.EditSecrets(ctx, func(b *teamroster.SecretBook) error {
+		b.Requests = append(b.Requests, teamroster.SecretRequest{Name: "OLD_KEY", Agent: "a-gone"})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.svc.UserSaveSecret(ctx, "OLD_KEY", "sk-old-key-0123456789", "", nil, ""); err != nil {
+		t.Fatalf("save = %v", err)
+	}
+	if book, _ := h.store.Secrets(); len(book.Requests) != 0 || len(book.Secrets) != 1 {
+		t.Fatalf("book = %+v", book)
+	}
+	if told := h.panes.pane(SeatRef{Agent: "a-gone"}).deliveries(); len(told) != 0 {
+		t.Fatalf("a deleted agent's seat was opened and told %+v", told)
+	}
+}
+
 func TestAnEmptyListOfAgentsIsRefusedNotReadAsEveryone(t *testing.T) {
 	h := newHarness(t, "Chief")
 	err := h.svc.UserSaveSecret(context.Background(), "NOBODY", "sk-nobody-0123456789", "", []string{}, "")
@@ -127,25 +149,37 @@ func TestAnEmptyListOfAgentsIsRefusedNotReadAsEveryone(t *testing.T) {
 	}
 }
 
-// What an agent writes on its request is bounded where it is written, so the
-// card that carries it back can always be saved; and the open requests are
-// bounded too.
+// What an agent writes on its request is bounded in the unit the store checks,
+// so the card that carries it back can always be saved; and each agent's open
+// requests are bounded, so one agent asking for many evicts only its own.
 func TestARequestIsBoundedWhereItIsMade(t *testing.T) {
-	h := newHarness(t, "Chief", "Ada")
+	h := newHarness(t, "Chief", "Ada", "Ben")
 	ctx := context.Background()
-	if _, err := h.svc.RequestSecret(ctx, Caller{Agent: h.id("Ada")}, "LONG", strings.Repeat("why ", 400)); err != nil {
+	if _, err := h.svc.RequestSecret(ctx, Caller{Agent: h.id("Ben")}, "BENS", "Ben's own"); err != nil {
 		t.Fatal(err)
+	}
+	long := strings.Repeat("क्षि", 120)
+	if _, err := h.svc.RequestSecret(ctx, Caller{Agent: h.id("Ada")}, "LONG", long); err != nil {
+		t.Fatal(err)
+	}
+	book, _ := h.store.Secrets()
+	clipped := book.Requests[1].Purpose
+	if err := h.svc.UserSaveSecret(ctx, "LONG", "sk-long-0123456789", clipped, nil, h.id("Ada")); err != nil {
+		t.Fatalf("the clipped purpose a card carries back was refused: %v", err)
 	}
 	for i := range teamroster.MaxSecretRequests + 5 {
 		if _, err := h.svc.RequestSecret(ctx, Caller{Agent: h.id("Ada")}, fmt.Sprintf("K%d", i), ""); err != nil {
 			t.Fatal(err)
 		}
 	}
-	book, _ := h.store.Secrets()
-	if len(book.Requests) != teamroster.MaxSecretRequests || book.Requests[len(book.Requests)-1].Name != fmt.Sprintf("K%d", teamroster.MaxSecretRequests+4) {
-		t.Fatalf("%d requests, last %+v", len(book.Requests), book.Requests[len(book.Requests)-1])
+	book, _ = h.store.Secrets()
+	if n := countRequests(book.Requests, h.id("Ada")); n != teamroster.MaxSecretRequests {
+		t.Fatalf("Ada has %d open requests", n)
 	}
-	if err := h.svc.UserSaveSecret(ctx, "LONG", "sk-long-0123456789", strings.Repeat("why ", 400), nil, ""); err == nil {
+	if !slices.ContainsFunc(book.Requests, func(q teamroster.SecretRequest) bool { return q.Agent == h.id("Ben") }) {
+		t.Fatal("Ada's requests evicted Ben's")
+	}
+	if err := h.svc.UserSaveSecret(ctx, "WHY", "sk-why-0123456789", strings.Repeat("why ", 400), nil, ""); err == nil {
 		t.Fatal("an unbounded purpose was saved")
 	}
 }

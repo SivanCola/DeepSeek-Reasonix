@@ -79,9 +79,14 @@ func TestAWriteCarryingASecretsMarkIsRefused(t *testing.T) {
 			_, err := editFile{}.Execute(context.Background(), args)
 			return err
 		},
+		"write_file preview": func() error {
+			args, _ := json.Marshal(map[string]string{"path": path, "content": "KEY=[secret:ENV_KEY]\n"})
+			_, err := writeFile{workDir: dir, roots: realRoots([]string{dir})}.Preview(context.Background(), args)
+			return err
+		},
 	} {
 		var refusal tool.Refusal
-		if err := run(); !errors.As(err, &refusal) || refusal.Code != CodeMaskedSecretWrite || !strings.Contains(refusal.Message, "[secret:ENV_KEY]") {
+		if err := run(); !errors.As(err, &refusal) || refusal.Code != CodeMaskedSecretWrite || !strings.Contains(refusal.Message, "$REASONIX_SECRET_ENV_KEY") {
 			t.Errorf("%s: err = %v", name, err)
 		}
 	}

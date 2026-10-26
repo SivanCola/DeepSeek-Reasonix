@@ -59,9 +59,10 @@ type Mask struct {
 
 // spelled is one value with every spelling it is masked in, and its mark.
 type spelled struct {
-	mark  string
-	forms []string
-	short bool
+	mark   string
+	labels []string
+	forms  []string
+	short  bool
 }
 
 // Masker reads every source, holds what they answer, and snapshots the lot;
@@ -85,12 +86,12 @@ func Masker() *Mask {
 	if len(registered.held) == 0 {
 		return nil
 	}
-	byValue := map[string]string{}
+	byValue := map[string][]string{}
 	labels := map[string]bool{}
 	for l := range registered.held {
 		labels[l.Label] = true
-		if cur, ok := byValue[l.Value]; !ok || l.Label < cur {
-			byValue[l.Value] = l.Label
+		if !slices.Contains(byValue[l.Value], l.Label) {
+			byValue[l.Value] = append(byValue[l.Value], l.Label)
 		}
 	}
 	values := make([]string, 0, len(byValue))
@@ -105,14 +106,16 @@ func Masker() *Mask {
 	})
 	m := &Mask{labels: labels}
 	for _, v := range values {
-		m.values = append(m.values, spelled{mark: Mark(byValue[v]), forms: forms(v), short: len(v) < shortValue})
+		names := slices.Sorted(slices.Values(byValue[v]))
+		m.values = append(m.values, spelled{mark: Mark(strings.Join(names, ",")), labels: names, forms: forms(v), short: len(v) < shortValue})
 	}
 	return m
 }
 
 // String replaces every registered value in s with [secret:LABEL]: the value
-// as written, JSON-escaped, and URL-encoded. Longer values go first, so a
-// value that contains another is masked whole.
+// as written, JSON-escaped, and URL-encoded. A value held under several labels
+// reads [secret:A,B], so whoever holds either knows it. Longer values go
+// first, so a value that contains another is masked whole.
 func (m *Mask) String(s string) string {
 	if m == nil || s == "" {
 		return s
@@ -186,8 +189,13 @@ func (m *Mask) Marks(s string) []string {
 			out = append(out, label)
 		}
 	}
+	for _, v := range m.values {
+		if len(v.labels) > 1 && strings.Contains(s, v.mark) {
+			out = append(out, v.labels...)
+		}
+	}
 	slices.Sort(out)
-	return out
+	return slices.Compact(out)
 }
 
 const markOpen = "[secret:"

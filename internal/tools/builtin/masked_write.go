@@ -20,11 +20,11 @@ func refuseMaskedWrite(args json.RawMessage) error {
 	if len(labels) == 0 {
 		return nil
 	}
-	marks := make([]string, len(labels))
+	vars := make([]string, len(labels))
 	for i, l := range labels {
-		marks[i] = secrets.Mark(l)
+		vars[i] = "$REASONIX_SECRET_" + l
 	}
 	return tool.Refusal{Code: CodeMaskedSecretWrite, Message: fmt.Sprintf(
-		"write refused: the text holds %s, which you read in place of a secret the user saved; the file holds the real value, and writing the mark would replace it. Leave those lines as they are and edit around them. A shell command reads the value as $REASONIX_SECRET_%s.",
-		strings.Join(marks, ", "), labels[0])}
+		"write refused: the text holds a [secret:...] mark, which you read in place of a secret the user saved (%s); the file holds the real value, and writing the mark would replace it. Leave those lines as they are and edit around them; to remove one, use delete_range or a shell command. A shell command reads the value as %s, whichever you were given.",
+		strings.Join(labels, ", "), strings.Join(vars, " or "))}
 }

@@ -76,8 +76,11 @@ func TestAWatchedStoreIsReadOnEverySnapshotAndNothingIsForgotten(t *testing.T) {
 func TestOneValueUnderTwoNamesStaysMaskedWhenEitherGoes(t *testing.T) {
 	stored := []Labeled{{"GH_TOKEN", "ghp_twonames0001"}, {"GITHUB_TOKEN", "ghp_twonames0001"}}
 	WatchValues(t.Name(), func() []Labeled { return stored })
-	if got := masked("token=ghp_twonames0001"); got != "token=[secret:GH_TOKEN]" {
+	if got := masked("token=ghp_twonames0001"); got != "token=[secret:GH_TOKEN,GITHUB_TOKEN]" {
 		t.Fatalf("two names = %q", got)
+	}
+	if got := Masker().Marks("token=[secret:GH_TOKEN,GITHUB_TOKEN]"); !slices.Equal(got, []string{"GH_TOKEN", "GITHUB_TOKEN"}) {
+		t.Fatalf("marks of a value under two names = %v", got)
 	}
 	stored = stored[1:]
 	if got := masked("token=ghp_twonames0001"); strings.Contains(got, "ghp_") {

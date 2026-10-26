@@ -5,14 +5,17 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
 
+	"reasonix/internal/base/secrets"
 	"reasonix/internal/base/secrets/secretstest"
 	"reasonix/internal/contract/config"
 	"reasonix/internal/contract/provider"
 	_ "reasonix/internal/model/responses"
+	"reasonix/internal/state/teamroster"
 )
 
 // Every wire a provider entry may speak masks a value the host holds for the
@@ -63,5 +66,27 @@ func TestEveryProviderKindMasksSecretsOnTheWire(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A process that reaches a model without building a session, as review does,
+// still masks what the team stored: building the provider is enough.
+func TestBuildingAProviderAloneMasksTheTeamsSecrets(t *testing.T) {
+	const value = "sk-review-0123456789"
+	store := teamroster.Store{Dir: config.RootsForHome("").TeamDir()}
+	if err := os.MkdirAll(store.Dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.EditSecrets(context.Background(), func(b *teamroster.SecretBook) error {
+		b.Secrets = append(b.Secrets, teamroster.Secret{Name: "REVIEW_KEY", Value: value})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newProviderForTest(&config.ProviderEntry{Name: "review", Kind: "openai", BaseURL: "http://127.0.0.1:1", Model: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := secrets.Masker().String("diff adds " + value); got != "diff adds [secret:REVIEW_KEY]" {
+		t.Fatalf("after building a provider = %q", got)
 	}
 }

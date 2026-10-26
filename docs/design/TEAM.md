@@ -78,11 +78,12 @@ default, and a secret already saved under the name keeps the agents it had.
 | Rule | Behaviour |
 | --- | --- |
 | Reaching commands | Every agent given the secret reads it in its shell commands as `$REASONIX_SECRET_NAME`. No tool returns the value. |
-| Reaching models | Every provider adapter masks the outgoing request with `provider.MaskOutbound`, so no path to a model skips it. A model reads `[secret:NAME]` in place of the value as written, JSON-escaped or URL-encoded. |
-| Freshness | The mask reads the secrets file on every snapshot (`secrets.WatchValues`), in every process, and holds each value it has seen until the process exits. A value another process saved is masked here at once. |
+| Reaching models | Every built-in adapter masks the request it sends (`provider.MaskOutbound`), and so does every crossing into an extension process (`providerconv`). A model reads `[secret:NAME]`, or `[secret:A,B]` for a value saved under two names. |
+| Signed bytes | Kept whole only by the adapter that sends their signature back: Anthropic thinking, Gemini thought steps, thought-signed calls to Gemini endpoints. Every other receiver gets them masked. |
+| Freshness | The mask reads the secrets file on every snapshot (`secrets.WatchValues`), in every process that builds a session or a provider, and holds each value it has seen until the process exits. |
 | Delete and replace | The value stops reaching commands and is kept as retired, so copies already in conversations stay masked. Forgetting retired values is a separate, confirmed action. |
-| Writing back | `write_file`, `edit_file`, `multi_edit` and `notebook_edit` refuse text carrying a mark (`secret.masked_write`): written, it would replace the real value. |
-| Shell output | Output, the failure tail, streamed progress and background job output are masked before they are kept or drawn. |
+| Writing back | `write_file`, `edit_file`, `multi_edit` and `notebook_edit`, and their approval previews, refuse text carrying a mark (`secret.masked_write`): written, it would replace the real value. |
+| Shell output | A command's output, failure tail and streamed progress, and what `bash_output` and `wait` return, are masked before they are kept or drawn. |
 
 ## 8. Known limits
 
@@ -91,8 +92,9 @@ default, and a secret already saved under the name keeps the agents it had.
 | Windows | No OS sandbox bounds what an agent's shell can write, so the roster file is protected only by being outside workspace write roots on macOS and Linux. |
 | Secrets at rest | Stored unencrypted. On macOS and Linux with the sandbox on, agents' commands are denied the file; on Windows or with the sandbox off they can read every secret in it. |
 | Secrets in commands | A command can read a value and print it transformed (base64, hex); the mask matches the value, not what was done to it. Give a secret only to agents you trust. |
-| Secret scope | "Only Ada" governs which commands receive the variable, in all of Ada's seats, groups included. It does not isolate files: another agent's commands can read Ada's session files, which hold what the user typed. |
-| Signed bytes | Reasoning a provider signed, and a tool call carrying a thought signature, are sent back unmasked: the provider verifies them, and it wrote them. |
+| Secret scope | "Only Ada" governs which commands receive the variable, in all of Ada's seats, groups included. It does not isolate files: another agent's commands can read Ada's session files and background job logs, which hold raw text. |
+| Writes the host cannot read | A shell command (heredoc, `sed`, redirect) or an MCP tool can still write a mark over a value; only the file tools are refused. |
+| Signed bytes elsewhere | A brokered or extension-hosted model that verifies signed bytes holding a value can refuse the turn, since those bytes reach it masked. |
 | Short values | Values under 8 bytes are masked only between non-word characters, and a value split across two progress chunks is not recognised in the window. |
 | Memory review | Runs on the title model, which reads up to 3000 characters of each of the user's lines in the turn. |
 | Terminal | `/team` lists the team and `/msg` queues a message, delivered when a Studio host holding the team ticks. ACP seats no session on the team. |

@@ -7,33 +7,46 @@ import (
 	"reasonix/internal/base/secrets"
 )
 
+// Signed names the provider-verified bytes an adapter sends back as it got
+// them. Only the adapter that sends a signature knows it does, so each says;
+// a receiver that cannot say, an extension or a broker, keeps nothing.
+type Signed struct {
+	Reasoning bool     // reasoning sent with its ReasoningSignature
+	ToolCalls bool     // arguments of a call sent with its ThoughtSignature
+	Items     []string // ResponsesItems of these types, replayed raw
+}
+
 // MaskOutbound masks every value the host holds for the person in a request
 // an adapter is about to send; every adapter calls it, so no path to a model
-// skips it. Signed reasoning, replayed reasoning items and tool calls carrying
-// a thought signature stay whole: the provider wrote and verifies those bytes.
-func MaskOutbound(req Request) Request {
-	m := secrets.Masker()
-	if m == nil {
-		return req
-	}
-	msgs := slices.Clone(req.Messages)
-	for i := range msgs {
-		msgs[i] = maskMessage(m, msgs[i])
-	}
-	req.Messages = msgs
+// skips it. What keep names stays whole: altering it fails the request.
+func MaskOutbound(req Request, keep Signed) Request {
+	req.Messages = MaskMessages(req.Messages, keep)
 	return req
 }
 
-func maskMessage(m *secrets.Mask, msg Message) Message {
+// MaskMessages is MaskOutbound for messages leaving the host another way.
+func MaskMessages(msgs []Message, keep Signed) []Message {
+	m := secrets.Masker()
+	if m == nil {
+		return msgs
+	}
+	out := slices.Clone(msgs)
+	for i := range out {
+		out[i] = maskMessage(m, out[i], keep)
+	}
+	return out
+}
+
+func maskMessage(m *secrets.Mask, msg Message, keep Signed) Message {
 	msg.Content = m.String(msg.Content)
 	msg.ProviderContent = m.String(msg.ProviderContent)
-	if msg.ReasoningSignature == "" {
+	if !keep.Reasoning || msg.ReasoningSignature == "" {
 		msg.ReasoningContent = m.String(msg.ReasoningContent)
 	}
 	if len(msg.ToolCalls) > 0 {
 		calls := slices.Clone(msg.ToolCalls)
 		for i := range calls {
-			if calls[i].ThoughtSignature == "" {
+			if !keep.ToolCalls || calls[i].ThoughtSignature == "" {
 				calls[i].Arguments = m.String(calls[i].Arguments)
 			}
 		}
@@ -45,7 +58,7 @@ func maskMessage(m *secrets.Mask, msg Message) Message {
 			var head struct {
 				Type string `json:"type"`
 			}
-			if json.Unmarshal(it, &head) == nil && head.Type == "reasoning" {
+			if json.Unmarshal(it, &head) == nil && slices.Contains(keep.Items, head.Type) {
 				items[i] = it
 				continue
 			}

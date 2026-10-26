@@ -25,7 +25,7 @@ const (
 	MinSecretBytes        = 4
 	MaxSecretBytes        = 16 << 10
 	MaxSecretPurposeRunes = 200
-	MaxSecretRequests     = 32
+	MaxSecretRequests     = 32 // open at once, per agent
 	maxSecretNameRunes    = 40
 )
 

@@ -6,6 +6,8 @@ import (
 	"reasonix/internal/contract/config"
 	"reasonix/internal/contract/tool"
 	"reasonix/internal/session/control"
+	"reasonix/internal/session/team"
+	"reasonix/internal/state/teamroster"
 	"reasonix/internal/tools/builtin"
 )
 
@@ -37,5 +39,12 @@ func teamSecretEnv(seat control.TeamSeat) func() []string {
 			return nil
 		}
 		return svc.SecretEnv(ref.Agent)
+	}
+}
+
+// watchTeamSecrets makes the team's stored secrets what this process masks.
+func watchTeamSecrets(roots config.Roots) {
+	if dir := roots.TeamDir(); dir != "" {
+		team.WatchSecrets(teamroster.Store{Dir: dir})
 	}
 }
