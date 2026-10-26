@@ -11,6 +11,7 @@ export const TEAM_ACTIONS: UIAction[] = [
   { id: "team.group-open", kind: "view", target: "entity", proof: "interaction" },
   { id: "team.group-settings", kind: "view", target: "entity", proof: "interaction" },
   { id: "team.group-close", kind: "view", target: "none", proof: "interaction" },
+  { id: "team.group-older", kind: "view", target: "entity", proof: "interaction" },
   { id: "team.dialog-submit", kind: "kernel-mutation", target: "optional", proof: "interaction" },
   { id: "team.agent-delete-ask", kind: "view", target: "entity", proof: "interaction" },
   { id: "team.agent-delete", kind: "destructive", target: "entity", proof: "interaction" },

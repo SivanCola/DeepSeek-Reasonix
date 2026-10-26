@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { t } from "../../i18n";
 import { reason, say } from "../../i18n/kernel";
 import type { HubPort, RuntimeView } from "../../port/hub";
@@ -13,6 +13,9 @@ import "../../styles/team.css";
 import "../../styles/team-stage.css";
 
 const EVERYONE = "*";
+// How many lines one read of the log brings: the latest on open, then the
+// ones before, a page at a time, on request.
+const PAGE = 200;
 
 function eventText(l: GroupLine, name: string): string {
   switch (l.event) {
@@ -62,7 +65,11 @@ function GroupChat({ group, view, team, onAdoptPane, onSaved }: {
   const [picking, setPicking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [settings, setSettings] = useState(false);
+  const [older, setOlder] = useState(false);
+  const [paging, setPaging] = useState(false);
   const end = useRef<HTMLDivElement>(null);
+  const log = useRef<HTMLDivElement>(null);
+  const anchor = useRef<number | null>(null);
   const agents = new Map(view.agents.map((a) => [a.id, a]));
   const nameOf = (id: string) => (id === "user" ? t("你") : agents.get(id)?.name ?? t("另一个 Agent"));
   const members = group.members.map((m) => agents.get(m)).filter((a): a is TeamAgent => !!a);
@@ -72,15 +79,40 @@ function GroupChat({ group, view, team, onAdoptPane, onSaved }: {
     let live = true;
     const after = lastSeq;
     if (after > 0 && (group.lastSeq ?? 0) <= after) return;
-    void team.groupLog(group.id, after ? { after } : { limit: 200 }).then(
-      (more) => live && setLines((cur) => [...cur, ...more.filter((l) => l.seq > (cur.at(-1)?.seq ?? 0))]),
+    void team.groupLog(group.id, after ? { after } : { limit: PAGE }).then(
+      (more) => {
+        if (!live) return;
+        if (!after) setOlder(more.length === PAGE && (more[0]?.seq ?? 1) > 1);
+        setLines((cur) => [...cur, ...more.filter((l) => l.seq > (cur.at(-1)?.seq ?? 0))]);
+      },
       (e) => live && pushToast(reason(e)),
     );
     return () => { live = false; };
   }, [group.id, group.lastSeq, view.revision]);
   useEffect(() => {
-    end.current?.scrollIntoView?.({ block: "end" });
-  }, [lines.length]);
+    if (anchor.current === null) end.current?.scrollIntoView?.({ block: "end" });
+  }, [lines.at(-1)?.seq]);
+  // Lines paged in above keep the ones on screen where they were.
+  useLayoutEffect(() => {
+    if (anchor.current === null || !log.current) return;
+    log.current.scrollTop += log.current.scrollHeight - anchor.current;
+    anchor.current = null;
+  }, [lines[0]?.seq]);
+  const loadOlder = async () => {
+    const first = lines[0]?.seq;
+    if (!first || paging) return;
+    setPaging(true);
+    try {
+      const page = await team.groupLog(group.id, { before: first, limit: PAGE });
+      anchor.current = log.current?.scrollHeight ?? 0;
+      setOlder(page.length === PAGE && (page[0]?.seq ?? 1) > 1);
+      setLines((cur) => [...page.filter((l) => l.seq < (cur[0]?.seq ?? Infinity)), ...cur]);
+    } catch (e) {
+      pushToast(reason(e));
+    } finally {
+      setPaging(false);
+    }
+  };
 
   const send = async () => {
     const body = text.trim();
@@ -129,7 +161,12 @@ function GroupChat({ group, view, team, onAdoptPane, onSaved }: {
           <StudioIcon name="close" />
         </button>
       </header>
-      <div className="team-stage-log" role="log" aria-live="polite">
+      <div className="team-stage-log" role="log" aria-live="polite" ref={log}>
+        {older && (
+          <button type="button" className="sessmore" data-action="team.group-older" data-target={group.id} disabled={paging} onClick={() => void loadOlder()}>
+            {t("加载更早的消息")}
+          </button>
+        )}
         {lines.length === 0 && <p className="team-note">{t("还没有消息。发一条消息，管理员会先回答；用 @ 可以直接叫某位成员。")}</p>}
         {lines.map((l) =>
           l.kind === "post" ? (

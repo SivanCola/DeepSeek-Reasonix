@@ -103,3 +103,25 @@ it("a failed turn says why when the kernel's code has words, and opens the membe
   await userEvent.click(within(line).getByRole("button", { name: "查看 Ben 的对话" }));
   await waitFor(() => expect(adopt).toHaveBeenCalledWith(expect.objectContaining({ team: { agent: "a-2", group: "g-3" } })));
 });
+
+it("a long log opens on its latest lines and pages back on request", async () => {
+  const hub = new MockHub();
+  const team = hub.team();
+  await team.bootstrap("Chief");
+  await team.createAgent({ name: "Ada" });
+  await team.createGroup({ name: "Long", members: ["a-chief", "a-1"] });
+  for (let i = 1; i <= 300; i++) team.addLine("g-2", { from: "a-1", kind: "post", text: `line ${i}` });
+  render(
+    <>
+      <TeamRail hub={hub} active="r1" onAdoptPane={vi.fn()} />
+      <GroupStage hub={hub} active="r1" onAdoptPane={vi.fn()} />
+    </>,
+  );
+  await userEvent.click(await screen.findByRole("button", { name: "Long line 300" }));
+  const stage = await screen.findByRole("region", { name: "Long" });
+  expect(await within(stage).findByText("line 300")).toBeTruthy();
+  expect(within(stage).queryByText("line 100")).toBeNull();
+  await userEvent.click(within(stage).getByRole("button", { name: "加载更早的消息" }));
+  expect(await within(stage).findByText("line 1")).toBeTruthy();
+  expect(within(stage).queryByRole("button", { name: "加载更早的消息" })).toBeNull();
+});
