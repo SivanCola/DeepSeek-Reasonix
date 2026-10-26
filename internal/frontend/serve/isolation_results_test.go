@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -91,5 +92,30 @@ func TestPairedDevicesCannotMutateRetainedResults(t *testing.T) {
 	w := isolationRoute(s, http.MethodPost, "/isolated-results/root", `{}`, false)
 	if w.Code != http.StatusNoContent || s.root != 1 {
 		t.Fatalf("host root management blocked: %d %+v", w.Code, s)
+	}
+}
+
+func TestIsolationRefusalStatusFollowsItsClass(t *testing.T) {
+	for code, status := range map[string]int{
+		isolation.CodeUnknownID:        http.StatusNotFound,
+		isolation.CodeUnavailable:      http.StatusNotImplemented,
+		isolation.CodeNotGit:           http.StatusNotImplemented,
+		isolation.CodeUnsupportedState: http.StatusNotImplemented,
+		isolation.CodeStaleDiscard:     http.StatusConflict,
+		isolation.CodeBusy:             http.StatusConflict,
+	} {
+		w := httptest.NewRecorder()
+		writeIsolationError(w, tool.Refusal{Code: code, Message: code})
+		if w.Code != status {
+			t.Errorf("%s answered %d, want %d", code, w.Code, status)
+		}
+	}
+}
+
+func TestUnclassifiedIsolationFailureIsNotAConflict(t *testing.T) {
+	w := httptest.NewRecorder()
+	writeIsolationError(w, errors.New("disk full while staging the root environment"))
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("an internal failure answered %d", w.Code)
 	}
 }

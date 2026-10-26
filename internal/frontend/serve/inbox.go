@@ -153,7 +153,7 @@ func (s *Server) enqueueLocked(ctx context.Context, w http.ResponseWriter, req c
 	}
 	cleanup, err := s.prepareRootExecutionLocked(ctx)
 	if err != nil {
-		writeErr(w, http.StatusConflict, err)
+		writeIsolationError(w, err)
 		return
 	}
 	defer cleanup()
