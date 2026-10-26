@@ -77,6 +77,10 @@ class TeamStore {
       if (--this.users === 0) {
         this.unwatch?.();
         this.unwatch = null;
+        if (current === this) {
+          current = null;
+          for (const l of currentListeners) l();
+        }
       }
     };
   }

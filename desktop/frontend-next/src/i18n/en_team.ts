@@ -193,4 +193,5 @@ export const EN_TEAM: Record<string, string> = {
   "{agent} 需要 {name}": "{agent} needs {name}",
   "已保存 {name} · {scope}": "Saved {name} · {scope}",
   "已拒绝提供 {name}": "Declined {name}",
+  "{name} 的对话": "{name}'s conversation",
 };

@@ -339,3 +339,6 @@
 .team-secret-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .team-secret-actions button { padding: 4px 12px; border: 1px solid var(--hair); border-radius: var(--r-pill); background: transparent; color: var(--text); font: inherit; font-size: var(--fs-meta); cursor: pointer; }
 .team-secret-actions .team-save { border-color: var(--text); background: var(--text); color: var(--surface); }
+.team-mention { display: inline; padding: 0 2px; border: 0; border-radius: var(--r-xs); background: var(--press-wash); color: var(--accent-ink); font: inherit; cursor: pointer; }
+.team-mention:hover { text-decoration: underline; }
+.team-ref-chip { display: inline-block; padding: 0 6px; border: 1px solid var(--hair); border-radius: var(--r-pill); color: var(--muted); font-size: var(--fs-meta); }

@@ -68,8 +68,13 @@ func (c *Controller) CompletionData(lang string) CompletionData {
 // which is a disk read that every keystroke would otherwise repeat.
 func (c *Controller) CompletionDataFor(lang, line string, cursor int) CompletionData {
 	d := c.completionData(lang, CompletionNeedsArgData(line, cursor))
-	if _, _, _, ok := ActiveSessionToken(line, cursor); ok {
+	_, _, _, ref := ActiveRefToken(line, cursor)
+	_, _, _, session := ActiveSessionToken(line, cursor)
+	if session {
 		d.Sessions = c.sessionOptions()
+	}
+	if ref || session {
+		d.Agents = c.teammates()
 	}
 	return d
 }

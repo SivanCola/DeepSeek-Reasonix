@@ -1,5 +1,8 @@
+import { useEffect } from "react";
 import type { HubPort, RuntimeView } from "../../port/hub";
 import type { AgentPort } from "../../port/port";
+import { setAgentOpener } from "../../state/teamOpen";
+import { closeGroupStage } from "../../state/teamStage";
 import { GroupStage } from "./GroupStage";
 import { SeatDrawer } from "./SeatDrawer";
 
@@ -14,6 +17,17 @@ export function TeamLayer({ hub, active, seat, root, port, onMemory, onAdoptPane
   onMemory?: () => void;
   onAdoptPane: (rt: RuntimeView) => void;
 }) {
+  useEffect(() => {
+    const team = hub.team();
+    if (!team) return;
+    setAgentOpener(async (agent) => {
+      const rt = await team.openAgent(agent);
+      closeGroupStage();
+      onAdoptPane(rt);
+      return rt;
+    });
+    return () => setAgentOpener(null);
+  }, [hub, onAdoptPane]);
   return (
     <>
       <GroupStage hub={hub} active={active} onAdoptPane={onAdoptPane} />

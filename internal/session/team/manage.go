@@ -355,3 +355,32 @@ func (s *Service) GroupID(ref string) (string, error) {
 	}
 	return id, nil
 }
+
+// Teammates are the team's agents other than self, in roster order.
+func (s *Service) Teammates(self string) ([]teamroster.Agent, error) {
+	r, err := s.store.Load()
+	if err != nil {
+		return nil, err
+	}
+	var out []teamroster.Agent
+	for _, a := range r.Agents {
+		if a.ID != self {
+			out = append(out, a)
+		}
+	}
+	return out, nil
+}
+
+// AgentConversation is agent id as the roster holds it, for reading its own
+// conversation.
+func (s *Service) AgentConversation(id string) (teamroster.Agent, error) {
+	r, err := s.store.Load()
+	if err != nil {
+		return teamroster.Agent{}, err
+	}
+	a, ok := r.Agent(id)
+	if !ok {
+		return teamroster.Agent{}, teamroster.ErrUnknownAgent
+	}
+	return *a, nil
+}
