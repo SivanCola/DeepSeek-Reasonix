@@ -18,6 +18,9 @@ const (
 	DeliverGroupTurn DeliveryKind = "group_turn"
 	DeliverSchedule  DeliveryKind = "schedule"
 	DeliverSecret    DeliveryKind = "secret"
+	// DeliverUserMessage is the user's own words, sent from another window: a
+	// turn of theirs, not data the host frames.
+	DeliverUserMessage DeliveryKind = "user_message"
 )
 
 // Delivery is one item the host queues in a seat's inbox. Key makes it

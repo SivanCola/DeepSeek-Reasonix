@@ -52,6 +52,8 @@ func SubmitSlashCommands(m i18n.Messages) []SlashItem {
 		{Label: "/language", Insert: "/language ", Hint: m.CmdLanguage, Descend: true},
 		{Label: "/currency", Insert: "/currency ", Hint: m.CmdCurrency, Descend: true},
 		{Label: "/ask-timeout", Insert: "/ask-timeout ", Hint: m.CmdAskTimeout, Descend: true},
+		{Label: "/team", Insert: "/team", Hint: m.CmdTeam},
+		{Label: "/msg", Insert: "/msg ", Hint: m.CmdMsg, Descend: true},
 	}
 }
 

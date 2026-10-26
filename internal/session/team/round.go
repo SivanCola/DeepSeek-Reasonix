@@ -429,7 +429,7 @@ func (s *Service) Tick(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	errs := []error{s.fireDue(ctx, r)}
+	errs := []error{s.fireDue(ctx, r), s.deliverOutbox(ctx, r)}
 	for _, g := range r.Groups {
 		errs = append(errs, s.tickGroup(ctx, g.ID))
 	}

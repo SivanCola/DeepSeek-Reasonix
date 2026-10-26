@@ -130,3 +130,22 @@ func TestDeletingAnAgentOrGroupDropsItsTasks(t *testing.T) {
 		t.Fatalf("tasks left = %+v", list)
 	}
 }
+
+// What the user sent from a window without the team reaches the agent as the
+// user's own words, on the holder's next tick, once.
+func TestAQueuedUserMessageReachesItsAgentAsTheUsersWords(t *testing.T) {
+	h := newHarness(t, "Chief", "Ada")
+	ctx := context.Background()
+	if _, err := h.store.QueueUserMessage(ctx, h.id("Ada"), "write the weekly report"); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := h.svc.Tick(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := h.panes.pane(SeatRef{Agent: h.id("Ada")}).deliveries()
+	if len(got) != 1 || got[0].Kind != DeliverUserMessage || got[0].Text != "write the weekly report" || got[0].From != teamroster.ByUser {
+		t.Fatalf("deliveries = %+v", got)
+	}
+}

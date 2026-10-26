@@ -163,3 +163,41 @@ func TestEffectAnAgentsMessageIsAnsweredThroughTheReceiversRealTurn(t *testing.T
 		t.Fatalf("turn_started names index %v and text %q; history reads %q at %d", live.MsgIndex, live.Text, read, landed)
 	}
 }
+
+// A message the user sent an agent from another window runs as the user's own
+// turn: it lands as theirs, with no origin row and nothing framed around it.
+func TestEffectAUserMessageFromAnotherWindowIsTheUsersTurn(t *testing.T) {
+	home := isolateConfigHome(t)
+	t.Setenv("REASONIX_HOME", filepath.Join(home, ".reasonix"))
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	rec := &effectRecordingProvider{}
+	provider.Register("team-user-effect", func(provider.Config) (provider.Provider, error) { return rec, nil })
+	writeFile(t, dir, "reasonix.toml", "default_model = \"test-model\"\n[agent]\nsystem_prompt = \"BASE\"\n[[providers]]\nname = \"test-model\"\nkind = \"team-user-effect\"\nmodel = \"x\"\n")
+	approveWorkspace(t, dir)
+	ctrl, err := Build(context.Background(), Options{Home: os.Getenv("REASONIX_HOME"), WorkspaceRoot: dir, resolvedShell: pinnedEffectShell()})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+	ctrl.EnsureSessionPath()
+	if err := ctrl.DeliverTeam(team.Delivery{Key: "user-u-1", Kind: team.DeliverUserMessage, From: teamroster.ByUser, Display: "write the weekly report", Text: "write the weekly report"}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for len(rec.requests()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	for !time.Now().After(deadline) && ctrl.Running() {
+		time.Sleep(20 * time.Millisecond)
+	}
+	var landed *provider.Message
+	for _, m := range ctrl.History() {
+		if m.Role == provider.RoleUser && strings.Contains(sessionstore.UserMessageText(m), "write the weekly report") {
+			landed = &m
+		}
+	}
+	if landed == nil || landed.HostAuthored || landed.Origin != nil {
+		t.Fatalf("the user's message landed as %+v", landed)
+	}
+}

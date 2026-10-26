@@ -114,3 +114,25 @@ func renderScheduledPost(sc teamroster.Schedule) string {
 	}
 	return sc.Name + ": " + sc.Prompt
 }
+
+// deliverOutbox hands each message the user queued from another window to its
+// agent as the user's own words. One whose agent has left the team is dropped.
+func (s *Service) deliverOutbox(ctx context.Context, r teamroster.Roster) error {
+	queued, err := s.store.TakeUserMessages(ctx)
+	if err != nil || len(queued) == 0 {
+		return err
+	}
+	defer s.changed()
+	var errs []error
+	for _, m := range queued {
+		if _, ok := r.Agent(m.To); !ok {
+			continue
+		}
+		pane, err := s.panes.Ensure(ctx, SeatRef{Agent: m.To})
+		if err == nil {
+			err = pane.Deliver(Delivery{Key: "user-" + m.ID, Kind: DeliverUserMessage, From: teamroster.ByUser, Display: m.Text, Text: m.Text})
+		}
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
