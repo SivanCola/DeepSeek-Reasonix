@@ -3,6 +3,7 @@ package serve
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -252,5 +253,42 @@ func TestAnAgentsUsageSumsItsChatAndGroupSeats(t *testing.T) {
 	}
 	if chief, _ := agentNamed(v, "Chief"); chief.Usage != (teamUsageView{}) {
 		t.Fatalf("an agent with no conversations spent %+v", chief.Usage)
+	}
+}
+
+// A photo is uploaded as a data URL, served from the team's own folder by a
+// name the kernel chose, and taken off again; only a real picture is kept.
+func TestAPhotoIsUploadedServedAndTakenOff(t *testing.T) {
+	h, ids := teamHub(t, "Chief", "Ada")
+	c := newTeamClient(t, h)
+	png := "\x89PNG\r\n\x1a\n" + strings.Repeat("x", 64)
+	body := map[string]string{"image": "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte(png))}
+	ada, _ := agentNamed(c.view("POST", "/team/agents/"+ids["Ada"]+"/photo", body), "Ada")
+	if !strings.HasPrefix(ada.Avatar.Image, "/team/avatars/") {
+		t.Fatalf("avatar = %+v, want a served photo", ada.Avatar)
+	}
+	resp, err := http.Get(c.srv.URL + ada.Avatar.Image)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || string(got) != png || resp.Header.Get("Content-Type") != "image/png" || resp.Header.Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("GET photo = %d %q %v", resp.StatusCode, got, resp.Header)
+	}
+
+	svg := map[string]string{"image": "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte("<svg onload=alert(1)>"))}
+	c.refused("POST", "/team/agents/"+ids["Ada"]+"/photo", svg, 400, "team.invalid")
+	c.refused("POST", "/team/agents/"+ids["Ada"]+"/photo", map[string]string{"image": "/etc/passwd"}, 400, "team.invalid")
+
+	worn := ada.Avatar.Image
+	ada, _ = agentNamed(c.view("DELETE", "/team/agents/"+ids["Ada"]+"/photo", nil), "Ada")
+	if ada.Avatar.Image != "" {
+		t.Fatalf("after taking it off the avatar is %+v", ada.Avatar)
+	}
+	for _, path := range []string{worn, "/team/avatars/..%2Froster.json", "/team/avatars/roster.json"} {
+		if status, _ := c.do("GET", path, nil); status == http.StatusOK {
+			t.Fatalf("GET %s answered 200", path)
+		}
 	}
 }

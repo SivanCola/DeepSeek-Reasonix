@@ -75,6 +75,19 @@ export class MockTeam implements TeamPort {
     return this.bump();
   }
 
+  async setPhoto(id: string, image: string) {
+    this.record("setPhoto", id, image);
+    this.agent(id).avatar = { ...this.agent(id).avatar, image };
+    return this.bump();
+  }
+
+  async clearPhoto(id: string) {
+    this.record("clearPhoto", id);
+    const { image: _, ...rest } = this.agent(id).avatar;
+    this.agent(id).avatar = rest;
+    return this.bump();
+  }
+
   async updateAgent(id: string, edit: AgentEdit) {
     this.record("updateAgent", id, edit);
     const a = this.agent(id);

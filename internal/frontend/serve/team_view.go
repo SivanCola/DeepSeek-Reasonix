@@ -23,6 +23,7 @@ type teamView struct {
 type teamAvatarView struct {
 	Glyph string `json:"glyph,omitempty"`
 	Color string `json:"color,omitempty"`
+	Image string `json:"image,omitempty"`
 }
 
 // teamActivityView is what an agent is doing, read off its open sessions and
@@ -114,7 +115,7 @@ func (t *hubTeam) view() (teamView, error) {
 func (t *hubTeam) agentView(a teamroster.Agent, book []teamroster.Exchange) teamAgentView {
 	v := teamAgentView{
 		ID: a.ID, Name: a.Name, Role: a.Role, Instructions: a.Instructions,
-		Avatar: teamAvatarView{Glyph: a.Avatar.Glyph, Color: a.Avatar.Color}, Model: a.InitialModel,
+		Avatar: teamAvatarView{Glyph: a.Avatar.Glyph, Color: a.Avatar.Color, Image: photoURL(a.Avatar.Image)}, Model: a.InitialModel,
 		Folder: a.Folder, Permission: a.Permission, Main: a.Main, Pinned: a.Pinned, Hidden: a.Hidden,
 	}
 	if rt, ok := t.liveRuntime(team.SeatRef{Agent: a.ID}); ok {

@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
 import { t } from "../../i18n";
 import type { TeamActivity, TeamAvatar } from "../../port/team";
 
@@ -56,13 +56,19 @@ export interface AvatarSubject {
 export function AgentAvatar({ agent, size = 28, star = agent.main, badges = true }: { agent: AvatarSubject; size?: number; star?: boolean; badges?: boolean }) {
   const { glyph, color } = avatarOf(agent.id, agent.avatar, agent.main);
   const state = agent.activity?.state ?? "idle";
+  const [broken, setBroken] = useState<string | null>(null);
+  const photo = agent.avatar.image && agent.avatar.image !== broken ? agent.avatar.image : undefined;
   return (
-    <span className="team-avatar" data-color={color} data-state={badges ? state : "idle"} style={{ "--avatar-size": `${size}px` } as CSSProperties} aria-hidden="true">
-      <svg viewBox="0 0 24 24">
-        <path d={GLYPHS[glyph]} />
-        <circle className="team-avatar-eye" cx="9.5" cy="12" r="1.3" />
-        <circle className="team-avatar-eye" cx="14.5" cy="12" r="1.3" />
-      </svg>
+    <span className="team-avatar" data-color={color} data-state={badges ? state : "idle"} data-photo={photo ? "" : undefined} style={{ "--avatar-size": `${size}px` } as CSSProperties} aria-hidden="true">
+      {photo ? (
+        <img src={photo} alt="" draggable={false} onError={() => setBroken(photo)} />
+      ) : (
+        <svg viewBox="0 0 24 24">
+          <path d={GLYPHS[glyph]} />
+          <circle className="team-avatar-eye" cx="9.5" cy="12" r="1.3" />
+          <circle className="team-avatar-eye" cx="14.5" cy="12" r="1.3" />
+        </svg>
+      )}
       {badges && star && <span className="team-avatar-star" />}
       {badges && state === "working" && <span className="team-avatar-dot" />}
       {badges && state === "needs_you" && <span className="team-avatar-ask">?</span>}

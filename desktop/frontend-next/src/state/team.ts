@@ -89,8 +89,8 @@ const stores = new WeakMap<HubPort, TeamStore>();
 let current: TeamStore | null = null;
 const currentListeners = new Set<() => void>();
 
-/** The name the team knows an agent by, or undefined when it does not. */
-export function useAgentName(id: string | undefined): string | undefined {
+/** The team the window last attached, for a view drawn inside a pane. */
+export function useCurrentTeam(): { view: TeamView | null; team: TeamPort | null; shown: (view: TeamView) => void } {
   const view = useSyncExternalStore(
     (l) => {
       currentListeners.add(l);
@@ -102,6 +102,12 @@ export function useAgentName(id: string | undefined): string | undefined {
     },
     () => current?.get().view ?? null,
   );
+  return { view, team: current?.port() ?? null, shown: (next) => current?.shown(next) };
+}
+
+/** The name the team knows an agent by, or undefined when it does not. */
+export function useAgentName(id: string | undefined): string | undefined {
+  const { view } = useCurrentTeam();
   return id ? view?.agents.find((a) => a.id === id)?.name : undefined;
 }
 

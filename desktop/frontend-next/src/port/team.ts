@@ -13,6 +13,8 @@ export interface MessageOrigin {
 export interface TeamAvatar {
   glyph?: string;
   color?: string;
+  // Where a photo the person gave the agent is read; it is worn over the glyph.
+  image?: string;
 }
 
 // What an agent is doing, read off its open sessions. `runtime` names the pane
@@ -152,6 +154,9 @@ export interface TeamPort {
   view(): Promise<TeamView | null>;
   bootstrap(name: string, role?: string): Promise<TeamView>;
   createAgent(edit: AgentEdit): Promise<TeamView>;
+  // A picture already cropped by the window, as a data URL.
+  setPhoto(id: string, image: string): Promise<TeamView>;
+  clearPhoto(id: string): Promise<TeamView>;
   updateAgent(id: string, edit: AgentEdit): Promise<TeamView>;
   deleteAgent(id: string): Promise<TeamView>;
   openAgent(id: string): Promise<import("./hub").RuntimeView>;
@@ -202,6 +207,8 @@ export class SseTeam implements TeamPort {
   }
   bootstrap(name: string, role?: string) { return this.call<TeamView>("POST", "/team/bootstrap", { name, role }); }
   createAgent(edit: AgentEdit) { return this.call<TeamView>("POST", "/team/agents", edit); }
+  setPhoto(id: string, image: string) { return this.call<TeamView>("POST", `/team/agents/${encodeURIComponent(id)}/photo`, { image }); }
+  clearPhoto(id: string) { return this.call<TeamView>("DELETE", `/team/agents/${encodeURIComponent(id)}/photo`); }
   updateAgent(id: string, edit: AgentEdit) { return this.call<TeamView>("PATCH", `/team/agents/${encodeURIComponent(id)}`, edit); }
   deleteAgent(id: string) { return this.call<TeamView>("DELETE", `/team/agents/${encodeURIComponent(id)}`); }
   openAgent(id: string) { return this.call<import("./hub").RuntimeView>("POST", `/team/agents/${encodeURIComponent(id)}/open`); }

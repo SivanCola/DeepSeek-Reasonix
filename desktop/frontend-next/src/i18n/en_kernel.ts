@@ -700,6 +700,7 @@ export const EN_KERNEL: Record<string, string> = {
   "它的某个钩子抛出了异常": "One of its hooks threw an exception",
   "它用到了本宿主不支持的功能": "It uses something this host does not support",
   "这一轮超时了": "the turn timed out",
+  "这张头像照片已不存在": "That photo no longer exists",
   "多次尝试后仍未通过交付检查": "it did not pass the delivery checks after several attempts",
   "这一轮在一个明确的边界处暂停了": "the turn paused at a deliberate boundary",
 };

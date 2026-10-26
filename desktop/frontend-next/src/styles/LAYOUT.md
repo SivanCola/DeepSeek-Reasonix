@@ -1720,6 +1720,12 @@ A sub-agent row, by the list's own width:
 - The avatar picker keeps shapes and colours in separate rows, each with one pressed choice; one wrapping grid runs colours on after shapes and shows two selections in what reads as a single set.
 - Team dialogs dim the window with the same thin black scrim as the rename dialog. `--overlay` is an opaque surface colour, not a scrim, and would hide the window.
 
+## Agent greeting
+
+- An agent's empty conversation shows the agent instead of the window's hero: its avatar, a greeting, the chat models as chips with the one in use pressed, and for a main agent three first requests.
+- The host writes the greeting, so it costs nothing, works before any provider is set up, and never lands as a message in a conversation whose prefix the cache holds.
+- A starter fills the composer; it never sends. A model chip switches the conversation's model and records it as the agent's model for a first open.
+
 ## Agent details drawer
 
 - The agent's name in the chrome crumb is the drawer's switch. The drawer sits over the right edge of the panes area rather than in the `.side` rail, so it needs no column of its own and the conversation keeps its width when it closes.

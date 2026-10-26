@@ -55,4 +55,8 @@ export const TEAM_ACTIONS: UIAction[] = [
   { id: "team.drawer-permission", kind: "kernel-mutation", target: "entity", proof: "interaction" },
   { id: "team.drawer-folder", kind: "kernel-mutation", target: "entity", proof: "interaction" },
   { id: "team.exchange-open", kind: "kernel-mutation", target: "entity", proof: "interaction" },
+  { id: "team.hero-model", kind: "kernel-mutation", target: "none", proof: "interaction" },
+  { id: "team.hero-starter", kind: "view", target: "none", proof: "interaction" },
+  { id: "team.photo-pick", kind: "view", target: "none", proof: "interaction" },
+  { id: "team.photo-remove", kind: "view", target: "none", proof: "interaction" },
 ];

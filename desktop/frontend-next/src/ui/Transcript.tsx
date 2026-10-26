@@ -83,6 +83,8 @@ interface Props {
   needsProject: boolean;
   onOpenProject: () => void;
   onKeepHere: () => void;
+  // What an empty conversation shows in place of the window's own hero.
+  hero?: ReactNode;
   foldWork?: boolean;
   turnRunning?: boolean;
   scope?: string;
@@ -101,7 +103,7 @@ interface Props {
   brought?: { ids: string[]; bring: (id: string) => void; dismiss: (id: string) => void };
 }
 
-export function Transcript({ items, port, historyPaging, entering, onEntered, brought, revision, waiting, scroll, hidden, focus, find, query, onApprove, onFullAccess, onPlan, onAnswer, onForget, onSettings, onExtInvoke, onExtSubmit, reply, onResend, takeovers = {}, checkpoints, onPrepareRewind, onCommitRewind, onPrepareFileRevert, onCommitFileRevert, needsProject, onOpenProject, onKeepHere, foldWork = false, turnRunning = false, scope = "" }: Props) {
+export function Transcript({ items, port, historyPaging, entering, onEntered, brought, revision, waiting, scroll, hidden, focus, find, query, onApprove, onFullAccess, onPlan, onAnswer, onForget, onSettings, onExtInvoke, onExtSubmit, reply, onResend, takeovers = {}, checkpoints, onPrepareRewind, onCommitRewind, onPrepareFileRevert, onCommitFileRevert, needsProject, onOpenProject, onKeepHere, hero, foldWork = false, turnRunning = false, scope = "" }: Props) {
   // A block the selection touches must not leave the DOM. Unmounting the node a
   // selection is anchored to makes the browser remap that selection onto
   // whatever is still mounted — which reads as "I selected up there and the
@@ -484,7 +486,7 @@ export function Transcript({ items, port, historyPaging, entering, onEntered, br
       <div className="flow" ref={flow} data-empty={items.length === 0 && !historyPaging?.hasMore && !historyPaging?.busy && !historyPaging?.failed ? "" : undefined}>
         <HistoryPageControl paging={historyPaging} load={loadOlder} />
         {items.length === 0 && !historyPaging?.hasMore && !historyPaging?.busy && !historyPaging?.failed && (
-          <Hero needsProject={needsProject} onOpen={onOpenProject} onKeep={onKeepHere} />
+          hero ?? <Hero needsProject={needsProject} onOpen={onOpenProject} onKeep={onKeepHere} />
         )}
         {blocks.map((block, i) => (
           <Block

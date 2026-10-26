@@ -49,11 +49,13 @@ var (
 	token   = regexp.MustCompile(`^[a-z0-9-]{0,24}$`)
 )
 
-// Avatar is how an agent is drawn. Both fields are presentation tokens the
-// frontend resolves; an empty one is the frontend's derived default.
+// Avatar is how an agent is drawn. Glyph and Color are presentation tokens the
+// frontend resolves, an empty one its derived default; Image names a photo in
+// AvatarDir, worn over the glyph when set.
 type Avatar struct {
 	Glyph string `json:"glyph,omitempty"`
 	Color string `json:"color,omitempty"`
+	Image string `json:"image,omitempty"`
 }
 
 // Part is an earlier session of an agent, closed when its conversation was
@@ -210,6 +212,9 @@ func (r *Roster) Validate() error {
 		}
 		if !token.MatchString(a.Avatar.Glyph) || !token.MatchString(a.Avatar.Color) {
 			return fieldErr("avatar", ErrInvalid)
+		}
+		if a.Avatar.Image != "" && !avatarFile.MatchString(a.Avatar.Image) {
+			return fieldErr("avatar.image", ErrInvalid)
 		}
 		if a.Folder != "" && (!filepath.IsAbs(a.Folder) || filepath.Clean(a.Folder) != a.Folder) {
 			return fieldErr("folder", ErrInvalid)

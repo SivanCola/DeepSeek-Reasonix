@@ -12,9 +12,10 @@ import (
 // or a relay limit.
 
 // UserAgentChange is what the user sets on an agent; a nil field is left as it
-// is.
+// is. Photo names a picture already saved with SaveAvatar; empty takes it off.
 type UserAgentChange struct {
 	AgentChange
+	Photo      *string
 	Permission *string
 	Main       *bool
 	Pinned     *bool
@@ -62,6 +63,9 @@ func (s *Service) UserCreateAgent(ctx context.Context, ch UserAgentChange) (team
 
 func applyUserAgent(a *teamroster.Agent, ch UserAgentChange) {
 	applyAgent(a, ch.AgentChange)
+	if ch.Photo != nil {
+		a.Avatar.Image = *ch.Photo
+	}
 	if ch.Permission != nil {
 		a.Permission = *ch.Permission
 	}

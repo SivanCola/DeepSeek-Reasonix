@@ -12,6 +12,7 @@
 .team-avatar[data-color="cat-4"] { --tone: var(--cat-4); }
 .team-avatar[data-color="cat-5"] { --tone: var(--cat-5); }
 .team-avatar svg { width: 100%; height: 100%; }
+.team-avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
 .team-avatar svg path { fill: var(--tone); }
 .team-avatar .team-avatar-eye { fill: var(--surface); }
 .team-avatar-star {
@@ -266,3 +267,50 @@
 }
 .crumb-seat-toggle:hover,
 .crumb-seat-toggle[aria-expanded="true"] { background: var(--press-wash); }
+.team-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  max-width: 560px;
+  margin: 18vh auto 0;
+  padding: 0 24px;
+  text-align: center;
+}
+.team-hero-say { margin: 0; color: var(--text); font-size: var(--fs-lead); line-height: 1.6; }
+.team-hero-models,
+.team-hero-starters { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+.team-hero-models button,
+.team-hero-starters button {
+  padding: 5px 12px;
+  border: 1px solid var(--hair);
+  border-radius: var(--r-pill);
+  background: var(--raised);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-meta);
+  cursor: pointer;
+}
+.team-hero-models button[aria-pressed="true"] { border-color: var(--text); box-shadow: 0 0 0 1px var(--text); }
+.team-hero-models button:hover,
+.team-hero-starters button:hover { background: var(--press-wash); }
+.team-hero-starters button { color: var(--muted); }
+.team-look-photo { display: flex; align-items: center; gap: 8px; }
+.team-dialog .team-photo-pick,
+.team-photo-remove {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  padding: 3px 10px;
+  border: 1px solid var(--hair);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-meta);
+  cursor: pointer;
+}
+.team-photo-pick:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
+.team-dialog .team-photo-pick input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.team-photo-pick:hover,
+.team-photo-remove:hover { background: var(--press-wash); color: var(--text); }

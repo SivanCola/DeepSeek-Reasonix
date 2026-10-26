@@ -25,10 +25,13 @@ function hubShowing(rt: RuntimeView) {
   return hub;
 }
 
-it("an agent's pane does not ask for a project", async () => {
-  render(<App hub={hubShowing({ id: "r2", base: "/rt/r2", root: "/home/u/Reasonix Team/a-chief", name: "a-chief", team: { agent: "a-chief" } })} />);
-  expect(await screen.findByText("描述任务，其余交给 Reasonix")).toBeTruthy();
+it("an agent's pane greets as the agent instead of asking for a project", async () => {
+  const hub = hubShowing({ id: "r2", base: "/rt/r2", root: "/home/u/Reasonix Team/a-chief", name: "a-chief", team: { agent: "a-chief" } });
+  await hub.team().bootstrap("Chief", "首席助理");
+  render(<App hub={hub} />);
+  expect(await screen.findByText(/你好，我是 Chief。/)).toBeTruthy();
   expect(screen.queryByText("先打开一个项目")).toBeNull();
+  expect(screen.queryByText("描述任务，其余交给 Reasonix")).toBeNull();
 });
 
 it("an ordinary pane still asks for one", async () => {

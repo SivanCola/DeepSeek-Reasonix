@@ -66,3 +66,24 @@ func TestDeletingAMemberKeepsALargerGroupWithoutIt(t *testing.T) {
 		t.Fatalf("a deleted group = %v", err)
 	}
 }
+
+// A photo is the user's alone to set, and changing the drawn glyph or colour,
+// as an agent's tool can, leaves it on.
+func TestAPhotoOutlivesAChangeOfGlyph(t *testing.T) {
+	h := newHarness(t, "Chief", "Ada")
+	ctx := context.Background()
+	photo, err := h.store.SaveAvatar([]byte("\x89PNG\r\n\x1a\nxxxxxxxx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := h.svc.UserUpdateAgent(ctx, h.id("Ada"), UserAgentChange{Photo: new(photo)}); err != nil || got.Avatar.Image != photo {
+		t.Fatalf("set photo = %+v, %v", got.Avatar, err)
+	}
+	got, err := h.svc.UpdateAgent(ctx, Caller{Agent: h.id("Chief")}, h.id("Ada"), AgentChange{Avatar: &teamroster.Avatar{Glyph: "moon", Color: "cat-2", Image: "ffffffffffffffff.png"}})
+	if err != nil || got.Avatar.Glyph != "moon" || got.Avatar.Image != photo {
+		t.Fatalf("after a glyph change the avatar is %+v (%v), want the photo kept", got.Avatar, err)
+	}
+	if got, err := h.svc.UserUpdateAgent(ctx, h.id("Ada"), UserAgentChange{Photo: new("")}); err != nil || got.Avatar.Image != "" {
+		t.Fatalf("remove photo = %+v, %v", got.Avatar, err)
+	}
+}

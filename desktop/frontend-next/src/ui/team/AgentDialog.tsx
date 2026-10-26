@@ -5,6 +5,7 @@ import type { AgentEdit, TeamAgent, TeamPort, TeamView } from "../../port/team";
 import { StudioIcon } from "../StudioIcon";
 import { AVATAR_COLORS, AVATAR_GLYPHS, AgentAvatar, avatarOf, glyphName } from "./AgentAvatar";
 import { PERMISSIONS } from "./permissions";
+import { cropPhoto, PhotoError } from "./photo";
 import { TeamDialog } from "./TeamDialog";
 
 
@@ -29,6 +30,9 @@ export function AgentDialog({ team, agent, onClose, onSaved }: {
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState("");
+  // undefined leaves the photo as it is, null takes it off, a data URL replaces it.
+  const [photo, setPhoto] = useState<string | null | undefined>(undefined);
+  const worn = photo === undefined ? agent?.avatar.image : photo ?? undefined;
 
   const run = async (write: () => Promise<TeamView>) => {
     setBusy(true);
@@ -42,8 +46,27 @@ export function AgentDialog({ team, agent, onClose, onSaved }: {
   };
   const save = () => {
     const edit: AgentEdit = { name: name.trim(), role: role.trim(), instructions, avatar: { glyph, color } };
-    if (!agent) return run(() => team.createAgent(edit));
-    return run(() => team.updateAgent(agent.id, { ...edit, permission, main, pinned, hidden }));
+    if (!agent) {
+      return run(async () => {
+        const next = await team.createAgent(edit);
+        const made = photo ? next.agents.find((a) => a.name === edit.name) : undefined;
+        return made && photo ? team.setPhoto(made.id, photo) : next;
+      });
+    }
+    return run(async () => {
+      const next = await team.updateAgent(agent.id, { ...edit, permission, main, pinned, hidden });
+      if (photo === undefined) return next;
+      return photo ? team.setPhoto(agent.id, photo) : team.clearPhoto(agent.id);
+    });
+  };
+  const pickPhoto = async (file: File | undefined) => {
+    if (!file) return;
+    setError("");
+    try {
+      setPhoto(await cropPhoto(file));
+    } catch (e) {
+      setError(e instanceof PhotoError && e.reason === "type" ? t("只能用 PNG、JPEG、WebP 或 GIF 图片") : t("这张图片太大了"));
+    }
   };
   const shuffle = () => {
     setGlyph(AVATAR_GLYPHS[Math.floor(Math.random() * AVATAR_GLYPHS.length)]);
@@ -65,7 +88,7 @@ export function AgentDialog({ team, agent, onClose, onSaved }: {
         </button>
       </>}>
       <div className="team-look" role="group" aria-label={t("头像")}>
-        <AgentAvatar agent={{ id: agent?.id ?? "new", avatar: { glyph, color } }} size={40} badges={false} />
+        <AgentAvatar agent={{ id: agent?.id ?? "new", avatar: { glyph, color, image: worn } }} size={40} badges={false} />
         <div className="team-look-pick">
           <div className="team-look-row" role="group" aria-label={t("形状")}>
             {AVATAR_GLYPHS.map((g) => (
@@ -83,6 +106,18 @@ export function AgentDialog({ team, agent, onClose, onSaved }: {
             <button type="button" data-action="team.avatar-shuffle" aria-label={t("随机")} title={t("随机")} onClick={shuffle}>
               <StudioIcon name="refresh" />
             </button>
+          </div>
+          <div className="team-look-photo">
+            <label className="team-photo-pick">
+              <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" data-action-change="team.photo-pick"
+                onChange={(ev) => { void pickPhoto(ev.target.files?.[0]); ev.target.value = ""; }} />
+              {t("上传照片")}
+            </label>
+            {worn && (
+              <button type="button" className="team-photo-remove" data-action="team.photo-remove" onClick={() => setPhoto(null)}>
+                {t("移除照片")}
+              </button>
+            )}
           </div>
         </div>
       </div>

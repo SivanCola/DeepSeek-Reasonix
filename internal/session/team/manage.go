@@ -138,7 +138,7 @@ func applyAgent(a *teamroster.Agent, ch AgentChange) {
 		a.Folder = *ch.Folder
 	}
 	if ch.Avatar != nil {
-		a.Avatar = *ch.Avatar
+		a.Avatar.Glyph, a.Avatar.Color = ch.Avatar.Glyph, ch.Avatar.Color
 	}
 }
 
