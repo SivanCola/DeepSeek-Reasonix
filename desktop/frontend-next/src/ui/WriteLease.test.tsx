@@ -134,4 +134,12 @@ describe("the write-lease switch", () => {
     expect(screen.getByRole("status").textContent).toContain("当前聊天：共享工作区");
     expect(screen.getByRole("textbox", { name: "等待其他会话释放写入权的最长时间" }).closest("details")).toHaveProperty("open", false);
   });
+  it("says when automatic isolation falls back to shared transactions on this host", async () => {
+    const p = new MockPort() as unknown as AgentPort;
+    const initial = await p.writeLease();
+    p.writeLease = async () => ({ ...initial, collaboration: "auto",
+      effective: { ...initial.effective!, collaboration: "auto", transactionWaitSeconds: 30, automaticIsolationFallback: true } });
+    render(<WriteLease port={p} />);
+    expect(await screen.findByText("本机无法为自动隔离限定完整的写入边界，当前聊天的可写子任务改用共享事务。")).toBeTruthy();
+  });
 });

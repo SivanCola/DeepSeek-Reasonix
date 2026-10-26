@@ -70,6 +70,7 @@ export function WriteLease({ port }: { port: AgentPort }) {
         </select>
       </div>
       <p className="ds" role="status">{state.effective ? t("当前聊天：{mode}；子代理并发 {total}，写入并发 {writers}。", { mode: coordinationName(state.effective.collaboration), total: state.effective.maxSubagentConcurrency, writers: state.effective.maxParallelWriters }) : t("无法确认当前聊天的生效策略。")}</p>
+      {state.effective?.collaboration === "auto" && state.effective.automaticIsolationFallback && <p className="ds">{t("本机无法为自动隔离限定完整的写入边界，当前聊天的可写子任务改用共享事务。")}</p>}
       {state.effective && state.effective.collaboration !== (state.collaboration ?? "legacy") && <p className="ds">{t("已保存：{mode}。当前聊天尚未切换。", { mode: coordinationName(state.collaboration ?? "legacy") })}</p>}
       {state.effective && state.effective.transactionWaitSeconds > 0 && <p className="ds">{t("当前共享事务最多等待 {seconds} 秒，超时后可重新调度；不会强制释放正在写入的资源。", { seconds: state.effective.transactionWaitSeconds })}</p>}
       {state.autoIntegrate !== undefined && <div className="lrow">

@@ -1879,6 +1879,7 @@ export const EN: Record<string, string> = {
   "保留的隔离成果": "Retained isolated results",
   "冲突": "Conflict",
   "准备中": "Preparing",
+  "本机无法为自动隔离限定完整的写入边界，当前聊天的可写子任务改用共享事务。": "This machine cannot bound an isolated task's writes, so writable tasks in the current chat use shared transactions instead.",
   "原成果：{id}": "Original result: {id}",
   "另有 {n} 项变更，请在候选目录中查看。": "{n} more changes; inspect them in the candidate directory.",
   "基线：{tree}": "Baseline: {tree}",

@@ -138,6 +138,7 @@ export interface WriteCoordinationRuntime {
   maxSubagentConcurrency: number;
   maxParallelWriters: number;
   transactionWaitSeconds: number;
+  automaticIsolationFallback?: boolean;
 }
 
 // Whether a submitted plan starts executing without the approval click, as the

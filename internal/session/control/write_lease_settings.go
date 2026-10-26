@@ -30,7 +30,10 @@ type WriteCoordinationRuntime struct {
 	MaxSubagentConcurrency int    `json:"maxSubagentConcurrency"`
 	MaxParallelWriters     int    `json:"maxParallelWriters"`
 	TransactionWaitSeconds int    `json:"transactionWaitSeconds"`
-	configPath             string
+	// AutomaticIsolationFallback marks auto runs whose writers share the workspace
+	// because this host cannot bound an isolated candidate's writes.
+	AutomaticIsolationFallback bool `json:"automaticIsolationFallback,omitempty"`
+	configPath                 string
 }
 
 type WriteCoordinationEdit struct {

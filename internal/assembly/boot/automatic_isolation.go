@@ -7,6 +7,7 @@ import (
 	"reasonix/internal/contract/tool"
 	"reasonix/internal/runtime/isolation"
 	"reasonix/internal/safety/sandbox"
+	"reasonix/internal/session/control"
 )
 
 // Automatic selection must not move an otherwise usable task into an environment
@@ -39,4 +40,12 @@ func checkAutomaticTaskIsolation(parent Options, specMode, resumeID string) erro
 		return automaticIsolationAvailability(parent, parent.frozenConfig)
 	}
 	return nil
+}
+
+func (b *builder) writeCoordination(opts Options, cfg *config.Config) *control.WriteCoordinationRuntime {
+	runtime := control.WriteCoordinationFromConfig(cfg, b.session.lease, b.tools.sub.scheduler)
+	if runtime != nil && runtime.Collaboration == "auto" {
+		runtime.AutomaticIsolationFallback = automaticIsolationAvailability(opts, cfg) != nil
+	}
+	return runtime
 }
