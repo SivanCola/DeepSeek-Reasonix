@@ -18,6 +18,8 @@ var (
 	ErrUnknownAgent = errors.New("no such agent")
 	// ErrUnknownGroup is a reference to a group the roster does not hold.
 	ErrUnknownGroup = errors.New("no such group")
+	// ErrUnknownSecret is a reference to a secret the team does not hold.
+	ErrUnknownSecret = errors.New("no such secret")
 	// ErrUnknownSchedule is a reference to a scheduled task the team does not hold.
 	ErrUnknownSchedule = errors.New("no such scheduled task")
 	// ErrNotMember is a group admin, or a member session, outside the group.

@@ -22,6 +22,19 @@ const sharedTierProps = `"tier":{"type":"string","enum":["team","group"],"descri
 // the same revisions, subject keys and search as an agent's own.
 func teamMemoryTools(link *tool.TeamLink) []tool.Tool {
 	return []tool.Tool{
+		&teamTool{link: link, name: "request_secret", readOnly: true,
+			description: "Ask the user for a secret you need, such as an API key or a password, from your own conversation (not a group). End your turn after calling it: the user fills in a card, and you get a message when they save or decline. You never see the value; once saved, your shell commands read it as $REASONIX_SECRET_<NAME>. Never ask the user to paste a secret into the chat.",
+			schema:      `{"type":"object","properties":{"name":{"type":"string","description":"A short name such as SHOP_API_KEY; it becomes the variable's suffix"},"purpose":{"type":"string","description":"What you need it for, shown to the user on the card"}},"required":["name","purpose"],"additionalProperties":false}`,
+			run: func(ctx context.Context, dir tool.TeamDirectory, args json.RawMessage) (string, error) {
+				var in struct {
+					Name    string `json:"name"`
+					Purpose string `json:"purpose"`
+				}
+				if err := decodeTeamArgs("request_secret", args, &in); err != nil {
+					return "", err
+				}
+				return dir.RequestSecret(ctx, in.Name, in.Purpose)
+			}},
 		&teamTool{link: link, name: "remember_shared", readOnly: false,
 			description: "Save or update a memory shared with other agents: tier team for what the whole team should know, tier group for what one group's members should know. Your own memory stays with remember. Only a main agent or a group's admin writes the team's memory; a group's members write its memory. Search with recall_shared first and reuse a name to update rather than duplicate.",
 			schema: `{"type":"object","properties":{` + sharedTierProps + `,` +

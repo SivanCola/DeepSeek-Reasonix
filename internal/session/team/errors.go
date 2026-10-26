@@ -35,6 +35,8 @@ var (
 	ErrArchived = errors.New("the group is archived")
 	// ErrUnavailable is a receiver whose session could not be opened or reached.
 	ErrUnavailable = errors.New("that agent's session could not be reached")
+	// ErrPrivateOnly is a call that belongs in an agent's own conversation, made from a group seat.
+	ErrPrivateOnly = errors.New("only in the agent's own conversation, not a group")
 	// ErrReviewReply is a memory review whose model answered something other than its changes.
 	ErrReviewReply = errors.New("the memory review's reply was not the changes it asked for")
 )

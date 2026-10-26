@@ -1,6 +1,6 @@
 import type { RuntimeView } from "./hub";
 import { HttpError } from "./http_error";
-import type { AgentEdit, GroupEdit, GroupLine, SharedMemory, TeamAgent, TeamExchange, TeamGroup, TeamPort, TeamPrefs, TeamSchedule, TeamView } from "./team";
+import type { AgentEdit, GroupEdit, GroupLine, SecretSave, SharedMemory, TeamAgent, TeamExchange, TeamGroup, TeamPort, TeamPrefs, TeamSchedule, TeamSecrets, TeamView } from "./team";
 
 // An in-memory team for the mock hub: enough of the kernel's rules to draw
 // every state the window has to, with no kernel behind it.
@@ -21,6 +21,36 @@ export class MockTeam implements TeamPort {
 
   private prefs: TeamPrefs = { memoryReview: true };
   private tasks: TeamSchedule[] = [];
+  private vault: TeamSecrets = { secrets: [], requests: [] };
+
+  async secrets(): Promise<TeamSecrets> {
+    return structuredClone(this.vault);
+  }
+
+  async saveSecret(s: SecretSave) {
+    this.record("saveSecret", s);
+    this.vault.secrets = [...this.vault.secrets.filter((x) => x.name !== s.name), { name: s.name, purpose: s.purpose, agents: s.agents, requestedBy: s.requester }];
+    this.vault.requests = this.vault.requests.filter((q) => q.name !== s.name);
+    this.bump();
+  }
+
+  async cancelSecret(name: string, agent: string) {
+    this.record("cancelSecret", name, agent);
+    this.vault.requests = this.vault.requests.filter((q) => !(q.name === name && q.agent === agent));
+    this.bump();
+  }
+
+  async deleteSecret(name: string) {
+    this.record("deleteSecret", name);
+    this.vault.secrets = this.vault.secrets.filter((x) => x.name !== name);
+    this.bump();
+  }
+
+  /** Records an agent's request for a secret, as its tool would, for tests. */
+  askSecret(name: string, purpose: string, agent: string) {
+    this.vault.requests.push({ name, purpose, agent });
+    this.bump();
+  }
 
   async schedules(): Promise<TeamSchedule[]> {
     return structuredClone(this.tasks);

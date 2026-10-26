@@ -5,6 +5,7 @@ import (
 
 	"reasonix/internal/contract/config"
 	"reasonix/internal/contract/tool"
+	"reasonix/internal/session/control"
 	"reasonix/internal/tools/builtin"
 )
 
@@ -22,4 +23,19 @@ func teamTools(reg *tool.Registry, cfg *config.Config, seated bool) *tool.TeamLi
 		}
 	}
 	return link
+}
+
+// teamSecretEnv is the secrets a team seat's commands receive, read on each
+// command; nil off the team.
+func teamSecretEnv(seat control.TeamSeat) func() []string {
+	if seat == nil {
+		return nil
+	}
+	return func() []string {
+		svc, ref := seat.Team()
+		if svc == nil {
+			return nil
+		}
+		return svc.SecretEnv(ref.Agent)
+	}
 }

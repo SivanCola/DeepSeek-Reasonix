@@ -39,6 +39,10 @@ func (h *Hub) registerTeamRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /team/exchanges", t.exchanges)
 	mux.HandleFunc("GET /team/memory", t.sharedMemory)
 	mux.HandleFunc("PATCH /team/prefs", t.writing(t.setPrefs))
+	mux.HandleFunc("GET /team/secrets", t.secrets)
+	mux.HandleFunc("POST /team/secrets", t.writing(t.saveSecret))
+	mux.HandleFunc("POST /team/secrets/{name}/cancel", t.writing(t.cancelSecret))
+	mux.HandleFunc("DELETE /team/secrets/{name}", t.writing(t.deleteSecret))
 	mux.HandleFunc("GET /team/schedules", t.schedules)
 	mux.HandleFunc("POST /team/schedules", t.writing(t.saveSchedule))
 	mux.HandleFunc("PATCH /team/schedules/{id}", t.writing(t.saveSchedule))
@@ -70,6 +74,7 @@ func teamError(w http.ResponseWriter, err error) {
 		{teamroster.ErrUnknownAgent, http.StatusNotFound, "team.unknown_agent"},
 		{teamroster.ErrUnknownGroup, http.StatusNotFound, "team.unknown_group"},
 		{teamroster.ErrUnknownSchedule, http.StatusNotFound, "team.unknown_schedule"},
+		{teamroster.ErrUnknownSecret, http.StatusNotFound, "team.unknown_secret"},
 		{teamroster.ErrNotMember, http.StatusBadRequest, "team.not_member"},
 		{teamroster.ErrGroupSize, http.StatusBadRequest, "team.group_size"},
 		{teamroster.ErrNameTaken, http.StatusBadRequest, "team.name_taken"},

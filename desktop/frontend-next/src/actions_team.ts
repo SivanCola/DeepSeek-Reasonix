@@ -78,4 +78,10 @@ export const TEAM_ACTIONS: UIAction[] = [
   { id: "team.schedule-day", kind: "view", target: "none", proof: "interaction" },
   { id: "team.schedule-every", kind: "view", target: "none", proof: "interaction" },
   { id: "team.schedule-unit", kind: "view", target: "none", proof: "interaction" },
+  { id: "team.secret-save", kind: "kernel-mutation", target: "entity", proof: "interaction" },
+  { id: "team.secret-decline", kind: "kernel-mutation", target: "entity", proof: "interaction" },
+  { id: "team.secret-value", kind: "view", target: "none", proof: "interaction" },
+  { id: "team.secret-scope", kind: "view", target: "none", proof: "interaction" },
+  { id: "team.secret-delete-ask", kind: "view", target: "entity", proof: "interaction" },
+  { id: "team.secret-delete", kind: "destructive", target: "entity", proof: "interaction" },
 ];

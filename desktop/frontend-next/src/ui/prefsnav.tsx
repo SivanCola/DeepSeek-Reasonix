@@ -277,6 +277,8 @@ export const SETTINGS: SettingEntry[] = [
   { section: "peers", anchor: "peers", title: "会话间消息（实验）", scope: "machine", apply: "next-turn", keywords: ["peer", "会话间", "消息", "发送", "批准", "挂起", "另一个会话"] },
   // Kept in this window's storage and read by the page at once.
   { section: "team", anchor: "team-motion", title: "Agent 动效", scope: "machine", apply: "immediate", keywords: ["动画", "动效", "安静", "活泼", "眨眼", "motion"] },
+  // Read from the file on every command; a new or removed secret counts at the next one.
+  { section: "team", anchor: "team-secrets", title: "机密", scope: "machine", apply: "immediate", keywords: ["密钥", "密码", "token", "api key", "secret"] },
   // Kept by the kernel and read by the team's clock every few seconds.
   { section: "team", anchor: "team-schedules", title: "定时任务", scope: "machine", apply: "immediate", keywords: ["定时", "计划", "提醒", "每天", "每周", "schedule"] },
   // A roster write the host reads when the next turn ends.

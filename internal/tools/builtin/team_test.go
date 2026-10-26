@@ -53,7 +53,7 @@ func TestTeamToolArgumentsAreDecodedOrRefused(t *testing.T) {
 
 func TestTeamToolNamesMatchTheRegisteredSet(t *testing.T) {
 	names := TeamToolNames()
-	if len(names) != 14 || !slices.Contains(names, "message_agent") || !slices.Contains(names, "hand_turn") || !slices.Contains(names, "remember_shared") {
+	if len(names) != 15 || !slices.Contains(names, "message_agent") || !slices.Contains(names, "hand_turn") || !slices.Contains(names, "remember_shared") {
 		t.Fatalf("names = %v", names)
 	}
 	for _, tl := range TeamTools(nil) {

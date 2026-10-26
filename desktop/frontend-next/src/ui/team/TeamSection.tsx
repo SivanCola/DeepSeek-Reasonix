@@ -7,6 +7,7 @@ import { pushToast } from "../../state/toasts";
 import { Group } from "../Group";
 import { Switch } from "../Switch";
 import { ScheduleList } from "./ScheduleList";
+import { SecretList } from "./SecretList";
 import { SharedMemoryList } from "./SharedMemoryList";
 
 const MOTIONS: [TeamMotion, string][] = [
@@ -43,6 +44,11 @@ export function TeamSection({ hub }: { hub: HubPort }) {
           ))}
         </div>
       </Group>
+      {view && team && (
+        <Group id="team-secrets" title={t("机密")} hint={t("Agent 用 request_secret 向你要的密钥和密码。值存在本机只有你能读的文件里，只以 $REASONIX_SECRET_名称 进入命令；发给模型的内容里，它的原文、JSON 和 URL 编码形式会换成 [secret:名称]。命令能读到它，所以只交给你信任的 Agent。")}>
+          <SecretList team={team} view={view} />
+        </Group>
+      )}
       {view && team && (
         <Group id="team-schedules" title={t("定时任务")} hint={t("到了设定的时间，把一段话发给某个 Agent 或群聊，就像你那时亲自发的一样。只在 Reasonix 开着时运行；关着时错过的时刻不会补发。")}>
           <ScheduleList team={team} view={view} />

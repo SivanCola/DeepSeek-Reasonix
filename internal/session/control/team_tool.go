@@ -311,6 +311,7 @@ var teamCodes = []struct {
 	{team.ErrOpenLimit, "team.limit"},
 	{team.ErrCreateLimit, "team.limit"},
 	{team.ErrRateLimited, "team.rate_limited"},
+	{team.ErrPrivateOnly, "team.private_only"},
 	{team.ErrUnavailable, "team.unavailable"},
 	{team.ErrNotInGroup, "team.not_in_group"},
 	{team.ErrNotYourTurn, "team.not_your_turn"},
@@ -360,4 +361,13 @@ func (d teamDirectory) SharedMemory(_ context.Context, tier, group string, write
 		return memory.NewRememberTool(store), nil
 	}
 	return memory.NewRecallTool(store), nil
+}
+
+func (d teamDirectory) RequestSecret(ctx context.Context, name, purpose string) (string, error) {
+	svc, c, err := d.caller()
+	if err != nil {
+		return "", err
+	}
+	out, err := svc.RequestSecret(ctx, c, name, purpose)
+	return out, teamRefusal(err)
 }

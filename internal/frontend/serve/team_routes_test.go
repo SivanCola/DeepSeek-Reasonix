@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"reasonix/internal/base/secrets"
 	"reasonix/internal/base/testenv"
 	"reasonix/internal/session/team"
 	"reasonix/internal/state/memory"
@@ -352,4 +353,36 @@ func TestScheduledTasksAreKeptFromTheWindow(t *testing.T) {
 		t.Fatalf("delete = %d", status)
 	}
 	c.refused("DELETE", "/team/schedules/"+sc.ID, nil, 404, "team.unknown_schedule")
+}
+
+// The window answers an agent's request for a secret and manages what it saved;
+// nothing it reads back ever carries a value, and the file they live in is a
+// path no session may read.
+func TestSecretsAreAnsweredFromTheWindowAndNeverReadBack(t *testing.T) {
+	h, ids := teamHub(t, "Chief", "Ada")
+	c := newTeamClient(t, h)
+	const value = "sk-shop-0123456789"
+	defer secrets.UnregisterValue(value)
+	if !slices.Contains(secrets.HostSecretPaths(), h.team.store.SecretPath()) {
+		t.Fatal("the secrets file is not a host secret path")
+	}
+	if _, err := h.team.service().RequestSecret(context.Background(), team.Caller{Agent: ids["Ada"]}, "shop key", "the shop"); err != nil {
+		t.Fatal(err)
+	}
+	_, out := c.do("GET", "/team/secrets", nil)
+	if !strings.Contains(string(out), `"name":"SHOP_KEY"`) || !strings.Contains(string(out), ids["Ada"]) {
+		t.Fatalf("pending request not listed: %s", out)
+	}
+	if status, out := c.do("POST", "/team/secrets", map[string]any{"name": "SHOP_KEY", "value": value, "purpose": "the shop", "agents": []string{ids["Ada"]}, "requester": ids["Ada"]}); status != http.StatusNoContent {
+		t.Fatalf("save = %d %s", status, out)
+	}
+	_, out = c.do("GET", "/team/secrets", nil)
+	if strings.Contains(string(out), value) || !strings.Contains(string(out), `"requests":[]`) || !strings.Contains(string(out), `"name":"SHOP_KEY"`) {
+		t.Fatalf("after saving: %s", out)
+	}
+	c.refused("POST", "/team/secrets", map[string]any{"name": "PIN", "value": "12"}, 400, "team.invalid")
+	if status, _ := c.do("DELETE", "/team/secrets/SHOP_KEY", nil); status != http.StatusNoContent {
+		t.Fatalf("delete = %d", status)
+	}
+	c.refused("DELETE", "/team/secrets/SHOP_KEY", nil, 404, "team.unknown_secret")
 }

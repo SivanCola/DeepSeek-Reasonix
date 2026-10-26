@@ -702,6 +702,7 @@ export const EN_KERNEL: Record<string, string> = {
   "这一轮超时了": "the turn timed out",
   "这张头像照片已不存在": "That photo no longer exists",
   "没有这个定时任务": "No such scheduled task",
+  "没有这个机密": "No such secret",
   "多次尝试后仍未通过交付检查": "it did not pass the delivery checks after several attempts",
   "这一轮在一个明确的边界处暂停了": "the turn paused at a deliberate boundary",
 };

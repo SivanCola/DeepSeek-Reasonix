@@ -1,4 +1,5 @@
 import { OriginLine } from "./team/OriginLine";
+import { SecretCard } from "./team/SecretCard";
 import { Fragment, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type RefObject, type SetStateAction } from "react";
 import { t } from "../i18n";
 import type { Item, Waiting } from "../state/session";
@@ -737,6 +738,7 @@ const Row = memo(function Row({
       // needs. Drawing the tool call too put two copies of the same question on
       // screen, each answerable.
       if (it.tool.name === "ask") return null;
+      if (it.tool.name === "request_secret") return <SecretCard tool={it.tool} running={it.running} />;
       { const surface = surfaceTool(it.tool, it.running, port); if (surface !== undefined) return surface; }
       return (() => {
         const card = (

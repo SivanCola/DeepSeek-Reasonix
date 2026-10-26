@@ -371,7 +371,7 @@ func (b *builder) wireTools() error {
 	t.env = resolveToolEnvironment(opts, cfg, b.roots, root, b.additionalDirs, b.shell, b.stderr)
 	env := t.env
 	// The full inventory registers for use_capability; the provider-visible surface narrows later.
-	addBuiltins(t.reg, cfg.Tools.Enabled, env.writeRoots, env.bash, env.bashTimeout, env.search, b.stderr, root, b.proxy, env.forbidReadRoots, env.readRoots, env.readPaths, env.sessionGuard, env.managedConfig, opts.FileOverlay, opts.TerminalRunner, env.sessionTemp, b.fileWriteReceipt)
+	addBuiltins(t.reg, cfg.Tools.Enabled, env.writeRoots, env.bash, env.bashTimeout, env.search, b.stderr, root, b.proxy, env.forbidReadRoots, env.readRoots, env.readPaths, env.sessionGuard, env.managedConfig, opts.FileOverlay, opts.TerminalRunner, env.sessionTemp, b.fileWriteReceipt, teamSecretEnv(opts.TeamSeat))
 	addViewImage(t.reg, cfg, b.model.entry, env, root)
 	addPresentFiles(t.reg, cfg, env, root)
 	bindFileViews(t.reg, cfg.Tools.ChangedFilesProtected())

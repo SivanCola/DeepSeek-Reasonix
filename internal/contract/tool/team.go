@@ -81,6 +81,9 @@ type TeamDirectory interface {
 	// SharedMemory is the memory tool bound to a store agents share — tier
 	// "team" or "group" — for writing when write is set.
 	SharedMemory(ctx context.Context, tier, group string, write bool) (Tool, error)
+	// RequestSecret asks the user for a secret, answering what the agent should
+	// do now; the user's card is drawn from the call itself.
+	RequestSecret(ctx context.Context, name, purpose string) (string, error)
 }
 
 // TeamLink joins the team tools, built with the registry, to the controller

@@ -328,3 +328,14 @@
 .team-weekdays legend { margin-bottom: 4px; padding: 0; color: var(--muted); font-size: var(--fs-meta); }
 .team-every { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
 .team-every label { flex: 1; }
+.team-secret { display: flex; flex-direction: column; gap: 8px; margin: 6px 0; padding: 12px 14px; border: 1px solid var(--hair); border-radius: var(--r-lg); background: var(--raised); font-size: var(--fs-ui); }
+.team-secret[data-state] { flex-direction: row; padding: 8px 12px; color: var(--muted); font-size: var(--fs-meta); }
+.team-secret-form { display: flex; flex-direction: column; gap: 8px; }
+.team-secret-form label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: var(--fs-meta); }
+.team-secret-form input[type="password"] { padding: 6px 8px; border: 1px solid var(--hair); border-radius: var(--r-sm); background: var(--surface); color: var(--text); font-family: var(--mono); }
+.team-secret-scope { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.team-secret-form .team-secret-scope label { flex-direction: row; align-items: center; gap: 6px; color: var(--text); }
+.team-secret-purpose { margin: 0; color: var(--muted); font-family: var(--mono); font-size: var(--fs-meta); }
+.team-secret-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.team-secret-actions button { padding: 4px 12px; border: 1px solid var(--hair); border-radius: var(--r-pill); background: transparent; color: var(--text); font: inherit; font-size: var(--fs-meta); cursor: pointer; }
+.team-secret-actions .team-save { border-color: var(--text); background: var(--text); color: var(--surface); }

@@ -150,6 +150,38 @@ export interface TeamSchedule {
   lastFired?: string;
 }
 
+// A secret the person saved, as the window may know it: never its value.
+// `agents` absent means every agent may use it.
+export interface TeamSecret {
+  name: string;
+  purpose?: string;
+  agents?: string[];
+  requestedBy?: string;
+  updatedAt?: number;
+}
+
+// An agent's request for a secret the person has not answered.
+export interface TeamSecretRequest {
+  name: string;
+  purpose?: string;
+  agent: string;
+  at?: number;
+}
+
+export interface TeamSecrets {
+  secrets: TeamSecret[];
+  requests: TeamSecretRequest[];
+}
+
+// What the window sends to save a secret.
+export interface SecretSave {
+  name: string;
+  value: string;
+  purpose?: string;
+  agents?: string[];
+  requester?: string;
+}
+
 // One memory agents share, as the kernel lists it.
 export interface SharedMemory {
   name: string;
@@ -212,6 +244,10 @@ export interface TeamPort {
   sharedMemory(tier: "team" | "group", group?: string): Promise<SharedMemory[]>;
   forgetShared(tier: "team" | "group", name: string, group?: string): Promise<void>;
   setPrefs(prefs: Partial<TeamPrefs>): Promise<TeamView>;
+  secrets(): Promise<TeamSecrets>;
+  saveSecret(s: SecretSave): Promise<void>;
+  cancelSecret(name: string, agent: string): Promise<void>;
+  deleteSecret(name: string): Promise<void>;
   schedules(): Promise<TeamSchedule[]>;
   saveSchedule(s: TeamSchedule): Promise<TeamSchedule>;
   deleteSchedule(id: string): Promise<void>;
@@ -283,6 +319,10 @@ export class SseTeam implements TeamPort {
     return this.call<SharedMemory[]>("GET", `/team/memory?tier=${tier}${group ? `&group=${encodeURIComponent(group)}` : ""}`);
   }
   setPrefs(prefs: Partial<TeamPrefs>) { return this.call<TeamView>("PATCH", "/team/prefs", prefs); }
+  secrets() { return this.call<TeamSecrets>("GET", "/team/secrets"); }
+  saveSecret(s: SecretSave) { return this.call<void>("POST", "/team/secrets", s); }
+  cancelSecret(name: string, agent: string) { return this.call<void>("POST", `/team/secrets/${encodeURIComponent(name)}/cancel`, { agent }); }
+  deleteSecret(name: string) { return this.call<void>("DELETE", `/team/secrets/${encodeURIComponent(name)}`); }
   schedules() { return this.call<TeamSchedule[]>("GET", "/team/schedules"); }
   saveSchedule(s: TeamSchedule) {
     return s.id ? this.call<TeamSchedule>("PATCH", `/team/schedules/${encodeURIComponent(s.id)}`, s) : this.call<TeamSchedule>("POST", "/team/schedules", s);
