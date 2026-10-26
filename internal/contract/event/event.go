@@ -572,6 +572,8 @@ const (
 	UsageSourceDeepSeekFetch = "deepseek-fetch"
 	// UsageSourceSide is a side conversation: asked beside the session, billed to it.
 	UsageSourceSide = "side"
+	// UsageSourceMemoryReview folds a finished team turn into memory.
+	UsageSourceMemoryReview = "memory-review"
 )
 
 // Event is one increment in a turn's event stream. Read the field(s) documented

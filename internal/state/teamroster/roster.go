@@ -113,6 +113,14 @@ type Roster struct {
 	Revision      uint64  `json:"revision"`
 	Agents        []Agent `json:"agents"`
 	Groups        []Group `json:"groups"`
+	Prefs         Prefs   `json:"prefs,omitzero"`
+}
+
+// Prefs are the user's choices for the whole team. Each zero value is the
+// default, so a roster written before a pref existed reads as choosing it.
+type Prefs struct {
+	// MemoryReviewOff stops folding finished turns into memory.
+	MemoryReviewOff bool `json:"memoryReviewOff,omitempty"`
 }
 
 func newAgentID() string { return "a-" + randomHex() }

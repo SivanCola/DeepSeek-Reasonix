@@ -38,6 +38,7 @@ func (h *Hub) registerTeamRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /team/groups/{id}/members/{agent}/open", t.writing(t.openMember))
 	mux.HandleFunc("GET /team/exchanges", t.exchanges)
 	mux.HandleFunc("GET /team/memory", t.sharedMemory)
+	mux.HandleFunc("PATCH /team/prefs", t.writing(t.setPrefs))
 	mux.HandleFunc("DELETE /team/memory/{tier}/{name}", t.writing(t.forgetShared))
 }
 

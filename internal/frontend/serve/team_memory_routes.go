@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"encoding/json"
 	"net/http"
 	"sort"
 
@@ -77,4 +78,21 @@ func (t *hubTeam) forgetShared(w http.ResponseWriter, r *http.Request) {
 	}
 	t.changed()
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (t *hubTeam) setPrefs(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		MemoryReview *bool `json:"memoryReview"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		badBody(w)
+		return
+	}
+	if in.MemoryReview != nil {
+		if err := t.service().UserSetMemoryReview(r.Context(), *in.MemoryReview); err != nil {
+			teamError(w, err)
+			return
+		}
+	}
+	t.writeView(w)
 }

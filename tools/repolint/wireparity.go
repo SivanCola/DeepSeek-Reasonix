@@ -137,6 +137,7 @@ var mirroredWireTypes = []wireMirror{
 	{"internal/frontend/serve/team_view.go", "teamGroupView", tsTeamFile, "TeamGroup"},
 	{"internal/frontend/serve/team_view.go", "teamRoundView", tsTeamFile, "TeamRound"},
 	{"internal/frontend/serve/team_view.go", "teamUsageView", tsTeamFile, "TeamUsage"},
+	{"internal/frontend/serve/team_view.go", "teamPrefsView", tsTeamFile, "TeamPrefs"},
 	{"internal/state/teamroster/grouplog.go", "GroupLine", tsTeamFile, "GroupLine"},
 	{"internal/state/teamroster/exchange.go", "Exchange", tsTeamFile, "TeamExchange"},
 	{"internal/frontend/serve/team_memory_routes.go", "sharedMemoryView", tsTeamFile, "SharedMemory"},

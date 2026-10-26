@@ -48,6 +48,16 @@ func (s *Service) Bootstrap(ctx context.Context, name, role string) (teamroster.
 	})
 }
 
+// UserSetMemoryReview turns the team's memory review on or off.
+func (s *Service) UserSetMemoryReview(ctx context.Context, on bool) error {
+	defer s.changed()
+	_, err := s.store.Update(ctx, func(r *teamroster.Roster) error {
+		r.Prefs.MemoryReviewOff = !on
+		return nil
+	})
+	return err
+}
+
 // UserCreateAgent adds an agent the user made.
 func (s *Service) UserCreateAgent(ctx context.Context, ch UserAgentChange) (teamroster.Agent, error) {
 	defer s.changed()

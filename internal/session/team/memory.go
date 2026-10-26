@@ -22,6 +22,15 @@ const (
 // sharedShown bounds how many shared memories one tier lists at a turn's tail.
 const sharedShown = 20
 
+// AgentMemoryDir is where an agent's own memory lives under the team's
+// directory: one memory across every folder and group it works in.
+func AgentMemoryDir(teamDir, agent string) string {
+	if teamDir == "" || agent == "" {
+		return ""
+	}
+	return filepath.Join(teamDir, "agents", agent, "memory")
+}
+
 // SharedStore is where tier's memory lives under the team's directory; group
 // is the group's id for the group tier.
 func SharedStore(teamDir string, tier SharedTier, group string) memory.Store {

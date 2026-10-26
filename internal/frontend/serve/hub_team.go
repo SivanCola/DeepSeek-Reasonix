@@ -56,6 +56,7 @@ type hubTeam struct {
 	opts    TeamHostOptions
 	store   teamroster.Store
 	writer  atomic.Pointer[teamWriter]
+	reviews *teamReviews
 	stop    chan struct{}
 	done    chan struct{}
 	opening sync.Map
@@ -82,6 +83,7 @@ type teamHold struct {
 func newHubTeam(h *Hub, opts TeamHostOptions) *hubTeam {
 	t := &hubTeam{h: h, opts: opts, store: teamroster.Store{Dir: opts.Dir}, stop: make(chan struct{}), done: make(chan struct{}),
 		seats: map[team.SeatRef]string{}, holds: map[string]*teamHold{}}
+	t.reviews = newTeamReviews(t)
 	if err := t.claim(); err != nil && !errors.Is(err, teamroster.ErrReadOnly) {
 		slog.Warn("serve: open the team", "err", err)
 	}
@@ -505,15 +507,22 @@ func (t *hubTeam) background(keep func(*teamHold) bool) []string {
 	return ids
 }
 
-// observe wraps a seat's event sink so the team's round timers see its
-// activity: any event, and when a tool starts and ends.
+// observe wraps a seat's event sink: a turn's end schedules its memory review,
+// and in a group seat the round timers see its activity — any event, and when
+// a tool starts and ends.
 func (t *hubTeam) observe(seat team.SeatRef, inner event.Sink) event.Sink {
-	svc := t.service()
-	if svc == nil || seat.Group == "" {
-		return inner
-	}
 	return event.FuncSink(func(e event.Event) {
 		inner.Emit(e)
+		switch e.Kind {
+		case event.TurnStarted:
+			t.reviews.cancel(seat)
+		case event.TurnDone:
+			t.reviews.schedule(seat)
+		}
+		svc := t.service()
+		if svc == nil || seat.Group == "" {
+			return
+		}
 		o := team.Observation{Kind: team.ObserveEvent, At: time.Now()}
 		switch e.Kind {
 		case event.ToolDispatch:

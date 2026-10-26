@@ -18,6 +18,12 @@ type teamView struct {
 	ReadOnly bool            `json:"readOnly,omitempty"`
 	Agents   []teamAgentView `json:"agents"`
 	Groups   []teamGroupView `json:"groups"`
+	Prefs    teamPrefsView   `json:"prefs"`
+}
+
+// teamPrefsView is what the user chose for the whole team.
+type teamPrefsView struct {
+	MemoryReview bool `json:"memoryReview"`
 }
 
 type teamAvatarView struct {
@@ -100,7 +106,8 @@ func (t *hubTeam) view() (teamView, error) {
 	if err != nil {
 		return teamView{}, err
 	}
-	out := teamView{Revision: r.Revision, ReadOnly: t.service() == nil, Agents: []teamAgentView{}, Groups: []teamGroupView{}}
+	out := teamView{Revision: r.Revision, ReadOnly: t.service() == nil, Agents: []teamAgentView{}, Groups: []teamGroupView{},
+		Prefs: teamPrefsView{MemoryReview: !r.Prefs.MemoryReviewOff}}
 	for _, a := range r.Agents {
 		v := t.agentView(a, book)
 		v.Usage = agentUsage(r, a)

@@ -1,6 +1,6 @@
 import type { RuntimeView } from "./hub";
 import { HttpError } from "./http_error";
-import type { AgentEdit, GroupEdit, GroupLine, SharedMemory, TeamAgent, TeamExchange, TeamGroup, TeamPort, TeamView } from "./team";
+import type { AgentEdit, GroupEdit, GroupLine, SharedMemory, TeamAgent, TeamExchange, TeamGroup, TeamPort, TeamPrefs, TeamView } from "./team";
 
 // An in-memory team for the mock hub: enough of the kernel's rules to draw
 // every state the window has to, with no kernel behind it.
@@ -19,8 +19,16 @@ export class MockTeam implements TeamPort {
     private readonly changed: () => void,
   ) {}
 
+  private prefs: TeamPrefs = { memoryReview: true };
+
   private snapshot(): TeamView {
-    return { revision: this.revision, agents: structuredClone(this.agents), groups: structuredClone(this.groups) };
+    return { revision: this.revision, agents: structuredClone(this.agents), groups: structuredClone(this.groups), prefs: { ...this.prefs } };
+  }
+
+  async setPrefs(prefs: Partial<TeamPrefs>) {
+    this.record("setPrefs", prefs);
+    this.prefs = { ...this.prefs, ...prefs };
+    return this.bump();
   }
 
   private bump(): TeamView {

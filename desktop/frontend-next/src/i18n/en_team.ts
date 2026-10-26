@@ -144,4 +144,7 @@ export const EN_TEAM: Record<string, string> = {
   "忘掉": "Forget",
   "管理记忆": "Manage memory",
   "管理": "Manage",
+  "自动整理记忆": "Tidy memory after each turn",
+  "你发过消息的一轮结束后，用标题模型读一遍新的对话，把值得长期记住的事整理进这个 Agent 自己的记忆（群聊里整理进群记忆）。每轮一次简短请求；只有 Agent 之间往来、没有你的话的一轮不会触发。": "When a turn you wrote in ends, the title model reads the new lines and folds what is worth keeping into the agent's own memory (the group's, in a group chat). One short request per turn; a turn with nothing from you, only agents talking, asks for none.",
+  "默认开启；关闭后只有 Agent 自己调用 remember 时才会记下": "On by default; when off, only what an agent saves with remember is kept",
 };

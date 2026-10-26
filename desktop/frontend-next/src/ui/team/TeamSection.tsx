@@ -5,6 +5,7 @@ import { useTeam } from "../../state/team";
 import { setTeamMotion, useTeamMotion, type TeamMotion } from "../../state/teamMotion";
 import { pushToast } from "../../state/toasts";
 import { Group } from "../Group";
+import { Switch } from "../Switch";
 import { SharedMemoryList } from "./SharedMemoryList";
 
 const MOTIONS: [TeamMotion, string][] = [
@@ -41,6 +42,18 @@ export function TeamSection({ hub }: { hub: HubPort }) {
           ))}
         </div>
       </Group>
+      {view && team && (
+        <Group id="team-memory-review" title={t("自动整理记忆")} hint={t("你发过消息的一轮结束后，用标题模型读一遍新的对话，把值得长期记住的事整理进这个 Agent 自己的记忆（群聊里整理进群记忆）。每轮一次简短请求；只有 Agent 之间往来、没有你的话的一轮不会触发。")}>
+          <div className="lrow">
+            <span className="tx">
+              <span className="lb">{t("自动整理记忆")}</span>
+              <span className="ds">{t("默认开启；关闭后只有 Agent 自己调用 remember 时才会记下")}</span>
+            </span>
+            <Switch data-action="team.memory-review" on={view.prefs?.memoryReview ?? true} busy={!!view.readOnly} label={t("自动整理记忆")}
+              onClick={() => void team.setPrefs({ memoryReview: !(view.prefs?.memoryReview ?? true) }).then(shown, (e) => pushToast(reason(e)))} />
+          </div>
+        </Group>
+      )}
       {view && team && (
         <Group id="team-shared-memory" title={t("团队共享记忆")} hint={t("Agent 用 remember_shared 记下、整个团队都能读到的事。只有主 Agent 和群管理员能写；这里可以让团队忘掉其中一条。")}>
           <SharedMemoryList team={team} tier="team" revision={view.revision} readOnly={!!view.readOnly} label={t("团队共享记忆")} empty={t("团队还没有共享记忆")} />

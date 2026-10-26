@@ -1,9 +1,8 @@
 package boot
 
 import (
-	"path/filepath"
-
 	"reasonix/internal/contract/config"
+	"reasonix/internal/session/team"
 	"reasonix/internal/state/instruction"
 	"reasonix/internal/state/memory"
 )
@@ -53,9 +52,5 @@ func agentMemoryDir(opts Options) string {
 		return ""
 	}
 	_, ref := opts.TeamSeat.Team()
-	dir := opts.roots().TeamDir()
-	if ref.Agent == "" || dir == "" {
-		return ""
-	}
-	return filepath.Join(dir, "agents", ref.Agent, "memory")
+	return team.AgentMemoryDir(opts.roots().TeamDir(), ref.Agent)
 }

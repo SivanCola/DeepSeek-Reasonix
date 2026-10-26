@@ -63,4 +63,5 @@ export const TEAM_ACTIONS: UIAction[] = [
   { id: "team.forget-shared-ask", kind: "view", target: "entity", proof: "interaction" },
   { id: "team.forget-shared", kind: "destructive", target: "entity", proof: "interaction" },
   { id: "team.drawer-memory", kind: "view", target: "none", proof: "interaction" },
+  { id: "team.memory-review", kind: "kernel-mutation", target: "none", proof: "interaction" },
 ];

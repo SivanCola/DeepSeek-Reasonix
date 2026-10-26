@@ -85,6 +85,13 @@ export interface TeamView {
   readOnly?: boolean;
   agents: TeamAgent[];
   groups: TeamGroup[];
+  // Absent from a kernel that predates the team's prefs.
+  prefs?: TeamPrefs;
+}
+
+// What the person chose for the whole team.
+export interface TeamPrefs {
+  memoryReview: boolean;
 }
 
 // One entry of a group's log. An event names the member it is about in
@@ -182,6 +189,7 @@ export interface TeamPort {
   // What the team, or one group, remembers; the person can make it forget one.
   sharedMemory(tier: "team" | "group", group?: string): Promise<SharedMemory[]>;
   forgetShared(tier: "team" | "group", name: string, group?: string): Promise<void>;
+  setPrefs(prefs: Partial<TeamPrefs>): Promise<TeamView>;
 }
 
 type Refusal = { code?: string; error?: string; params?: Record<string, string | number> };
@@ -249,6 +257,7 @@ export class SseTeam implements TeamPort {
   sharedMemory(tier: "team" | "group", group?: string) {
     return this.call<SharedMemory[]>("GET", `/team/memory?tier=${tier}${group ? `&group=${encodeURIComponent(group)}` : ""}`);
   }
+  setPrefs(prefs: Partial<TeamPrefs>) { return this.call<TeamView>("PATCH", "/team/prefs", prefs); }
   forgetShared(tier: "team" | "group", name: string, group?: string) {
     return this.call<void>("DELETE", `/team/memory/${tier}/${encodeURIComponent(name)}${group ? `?group=${encodeURIComponent(group)}` : ""}`);
   }
