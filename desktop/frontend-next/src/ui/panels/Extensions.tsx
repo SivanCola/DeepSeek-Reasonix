@@ -8,6 +8,7 @@ import { SlottedView } from "../SlottedView";
 export function Extensions({
   panels,
   views = [],
+  assigned,
   onInvoke,
   onMove,
 }: {
@@ -16,6 +17,7 @@ export function Extensions({
   // named a place they could be put. The rail is where a standing surface goes
   // when no one said otherwise.
   views?: ExtensionSurface[];
+  assigned?: Record<string, string>;
   onInvoke: (name: string) => void;
   onMove?: (ext: ExtensionSurface, slot: string) => void;
 }) {
@@ -29,6 +31,7 @@ export function Extensions({
         <div className="extpanel" key={`${v.pluginId}:${v.surfaceId}`}>
           <SlottedView
             ext={v}
+            assigned={assigned}
             onAction={onInvoke}
             onMove={(slot) => onMove?.(v, slot)}
           />

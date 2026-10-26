@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { t } from "../i18n";
-import type { ExtensionSurface } from "../port/wire";
+import type { ExtensionSurface, ExtensionViewNode } from "../port/wire";
 import { ExtensionView } from "./cards/ExtensionView";
 import { SLOTS, placement } from "./slots";
 
@@ -9,9 +9,11 @@ import { SLOTS, placement } from "./slots";
 // where the user overrules it. It stays hidden until the surface is hovered,
 // because the common case is reading the thing, not moving it.
 export function SlottedView({
-  ext, assigned = {}, onAction, onMove,
+  ext, body, assigned = {}, onAction, onMove,
 }: {
   ext: ExtensionSurface;
+  // What a narrow place can draw of the view, when it cannot draw all of it.
+  body?: ExtensionViewNode[];
   assigned?: Record<string, string>;
   onAction: (actionId: string) => void;
   onMove: (slot: string) => void;
@@ -24,7 +26,7 @@ export function SlottedView({
   const close = (then: () => void) => { setOpen(false); grip.current?.focus(); then(); };
   return (
     <div className="slotted">
-      <ExtensionView body={ext.view?.body ?? []} onAction={onAction} />
+      <ExtensionView body={body ?? ext.view?.body ?? []} onAction={onAction} />
       <button
         ref={grip}
         className="movegrip"
@@ -46,7 +48,7 @@ export function SlottedView({
             aria-checked={here === slot.id}
             onClick={() => close(() => onMove(slot.id))}
           >
-            {slot.label}
+            {t(slot.label)}
           </button>
         ))}
         {/* Clearing hands the choice back to the extension rather than
