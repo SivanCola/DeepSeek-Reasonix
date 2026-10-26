@@ -40,6 +40,10 @@ func (t *teamTool) Description() string     { return t.description }
 func (t *teamTool) Schema() json.RawMessage { return json.RawMessage(t.schema) }
 func (t *teamTool) ReadOnly() bool          { return t.readOnly }
 
+// WritesHostStateOnly: a team tool changes the roster, an agent's inbox or a
+// group's log, never the workspace.
+func (t *teamTool) WritesHostStateOnly() bool { return true }
+
 func (t *teamTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	dir, ok := t.link.Directory()
 	if !ok {

@@ -201,5 +201,6 @@ export const EN_TEAM: Record<string, string> = {
   "{agent} 需要 {name}": "{agent} needs {name}",
   "已保存 {name} · {scope}": "Saved {name} · {scope}",
   "已拒绝提供 {name}": "Declined {name}",
+  "你对机密请求的答复": "Your answer to a secret request",
   "{name} 的对话": "{name}'s conversation",
 };

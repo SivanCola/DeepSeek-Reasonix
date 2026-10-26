@@ -113,3 +113,13 @@ func TestSharedMemoryToolsHandTheirArgumentsToTheBoundStore(t *testing.T) {
 		t.Fatalf("recall_shared reached %+v", stub)
 	}
 }
+
+// Every team tool changes host-owned state only, so a turn that used one has
+// changed nothing in the work product it would have to verify.
+func TestEveryTeamToolWritesHostStateOnly(t *testing.T) {
+	for _, tl := range TeamTools(&tool.TeamLink{}) {
+		if !tool.WritesHostStateOnly(tl) {
+			t.Errorf("%s does not declare its effects host-owned", tl.Name())
+		}
+	}
+}

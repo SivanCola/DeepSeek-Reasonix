@@ -4,7 +4,7 @@
 // Who a turn the host ran was for, when it was not the person: another agent's
 // message, an agent's reply, or a member's turn in a group.
 export interface MessageOrigin {
-  kind: "message" | "reply" | "group_turn" | "schedule";
+  kind: "message" | "reply" | "group_turn" | "schedule" | "secret";
   agent?: string;
   exchange?: string;
   group?: string;

@@ -13,3 +13,16 @@ import (
 type WritePathDeclarer interface {
 	DeclaredWritePaths(ctx context.Context, args json.RawMessage) ([]string, error)
 }
+
+// HostStateWriter is an optional contract for a tool whose every effect lands
+// in state the host owns and records itself — the team roster, an agent's
+// inbox — and none in the workspace: its calls change no work product.
+type HostStateWriter interface {
+	WritesHostStateOnly() bool
+}
+
+// WritesHostStateOnly reports whether every effect of t is host-owned state.
+func WritesHostStateOnly(t Tool) bool {
+	w, ok := t.(HostStateWriter)
+	return ok && w.WritesHostStateOnly()
+}

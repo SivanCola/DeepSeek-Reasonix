@@ -87,6 +87,16 @@ it("the dock stops the speaker and takes the person to a member waiting on them"
   await waitFor(() => expect(adopt).toHaveBeenCalledWith(expect.objectContaining({ id: "team-g-3-a-1" })));
 });
 
+// A member that moved its work to the background is still running it, and is
+// the one the person most needs a way to stop.
+it("the dock stops a member working in the background too", async () => {
+  const { team, stage } = await launch();
+  act(() => team.setRound("g-3", { working: ["a-1"] }));
+  expect(await within(stage).findByText("Ada 在后台工作")).toBeTruthy();
+  await userEvent.click(within(stage).getByRole("button", { name: "停止 Ada" }));
+  await waitFor(() => expect(team.calls.at(-1)).toEqual({ method: "stopMember", args: ["g-3", "a-1"] }));
+});
+
 it("opening a pane puts the group chat away", async () => {
   const { rerender } = await launch("r1");
   rerender("r2");

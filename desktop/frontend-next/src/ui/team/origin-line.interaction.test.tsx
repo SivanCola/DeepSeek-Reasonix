@@ -49,3 +49,11 @@ it("a sender the team no longer has is still named as an agent", () => {
   render(<OriginLine origin={{ kind: "reply", agent: "a-gone" }} text="ok" />);
   expect(screen.getByRole("button", { name: "另一个 Agent 的回复" })).toBeTruthy();
 });
+
+// The host tells an agent what the person did with its request for a secret;
+// that is no agent's message, and the row must not say it is.
+it("a secret's answer reads as the person's answer, not another agent's message", () => {
+  render(<OriginLine origin={{ kind: "secret" }} text={'<secret-update name="SHOP_KEY" status="saved">\nThe user saved SHOP_KEY for you.\n</secret-update>'} />);
+  expect(screen.getByRole("button", { name: "你对机密请求的答复" })).toBeTruthy();
+  expect(screen.queryByText(/另一个 Agent/)).toBeNull();
+});

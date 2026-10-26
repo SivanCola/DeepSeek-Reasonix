@@ -134,7 +134,7 @@ func (t *hubTeam) agentView(a teamroster.Agent, book []teamroster.Exchange) team
 	if a.SessionPath != "" {
 		if info, err := os.Stat(a.SessionPath); err == nil {
 			v.LastActivityAt = info.ModTime().UnixMilli()
-			v.Preview, _ = sessionstore.SessionPreview(a.SessionPath)
+			v.Preview = sessionstore.LatestPreview(a.SessionPath)
 		}
 	}
 	v.Activity = t.activity(a.ID, book)

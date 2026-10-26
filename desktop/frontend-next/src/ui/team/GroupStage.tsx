@@ -145,6 +145,12 @@ function GroupChat({ group, view, team, onAdoptPane, onSaved }: {
     setPicking(false);
   };
   const speaking = group.round.speaking;
+  const stop = (m: string) => !view.readOnly && (
+    <button type="button" data-action="team.member-stop" data-target={m} aria-label={t("停止 {name}", { name: nameOf(m) })}
+      onClick={() => void team.stopMember(group.id, m).catch((e) => pushToast(reason(e)))}>
+      <StudioIcon name="stop" />
+    </button>
+  );
   const waiting = members.filter((m) => m.activity.state === "needs_you");
   const lastPaused = [...lines].reverse().find((l) => l.event === "paused" || l.event === "resumed");
 
@@ -216,17 +222,15 @@ function GroupChat({ group, view, team, onAdoptPane, onSaved }: {
           {speaking && (
             <span className="team-dock-item">
               {t("{name} 正在发言", { name: nameOf(speaking) })}
-              {!view.readOnly && (
-                <button type="button" data-action="team.member-stop" data-target={speaking} aria-label={t("停止 {name}", { name: nameOf(speaking) })}
-                  onClick={() => void team.stopMember(group.id, speaking).catch((e) => pushToast(reason(e)))}>
-                  <StudioIcon name="stop" />
-                </button>
-              )}
+              {stop(speaking)}
             </span>
           )}
-          {group.round.working.length > 0 && (
-            <span className="team-dock-item">{t("{names} 在后台工作", { names: group.round.working.map(nameOf).join("、") })}</span>
-          )}
+          {group.round.working.map((m) => (
+            <span key={m} className="team-dock-item">
+              {t("{names} 在后台工作", { names: nameOf(m) })}
+              {stop(m)}
+            </span>
+          ))}
         </div>
       )}
       {!view.readOnly && (

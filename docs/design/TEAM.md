@@ -41,6 +41,7 @@ Studio keeps a team of long-lived agents beside the user's projects.
 | Refuse | Work handed upstream on its own branch (`team.upstream`), a chain six deep, sixteen unanswered, twelve a minute, eight in one turn. |
 | Answer | When the receiver's turn ends, the controller reports what it served and read. With work still out, the answer is held; otherwise `<agent-reply>` goes to the sender's seat. |
 | Read | A reply counts as returned only once the sender's turn has read it, so an answer never leaves before the replies it depends on. |
+| Receipts | Team tools declare every effect host-owned (`tool.HostStateWriter`): a turn that only managed the team reports no unverified change to the work product. |
 
 ## 4. Group rounds
 
