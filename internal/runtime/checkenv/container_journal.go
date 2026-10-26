@@ -74,6 +74,9 @@ func recoverContainerJournal(ctx context.Context, directory string, client *cont
 	defer release()
 	raw, err := os.ReadFile(filepath.Join(directory, "container.json"))
 	if os.IsNotExist(err) {
+		// Removed under the lock: an owner that has not locked it yet then fails
+		// instead of writing into a directory being deleted.
+		removeFrozenTree(directory)
 		return nil
 	}
 	if err != nil {
@@ -85,7 +88,7 @@ func recoverContainerJournal(ctx context.Context, directory string, client *cont
 	if len(raw) > 1<<20 || decoder.Decode(&journal) != nil || journal.Version != 1 || !errors.Is(decoder.Decode(new(any)), io.EOF) {
 		return errors.New("unsupported verification recovery journal; original retained")
 	}
-	if journal.Engine != client.engine.ID || journal.Endpoint != client.endpoint {
+	if client == nil || journal.Engine != client.engine.ID || journal.Endpoint != client.endpoint {
 		return nil
 	}
 	if journal.Identity != filepath.Base(directory) || journal.Stage != journal.Identity+"-stage" || journal.Run != journal.Identity+"-run" {

@@ -5,13 +5,19 @@ package checkenv
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 
+	"reasonix/internal/base/proc"
 	"reasonix/internal/contract/tool"
 	"reasonix/internal/tools/shellrun"
 )
@@ -52,6 +58,9 @@ func TestLinuxFailedIdentityHandshakeNeverStartsPayload(t *testing.T) {
 	case <-result.Tracked.WaitCompleted():
 	default:
 		t.Fatal("confirmed namespace failure did not release ownership")
+	}
+	if inputs := i.Inputs(); len(inputs) != 1 || !slices.Equal(inputs[0].Gaps, []string{"controlled_namespace_unbound"}) {
+		t.Fatalf("namespace identity failure lost its cause: %+v", inputs)
 	}
 	i.Close()
 	if i.state.directory != "" {
@@ -111,5 +120,74 @@ func TestLinuxFailedCancellationSignalWaitsForNamespace(t *testing.T) {
 	i.Close()
 	if i.state.directory != "" {
 		t.Fatal("proven terminated environment was not cleaned")
+	}
+}
+
+func assertGaps(t *testing.T, i *Invocation, want ...string) {
+	t.Helper()
+	if inputs := i.Inputs(); len(inputs) != 1 || !slices.Equal(inputs[0].Gaps, want) || Verify(inputs[0], "execution") {
+		t.Fatalf("gaps = %+v, want %v", inputs, want)
+	}
+}
+
+func TestLinuxRejectedLauncherReleasesEnvironmentWithCause(t *testing.T) {
+	const command = "printf PAYLOAD-RAN"
+	i, argv := prepareScopeTest(t, command)
+	rejected := append([]string{argv[0], "--reasonix-unsupported-option"}, argv[1:]...)
+	i.state.argv = rejected
+	directory := i.state.directory
+	result := shellrun.RunForeground(tool.WithControlledShell(t.Context(), i), shellrun.Request{Argv: rejected, Dir: i.spec.Directory, Command: command, Track: true})
+	if !errors.Is(result.Err, ErrUnsupported) || !errors.Is(result.Err, errNamespaceUnreported) ||
+		errors.Is(result.Err, proc.ErrScopeCompletionUnknown) || strings.Contains(result.Combined, "PAYLOAD-RAN") {
+		t.Fatalf("launcher that never reported a namespace was not settled with its cause: %+v", result)
+	}
+	select {
+	case <-result.Tracked.WaitCompleted():
+	default:
+		t.Fatal("a launcher no reader survives was left owning its scope")
+	}
+	assertGaps(t, i, "controlled_namespace_unreported")
+	i.Close()
+	if _, err := os.Lstat(directory); !os.IsNotExist(err) {
+		t.Fatalf("unreported namespace leaked its frozen environment: %v", err)
+	}
+}
+
+func TestLinuxSurvivingBlockReaderIsNeverReleased(t *testing.T) {
+	grace := namespaceReleaseGrace
+	namespaceReleaseGrace = 200 * time.Millisecond
+	t.Cleanup(func() { namespaceReleaseGrace = grace })
+	const command = "printf PAYLOAD-RAN"
+	i, _ := prepareScopeTest(t, command)
+	scratch := t.TempDir()
+	released, readerPID := filepath.Join(scratch, "released"), filepath.Join(scratch, "reader.pid")
+	script := fmt.Sprintf(`(exec 1>/dev/null 2>&1 3>&- 4>&-; read -r -n 1 <&5; : > %q) & printf %%s "$!" > %q; exit 0`, released, readerPID)
+	launcher := []string{"/bin/bash", "-c", script}
+	i.state.argv = launcher
+	directory := i.state.directory
+	result := shellrun.RunForeground(tool.WithControlledShell(t.Context(), i), shellrun.Request{Argv: launcher, Dir: i.spec.Directory, Command: command, Track: true})
+	raw, err := os.ReadFile(readerPID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(string(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = unix.Kill(pid, unix.SIGKILL) })
+	if !errors.Is(result.Err, proc.ErrScopeCompletionUnknown) || !errors.Is(result.Err, errNamespaceUnreported) {
+		t.Fatalf("an unproven scope was reported as settled or lost its cause: %+v", result)
+	}
+	assertGaps(t, i, "controlled_namespace_unreported")
+	i.Close()
+	if _, err := os.Lstat(directory); !os.IsNotExist(err) {
+		t.Fatalf("frozen environment retained although deleting it cannot release the reader: %v", err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if _, err := os.Lstat(released); !os.IsNotExist(err) {
+		t.Fatal("closing the environment released a surviving block reader")
+	}
+	if err := unix.Kill(pid, 0); err != nil {
+		t.Fatalf("block reader exited: %v", err)
 	}
 }

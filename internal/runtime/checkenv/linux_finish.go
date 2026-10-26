@@ -17,7 +17,7 @@ import (
 )
 
 func (i *Invocation) finish() {
-	i.scope.wait()
+	scopeErr := i.scope.wait()
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	if i.state.cmd != nil && i.state.cmd.Process != nil && !i.scope.completed() {
@@ -30,16 +30,29 @@ func (i *Invocation) finish() {
 		}
 	}()
 	cmd, ctx := i.state.cmd, i.state.ctx
-	if cmd == nil || cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+	exited := cmd != nil && cmd.ProcessState != nil && cmd.ProcessState.Exited()
+	i.state.input.Completed = exited
+	switch {
+	case scopeErr != nil:
+		i.state.input.Gaps = []string{namespaceGap(scopeErr)}
+		return
+	case ctx != nil && ctx.Err() != nil:
+		i.state.input.Gaps = []string{"controlled_execution_cancelled"}
+		return
+	case !exited:
 		return
 	}
-	i.state.input.Completed = true
-	if ctx.Err() != nil || cmd.Path != i.state.argv[0] || !reflect.DeepEqual(cmd.Args, i.state.argv) || cmd.Dir != "/" ||
+	i.state.input.Gaps = []string{"controlled_launch_identity_changed"}
+	if cmd.Path != i.state.argv[0] || !reflect.DeepEqual(cmd.Args, i.state.argv) || cmd.Dir != "/" ||
 		digest(cmd.Environ()) != i.state.input.EnvironmentHash ||
-		!reflect.DeepEqual(cmd.ExtraFiles, []*os.File{i.state.status, i.scope.infoWrite, i.scope.block}) ||
-		!namespaceCompleted(i.state.status, cmd.ProcessState.ExitCode()) {
+		!reflect.DeepEqual(cmd.ExtraFiles, []*os.File{i.state.status, i.scope.infoWrite, i.scope.block}) {
 		return
 	}
+	i.state.input.Gaps = []string{"controlled_exit_status_changed"}
+	if !namespaceCompleted(i.state.status, cmd.ProcessState.ExitCode()) {
+		return
+	}
+	i.state.input.Gaps = []string{"controlled_input_snapshot_changed"}
 	i.state.input.After = evidence.CaptureContentSnapshot(ctx, i.spec.SourceRoot, 50_000)
 	if !i.state.input.After.Complete || i.state.input.Before.Digest != i.state.input.After.Digest {
 		return
@@ -56,12 +69,28 @@ func (i *Invocation) finish() {
 	if err != nil || digest(original) != i.state.originalDigest {
 		return
 	}
+	i.state.input.Gaps = []string{"controlled_launcher_changed"}
 	launcher, err := fileutil.ReadContentVersion(ctx, i.state.argv[0])
 	if err != nil || launcher != i.state.launcher {
 		return
 	}
 	i.state.input.Stable, i.state.input.Gaps = true, nil
 	i.recordReceipt()
+}
+
+// namespaceGap names why a scope's run is not evidence. The scope's own causes
+// decide it; a payload behind an unreported or unbound namespace never ran.
+func namespaceGap(err error) string {
+	switch {
+	case errors.Is(err, errNamespaceUnreported):
+		return "controlled_namespace_unreported"
+	case errors.Is(err, errNamespaceUnbound):
+		return "controlled_namespace_unbound"
+	case errors.Is(err, errNamespaceSignal):
+		return "controlled_namespace_signal_failed"
+	default:
+		return "controlled_scope_unconfirmed"
+	}
 }
 
 func namespaceCompleted(status *os.File, exitCode int) bool {
@@ -99,7 +128,7 @@ func virtualFile(rootPath, path string) (string, error) {
 	}
 	defer root.Close()
 	parts := strings.Split(strings.TrimPrefix(filepath.Clean(path), "/"), "/")
-	for links := 0; links < 40; links++ {
+	for range 40 {
 		current, changed := ".", false
 		for index, part := range parts {
 			current = filepath.Join(current, part)
