@@ -15,7 +15,7 @@ import (
 	"reasonix/internal/tools/jobs"
 )
 
-func TestBackgroundBashOwnsMutationUntilProcessEnds(t *testing.T) {
+func TestBackgroundBashIsAdmittedBeforeLaunchAndReleasesOnceStarted(t *testing.T) {
 	root := t.TempDir()
 	notices := make(chan mutation.Notice, 20)
 	c, err := mutation.New(root, t.TempDir(), func(n mutation.Notice) { notices <- n })
@@ -61,24 +61,16 @@ func TestBackgroundBashOwnsMutationUntilProcessEnds(t *testing.T) {
 			t.Fatal("process never started")
 		}
 	}
-	acquired := make(chan error, 1)
-	go func() {
-		l, err := c.Acquire(ctx, mutation.Intent{Effect: mutation.Workspace, CallID: "contender"})
-		if l != nil {
-			l.End(mutation.NotExecuted)
-		}
-		acquired <- err
-	}()
-	waitMutationNotice(t, ctx, notices, "contender", "waiting")
-	manager.KillForSession("session", jobID)
-	select {
-	case err := <-acquired:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-ctx.Done():
-		t.Fatal("ended process retained mutation")
+	waitMutationNotice(t, ctx, notices, "submit", "released")
+	contender, err := c.TryAcquire(ctx, mutation.Intent{Effect: mutation.Workspace, CallID: "contender"})
+	if err != nil {
+		t.Fatalf("a running background process kept the workspace transaction: %v", err)
 	}
+	contender.End(mutation.NotExecuted)
+	if _, status, ok := manager.OutputForSession("session", jobID); !ok || status != jobs.Running {
+		t.Fatalf("background process ended before the contender was admitted: %s", status)
+	}
+	manager.KillForSession("session", jobID)
 }
 
 func waitMutationNotice(t *testing.T, ctx context.Context, notices <-chan mutation.Notice, call, state string) {

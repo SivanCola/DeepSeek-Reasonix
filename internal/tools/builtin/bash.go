@@ -548,8 +548,9 @@ func shouldTrackShellProcess(wrapped bool, sh sandbox.Shell, command string, pre
 	return sh.Kind != sandbox.ShellBash || !hasExplicitBackgroundKeepalive(command)
 }
 
-func runShellProcess(ctx context.Context, cmd *exec.Cmd, sh sandbox.Shell, command string, track bool) (*proc.TrackedCommand, error) {
+func runShellProcess(ctx context.Context, cmd *exec.Cmd, sh sandbox.Shell, command string, track bool, started func(*exec.Cmd)) (*proc.TrackedCommand, error) {
 	return proc.RunCommand(ctx, cmd, proc.RunOptions{
+		OnStarted:       started,
 		Track:           track,
 		CancelWaitGrace: bashWaitDelay + time.Second,
 		Source:          "bash_tool",

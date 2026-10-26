@@ -228,8 +228,11 @@ Git 快照及 worktree 创建将准备额度与相关路径联合申请；内核
 新版只读 skill 也使用统一执行入口，保留临时、不持久化子会话与原审查权限边界。
 完成协议工具在创建运行时确定；相同调用的系统及工具前缀保持稳定。
 
-后台 Shell 在实际启动进程前申请独立事务，执行和清理结束后释放。排队取消
-不会启动命令。正在执行的命令可以占用工作区范围，等待者可查看任务并取消。
+后台 Shell：
+
+- 实际启动进程前申请独立事务，进程启动后即释放；排队取消不会启动命令。
+- 启动后的进程按外部写入者对待，不占用工作区，长期运行的服务不阻塞其他写入。
+- 具名文件的写入仍由版本检查发现它造成的变化。
 新版协议拒绝显式脱离任务的 Shell 进程；服务请直接使用 `run_in_background`。
 协议不能承诺约束任意自行脱离的外部程序。
 
@@ -699,10 +702,13 @@ transcripts and their existing review-authority boundary. Completion protocol
 tools are fixed at runtime construction; identical invocations keep stable
 system and tool prefixes.
 
-Background shell jobs acquire their own transaction before process launch and
-release it after process completion and cleanup. Queue cancellation does not
-launch the command. A running shell can legitimately hold its workspace domain
-until stopped; this is execution, not a model-thinking lease.
+Background shell jobs:
+
+- acquire their own transaction before launch and release it once the process
+  has started; queue cancellation does not launch the command;
+- run as external writers afterwards, holding no workspace domain, so a
+  long-lived service never blocks other writers;
+- remain visible to named file writes through their version checks.
 
 Explicit shell detachment under the new protocol is refused. Run services
 directly with `run_in_background` to retain status and cancellation. The protocol

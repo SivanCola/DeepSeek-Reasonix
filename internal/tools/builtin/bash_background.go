@@ -2,7 +2,6 @@ package builtin
 
 import (
 	"context"
-	"errors"
 	"io"
 	"os/exec"
 
@@ -32,18 +31,14 @@ func (b bash) startBackground(ctx context.Context, manager *jobs.Manager, run ba
 		if err != nil {
 			return "", err
 		}
-		outcome := mutation.NotExecuted
-		defer func() { lease.End(outcome) }()
+		defer lease.End(mutation.NotExecuted)
 		argv, p, sh := run.prepared.Argv, run.params, run.shell
 		cmd := exec.CommandContext(jobCtx, argv[0], argv[1:]...)
 		cmd.Dir, cmd.Env, cmd.WaitDelay = b.workDir, run.env, bashWaitDelay
 		cmd.Stdout, cmd.Stderr = out, out
-		tracked, runErr := runShellProcess(jobCtx, cmd, sh, p.Command, shouldTrackShellProcess(run.prepared.Wrapped, sh, p.Command, p.PreserveBackgroundProcesses))
+		started := func(*exec.Cmd) { lease.End(mutation.Unknown) }
+		tracked, runErr := runShellProcess(jobCtx, cmd, sh, p.Command, shouldTrackShellProcess(run.prepared.Wrapped, sh, p.Command, p.PreserveBackgroundProcesses), started)
 		waitDone = tracked.WaitCompleted()
-		runErr = errors.Join(runErr, lease.HoldUntil(waitDone))
-		if cmd.Process != nil {
-			outcome = mutation.Unknown
-		}
 		if shouldReapAfterRun(jobCtx, sh, p.Command, p.PreserveBackgroundProcesses) {
 			reapShellProcess(cmd, tracked)
 		}
