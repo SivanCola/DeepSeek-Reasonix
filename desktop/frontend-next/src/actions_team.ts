@@ -59,4 +59,5 @@ export const TEAM_ACTIONS: UIAction[] = [
   { id: "team.hero-starter", kind: "view", target: "none", proof: "interaction" },
   { id: "team.photo-pick", kind: "view", target: "none", proof: "interaction" },
   { id: "team.photo-remove", kind: "view", target: "none", proof: "interaction" },
+  { id: "team.motion", kind: "view", target: "none", proof: "interaction" },
 ];

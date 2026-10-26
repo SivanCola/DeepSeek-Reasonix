@@ -1720,6 +1720,13 @@ A sub-agent row, by the list's own width:
 - The avatar picker keeps shapes and colours in separate rows, each with one pressed choice; one wrapping grid runs colours on after shapes and shows two selections in what reads as a single set.
 - Team dialogs dim the window with the same thin black scrim as the rename dialog. `--overlay` is an opaque surface colour, not a scrim, and would hide the window.
 
+## Team motion
+
+- Three levels, chosen in settings and held on this machine: quiet keeps only the animations that say a state (the working pulse); normal adds the answer to a pointer (a tilt on hover, a press on click) and rows sliding to a new place; lively adds idle blinks, fidgets and a repeating hop on "needs you".
+- Every animation sits under `prefers-reduced-motion: no-preference`, so the system setting stops all of it without a rule having to outweigh the others.
+- A row slides only when its place changes. A row met for the first time — on mount, or newly added — has no earlier place and stays still, and reordering moves the same elements rather than remounting them.
+- Each agent's ambient loops start at a phase taken from its id, so a column of avatars does not blink in step.
+
 ## Agent greeting
 
 - An agent's empty conversation shows the agent instead of the window's hero: its avatar, a greeting, the chat models as chips with the one in use pressed, and for a main agent three first requests.

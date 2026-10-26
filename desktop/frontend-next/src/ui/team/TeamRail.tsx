@@ -12,6 +12,7 @@ import { AgentAvatar, GroupAvatar } from "./AgentAvatar";
 import { AgentDialog } from "./AgentDialog";
 import { GroupDialog } from "./GroupDialog";
 import { TeamMenu, type MenuTarget } from "./TeamMenu";
+import { useReorderMotion } from "./useReorderMotion";
 import { UnreadDot } from "../UnreadMark";
 import "../../styles/team.css";
 
@@ -69,7 +70,9 @@ export function TeamRail({ hub, active, onAdoptPane }: { hub: HubPort; active: s
   const [showHidden, setShowHidden] = useState(false);
   const [menu, setMenu] = useState<{ kind: "agent" | "group"; id: string; x: number; y: number } | null>(null);
   const menuRow = useRef<HTMLElement | null>(null);
+  const list = useRef<HTMLUListElement>(null);
   const unread = useTeamUnread();
+  useReorderMotion(list, view ? teamRows(view, showHidden).rows.map((r) => (r.kind === "agent" ? r.agent.id : r.group.id)).join(" ") : "");
   useEffect(() => {
     if (!view) return;
     noteSeen([
@@ -119,7 +122,7 @@ export function TeamRail({ hub, active, onAdoptPane }: { hub: HubPort; active: s
     }
   };
   const agentRow = (a: TeamAgent, main = false) => (
-    <li key={a.id} className={main ? "team-row team-row--main" : "team-row"} data-state={a.activity.state} aria-current={!!a.runtime && a.runtime === active && !stage}
+    <li key={a.id} data-key={a.id} className={main ? "team-row team-row--main" : "team-row"} data-state={a.activity.state} aria-current={!!a.runtime && a.runtime === active && !stage}
       data-unread={isUnread(unread, a.id, a.lastActivityAt) ? "" : undefined} data-hidden={a.hidden ? "" : undefined}>
       <button type="button" className="team-row-open" data-action-click="team.agent-open" data-action-contextmenu="team.menu" data-action-keydown="team.menu" data-target={a.id}
         onClick={() => void openAgent(a.id)} onContextMenu={(ev) => menuAt("agent", a.id, ev)} onKeyDown={(ev) => menuKey("agent", a.id, ev)}>
@@ -139,7 +142,7 @@ export function TeamRail({ hub, active, onAdoptPane }: { hub: HubPort; active: s
     </li>
   );
   const groupRow = (g: TeamGroup) => (
-    <li key={g.id} className="team-row" aria-current={stage === g.id}
+    <li key={g.id} data-key={g.id} className="team-row" aria-current={stage === g.id}
       data-unread={isUnread(unread, g.id, g.lastActivityAt) ? "" : undefined} data-hidden={g.hidden ? "" : undefined}>
       <button type="button" className="team-row-open" data-action-click="team.group-open" data-action-contextmenu="team.menu" data-action-keydown="team.menu" data-target={g.id}
         onClick={() => { noteSeen([{ id: g.id, at: g.lastActivityAt, looking: true }]); openGroupStage(g.id); }}
@@ -199,7 +202,7 @@ export function TeamRail({ hub, active, onAdoptPane }: { hub: HubPort; active: s
           </div>
         )
       ) : (
-        <ul className="team-rows">
+        <ul className="team-rows" ref={list}>
           {lead && agentRow(lead, true)}
           {rows.map((r) => (r.kind === "agent" ? agentRow(r.agent) : groupRow(r.group)))}
         </ul>

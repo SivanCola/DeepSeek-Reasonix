@@ -1,6 +1,7 @@
 import { useState, type CSSProperties } from "react";
 import { t } from "../../i18n";
 import type { TeamActivity, TeamAvatar } from "../../port/team";
+import "../../styles/team-motion.css";
 
 // Each glyph is drawn on a 24-unit square with room for two eyes at y=12.
 const GLYPHS: Record<string, string> = {
@@ -59,7 +60,7 @@ export function AgentAvatar({ agent, size = 28, star = agent.main, badges = true
   const [broken, setBroken] = useState<string | null>(null);
   const photo = agent.avatar.image && agent.avatar.image !== broken ? agent.avatar.image : undefined;
   return (
-    <span className="team-avatar" data-color={color} data-state={badges ? state : "idle"} data-photo={photo ? "" : undefined} style={{ "--avatar-size": `${size}px` } as CSSProperties} aria-hidden="true">
+    <span className="team-avatar" data-color={color} data-state={badges ? state : "idle"} data-photo={photo ? "" : undefined} style={{ "--avatar-size": `${size}px`, "--avatar-phase": `${hash(agent.id) % 9000}ms` } as CSSProperties} aria-hidden="true">
       {photo ? (
         <img src={photo} alt="" draggable={false} onError={() => setBroken(photo)} />
       ) : (

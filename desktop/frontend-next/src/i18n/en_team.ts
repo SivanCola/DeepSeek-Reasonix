@@ -124,4 +124,13 @@ export const EN_TEAM: Record<string, string> = {
   "移除照片": "Remove photo",
   "只能用 PNG、JPEG、WebP 或 GIF 图片": "Only PNG, JPEG, WebP or GIF pictures",
   "这张图片太大了": "That picture is too large",
+  "Agent 动效": "Agent motion",
+  "安静只保留表示状态的动画；正常还会回应指针，并让侧栏里换了位置的行滑过去；活泼再加上空闲时的眨眼和小动作。系统开启「减少动态效果」时全部关闭。": "Quiet keeps only the animations that show a state; normal also answers the pointer and slides sidebar rows into a new place; lively adds idle blinks and fidgets. The system's reduce-motion setting turns all of it off.",
+  "已隐藏的 Agent 和群聊": "Hidden agents and group chats",
+  "隐藏只是不在侧栏里列出：它们照常工作，也照常收发消息。": "Hiding only leaves them out of the sidebar: they work, and send and receive messages, as before.",
+  "没有隐藏的 Agent 或群聊": "No hidden agents or group chats",
+  "在侧栏显示 {name}": "Show {name} in the sidebar",
+  "安静": "Quiet",
+  "正常": "Normal",
+  "活泼": "Lively",
 };
