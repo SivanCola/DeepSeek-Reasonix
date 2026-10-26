@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { t } from "../../i18n";
 import { reason } from "../../i18n/kernel";
 import type { HubPort, RuntimeView } from "../../port/hub";
+import type { AgentPort } from "../../port/port";
 import type { TeamAgent, TeamExchange, TeamView } from "../../port/team";
 import { useTeam } from "../../state/team";
 import { closeSeatDrawer, useSeatDrawer } from "../../state/teamDrawer";
@@ -41,10 +42,12 @@ function usageLine(a: TeamAgent): string {
 // do, where it works, what it has spent and whom it has been talking to. What
 // the person can change takes effect the way its endpoint does; the folder is
 // read when the agent's conversation next opens.
-export function SeatDrawer({ hub, seat, root, onAdoptPane }: {
+export function SeatDrawer({ hub, seat, root, port, onMemory, onAdoptPane }: {
   hub: HubPort;
   seat?: RuntimeView["team"];
   root?: string;
+  port?: AgentPort | null;
+  onMemory?: () => void;
   onAdoptPane: (rt: RuntimeView) => void;
 }) {
   const open = useSeatDrawer();
@@ -53,7 +56,14 @@ export function SeatDrawer({ hub, seat, root, onAdoptPane }: {
   const [book, setBook] = useState<TeamExchange[]>([]);
   const [editing, setEditing] = useState(false);
   const [moved, setMoved] = useState(false);
+  const [remembered, setRemembered] = useState<number | null>(null);
   const agentId = seat?.agent;
+  useEffect(() => {
+    if (!open || !port) return;
+    let live = true;
+    void port.memories().then((c) => live && setRemembered(c.memories.length), () => live && setRemembered(null));
+    return () => { live = false; };
+  }, [open, port, agentId]);
   useEffect(() => {
     if (!open || !team || !agentId) return;
     let live = true;
@@ -126,6 +136,19 @@ export function SeatDrawer({ hub, seat, root, onAdoptPane }: {
           )}
           {moved && <p className="team-note">{t("下次打开这个 Agent 时生效")}</p>}
         </dd>
+        {remembered !== null && (
+          <>
+            <dt>{t("记忆")}</dt>
+            <dd>
+              {t("{n} 条", { n: remembered })}
+              {onMemory && (
+                <button type="button" className="team-drawer-link" data-action="team.drawer-memory" aria-label={t("管理记忆")} onClick={onMemory}>
+                  {t("管理")}
+                </button>
+              )}
+            </dd>
+          </>
+        )}
         {agent.instructions && (
           <>
             <dt>{t("指令")}</dt>

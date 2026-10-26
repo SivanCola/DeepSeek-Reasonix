@@ -13,7 +13,7 @@ import (
 // between an agent's own chat and its group seats; who may do what is decided
 // when a tool is called, not by which tools a session has.
 func TeamTools(link *tool.TeamLink) []tool.Tool {
-	return append(teamCoordinationTools(link), teamManagementTools(link)...)
+	return append(append(teamCoordinationTools(link), teamManagementTools(link)...), teamMemoryTools(link)...)
 }
 
 // TeamToolNames are the names TeamTools registers, in its order.

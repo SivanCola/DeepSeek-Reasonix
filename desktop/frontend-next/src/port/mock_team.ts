@@ -1,6 +1,6 @@
 import type { RuntimeView } from "./hub";
 import { HttpError } from "./http_error";
-import type { AgentEdit, GroupEdit, GroupLine, TeamAgent, TeamExchange, TeamGroup, TeamPort, TeamView } from "./team";
+import type { AgentEdit, GroupEdit, GroupLine, SharedMemory, TeamAgent, TeamExchange, TeamGroup, TeamPort, TeamView } from "./team";
 
 // An in-memory team for the mock hub: enough of the kernel's rules to draw
 // every state the window has to, with no kernel behind it.
@@ -11,6 +11,7 @@ export class MockTeam implements TeamPort {
   private groups: TeamGroup[] = [];
   private readonly logs = new Map<string, GroupLine[]>();
   private book: TeamExchange[] = [];
+  private readonly shared = new Map<string, SharedMemory[]>();
   calls: { method: string; args: unknown[] }[] = [];
 
   constructor(
@@ -223,6 +224,24 @@ export class MockTeam implements TeamPort {
 
   async exchanges(agent: string): Promise<TeamExchange[]> {
     return structuredClone(this.book.filter((x) => !agent || x.from === agent || x.to === agent));
+  }
+
+  async sharedMemory(tier: "team" | "group", group?: string): Promise<SharedMemory[]> {
+    return structuredClone(this.shared.get(`${tier}:${group ?? ""}`) ?? []);
+  }
+
+  async forgetShared(tier: "team" | "group", name: string, group?: string) {
+    this.record("forgetShared", tier, name, group);
+    const key = `${tier}:${group ?? ""}`;
+    this.shared.set(key, (this.shared.get(key) ?? []).filter((m) => m.name !== name));
+    this.bump();
+  }
+
+  /** Puts a memory in a shared store as an agent's tool would, for tests. */
+  addShared(tier: "team" | "group", m: SharedMemory, group?: string) {
+    const key = `${tier}:${group ?? ""}`;
+    this.shared.set(key, [...(this.shared.get(key) ?? []), m]);
+    this.bump();
   }
 
   /** Records an exchange as the kernel's book would, for tests. */

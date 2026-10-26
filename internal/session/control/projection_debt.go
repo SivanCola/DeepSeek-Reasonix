@@ -56,6 +56,7 @@ func (c *Controller) bindProjectionSeer(newest func(string) (string, bool), note
 	c.team.identity.newest = newest
 	c.team.roster.newest = newest
 	c.team.group.newest = newest
+	c.team.memory.newest = newest
 	c.deliveryNotes(notes)
 }
 

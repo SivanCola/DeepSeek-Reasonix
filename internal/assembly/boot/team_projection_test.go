@@ -11,7 +11,9 @@ import (
 	"reasonix/internal/runtime/agent"
 	"reasonix/internal/session/control"
 	"reasonix/internal/session/team"
+	"reasonix/internal/state/memory"
 	"reasonix/internal/state/sessioninbox"
+	"reasonix/internal/state/teamroster"
 )
 
 type fakeTeamSeat struct {
@@ -127,5 +129,55 @@ func TestProjectionTeamSeatIsReOwedAfterCompaction(t *testing.T) {
 	got := projectionOf(t, h.turn("turn-eta"), "turn-eta")
 	if !strings.Contains(blockOf(got, "agent-identity"), "You are Ada") || !strings.Contains(blockOf(got, "team-roster"), "Ben") {
 		t.Fatalf("freshness: the fold left the session without its identity:\n%s", got)
+	}
+}
+
+// What agents share rides the turn under its own tag, read from the team's
+// real store: a new shared memory is the next turn's projection, an unchanged
+// list is not sent again, one emptied is retracted once, and none of it moves
+// the prefix.
+func TestProjectionSharedMemoryRidesTheTurn(t *testing.T) {
+	h := newProjectionHarness(t, "ctxproj-team-memory", "", "")
+	store := teamroster.Store{Dir: t.TempDir()}
+	var chief string
+	if _, err := store.Update(context.Background(), func(r *teamroster.Roster) error {
+		chief = r.AddAgent(teamroster.Agent{Name: "Chief", Main: true, CreatedBy: teamroster.ByUser}).ID
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc := team.New(team.Options{Store: store})
+	h.ctrl.BindTeamSeat(team.Seat{Service: svc, Ref: team.SeatRef{Agent: chief}})
+	before := h.turn("turn-a")
+	if got := projectionOf(t, before, "turn-a"); blockOf(got, "team-memory") != "" {
+		t.Fatalf("an empty shared memory was projected:\n%s", got)
+	}
+
+	shared, err := svc.SharedMemory(team.Caller{Agent: chief}, team.TierTeam, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shared.Save(memory.Memory{Name: "house-style", Description: "write in plain English", Type: memory.TypeFeedback, Body: "Plain English."}); err != nil {
+		t.Fatal(err)
+	}
+	saved := h.turn("turn-b")
+	if got := projectionOf(t, saved, "turn-b"); !strings.Contains(blockOf(got, "team-memory"), "house-style: write in plain English") {
+		t.Fatalf("freshness: a new shared memory was not the next turn's projection:\n%s", got)
+	}
+	if a, b := systemOf(before), systemOf(saved); a != b {
+		t.Fatalf("cache-boundary: a shared memory moved the prefix:\nfirst diff site: %q", firstDivergence(a, b))
+	}
+	if got := projectionOf(t, h.turn("turn-c"), "turn-c"); blockOf(got, "team-memory") != "" {
+		t.Fatalf("an unchanged shared memory was sent again:\n%s", got)
+	}
+
+	if _, err := shared.Archive("house-style"); err != nil {
+		t.Fatal(err)
+	}
+	if got := projectionOf(t, h.turn("turn-d"), "turn-d"); !strings.Contains(blockOf(got, "team-memory"), "Nothing is shared") {
+		t.Fatalf("an emptied shared memory was not retracted:\n%s", got)
+	}
+	if got := projectionOf(t, h.turn("turn-e"), "turn-e"); blockOf(got, "team-memory") != "" {
+		t.Fatalf("the retraction was sent twice:\n%s", got)
 	}
 }

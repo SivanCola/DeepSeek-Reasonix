@@ -121,6 +121,15 @@ export interface TeamExchange {
   at: string;
 }
 
+// One memory agents share, as the kernel lists it.
+export interface SharedMemory {
+  name: string;
+  title?: string;
+  description: string;
+  type?: string;
+  updatedAt?: number;
+}
+
 // What the window sends to create or change an agent; an absent field is left
 // as it is. Permission, main and the relay limit are only ever the person's.
 export interface AgentEdit {
@@ -170,6 +179,9 @@ export interface TeamPort {
   stopMember(group: string, agent: string): Promise<void>;
   openMember(group: string, agent: string): Promise<import("./hub").RuntimeView>;
   exchanges(agent: string): Promise<TeamExchange[]>;
+  // What the team, or one group, remembers; the person can make it forget one.
+  sharedMemory(tier: "team" | "group", group?: string): Promise<SharedMemory[]>;
+  forgetShared(tier: "team" | "group", name: string, group?: string): Promise<void>;
 }
 
 type Refusal = { code?: string; error?: string; params?: Record<string, string | number> };
@@ -234,4 +246,10 @@ export class SseTeam implements TeamPort {
     return this.call<import("./hub").RuntimeView>("POST", `/team/groups/${encodeURIComponent(group)}/members/${encodeURIComponent(agent)}/open`);
   }
   exchanges(agent: string) { return this.call<TeamExchange[]>("GET", `/team/exchanges?agent=${encodeURIComponent(agent)}`); }
+  sharedMemory(tier: "team" | "group", group?: string) {
+    return this.call<SharedMemory[]>("GET", `/team/memory?tier=${tier}${group ? `&group=${encodeURIComponent(group)}` : ""}`);
+  }
+  forgetShared(tier: "team" | "group", name: string, group?: string) {
+    return this.call<void>("DELETE", `/team/memory/${tier}/${encodeURIComponent(name)}${group ? `?group=${encodeURIComponent(group)}` : ""}`);
+  }
 }

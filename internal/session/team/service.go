@@ -89,6 +89,7 @@ type Projection struct {
 	Identity string
 	Roster   string
 	Group    string
+	Memory   string
 }
 
 // Projection renders seat's projection. The same roster gives the same bytes,
@@ -105,8 +106,10 @@ func (s *Service) Projection(seat SeatRef) (Projection, error) {
 		return Projection{}, teamroster.ErrUnknownAgent
 	}
 	p := Projection{Identity: renderIdentity(*a), Roster: renderRoster(r, a.ID)}
+	inGroup := false
 	if g, ok := r.Group(seat.Group); ok && g.IsMember(a.ID) {
-		p.Group = renderGroup(r, *g)
+		p.Group, inGroup = renderGroup(r, *g), true
 	}
+	p.Memory = s.renderMemory(seat, inGroup)
 	return p, nil
 }

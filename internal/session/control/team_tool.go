@@ -8,6 +8,7 @@ import (
 
 	"reasonix/internal/contract/tool"
 	"reasonix/internal/session/team"
+	"reasonix/internal/state/memory"
 	"reasonix/internal/state/teamroster"
 )
 
@@ -344,4 +345,19 @@ func teamRefusal(err error) error {
 		}
 	}
 	return err
+}
+
+func (d teamDirectory) SharedMemory(_ context.Context, tier, group string, write bool) (tool.Tool, error) {
+	svc, c, err := d.caller()
+	if err != nil {
+		return nil, err
+	}
+	store, err := svc.SharedMemory(c, team.SharedTier(tier), group, write)
+	if err != nil {
+		return nil, teamRefusal(err)
+	}
+	if write {
+		return memory.NewRememberTool(store), nil
+	}
+	return memory.NewRecallTool(store), nil
 }

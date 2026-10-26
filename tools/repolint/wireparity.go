@@ -139,6 +139,7 @@ var mirroredWireTypes = []wireMirror{
 	{"internal/frontend/serve/team_view.go", "teamUsageView", tsTeamFile, "TeamUsage"},
 	{"internal/state/teamroster/grouplog.go", "GroupLine", tsTeamFile, "GroupLine"},
 	{"internal/state/teamroster/exchange.go", "Exchange", tsTeamFile, "TeamExchange"},
+	{"internal/frontend/serve/team_memory_routes.go", "sharedMemoryView", tsTeamFile, "SharedMemory"},
 	{"internal/frontend/serve/history_page.go", "historyPageResponse", tsSessionFile, "HistoryPage"},
 	{"internal/frontend/serve/history_page.go", "historyPageToolContext", tsSessionFile, "HistoryToolContext"},
 	// Who can reach this window from another device. A device the page cannot

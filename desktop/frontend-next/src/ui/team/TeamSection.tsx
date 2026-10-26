@@ -5,6 +5,7 @@ import { useTeam } from "../../state/team";
 import { setTeamMotion, useTeamMotion, type TeamMotion } from "../../state/teamMotion";
 import { pushToast } from "../../state/toasts";
 import { Group } from "../Group";
+import { SharedMemoryList } from "./SharedMemoryList";
 
 const MOTIONS: [TeamMotion, string][] = [
   ["quiet", "安静"],
@@ -40,6 +41,11 @@ export function TeamSection({ hub }: { hub: HubPort }) {
           ))}
         </div>
       </Group>
+      {view && team && (
+        <Group id="team-shared-memory" title={t("团队共享记忆")} hint={t("Agent 用 remember_shared 记下、整个团队都能读到的事。只有主 Agent 和群管理员能写；这里可以让团队忘掉其中一条。")}>
+          <SharedMemoryList team={team} tier="team" revision={view.revision} readOnly={!!view.readOnly} label={t("团队共享记忆")} empty={t("团队还没有共享记忆")} />
+        </Group>
+      )}
       {view && (
         <Group id="team-hidden" title={t("已隐藏的 Agent 和群聊")} hint={t("隐藏只是不在侧栏里列出：它们照常工作，也照常收发消息。")}>
           {hidden.length === 0 ? (

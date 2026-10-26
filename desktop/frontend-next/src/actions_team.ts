@@ -60,4 +60,7 @@ export const TEAM_ACTIONS: UIAction[] = [
   { id: "team.photo-pick", kind: "view", target: "none", proof: "interaction" },
   { id: "team.photo-remove", kind: "view", target: "none", proof: "interaction" },
   { id: "team.motion", kind: "view", target: "none", proof: "interaction" },
+  { id: "team.forget-shared-ask", kind: "view", target: "entity", proof: "interaction" },
+  { id: "team.forget-shared", kind: "destructive", target: "entity", proof: "interaction" },
+  { id: "team.drawer-memory", kind: "view", target: "none", proof: "interaction" },
 ];

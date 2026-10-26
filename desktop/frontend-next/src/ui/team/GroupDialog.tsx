@@ -3,6 +3,7 @@ import { t } from "../../i18n";
 import { reason } from "../../i18n/kernel";
 import type { GroupEdit, TeamAgent, TeamGroup, TeamPort, TeamView } from "../../port/team";
 import { AgentAvatar } from "./AgentAvatar";
+import { SharedMemoryList } from "./SharedMemoryList";
 import { TeamDialog } from "./TeamDialog";
 
 // Creating a group chat, or changing one. The relay limit is the person's
@@ -90,6 +91,12 @@ export function GroupDialog({ team, agents, group, onClose, onSaved }: {
       <label>{t("Agent 之间接力几次后暂停")}
         <input data-action="team.group-limit" type="number" min={1} max={200} value={limit} placeholder={String((members.length || 2) * 3)} onChange={(ev) => setLimit(ev.target.value)} />
       </label>
+      {group && (
+        <section className="team-dialog-section">
+          <h3>{t("群记忆")}</h3>
+          <SharedMemoryList team={team} tier="group" group={group.id} revision={0} readOnly={false} label={t("群记忆")} empty={t("这个群还没有共享记忆")} />
+        </section>
+      )}
       {error && <p className="team-error" role="alert">{error}</p>}
     </TeamDialog>
   );

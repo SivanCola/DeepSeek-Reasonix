@@ -37,6 +37,8 @@ func (h *Hub) registerTeamRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /team/groups/{id}/members/{agent}/stop", t.writing(t.stopMember))
 	mux.HandleFunc("POST /team/groups/{id}/members/{agent}/open", t.writing(t.openMember))
 	mux.HandleFunc("GET /team/exchanges", t.exchanges)
+	mux.HandleFunc("GET /team/memory", t.sharedMemory)
+	mux.HandleFunc("DELETE /team/memory/{tier}/{name}", t.writing(t.forgetShared))
 }
 
 // writing refuses a write when another process holds the team.

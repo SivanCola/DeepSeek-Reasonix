@@ -730,7 +730,7 @@ export function App({ hub }: { hub: HubPort }) {
                 )}
               </div>
             )}
-            <TeamLayer hub={hub} active={active} seat={runtimes.find((rt) => rt.id === active)?.team} root={runtimes.find((rt) => rt.id === active)?.root} onAdoptPane={adoptPane} />
+            <TeamLayer hub={hub} active={active} seat={runtimes.find((rt) => rt.id === active)?.team} root={runtimes.find((rt) => rt.id === active)?.root} port={activePort} onMemory={() => showPrefs("memory")} onAdoptPane={adoptPane} />
           </div>
 
           {!activePaneShown && bar}

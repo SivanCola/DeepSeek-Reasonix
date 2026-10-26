@@ -277,6 +277,8 @@ export const SETTINGS: SettingEntry[] = [
   { section: "peers", anchor: "peers", title: "会话间消息（实验）", scope: "machine", apply: "next-turn", keywords: ["peer", "会话间", "消息", "发送", "批准", "挂起", "另一个会话"] },
   // Kept in this window's storage and read by the page at once.
   { section: "team", anchor: "team-motion", title: "Agent 动效", scope: "machine", apply: "immediate", keywords: ["动画", "动效", "安静", "活泼", "眨眼", "motion"] },
+  // Archived at once; an agent's next turn projects the shorter list.
+  { section: "team", anchor: "team-shared-memory", title: "团队共享记忆", scope: "machine", apply: "next-turn", keywords: ["共享", "团队", "忘掉", "memory", "remember_shared"] },
   // A roster write; the sidebar draws the row again on the change notice.
   { section: "team", anchor: "team-hidden", title: "已隐藏的 Agent 和群聊", scope: "machine", apply: "immediate", keywords: ["隐藏", "侧栏", "恢复", "显示"] },
   { section: "peers", anchor: "peer-projects", title: "放行的项目", scope: "machine", apply: "next-turn", keywords: ["放行", "项目", "不再询问", "长期", "撤销", "peer", "release", "会话间"] },

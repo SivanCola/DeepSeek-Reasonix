@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"reasonix/internal/base/testenv"
+	"reasonix/internal/session/team"
+	"reasonix/internal/state/memory"
 	"reasonix/internal/state/teamroster"
 	"reasonix/internal/state/usagereport"
 )
@@ -290,5 +292,39 @@ func TestAPhotoIsUploadedServedAndTakenOff(t *testing.T) {
 		if status, _ := c.do("GET", path, nil); status == http.StatusOK {
 			t.Fatalf("GET %s answered 200", path)
 		}
+	}
+}
+
+// The window lists what the team and a group share, and the person can make
+// the team forget one; a write there is the person's, never an agent's.
+func TestSharedMemoryIsListedAndForgottenFromTheWindow(t *testing.T) {
+	h, ids := teamHub(t, "Chief", "Ada")
+	c := newTeamClient(t, h)
+	g := c.view("POST", "/team/groups", map[string]any{"name": "Launch", "members": []string{ids["Chief"], ids["Ada"]}}).Groups[0].ID
+	svc := h.team.service()
+	teamStore, _ := svc.SharedMemory(team.Caller{Agent: ids["Chief"]}, team.TierTeam, "", true)
+	groupStore, _ := svc.SharedMemory(team.Caller{Agent: ids["Ada"], Group: g}, team.TierGroup, "", true)
+	if _, err := teamStore.Save(memory.Memory{Name: "house-style", Description: "write in plain English", Type: memory.TypeFeedback, Body: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := groupStore.Save(memory.Memory{Name: "launch-date", Description: "Friday", Type: memory.TypeProject, Body: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	var shared []sharedMemoryView
+	status, out := c.do("GET", "/team/memory?tier=team", nil)
+	if err := json.Unmarshal(out, &shared); err != nil || status != 200 || len(shared) != 1 || shared[0].Name != "house-style" || shared[0].Description != "write in plain English" {
+		t.Fatalf("team memory = %d %s", status, out)
+	}
+	status, out = c.do("GET", "/team/memory?tier=group&group="+g, nil)
+	if err := json.Unmarshal(out, &shared); err != nil || status != 200 || len(shared) != 1 || shared[0].Name != "launch-date" {
+		t.Fatalf("group memory = %d %s", status, out)
+	}
+	c.refused("GET", "/team/memory?tier=group&group=g-0000000000000000", nil, 404, "team.unknown_group")
+	c.refused("GET", "/team/memory?tier=nobody", nil, 400, "team.invalid")
+	if status, out := c.do("DELETE", "/team/memory/team/house-style", nil); status != http.StatusNoContent {
+		t.Fatalf("forget = %d %s", status, out)
+	}
+	if _, out := c.do("GET", "/team/memory?tier=team", nil); string(out) != "[]\n" {
+		t.Fatalf("after forgetting, team memory = %s", out)
 	}
 }

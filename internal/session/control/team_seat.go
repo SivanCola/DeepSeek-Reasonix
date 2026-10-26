@@ -13,6 +13,7 @@ const (
 	agentIdentityTag = "agent-identity"
 	teamRosterTag    = "team-roster"
 	groupRosterTag   = "group-roster"
+	teamMemoryTag    = "team-memory"
 )
 
 // TeamSeat is the seat on the user's team a session speaks through, bound by
@@ -31,6 +32,7 @@ type teamSeat struct {
 	identity projectionDebt
 	roster   projectionDebt
 	group    projectionDebt
+	memory   projectionDebt
 }
 
 // TeamOptions seats a session on the user's team: Link reaches the team tools
@@ -85,12 +87,21 @@ func (t *teamSeat) owed() []turnBlock {
 	if group == "" && t.group.visible(groupRosterTag) {
 		group = groupLeft
 	}
+	shared := p.Memory
+	if shared == "" && t.memory.visible(teamMemoryTag) {
+		shared = sharedForgotten
+	}
 	return []turnBlock{
 		{agentIdentityTag, wrapTurnBlock(agentIdentityTag, t.identity.owed(agentIdentityTag, p.Identity))},
 		{teamRosterTag, wrapTurnBlock(teamRosterTag, t.roster.owed(teamRosterTag, p.Roster))},
 		{groupRosterTag, wrapTurnBlock(groupRosterTag, t.group.owed(groupRosterTag, group))},
+		{teamMemoryTag, wrapTurnBlock(teamMemoryTag, t.memory.owed(teamMemoryTag, shared))},
 	}
 }
+
+// sharedForgotten retracts a shared-memory list the model still reads once
+// nothing is left in it.
+const sharedForgotten = "Nothing is shared in the team's or this group's memory any more."
 
 // groupLeft retracts a group block the model still reads once this seat's
 // agent is no longer in the group, so the old one stops reading as current.

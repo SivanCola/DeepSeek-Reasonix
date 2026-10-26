@@ -314,3 +314,12 @@
 .team-dialog .team-photo-pick input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .team-photo-pick:hover,
 .team-photo-remove:hover { background: var(--press-wash); color: var(--text); }
+.team-shared { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.team-shared li { display: flex; align-items: center; gap: 12px; padding: 6px 8px; border-radius: var(--r-md); }
+.team-shared li:hover { background: var(--press-wash); }
+.team-shared-text { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
+.team-shared-text b { font-size: var(--fs-ui); font-weight: var(--w-med); }
+.team-shared-text span { overflow: hidden; color: var(--muted); font-size: var(--fs-meta); text-overflow: ellipsis; white-space: nowrap; }
+.team-shared button { padding: 2px 8px; border: 1px solid var(--hair); border-radius: var(--r-pill); background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-meta); cursor: pointer; }
+.team-shared button[data-action="team.forget-shared"] { border-color: var(--err); color: var(--err-ink); }
+.team-dialog-section h3 { margin: 0 0 6px; color: var(--muted); font-size: var(--fs-meta); font-weight: var(--w-semi); }

@@ -78,6 +78,9 @@ type TeamDirectory interface {
 	PassTurn(ctx context.Context) error
 	HandTurn(ctx context.Context, to []string) error
 	ReadGroup(ctx context.Context, group string, before int64, limit int) (string, error)
+	// SharedMemory is the memory tool bound to a store agents share — tier
+	// "team" or "group" — for writing when write is set.
+	SharedMemory(ctx context.Context, tier, group string, write bool) (Tool, error)
 }
 
 // TeamLink joins the team tools, built with the registry, to the controller
