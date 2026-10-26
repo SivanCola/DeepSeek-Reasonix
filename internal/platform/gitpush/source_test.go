@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -96,4 +97,72 @@ func TestPushRefusedPreparationDoesNotReachRemote(t *testing.T) {
 	if !errors.Is(err, context.Canceled) || f.remoteHead(t) != before {
 		t.Fatalf("refused preparation reached remote: %v", err)
 	}
+}
+
+func TestPushTransferCarriesOnlyWhatTheRemoteLacks(t *testing.T) {
+	f := newFixture(t)
+	write(t, f.work, "big.bin", strings.Repeat("remote history ", 1<<16))
+	run(t, f.work, "add", ".")
+	run(t, f.work, "commit", "-qm", "remote-known")
+	big := run(t, f.work, "rev-parse", "HEAD:big.bin")
+	run(t, f.work, "push", "-q", "origin", "main")
+	run(t, f.work, "checkout", "-q", "-b", "side", "HEAD~2")
+	write(t, f.work, "side.go", "package side\n")
+	run(t, f.work, "add", ".")
+	run(t, f.work, "commit", "-qm", "side")
+	run(t, f.work, "checkout", "-q", "main")
+	run(t, f.work, "merge", "-q", "--no-ff", "-m", "merge older side", "side")
+	plan, err := Preview(t.Context(), f.repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, cleanup, err := preparePush(t.Context(), f.repo, plan, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if err := prepared.scratch.repo.Command(t.Context(), "cat-file", "-e", big).Run(); err == nil {
+		t.Fatal("push copied history the remote already holds")
+	}
+	if _, err := PushWithScope(t.Context(), f.repo, plan, nil); err != nil {
+		t.Fatal(err)
+	}
+	if f.remoteHead(t) != f.workHead(t) {
+		t.Fatal("remote did not receive the merge")
+	}
+	run(t, f.remote, "fsck", "--strict")
+}
+
+func TestNewBranchTransferExcludesHistoryTheRemoteHolds(t *testing.T) {
+	f := newFixture(t)
+	write(t, f.work, "big.bin", strings.Repeat("remote history ", 1<<16))
+	run(t, f.work, "add", ".")
+	run(t, f.work, "commit", "-qm", "remote-known")
+	big := run(t, f.work, "rev-parse", "HEAD:big.bin")
+	run(t, f.work, "push", "-q", "origin", "main")
+	run(t, f.work, "checkout", "-q", "-b", "feature")
+	write(t, f.work, "feature.go", "package feature\n")
+	run(t, f.work, "add", ".")
+	run(t, f.work, "commit", "-qm", "feature")
+	run(t, f.work, "config", "branch.feature.remote", "origin")
+	run(t, f.work, "config", "branch.feature.merge", "refs/heads/feature")
+	plan, err := Preview(t.Context(), f.repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, cleanup, err := preparePush(t.Context(), f.repo, plan, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if err := prepared.scratch.repo.Command(t.Context(), "cat-file", "-e", big).Run(); err == nil {
+		t.Fatal("a new branch copied history the remote already holds")
+	}
+	if _, err := PushWithScope(t.Context(), f.repo, plan, nil); err != nil {
+		t.Fatal(err)
+	}
+	if run(t, f.remote, "rev-parse", "feature") != f.workHead(t) {
+		t.Fatal("remote did not receive the new branch")
+	}
+	run(t, f.remote, "fsck", "--strict")
 }

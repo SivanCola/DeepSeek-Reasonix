@@ -16,7 +16,7 @@ import (
 
 func TestMain(m *testing.M) {
 	if address := os.Getenv("REASONIX_GIT_REPACK_PROBE"); address != "" && (filepath.Base(os.Args[0]) == "git" || filepath.Base(os.Args[0]) == "git.exe") {
-		if slices.Contains(os.Args[1:], "repack") {
+		if slices.Contains(os.Args[1:], "pack-objects") {
 			conn, err := net.Dial("tcp", address)
 			if err != nil {
 				os.Exit(90)

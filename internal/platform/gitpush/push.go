@@ -57,11 +57,26 @@ func Push(ctx context.Context, repo gitcmd.Repo, confirmed Plan) (Result, error)
 func PushWithScope(ctx context.Context, repo gitcmd.Repo, confirmed Plan, scope SourceScope) (Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, pushTimeout)
 	defer cancel()
-	prepared, cleanup, err := preparePush(ctx, repo, confirmed, scope)
+	result, shallow, err := pushOnce(ctx, repo, confirmed, scope, false)
+	if err != nil && shallow && ctx.Err() == nil && !errors.Is(err, ErrAuthRequired) {
+		result, _, err = pushOnce(ctx, repo, confirmed, scope, true)
+	}
+	return result, err
+}
+
+// pushOnce reports whether its transfer rested on the tracking refs' account of
+// the remote, which a rewritten or reset destination may not hold.
+func pushOnce(ctx context.Context, repo gitcmd.Repo, confirmed Plan, scope SourceScope, whole bool) (Result, bool, error) {
+	prepared, cleanup, err := preparePush(ctx, repo, confirmed, scope, whole)
 	if err != nil {
-		return Result{}, err
+		return Result{}, false, err
 	}
 	defer cleanup()
+	result, err := transfer(ctx, repo, prepared, scope)
+	return result, prepared.shallow, err
+}
+
+func transfer(ctx context.Context, repo gitcmd.Repo, prepared preparedPush, scope SourceScope) (Result, error) {
 	sc, plan, raw := prepared.scratch, prepared.plan, prepared.raw
 	mark, err := writeAskpass(sc.dir)
 	if err != nil {
