@@ -16,6 +16,7 @@ const (
 	DeliverMessage   DeliveryKind = "message"
 	DeliverReply     DeliveryKind = "reply"
 	DeliverGroupTurn DeliveryKind = "group_turn"
+	DeliverSchedule  DeliveryKind = "schedule"
 )
 
 // Delivery is one item the host queues in a seat's inbox. Key makes it

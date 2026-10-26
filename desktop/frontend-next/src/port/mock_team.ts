@@ -1,6 +1,6 @@
 import type { RuntimeView } from "./hub";
 import { HttpError } from "./http_error";
-import type { AgentEdit, GroupEdit, GroupLine, SharedMemory, TeamAgent, TeamExchange, TeamGroup, TeamPort, TeamPrefs, TeamView } from "./team";
+import type { AgentEdit, GroupEdit, GroupLine, SharedMemory, TeamAgent, TeamExchange, TeamGroup, TeamPort, TeamPrefs, TeamSchedule, TeamView } from "./team";
 
 // An in-memory team for the mock hub: enough of the kernel's rules to draw
 // every state the window has to, with no kernel behind it.
@@ -20,6 +20,25 @@ export class MockTeam implements TeamPort {
   ) {}
 
   private prefs: TeamPrefs = { memoryReview: true };
+  private tasks: TeamSchedule[] = [];
+
+  async schedules(): Promise<TeamSchedule[]> {
+    return structuredClone(this.tasks);
+  }
+
+  async saveSchedule(s: TeamSchedule): Promise<TeamSchedule> {
+    this.record("saveSchedule", s);
+    const saved = { ...s, id: s.id ?? `s-${++this.seq}`, next: s.enabled ? new Date(0).toISOString() : undefined };
+    this.tasks = s.id ? this.tasks.map((x) => (x.id === s.id ? saved : x)) : [...this.tasks, saved];
+    this.bump();
+    return structuredClone(saved);
+  }
+
+  async deleteSchedule(id: string) {
+    this.record("deleteSchedule", id);
+    this.tasks = this.tasks.filter((x) => x.id !== id);
+    this.bump();
+  }
 
   private snapshot(): TeamView {
     return { revision: this.revision, agents: structuredClone(this.agents), groups: structuredClone(this.groups), prefs: { ...this.prefs } };

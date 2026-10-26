@@ -154,7 +154,14 @@ func checkPost(text string) error {
 // answer it. A round in flight takes them next, and agent calls parked at the
 // relay limit resume after them.
 func (s *Service) UserPost(ctx context.Context, group, text string, mentions []string, everyone bool) (teamroster.GroupLine, error) {
+	return s.userPost(ctx, group, teamroster.GroupLine{Text: text}, mentions, everyone)
+}
+
+// userPost records the user's post and opens a round on it; post carries the
+// text and, for a scheduled task's post, the task it came from.
+func (s *Service) userPost(ctx context.Context, group string, post teamroster.GroupLine, mentions []string, everyone bool) (teamroster.GroupLine, error) {
 	defer s.changed()
+	text := post.Text
 	if err := checkPost(text); err != nil {
 		return teamroster.GroupLine{}, err
 	}
@@ -170,7 +177,7 @@ func (s *Service) UserPost(ctx context.Context, group, text string, mentions []s
 	if err != nil {
 		return teamroster.GroupLine{}, err
 	}
-	line, err := s.store.AppendLine(ctx, group, teamroster.GroupLine{From: teamroster.ByUser, Kind: teamroster.LinePost, Text: text, Mentions: ids, At: s.now()})
+	line, err := s.store.AppendLine(ctx, group, teamroster.GroupLine{From: teamroster.ByUser, Kind: teamroster.LinePost, Text: text, Mentions: ids, At: s.now(), Schedule: post.Schedule})
 	if err != nil {
 		return line, err
 	}
@@ -422,7 +429,7 @@ func (s *Service) Tick(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	var errs []error
+	errs := []error{s.fireDue(ctx, r)}
 	for _, g := range r.Groups {
 		errs = append(errs, s.tickGroup(ctx, g.ID))
 	}

@@ -63,3 +63,7 @@
 .team-exchange-head span[data-state="interrupted"] { color: var(--err-ink); }
 .team-exchange-head time { margin-inline-start: auto; color: var(--faint); }
 .team-exchange-preview { overflow: hidden; color: var(--muted); font-size: var(--fs-meta); text-overflow: ellipsis; white-space: nowrap; }
+.team-upcoming { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.team-upcoming li { display: flex; justify-content: space-between; gap: 12px; font-size: var(--fs-meta); }
+.team-upcoming b { font-weight: var(--w-med); }
+.team-upcoming span { color: var(--muted); }

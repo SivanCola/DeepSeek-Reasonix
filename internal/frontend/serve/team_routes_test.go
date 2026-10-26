@@ -328,3 +328,28 @@ func TestSharedMemoryIsListedAndForgottenFromTheWindow(t *testing.T) {
 		t.Fatalf("after forgetting, team memory = %s", out)
 	}
 }
+
+// The person sets, pauses and removes a team's scheduled tasks from the window.
+func TestScheduledTasksAreKeptFromTheWindow(t *testing.T) {
+	h, ids := teamHub(t, "Chief", "Ada")
+	c := newTeamClient(t, h)
+	status, out := c.do("POST", "/team/schedules", map[string]any{"name": "standup", "agent": ids["Ada"], "prompt": "summarise yesterday", "repeat": "daily", "clock": "09:00", "enabled": true})
+	var sc teamroster.Schedule
+	if err := json.Unmarshal(out, &sc); err != nil || status != http.StatusOK || sc.ID == "" || sc.Next.IsZero() {
+		t.Fatalf("create = %d %s", status, out)
+	}
+	c.refused("POST", "/team/schedules", map[string]any{"name": "x", "agent": ids["Ada"], "prompt": "p", "repeat": "every", "every": 1, "unit": "minutes", "enabled": true}, 400, "team.invalid")
+	status, out = c.do("PATCH", "/team/schedules/"+sc.ID, map[string]any{"name": "standup", "agent": ids["Ada"], "prompt": "summarise yesterday", "repeat": "daily", "clock": "09:00", "enabled": false})
+	var paused teamroster.Schedule
+	if err := json.Unmarshal(out, &paused); err != nil || status != http.StatusOK || paused.Enabled || !paused.Next.IsZero() {
+		t.Fatalf("pause = %d %s", status, out)
+	}
+	var list []teamroster.Schedule
+	if _, out := c.do("GET", "/team/schedules", nil); json.Unmarshal(out, &list) != nil || len(list) != 1 || list[0].Enabled {
+		t.Fatalf("list = %s", out)
+	}
+	if status, _ := c.do("DELETE", "/team/schedules/"+sc.ID, nil); status != http.StatusNoContent {
+		t.Fatalf("delete = %d", status)
+	}
+	c.refused("DELETE", "/team/schedules/"+sc.ID, nil, 404, "team.unknown_schedule")
+}

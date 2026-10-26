@@ -3,7 +3,7 @@ import { t } from "../../i18n";
 import { reason } from "../../i18n/kernel";
 import type { HubPort, RuntimeView } from "../../port/hub";
 import type { AgentPort } from "../../port/port";
-import type { TeamAgent, TeamExchange, TeamView } from "../../port/team";
+import type { TeamAgent, TeamExchange, TeamSchedule, TeamView } from "../../port/team";
 import { useTeam } from "../../state/team";
 import { closeSeatDrawer, useSeatDrawer } from "../../state/teamDrawer";
 import { useGroupStage } from "../../state/teamStage";
@@ -13,6 +13,7 @@ import { since } from "../wallet";
 import { AgentAvatar } from "./AgentAvatar";
 import { AgentDialog } from "./AgentDialog";
 import { PERMISSIONS } from "./permissions";
+import { describeSchedule } from "./schedules";
 import "../../styles/team-drawer.css";
 
 const STATES: Record<TeamExchange["state"], string> = {
@@ -57,6 +58,7 @@ export function SeatDrawer({ hub, seat, root, port, onMemory, onAdoptPane }: {
   const [editing, setEditing] = useState(false);
   const [moved, setMoved] = useState(false);
   const [remembered, setRemembered] = useState<number | null>(null);
+  const [tasks, setTasks] = useState<TeamSchedule[]>([]);
   const agentId = seat?.agent;
   useEffect(() => {
     if (!open || !port) return;
@@ -71,6 +73,12 @@ export function SeatDrawer({ hub, seat, root, port, onMemory, onAdoptPane }: {
     return () => { live = false; };
   }, [open, team, agentId, view?.revision]);
   useEffect(() => setMoved(false), [agentId]);
+  useEffect(() => {
+    if (!open || !team || !agentId) return;
+    let live = true;
+    void team.schedules().then((all) => live && setTasks(all.filter((s) => s.agent === agentId && s.enabled && s.next)), () => live && setTasks([]));
+    return () => { live = false; };
+  }, [open, team, agentId, view?.revision]);
   const agent = view?.agents.find((a) => a.id === agentId);
   if (!open || stage || !agent || !team || !view) return null;
 
@@ -156,6 +164,19 @@ export function SeatDrawer({ hub, seat, root, port, onMemory, onAdoptPane }: {
           </>
         )}
       </dl>
+      {tasks.length > 0 && (
+        <section className="team-drawer-section">
+          <h3>{t("定时任务")}</h3>
+          <ul className="team-upcoming" aria-label={t("定时任务")}>
+            {[...tasks].sort((a, b) => (a.next ?? "").localeCompare(b.next ?? "")).slice(0, 3).map((s) => (
+              <li key={s.id}>
+                <b>{s.name || t("定时任务")}</b>
+                <span>{describeSchedule(s)}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       <section className="team-drawer-section">
         <h3>{t("往来")}</h3>
         {recent.length === 0 ? (

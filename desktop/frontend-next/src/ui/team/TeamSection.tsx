@@ -6,6 +6,7 @@ import { setTeamMotion, useTeamMotion, type TeamMotion } from "../../state/teamM
 import { pushToast } from "../../state/toasts";
 import { Group } from "../Group";
 import { Switch } from "../Switch";
+import { ScheduleList } from "./ScheduleList";
 import { SharedMemoryList } from "./SharedMemoryList";
 
 const MOTIONS: [TeamMotion, string][] = [
@@ -42,6 +43,11 @@ export function TeamSection({ hub }: { hub: HubPort }) {
           ))}
         </div>
       </Group>
+      {view && team && (
+        <Group id="team-schedules" title={t("定时任务")} hint={t("到了设定的时间，把一段话发给某个 Agent 或群聊，就像你那时亲自发的一样。只在 Reasonix 开着时运行；关着时错过的时刻不会补发。")}>
+          <ScheduleList team={team} view={view} />
+        </Group>
+      )}
       {view && team && (
         <Group id="team-memory-review" title={t("自动整理记忆")} hint={t("你发过消息的一轮结束后，用标题模型读一遍新的对话，把值得长期记住的事整理进这个 Agent 自己的记忆（群聊里整理进群记忆）。每轮一次简短请求；只有 Agent 之间往来、没有你的话的一轮不会触发。")}>
           <div className="lrow">

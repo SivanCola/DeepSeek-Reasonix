@@ -136,7 +136,10 @@ func (s *Service) UserDeleteAgent(ctx context.Context, id string) error {
 		}
 		return nil
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	return s.dropSchedules(ctx, func(sc teamroster.Schedule) bool { return sc.Agent == id })
 }
 
 // UserCreateGroup opens a group the user made.
@@ -215,6 +218,21 @@ func (s *Service) UserDeleteGroup(ctx context.Context, id string) error {
 		}
 		r.Groups = slices.DeleteFunc(r.Groups, func(g teamroster.Group) bool { return g.ID == id })
 		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return s.dropSchedules(ctx, func(sc teamroster.Schedule) bool { return sc.Group == id })
+}
+
+// dropSchedules removes the tasks whose target has left the team.
+func (s *Service) dropSchedules(ctx context.Context, gone func(teamroster.Schedule) bool) error {
+	list, err := s.store.Schedules()
+	if err != nil || !slices.ContainsFunc(list, gone) {
+		return err
+	}
+	_, err = s.store.EditSchedules(ctx, func(list []teamroster.Schedule) ([]teamroster.Schedule, error) {
+		return slices.DeleteFunc(list, gone), nil
 	})
 	return err
 }

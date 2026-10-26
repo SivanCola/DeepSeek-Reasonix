@@ -828,6 +828,7 @@ const SAID: Record<string, string> = {
   "team.archived": "这个群聊已归档，不再接收新消息",
   "team.unavailable": "该 Agent 的会话暂时无法打开",
   "team.unknown_photo": "这张头像照片已不存在",
+  "team.unknown_schedule": "没有这个定时任务",
   "turn.timeout": "这一轮超时了",
   "turn.final_readiness": "多次尝试后仍未通过交付检查",
   "turn.paused": "这一轮在一个明确的边界处暂停了",

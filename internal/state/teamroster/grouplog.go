@@ -70,11 +70,15 @@ type GroupLine struct {
 	Count    int       `json:"count,omitempty"`
 	Code     string    `json:"code,omitempty"`
 	Late     bool      `json:"late,omitempty"`
+	Schedule string    `json:"schedule,omitempty"`
 }
 
 func (l *GroupLine) check() error {
 	if l.From != ByUser && !agentID.MatchString(l.From) {
 		return fieldErr("line.from", ErrInvalid)
+	}
+	if l.Schedule != "" && (l.From != ByUser || !scheduleID.MatchString(l.Schedule)) {
+		return fieldErr("line.schedule", ErrInvalid)
 	}
 	for _, m := range l.Mentions {
 		if !agentID.MatchString(m) {

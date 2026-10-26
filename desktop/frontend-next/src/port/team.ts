@@ -4,7 +4,7 @@
 // Who a turn the host ran was for, when it was not the person: another agent's
 // message, an agent's reply, or a member's turn in a group.
 export interface MessageOrigin {
-  kind: "message" | "reply" | "group_turn";
+  kind: "message" | "reply" | "group_turn" | "schedule";
   agent?: string;
   exchange?: string;
   group?: string;
@@ -108,6 +108,8 @@ export interface GroupLine {
   count?: number;
   code?: string;
   late?: boolean;
+  // The scheduled task a user line came from.
+  schedule?: string;
 }
 
 // One message between agents, as the kernel's book records it.
@@ -126,6 +128,26 @@ export interface TeamExchange {
   returned?: boolean;
   openedAt: string;
   at: string;
+}
+
+// A task the person set for an agent or a group. `clock` is a local "HH:MM",
+// `days` weekdays with Sunday 0, `once` the one-off's moment and the anchor an
+// every-N task counts from. `next` and `lastFired` are the kernel's.
+export interface TeamSchedule {
+  id?: string;
+  name: string;
+  agent?: string;
+  group?: string;
+  prompt: string;
+  repeat: "once" | "daily" | "weekly" | "every";
+  clock?: string;
+  days?: number[];
+  every?: number;
+  unit?: "minutes" | "hours" | "days";
+  once?: string;
+  enabled: boolean;
+  next?: string;
+  lastFired?: string;
 }
 
 // One memory agents share, as the kernel lists it.
@@ -190,6 +212,9 @@ export interface TeamPort {
   sharedMemory(tier: "team" | "group", group?: string): Promise<SharedMemory[]>;
   forgetShared(tier: "team" | "group", name: string, group?: string): Promise<void>;
   setPrefs(prefs: Partial<TeamPrefs>): Promise<TeamView>;
+  schedules(): Promise<TeamSchedule[]>;
+  saveSchedule(s: TeamSchedule): Promise<TeamSchedule>;
+  deleteSchedule(id: string): Promise<void>;
 }
 
 type Refusal = { code?: string; error?: string; params?: Record<string, string | number> };
@@ -258,6 +283,11 @@ export class SseTeam implements TeamPort {
     return this.call<SharedMemory[]>("GET", `/team/memory?tier=${tier}${group ? `&group=${encodeURIComponent(group)}` : ""}`);
   }
   setPrefs(prefs: Partial<TeamPrefs>) { return this.call<TeamView>("PATCH", "/team/prefs", prefs); }
+  schedules() { return this.call<TeamSchedule[]>("GET", "/team/schedules"); }
+  saveSchedule(s: TeamSchedule) {
+    return s.id ? this.call<TeamSchedule>("PATCH", `/team/schedules/${encodeURIComponent(s.id)}`, s) : this.call<TeamSchedule>("POST", "/team/schedules", s);
+  }
+  deleteSchedule(id: string) { return this.call<void>("DELETE", `/team/schedules/${encodeURIComponent(id)}`); }
   forgetShared(tier: "team" | "group", name: string, group?: string) {
     return this.call<void>("DELETE", `/team/memory/${tier}/${encodeURIComponent(name)}${group ? `?group=${encodeURIComponent(group)}` : ""}`);
   }

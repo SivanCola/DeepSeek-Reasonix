@@ -323,3 +323,8 @@
 .team-shared button { padding: 2px 8px; border: 1px solid var(--hair); border-radius: var(--r-pill); background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-meta); cursor: pointer; }
 .team-shared button[data-action="team.forget-shared"] { border-color: var(--err); color: var(--err-ink); }
 .team-dialog-section h3 { margin: 0 0 6px; color: var(--muted); font-size: var(--fs-meta); font-weight: var(--w-semi); }
+.team-schedules li .sw { flex: none; }
+.team-weekdays { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; padding: 0; border: 0; min-inline-size: 0; }
+.team-weekdays legend { margin-bottom: 4px; padding: 0; color: var(--muted); font-size: var(--fs-meta); }
+.team-every { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+.team-every label { flex: 1; }

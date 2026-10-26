@@ -20,12 +20,14 @@ export function OriginLine({ origin, text }: { origin: MessageOrigin; text: stri
   const [open, setOpen] = useState(false);
   const name = useAgentName(origin.agent) ?? t("另一个 Agent");
   const label =
-    origin.kind === "group_turn" ? t("群聊轮到这个 Agent 发言") : origin.kind === "reply" ? t("{name} 的回复", { name }) : t("来自 {name} 的消息", { name });
+    origin.kind === "schedule" ? t("定时任务")
+      : origin.kind === "group_turn" ? t("群聊轮到这个 Agent 发言")
+        : origin.kind === "reply" ? t("{name} 的回复", { name }) : t("来自 {name} 的消息", { name });
   const body = framedBody(text);
   return (
     <div className="team-origin" data-kind={origin.kind}>
       <button type="button" className="team-origin-head" data-action="team.origin-toggle" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
-        <StudioIcon name={origin.kind === "group_turn" ? "chat" : "agent"} aria-hidden="true" />
+        <StudioIcon name={origin.kind === "group_turn" ? "chat" : origin.kind === "schedule" ? "clock" : "agent"} aria-hidden="true" />
         <span>{label}</span>
         <StudioIcon name={open ? "down" : "chevron"} aria-hidden="true" />
       </button>

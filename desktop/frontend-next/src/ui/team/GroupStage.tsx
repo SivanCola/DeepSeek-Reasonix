@@ -140,6 +140,7 @@ function GroupChat({ group, view, team, onAdoptPane, onSaved }: {
                   <b>{nameOf(l.from)}</b>
                   {l.mentions && <span className="team-line-to">{"→ " + l.mentions.map(nameOf).join("、")}</span>}
                   {l.late && <span className="team-line-tag">{t("迟到的回复")}</span>}
+                  {l.schedule && <span className="team-line-tag">{t("定时任务")}</span>}
                 </header>
                 <p>{l.text}</p>
                 {!!l.length && <p className="team-note">{t("这条发言很长，群里只保留了前一部分")}</p>}
