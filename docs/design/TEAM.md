@@ -60,11 +60,40 @@ Studio keeps a team of long-lived agents beside the user's projects.
 | A model choosing an agent's folder | Fresh `team_change` card every time; no posture, grant, hook or rule answers it. |
 | Main agent, permission, relay limit, deletion | User only, through `/team` routes. |
 
-## 6. Known limits
+## 6. Memory and schedules
+
+| Feature | Behaviour |
+| --- | --- |
+| Memory tiers | Each agent keeps its own memory; `remember_shared` and `recall_shared` reach the team's and a group's. Shared memory rides the turn tail as `team-memory`. |
+| Memory review | After a turn the user spoke in, the title model reviews it and saves or forgets facts. It runs 2 s after the turn, and the team settings turn it off. |
+| Schedules | A prompt for an agent or a group: once, daily, weekly, or every 10 minutes to 7 days. A slot missed by more than 2 minutes is skipped, not made up. |
+| Who fires them | The Studio host that holds the team's writer lease, on its tick. A fired run is gated at the agent's own approval mode. |
+
+## 7. Secrets
+
+An agent asks with `request_secret`, from its own conversation only. The user
+answers on a card: the value, and which agents get it. The asker alone is the
+default, and a secret already saved under the name keeps the agents it had.
+
+| Rule | Behaviour |
+| --- | --- |
+| Reaching commands | Every agent given the secret reads it in its shell commands as `$REASONIX_SECRET_NAME`. No tool returns the value. |
+| Reaching models | Every provider adapter masks the outgoing request with `provider.MaskOutbound`, so no path to a model skips it. A model reads `[secret:NAME]` in place of the value as written, JSON-escaped or URL-encoded. |
+| Freshness | The mask reads the secrets file on every snapshot (`secrets.WatchValues`), in every process, and holds each value it has seen until the process exits. A value another process saved is masked here at once. |
+| Delete and replace | The value stops reaching commands and is kept as retired, so copies already in conversations stay masked. Forgetting retired values is a separate, confirmed action. |
+| Writing back | `write_file`, `edit_file`, `multi_edit` and `notebook_edit` refuse text carrying a mark (`secret.masked_write`): written, it would replace the real value. |
+| Shell output | Output, the failure tail, streamed progress and background job output are masked before they are kept or drawn. |
+
+## 8. Known limits
 
 | Limit | Note |
 | --- | --- |
-| Live origin rows | The transcript draws "message from X" when it is rebuilt from history; the live event stream does not carry the origin yet. |
 | Windows | No OS sandbox bounds what an agent's shell can write, so the roster file is protected only by being outside workspace write roots on macOS and Linux. |
-| Memory, browser, usage | Agent and group memory scopes, per-agent browser profiles and usage by agent are not built. |
-| Terminal | The TUI and ACP do not seat sessions on the team. |
+| Secrets at rest | Stored unencrypted. On macOS and Linux with the sandbox on, agents' commands are denied the file; on Windows or with the sandbox off they can read every secret in it. |
+| Secrets in commands | A command can read a value and print it transformed (base64, hex); the mask matches the value, not what was done to it. Give a secret only to agents you trust. |
+| Secret scope | "Only Ada" governs which commands receive the variable, in all of Ada's seats, groups included. It does not isolate files: another agent's commands can read Ada's session files, which hold what the user typed. |
+| Signed bytes | Reasoning a provider signed, and a tool call carrying a thought signature, are sent back unmasked: the provider verifies them, and it wrote them. |
+| Short values | Values under 8 bytes are masked only between non-word characters, and a value split across two progress chunks is not recognised in the window. |
+| Memory review | Runs on the title model, which reads up to 3000 characters of each of the user's lines in the turn. |
+| Terminal | `/team` lists the team and `/msg` queues a message, delivered when a Studio host holding the team ticks. ACP seats no session on the team. |
+| Browser, usage | Per-agent browser profiles and usage by agent are not built. |
