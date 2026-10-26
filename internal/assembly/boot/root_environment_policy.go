@@ -3,8 +3,11 @@ package boot
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 
 	"reasonix/internal/contract/config"
+	"reasonix/internal/contract/event"
 	"reasonix/internal/runtime/rootenv"
 	"reasonix/internal/session/control"
 	"reasonix/internal/state/sessionstore"
@@ -47,6 +50,11 @@ func (b *builder) rootEnvironmentPolicy() *control.RootEnvironmentPolicy {
 			return nil, nil, err
 		}
 		store.WithVerificationChecks(b.prompt.projectChecks)
+		retained, err := store.ReclaimAbandoned(ctx)
+		reportRetainedRootEnvironments(b.sink, retained)
+		if err != nil {
+			return nil, nil, err
+		}
 		if b.tools.taskTool != nil {
 			store.WithPreparationCapacities(b.tools.taskTool.Scheduler().PhaseCapacity().Preparation)
 		}
@@ -54,4 +62,15 @@ func (b *builder) rootEnvironmentPolicy() *control.RootEnvironmentPolicy {
 		environment, err := store.Prepare(ctx, sessionstore.CanonicalSessionPath(path), cfg.Agent.IsolationCopyPaths, denied)
 		return environment, cfg, err
 	}}
+}
+
+func reportRetainedRootEnvironments(sink event.Sink, retained []rootenv.Retained) {
+	if len(retained) == 0 {
+		return
+	}
+	lines := make([]string, 0, len(retained))
+	for _, r := range retained {
+		lines = append(lines, fmt.Sprintf("%s (%s) at %s: %v", r.ID, r.State, r.WorktreeRoot, r.Err))
+	}
+	report(sink, event.Event{Level: event.LevelWarn, Text: "Kept abandoned root environments that may still hold work.", Detail: strings.Join(lines, "\n")})
 }

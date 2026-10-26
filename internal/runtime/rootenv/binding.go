@@ -42,6 +42,12 @@ func (e *Environment) BindSession(ctx context.Context, path string, authority *s
 	if !ownsAttachment(r, sessionstore.CanonicalSessionPath(path)) {
 		return ErrOwner
 	}
+	if !r.Bound {
+		if err := e.updatePublication(ctx, r, func(r *Record) error { r.Bound = true; return nil }); err != nil {
+			return err
+		}
+		r = e.Record()
+	}
 	return sessionstore.BindExecutionEnvironment(path, sessionstore.ExecutionEnvironmentBinding{Version: 1,
 		EnvironmentID: r.ID, Generation: r.Generation, SourceWorkspace: r.SourceWorkspace,
 		WorkspaceRoot: r.Candidate.WorkspaceRoot, WorkingCopyRoot: r.Candidate.WorktreeRoot}, authority)
