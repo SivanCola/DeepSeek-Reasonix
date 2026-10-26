@@ -99,4 +99,5 @@ default, and a secret already saved under the name keeps the agents it had.
 | Signed bytes elsewhere | A brokered or extension-hosted model that verifies signed bytes holding a value can refuse the turn, since those bytes reach it masked. |
 | Short values | Values under 8 bytes are masked only between non-word characters, and a value split across two progress chunks is not recognised in the window. |
 | Memory review | Runs on the title model, which reads up to 3000 characters of each of the user's lines in the turn. |
+| Mentions with spaces | A reference token ends at a space, so in "@Ada Lovelace" only "@Ada" is read, and it is looked up as an @file reference rather than taken out as a mention. |
 | Terminal | `/team` lists the team and `/msg` queues a message, delivered when a Studio host holding the team ticks. ACP seats no session on the team. |
