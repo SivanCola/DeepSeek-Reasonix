@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func ask(from, to, requestID string) Exchange {
@@ -28,6 +29,24 @@ func TestOpenExchangeQueuesUnderAFreshID(t *testing.T) {
 	book, err := s.Exchanges()
 	if err != nil || len(book) != 1 || book[0].ID != x.ID {
 		t.Fatalf("Exchanges = %+v, %v", book, err)
+	}
+}
+
+// The book keeps the opening of the message on one line, so the window can say
+// what was asked without reading the receiver's whole conversation.
+func TestAnExchangeKeepsAOneLinePreviewOfItsMessage(t *testing.T) {
+	s := Store{Dir: t.TempDir()}
+	long := "draft\nthe   launch post " + strings.Repeat("词", 200)
+	x, _, err := s.OpenExchange(context.Background(), ask(newAgentID(), newAgentID(), ""), long)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(x.Preview, "draft the launch post 词") || strings.ContainsAny(x.Preview, "\n") || utf8.RuneCountInString(x.Preview) > PreviewRunes {
+		t.Fatalf("preview = %q", x.Preview)
+	}
+	book, _ := s.Exchanges()
+	if book[0].Preview != x.Preview {
+		t.Fatalf("the book did not keep the preview: %q", book[0].Preview)
 	}
 }
 

@@ -29,7 +29,7 @@ func (c *Controller) DeliverTeam(d team.Delivery) error {
 	}
 	req := InboxRequest{
 		Origin: sessioninbox.OriginHost, Source: "team:" + d.From, Idempotency: d.Key,
-		Display: d.Display, Raw: d.Display, Submit: d.Text, Extra: extra,
+		Display: d.Display, Raw: d.Text, Submit: d.Text, Extra: extra,
 	}
 	var err error
 	if d.Steer && stricterApproval(c.effectiveApprovalMode(), d.Ceiling) == c.effectiveApprovalMode() {

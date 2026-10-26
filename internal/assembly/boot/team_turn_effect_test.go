@@ -9,9 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"reasonix/internal/contract/event"
+	"reasonix/internal/contract/eventwire"
 	"reasonix/internal/contract/provider"
 	"reasonix/internal/session/control"
 	"reasonix/internal/session/team"
+	"reasonix/internal/state/sessionstore"
 	"reasonix/internal/state/teamroster"
 )
 
@@ -71,7 +74,16 @@ func TestEffectAnAgentsMessageIsAnsweredThroughTheReceiversRealTurn(t *testing.T
 	provider.Register("team-turn-effect", func(provider.Config) (provider.Provider, error) { return rec, nil })
 	writeFile(t, dir, "reasonix.toml", "default_model = \"test-model\"\n[agent]\nsystem_prompt = \"BASE\"\n[[providers]]\nname = \"test-model\"\nkind = \"team-turn-effect\"\nmodel = \"x\"\n")
 	approveWorkspace(t, dir)
-	ctrl, err := Build(context.Background(), Options{Home: os.Getenv("REASONIX_HOME"), WorkspaceRoot: dir, resolvedShell: pinnedEffectShell(), TeamSeat: team.Seat{Service: svc, Ref: team.SeatRef{Agent: ben}}})
+	var seenMu sync.Mutex
+	var started []eventwire.Event
+	sink := event.FuncSink(func(e event.Event) {
+		if e.Kind == event.TurnStarted {
+			seenMu.Lock()
+			started = append(started, eventwire.ToWire(e))
+			seenMu.Unlock()
+		}
+	})
+	ctrl, err := Build(context.Background(), Options{Home: os.Getenv("REASONIX_HOME"), WorkspaceRoot: dir, Sink: sink, resolvedShell: pinnedEffectShell(), TeamSeat: team.Seat{Service: svc, Ref: team.SeatRef{Agent: ben}}})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -120,12 +132,34 @@ func TestEffectAnAgentsMessageIsAnsweredThroughTheReceiversRealTurn(t *testing.T
 		t.Fatalf("the framed message did not reach Ben's model:\n%s", got)
 	}
 	var origin *provider.Origin
-	for _, m := range ctrl.History() {
+	landed := -1
+	for i, m := range ctrl.History() {
 		if m.Role == provider.RoleUser && m.Origin != nil {
-			origin = m.Origin
+			origin, landed = m.Origin, i
 		}
 	}
 	if origin == nil || origin.Kind != string(team.DeliverMessage) || origin.Agent != ada || origin.Exchange != receipt.Exchange {
 		t.Fatalf("the transcript does not say who the turn was for: %+v", origin)
+	}
+
+	// The live stream says the same thing the transcript does, at the index the
+	// message landed on, so a window watching draws the row a reload would.
+	seenMu.Lock()
+	defer seenMu.Unlock()
+	var live *eventwire.Event
+	for i := range started {
+		if started[i].Origin != nil {
+			live = &started[i]
+		}
+	}
+	if live == nil || live.Origin.Agent != ada || live.Origin.Exchange != receipt.Exchange || live.Origin.Kind != string(team.DeliverMessage) {
+		t.Fatalf("no turn_started carried the turn's origin: %+v", started)
+	}
+	read := sessionstore.UserMessageText(ctrl.History()[landed])
+	if !strings.Contains(read, `<agent-message from="Ada"`) || !strings.Contains(read, "draft the launch post") {
+		t.Fatalf("history reads the turn as %q, not the message it was handed", read)
+	}
+	if live.MsgIndex == nil || *live.MsgIndex != landed || live.Text != read {
+		t.Fatalf("turn_started names index %v and text %q; history reads %q at %d", live.MsgIndex, live.Text, read, landed)
 	}
 }

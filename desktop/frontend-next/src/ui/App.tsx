@@ -64,7 +64,7 @@ import { useTreeRead } from "./useTreeRead";
 import { useSidebarOpen } from "./sidebaropen";
 import { useOpenPane } from "./useOpenPane";
 import { useAdoptPane } from "./team/useAdoptPane";
-import { GroupStage } from "./team/GroupStage";
+import { TeamLayer } from "./team/TeamLayer";
 import { useOpenRemotePane } from "./useOpenRemotePane";
 import { useNewConversation } from "./useNewConversation";
 import { markSettled } from "../boot/gate";
@@ -730,7 +730,7 @@ export function App({ hub }: { hub: HubPort }) {
                 )}
               </div>
             )}
-            <GroupStage hub={hub} active={active} onAdoptPane={adoptPane} />
+            <TeamLayer hub={hub} active={active} seat={runtimes.find((rt) => rt.id === active)?.team} root={runtimes.find((rt) => rt.id === active)?.root} onAdoptPane={adoptPane} />
           </div>
 
           {!activePaneShown && bar}

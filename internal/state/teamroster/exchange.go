@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"reasonix/internal/base/fileutil"
+	"reasonix/internal/base/textutil"
 )
 
 // ExchangeFile is the append-only record of messages between agents.
@@ -67,17 +69,18 @@ func (s ExchangeState) valid() bool {
 	return s.Settled()
 }
 
-// Exchange is one message an agent, or the user, sent another agent. Parent
-// is the exchange the sender was serving when it sent this one, which is what
-// the handoff tree is built from. Returned is set once the sender has read the
-// answer, which can be after the exchange settled. The message itself lives in
-// the receiver's session; the book keeps its digest to tell retries apart.
+// Exchange is one message an agent, or the user, sent another agent. Parent is
+// the exchange the sender was serving, which builds the handoff tree; Returned
+// is set once the sender has read the answer, possibly after it settled. The
+// message lives in the receiver's session; the book keeps its digest to tell
+// retries apart and its opening, on one line, to say what was asked.
 type Exchange struct {
 	ID        string        `json:"id"`
 	From      string        `json:"from"`
 	To        string        `json:"to"`
 	RequestID string        `json:"requestId,omitempty"`
 	Digest    string        `json:"digest"`
+	Preview   string        `json:"preview,omitempty"`
 	ReplyTo   ReplyTo       `json:"replyTo"`
 	Parent    string        `json:"parent,omitempty"`
 	Group     string        `json:"group,omitempty"`
@@ -147,6 +150,9 @@ func foldExchanges(path string) ([]Exchange, int, error) {
 	return out, lines, nil
 }
 
+// PreviewRunes bounds the opening of a message an exchange keeps.
+const PreviewRunes = 140
+
 // OpenExchange records x as a new queued exchange carrying message and returns
 // it under a fresh id. A request id the sender already used for the same
 // message returns that exchange with existed true; for a different message it
@@ -177,6 +183,7 @@ func (s Store) OpenExchange(ctx context.Context, x Exchange, message string) (_ 
 			}
 		}
 		x.ID, x.Digest, x.State = "x-"+randomHex(), digest, ExchangeQueued
+		x.Preview = textutil.ClipGraphemes(strings.Join(strings.Fields(message), " "), PreviewRunes, "…")
 		if x.OpenedAt.IsZero() {
 			x.OpenedAt = time.Now().UTC()
 		}

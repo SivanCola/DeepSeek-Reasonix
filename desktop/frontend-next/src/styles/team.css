@@ -111,6 +111,22 @@
 .team-row:hover .team-row-more,
 .team-row-more:focus-visible { opacity: 1; }
 .team-row--main .team-row-open { padding-block: 10px; }
+.team-row[data-hidden] .team-row-open { opacity: .6; }
+.team-row[data-unread] .team-row-name { font-weight: var(--w-semi); }
+.team-row-name .unread-dot { display: inline-block; width: 7px; height: 7px; margin-inline-start: 6px; border-radius: 50%; background: var(--accent-ink); vertical-align: middle; }
+.team-hidden-toggle {
+  align-self: flex-start;
+  margin: 2px 8px 0;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--faint);
+  font: inherit;
+  font-size: var(--fs-meta);
+  cursor: pointer;
+}
+.team-hidden-toggle:hover { background: var(--press-wash); color: var(--muted); }
 .team-note { margin: 0; padding: 4px 8px; color: var(--muted); font-size: var(--fs-meta); }
 
 .team-welcome {
@@ -235,3 +251,18 @@
   gap: 6px;
   min-width: 0;
 }
+.crumb-seat-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.crumb-seat-toggle:hover,
+.crumb-seat-toggle[aria-expanded="true"] { background: var(--press-wash); }

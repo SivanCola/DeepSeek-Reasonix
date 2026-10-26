@@ -10,6 +10,7 @@ export class MockTeam implements TeamPort {
   private agents: TeamAgent[] = [];
   private groups: TeamGroup[] = [];
   private readonly logs = new Map<string, GroupLine[]>();
+  private book: TeamExchange[] = [];
   calls: { method: string; args: unknown[] }[] = [];
 
   constructor(
@@ -69,7 +70,7 @@ export class MockTeam implements TeamPort {
     this.seq++;
     this.agents.push({
       id: `a-${this.seq}`, name: edit.name!.trim(), role: edit.role, instructions: edit.instructions,
-      avatar: edit.avatar ?? {}, permission: edit.permission, model: edit.model, main: false, activity: { state: "idle" },
+      avatar: edit.avatar ?? {}, permission: edit.permission, model: edit.model, folder: edit.folder, main: false, activity: { state: "idle" },
     });
     return this.bump();
   }
@@ -175,6 +176,14 @@ export class MockTeam implements TeamPort {
     this.bump();
   }
 
+  /** Moves an agent's or a group's last activity, as a turn would, for tests. */
+  touch(id: string, at: number) {
+    const a = this.agents.find((x) => x.id === id);
+    if (a) a.lastActivityAt = at;
+    else this.group(id).lastActivityAt = at;
+    this.bump();
+  }
+
   /** Sets a group's round, as the kernel would report it, for tests. */
   setRound(id: string, round: Partial<TeamGroup["round"]>) {
     Object.assign(this.group(id).round, round);
@@ -199,7 +208,13 @@ export class MockTeam implements TeamPort {
     return view;
   }
 
-  async exchanges(_agent: string): Promise<TeamExchange[]> {
-    return [];
+  async exchanges(agent: string): Promise<TeamExchange[]> {
+    return structuredClone(this.book.filter((x) => !agent || x.from === agent || x.to === agent));
+  }
+
+  /** Records an exchange as the kernel's book would, for tests. */
+  addExchange(x: TeamExchange) {
+    this.book.push(x);
+    this.bump();
   }
 }

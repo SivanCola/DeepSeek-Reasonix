@@ -14,6 +14,7 @@ import (
 // Where the desktop re-declares the kernel's wire types by hand.
 const (
 	tsWireFile      = "desktop/frontend-next/src/port/wire.ts"
+	tsGraphFile     = "desktop/frontend-next/src/port/execution_graph.ts"
 	tsPortFile      = "desktop/frontend-next/src/port/port.ts"
 	tsLeaseFile     = "desktop/frontend-next/src/port/workspace_lease.ts"
 	tsBoundaryFile  = "desktop/frontend-next/src/port/boundary.ts"
@@ -85,16 +86,16 @@ var mirroredWireTypes = []wireMirror{
 	{"internal/platform/gitstatus/history.go", "Commit", tsWorkspaceFile, "GitCommit"},
 	{"internal/contract/eventwire/wire.go", "AskOrigin", tsWireFile, "AskOrigin"},
 	{"internal/session/control/goal_runtime_view.go", "GoalRuntimeView", tsSessionFile, "GoalRuntime"},
-	{"internal/contract/agentgraph/graph.go", "Node", tsWireFile, "GraphNode"},
-	{"internal/contract/agentgraph/graph.go", "Edge", tsWireFile, "GraphEdge"},
-	{"internal/contract/agentgraph/graph.go", "Delta", tsWireFile, "GraphDelta"},
+	{"internal/contract/agentgraph/graph.go", "Node", tsGraphFile, "GraphNode"},
+	{"internal/contract/agentgraph/graph.go", "Edge", tsGraphFile, "GraphEdge"},
+	{"internal/contract/agentgraph/graph.go", "Delta", tsGraphFile, "GraphDelta"},
 	// The snapshot is the execution model's whole authority: no delta carries an
 	// interruption or an unrecorded identity, and a watermark the page cannot
 	// find is a bootstrap that resumes from zero.
-	{"internal/contract/agentgraph/graph.go", "Graph", tsWireFile, "ExecutionGraph"},
-	{"internal/session/control/execution_graph.go", "ExecutionGraphSnapshot", tsWireFile, "ExecutionGraphSnapshot"},
-	{"internal/session/control/execution_graph.go", "ExecutionInterruption", tsWireFile, "ExecutionInterruption"},
-	{"internal/frontend/serve/executiongraph.go", "executionGraphView", tsWireFile, "ExecutionGraphView"},
+	{"internal/contract/agentgraph/graph.go", "Graph", tsGraphFile, "ExecutionGraph"},
+	{"internal/session/control/execution_graph.go", "ExecutionGraphSnapshot", tsGraphFile, "ExecutionGraphSnapshot"},
+	{"internal/session/control/execution_graph.go", "ExecutionInterruption", tsGraphFile, "ExecutionInterruption"},
+	{"internal/frontend/serve/executiongraph.go", "executionGraphView", tsGraphFile, "ExecutionGraphView"},
 	// Whether a replayed trajectory covers the session or only a prefix of it.
 	// A page that cannot read the coverage is back to the empty array that meant
 	// three different things.

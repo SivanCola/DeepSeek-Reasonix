@@ -4,15 +4,9 @@ import { reason } from "../../i18n/kernel";
 import type { AgentEdit, TeamAgent, TeamPort, TeamView } from "../../port/team";
 import { StudioIcon } from "../StudioIcon";
 import { AVATAR_COLORS, AVATAR_GLYPHS, AgentAvatar, avatarOf, glyphName } from "./AgentAvatar";
+import { PERMISSIONS } from "./permissions";
 import { TeamDialog } from "./TeamDialog";
 
-const PERMISSIONS: [string, string][] = [
-  ["", "跟随窗口"],
-  ["readOnly", "只读"],
-  ["ask", "逐项询问"],
-  ["auto", "自动"],
-  ["yolo", "完全放行"],
-];
 
 // Creating an agent, or changing one. Only the person reaches the permission,
 // main and delete controls: no agent opens this dialog.

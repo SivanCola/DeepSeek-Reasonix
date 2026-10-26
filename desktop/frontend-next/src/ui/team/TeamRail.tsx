@@ -1,15 +1,18 @@
-import { useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { t } from "../../i18n";
 import { reason } from "../../i18n/kernel";
 import type { HubPort, RuntimeView } from "../../port/hub";
 import type { TeamAgent, TeamGroup, TeamView } from "../../port/team";
 import { useTeam } from "../../state/team";
 import { closeGroupStage, openGroupStage, useGroupStage } from "../../state/teamStage";
+import { isUnread, noteSeen, useTeamUnread } from "../../state/teamUnread";
 import { pushToast } from "../../state/toasts";
 import { StudioIcon } from "../StudioIcon";
 import { AgentAvatar, GroupAvatar } from "./AgentAvatar";
 import { AgentDialog } from "./AgentDialog";
 import { GroupDialog } from "./GroupDialog";
+import { TeamMenu, type MenuTarget } from "./TeamMenu";
+import { UnreadDot } from "../UnreadMark";
 import "../../styles/team.css";
 
 type Row = { kind: "agent"; agent: TeamAgent } | { kind: "group"; group: TeamGroup };
@@ -19,15 +22,18 @@ const activeAt = (r: Row) => (r.kind === "agent" ? r.agent.lastActivityAt : r.gr
 
 // The rows in the order the sidebar draws them: the first main agent leads,
 // then pinned rows, then the rest by when they last moved. The kernel owns
-// each field; this only orders them.
-export function teamRows(view: TeamView): { lead?: TeamAgent; rows: Row[] } {
+// each field; this only orders them. Hidden rows are counted, and drawn only
+// when the person asks for them.
+export function teamRows(view: TeamView, withHidden = false): { lead?: TeamAgent; rows: Row[]; hidden: number } {
   const lead = view.agents.find((a) => a.main);
-  const rows: Row[] = [
-    ...view.agents.filter((a) => a !== lead && !a.hidden).map((agent) => ({ kind: "agent" as const, agent })),
-    ...view.groups.filter((g) => !g.hidden && !g.archived).map((group) => ({ kind: "group" as const, group })),
+  const all: Row[] = [
+    ...view.agents.filter((a) => a !== lead).map((agent) => ({ kind: "agent" as const, agent })),
+    ...view.groups.filter((g) => !g.archived).map((group) => ({ kind: "group" as const, group })),
   ];
+  const hiddenOf = (r: Row) => (r.kind === "agent" ? !!r.agent.hidden : !!r.group.hidden);
+  const rows = all.filter((r) => withHidden || !hiddenOf(r));
   rows.sort((a, b) => Number(pinnedOf(b)) - Number(pinnedOf(a)) || activeAt(b) - activeAt(a));
-  return { lead, rows };
+  return { lead, rows, hidden: all.filter(hiddenOf).length };
 }
 
 function agentLine(a: TeamAgent, names: Map<string, string>): string {
@@ -60,12 +66,37 @@ export function TeamRail({ hub, active, onAdoptPane }: { hub: HubPort; active: s
   const stage = useGroupStage();
   const [dialog, setDialog] = useState<{ kind: "agent" | "group"; id?: string } | null>(null);
   const [starting, setStarting] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
+  const [menu, setMenu] = useState<{ kind: "agent" | "group"; id: string; x: number; y: number } | null>(null);
+  const menuRow = useRef<HTMLElement | null>(null);
+  const unread = useTeamUnread();
+  useEffect(() => {
+    if (!view) return;
+    noteSeen([
+      ...view.agents.map((a) => ({ id: a.id, at: a.lastActivityAt, looking: !!a.runtime && a.runtime === active && !stage })),
+      ...view.groups.map((g) => ({ id: g.id, at: g.lastActivityAt, looking: stage === g.id })),
+    ]);
+  }, [view, active, stage]);
   if (unavailable || !view || !team) return null;
   const names = new Map(view.agents.map((a) => [a.id, a.name]));
-  const { lead, rows } = teamRows(view);
+  const { lead, rows, hidden } = teamRows(view, showHidden);
   const readOnly = !!view.readOnly;
+  const menuAt = (kind: "agent" | "group", id: string, ev: MouseEvent<HTMLElement>) => {
+    if (readOnly) return;
+    ev.preventDefault();
+    menuRow.current = ev.currentTarget;
+    setMenu({ kind, id, x: ev.clientX, y: ev.clientY });
+  };
+  const menuKey = (kind: "agent" | "group", id: string, ev: KeyboardEvent<HTMLElement>) => {
+    if (readOnly || !(ev.key === "ContextMenu" || (ev.shiftKey && ev.key === "F10"))) return;
+    ev.preventDefault();
+    const box = ev.currentTarget.getBoundingClientRect();
+    menuRow.current = ev.currentTarget;
+    setMenu({ kind, id, x: box.right, y: box.top });
+  };
 
   const openAgent = async (id: string) => {
+    noteSeen([{ id, at: view.agents.find((a) => a.id === id)?.lastActivityAt, looking: true }]);
     try {
       const rt = await team.openAgent(id);
       closeGroupStage();
@@ -88,11 +119,13 @@ export function TeamRail({ hub, active, onAdoptPane }: { hub: HubPort; active: s
     }
   };
   const agentRow = (a: TeamAgent, main = false) => (
-    <li key={a.id} className={main ? "team-row team-row--main" : "team-row"} data-state={a.activity.state} aria-current={!!a.runtime && a.runtime === active && !stage}>
-      <button type="button" className="team-row-open" data-action="team.agent-open" data-target={a.id} onClick={() => void openAgent(a.id)}>
+    <li key={a.id} className={main ? "team-row team-row--main" : "team-row"} data-state={a.activity.state} aria-current={!!a.runtime && a.runtime === active && !stage}
+      data-unread={isUnread(unread, a.id, a.lastActivityAt) ? "" : undefined} data-hidden={a.hidden ? "" : undefined}>
+      <button type="button" className="team-row-open" data-action-click="team.agent-open" data-action-contextmenu="team.menu" data-action-keydown="team.menu" data-target={a.id}
+        onClick={() => void openAgent(a.id)} onContextMenu={(ev) => menuAt("agent", a.id, ev)} onKeyDown={(ev) => menuKey("agent", a.id, ev)}>
         <AgentAvatar agent={a} size={main ? 36 : 28} />
         <span className="team-row-text">
-          <span className="team-row-name">{a.name}</span>{" "}
+          <span className="team-row-name">{a.name}{isUnread(unread, a.id, a.lastActivityAt) && <>{" "}<UnreadDot /></>}</span>{" "}
           <span className="team-row-line">{agentLine(a, names)}</span>
         </span>
       </button>
@@ -106,11 +139,14 @@ export function TeamRail({ hub, active, onAdoptPane }: { hub: HubPort; active: s
     </li>
   );
   const groupRow = (g: TeamGroup) => (
-    <li key={g.id} className="team-row" aria-current={stage === g.id}>
-      <button type="button" className="team-row-open" data-action="team.group-open" data-target={g.id} onClick={() => openGroupStage(g.id)}>
+    <li key={g.id} className="team-row" aria-current={stage === g.id}
+      data-unread={isUnread(unread, g.id, g.lastActivityAt) ? "" : undefined} data-hidden={g.hidden ? "" : undefined}>
+      <button type="button" className="team-row-open" data-action-click="team.group-open" data-action-contextmenu="team.menu" data-action-keydown="team.menu" data-target={g.id}
+        onClick={() => { noteSeen([{ id: g.id, at: g.lastActivityAt, looking: true }]); openGroupStage(g.id); }}
+        onContextMenu={(ev) => menuAt("group", g.id, ev)} onKeyDown={(ev) => menuKey("group", g.id, ev)}>
         <GroupAvatar members={g.members.map((id) => view.agents.find((a) => a.id === id)).filter((a): a is TeamAgent => !!a)} />
         <span className="team-row-text">
-          <span className="team-row-name">{groupTitle(g, names)}</span>{" "}
+          <span className="team-row-name">{groupTitle(g, names)}{isUnread(unread, g.id, g.lastActivityAt) && <>{" "}<UnreadDot /></>}</span>{" "}
           <span className="team-row-line">{groupLine(g, names)}</span>
         </span>
       </button>
@@ -123,6 +159,11 @@ export function TeamRail({ hub, active, onAdoptPane }: { hub: HubPort; active: s
       )}
     </li>
   );
+  const menuTarget: MenuTarget | undefined = !menu
+    ? undefined
+    : menu.kind === "agent"
+      ? (() => { const agent = view.agents.find((a) => a.id === menu.id); return agent && { kind: "agent" as const, agent }; })()
+      : (() => { const group = view.groups.find((g) => g.id === menu.id); return group && { kind: "group" as const, group, title: groupTitle(group, names) }; })();
   const editing = dialog?.kind === "agent" ? view.agents.find((a) => a.id === dialog.id) : undefined;
   const editingGroup = dialog?.kind === "group" ? view.groups.find((g) => g.id === dialog.id) : undefined;
   const done = (next: TeamView) => {
@@ -162,6 +203,17 @@ export function TeamRail({ hub, active, onAdoptPane }: { hub: HubPort; active: s
           {lead && agentRow(lead, true)}
           {rows.map((r) => (r.kind === "agent" ? agentRow(r.agent) : groupRow(r.group)))}
         </ul>
+      )}
+      {hidden > 0 && (
+        <button type="button" className="team-hidden-toggle" data-action="team.show-hidden" aria-pressed={showHidden} onClick={() => setShowHidden((v) => !v)}>
+          {showHidden ? t("收起已隐藏的 {n} 个", { n: hidden }) : t("已隐藏 {n} 个", { n: hidden })}
+        </button>
+      )}
+      {menu && menuTarget && (
+        <TeamMenu team={team} view={view} target={menuTarget} at={{ x: menu.x, y: menu.y }} anchor={menuRow}
+          unread={isUnread(unread, menu.id, menuTarget.kind === "agent" ? menuTarget.agent.lastActivityAt : menuTarget.group.lastActivityAt)}
+          lead={menuTarget.kind === "agent" && menuTarget.agent === lead}
+          onClose={() => setMenu(null)} onSettings={() => setDialog({ kind: menu.kind, id: menu.id })} onShown={shown} onOpened={(rt) => { closeGroupStage(); onAdoptPane(rt); }} />
       )}
       {dialog?.kind === "agent" && (dialog.id === undefined || editing) && (
         <AgentDialog team={team} agent={editing} onClose={() => setDialog(null)} onSaved={done} />

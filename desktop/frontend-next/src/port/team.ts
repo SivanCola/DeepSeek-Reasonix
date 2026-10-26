@@ -108,6 +108,7 @@ export interface TeamExchange {
   to: string;
   requestId?: string;
   digest: string;
+  preview?: string;
   replyTo: "me" | "user";
   parent?: string;
   group?: string;

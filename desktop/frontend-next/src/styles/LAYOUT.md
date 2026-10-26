@@ -1714,10 +1714,17 @@ A sub-agent row, by the list's own width:
 
 - The team sits in the rail between the session filters and the project list. The first main agent leads; other agents and groups mix below it, pinned first, then by when they last moved. Reordering moves rows and never remounts them.
 - A row's second line says what the agent is doing — waiting on the person, working, or waiting for named agents — and falls back to its last message or role. A group's line names the speaker or says it is paused.
-- Settings open from a hover button on the row, not a context menu, so the row's own click always opens the conversation.
+- The row's own click always opens the conversation. Settings sit on a hover button; the right-click menu (and the ContextMenu key) carries the rest — pin, unread, duplicate, main role, hide, delete — with delete taking a second press.
+- Unread is this machine's fact: a row is unread when it moved after it was last looked at, or when the person marked it. Hidden rows are counted under the list and drawn on request, dimmed.
 - An agent's pane names the agent in the chrome crumb, not its folder, and offers no folder door: the host chose that folder, and entering it as a project would make it one of the user's.
 - The avatar picker keeps shapes and colours in separate rows, each with one pressed choice; one wrapping grid runs colours on after shapes and shows two selections in what reads as a single set.
 - Team dialogs dim the window with the same thin black scrim as the rename dialog. `--overlay` is an opaque surface colour, not a scrim, and would hide the window.
+
+## Agent details drawer
+
+- The agent's name in the chrome crumb is the drawer's switch. The drawer sits over the right edge of the panes area rather than in the `.side` rail, so it needs no column of its own and the conversation keeps its width when it closes.
+- Whether it is open is one window-wide answer: moving to another agent keeps it open and shows that agent. A group's chat takes the whole area, so the drawer steps aside while one is up.
+- Only what applies at once is edited in place (the permission). The folder is recorded at once and read when the conversation next opens, and the drawer says so; everything else goes through the settings dialog.
 
 ## Group chat stage
 
