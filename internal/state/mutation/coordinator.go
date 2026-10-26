@@ -139,11 +139,12 @@ func (c *Coordinator) Acquire(ctx context.Context, intent Intent) (acquired *Lea
 	if err := c.enqueue(ctx, &l.record); err != nil {
 		return nil, err
 	}
+	probe := versionProbe{}
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if err := validateExpected(ctx, intent.Expected, paths); err != nil {
+		if err := probe.check(ctx, intent.Expected, paths); err != nil {
 			return nil, err
 		}
 		held, err := c.tryGrant(ctx, l)
