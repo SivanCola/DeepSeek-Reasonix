@@ -54,17 +54,20 @@ Status: proposal. Nothing below is implemented. Sections marked **Current** desc
 ### Slot vocabulary
 
 1. The protocol documents a vocabulary of well-known slot names. It MUST stay advisory: no enum, no schema change, unknown names keep falling back.
-2. Studio implements every name below. Other frontends MAY map a name to a place of their own or fall back.
-3. Existing names keep working: `sidebar` is an alias of `rail`, and `composer-trailing` and `above_prompt` are aliases of `composer.above`.
+2. Studio implements every name below that is not marked deferred. Other frontends MAY map a name to a place of their own or fall back.
+3. Studio keeps its own ids (`sidebar`, `composer-trailing`, `session-header`, `pane-tab`) and maps the protocol names onto them, so placements stored under the earlier names keep resolving. `above_prompt` stays an alias of `composer.above`.
+4. Studio no longer mounts a side rail (`Pane` receives `sideHost={null}`), so `rail` is drawn as one Extensions tab in the workbench. It holds the rail's views and the extension panels, and exists only while it holds something.
 
 | Slot | Place in Studio | Accepts | Height | Capacity |
 | --- | --- | --- | --- | --- |
-| `rail` | Side rail panel list (today's `sidebar`) | view, panel, frame | host decides; frame 120–640 px | unbounded, scrolls |
+| `rail` | The workbench's Extensions tab | view, panel, frame | host decides; frame 120–640 px | unbounded, scrolls |
 | `composer.above` | Band above the composer (today's `composer-trailing`) | view, frame | view one row; frame 32–160 px | 2 |
 | `session.header` | Trailing edge of the conversation header | view limited to `text`, `pip`, `meter`, `button` | one line | 3 |
-| `pane.tab` | A tab in the document/preview pane, opened from the rail or the header | view, frame | fills the pane | 4 per session |
-| `settings.section` | The extension's own section on the Extensions settings page | view, form, frame | 120–960 px | 1 per plugin |
-| `home.card` | The new-session empty state | view | host decides | 3 |
+| `pane.tab` | A workbench tab of its own, after every tab a person or the agent opened | view, frame | fills the pane | 4 per session |
+| `settings.section` | Deferred: the settings page is outside every session | – | – | – |
+| `home.card` | Deferred: the new-session page is outside every session | – | – | – |
+
+`settings.section` and `home.card` need surfaces scoped to the app rather than to a session. Today every publication carries a `sessionId` and lives in one pane's state. Until the protocol can publish an app-scoped surface, both names fall back to `rail`.
 
 ### Rules
 
@@ -73,11 +76,11 @@ Status: proposal. Nothing below is implemented. Sections marked **Current** desc
 | S1 | A slot only ever **adds** content in host-drawn chrome. No slot overlays, replaces or hides UI Studio draws. |
 | S2 | Every slotted surface is drawn inside a host frame that names its plugin and carries the existing move menu. The extension cannot hide either. |
 | S3 | Placement is resolved in this order: the user's assignment, the slot the extension asked for, then `rail`. A slot over capacity places the extra surfaces in `rail`, never nowhere. |
-| S4 | Order inside a slot is the user's assignment order, then `pluginId`, then `surfaceId`. Publish time MUST NOT order anything, so a republish never moves a surface. |
+| S4 | Order inside a slot is `pluginId`, then `surfaceId`, compared by code unit so the order does not change with the locale. Publish time MUST NOT order anything, so a republish never moves a surface. |
 | S5 | A surface keeps its React key (`pluginId:surfaceId`) across moves and republishes. Mounting, replay and moving owe no entrance motion. |
 | S6 | A slot that restricts node kinds (`session.header`) renders a disallowed node as its text value. It does not drop the surface or reject it. |
-| S7 | `pane.tab` and `settings.section` are opened by the user. Publishing into them MUST NOT focus, open or switch a tab. |
-| S8 | `settings.section` holds the extension's own settings. It MUST NOT present Reasonix settings, keys or permissions, and actions there reach only the extension. |
+| S7 | `pane.tab` is opened by the user. Publishing into it MUST NOT focus, open or switch a tab. Closing the tab moves the view to `rail` rather than hiding it. The browser tab menu's bulk closes MUST NOT touch extension tabs. |
+| S8 | When `settings.section` lands, it holds the extension's own settings. It MUST NOT present Reasonix settings, keys or permissions, and actions there reach only the extension. |
 | S9 | The move menu lists every slot the surface's kind fits. `desktop.surface_slots` keeps its existing limits. |
 
 ### Changes
@@ -86,7 +89,7 @@ Status: proposal. Nothing below is implemented. Sections marked **Current** desc
 | --- | --- |
 | Protocol docs | Add the vocabulary table to `docs/EXTENSION_PROTOCOL.md` under Structured UI. |
 | Kernel | None. `MaxViewSlotID` already bounds names, and `surfaces.go` already stores any slot name. |
-| Studio | Widen `SLOTS`, add the aliases, generalise `useSurfaceSlots` from a two-way split into a per-slot map, and mount a slot host in each place listed above. |
+| Studio | Widen `SLOTS`, add the aliases, generalise `useSurfaceSlots` from a two-way split into a per-slot map, and mount hosts in the title bar (`Chrome`) and the workbench. |
 | TUI, ACP | None. Unknown names already fall back. |
 
 ## Part 2: sandboxed frames
@@ -135,7 +138,7 @@ All of these are new enum values, new optional fields or new methods, which majo
 
 | ID | Rule |
 | --- | --- |
-| P1 | `frame` payloads reject `anchor`. A `slot` outside `rail`, `composer.above`, `pane.tab` and `settings.section` falls back to `rail`. |
+| P1 | `frame` payloads reject `anchor`. A `slot` outside `rail`, `composer.above` and `pane.tab` falls back to `rail`. |
 | P2 | Every string leaf in `props`, plus `title` and `fallback`, passes the host credential-redaction pass before it is stored or sent. |
 | P3 | A session holds at most 6 live frame surfaces. A seventh is refused with `ui.frame_limit` and the earlier ones stay. |
 | P4 | Republishing the same `surfaceId` with the same `frame` updates props in place. A different `frame` id is a new document. |
