@@ -1,2 +1,0 @@
-- 改进：移除正文左右两侧的拖动宽度把手，对话区不再有线条，手机端也不再误触；正文宽度改用设置里的「适宜阅读」「铺满窗口」等预设。关联 #14460。
-- Changed: the drag handles beside the reading column are removed, so no lines show and a phone cannot hit them; set the width with the line-width presets in Settings. Refs #14460.

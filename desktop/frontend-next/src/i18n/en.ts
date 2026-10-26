@@ -1036,6 +1036,10 @@ export const EN: Record<string, string> = {
   "这些地址直连": "Reach these addresses directly",
   "测试目标": "Test target",
   "无法读取网络配置。": "Could not read the network config.",
+  "正在读取网络配置…": "Loading network settings…",
+  "测试已保存配置": "Test saved settings",
+  "有未保存的改动；连接测试使用已保存的配置。": "There are unsaved changes. Connection tests use the saved settings.",
+  "已保存配置的测试结果": "Test results for saved settings",
 
   // ── 命令解释器 ───────────────────────────────────────────────────
   "当前生效": "In effect",
@@ -1249,8 +1253,6 @@ export const EN: Record<string, string> = {
   "选择会话文件…": "Choose a session file…",
   "打开主题目录": "Open themes folder",
   "阅读": "Read",
-  "设置需要一个打开的会话。请先在左栏添加一个文件夹。": "Settings need an open session. Add a folder in the sidebar first.",
-  "反馈需要一个打开的会话。请先在左栏添加一个文件夹。": "Feedback needs an open session. Add a folder in the sidebar first.",
   "{host} 需要登录": "{host} asks you to sign in",
   "代理 {host} 需要登录": "The proxy {host} asks you to sign in",
   "用户名": "Username",
@@ -1628,7 +1630,7 @@ export const EN: Record<string, string> = {
   "在文件管理器中显示": "Show in file manager",
   "文件夹已不在磁盘上": "Folder is gone",
   "删除会话：{title}": "Delete session: {title}",
-  "会话在文件夹里打开，先添加一个": "A session opens in a folder; add one first",
+  "没有文件夹也能开始：会话会在应用自己的目录里打开": "You can start without a folder: the session opens in the app's own directory",
   "添加文件夹": "Add folder",
   "其中 {live} 个对话正在运行，停止后才能移除": "{live} of them are running; stop them before removing",
   "正在运行，停止后才能删除": "Running; stop it before deleting",

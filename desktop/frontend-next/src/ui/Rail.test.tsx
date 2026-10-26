@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import "./testkit";
 import { Rail, railLocalY, type RailMark } from "./Rail";
@@ -214,5 +214,40 @@ describe("a star belongs to the question, not the row id", () => {
     view.rescope("s1");
     await waitFor(() => expect(view.getAllByRole("button")[1].getAttribute("data-starred")).toBe(""));
     expect(view.getAllByRole("button")[0].getAttribute("data-starred")).toBeNull();
+  });
+});
+
+describe("a mark that kept focus after a press", () => {
+  const draw = () => {
+    const root = document.createElement("div");
+    const flow = document.createElement("div");
+    Object.defineProperties(root, {
+      clientHeight: { configurable: true, value: 600 },
+      scrollHeight: { configurable: true, value: 2400 },
+      scrollTop: { configurable: true, writable: true, value: 0 },
+    });
+    const marks = [mark("a", 0, "第一条"), mark("b", 50, "第二条"), mark("c", 99, "第三条")];
+    return render(<Rail marks={marks} total={100} scroll={{ current: root }} flow={{ current: flow }} onJump={vi.fn()} bound scope="focus" />);
+  };
+
+  it("does not magnify its neighbours when the window hands the focus back", async () => {
+    const view = draw();
+    const buttons = view.getAllByRole("button");
+    await waitFor(() => expect(buttons[0].style.top).not.toBe(""));
+    // The element is not the keyboard's: it kept the focus a press gave it.
+    const visible = vi.fn((selector: string) => selector !== ":focus-visible");
+    Object.defineProperty(buttons[1], "matches", { configurable: true, value: visible });
+    fireEvent.focus(buttons[1]);
+    expect(visible).toHaveBeenCalledWith(":focus-visible");
+    expect(view.container.querySelector("[data-on]")).toBeNull();
+  });
+
+  it("still follows the keyboard", async () => {
+    const view = draw();
+    const buttons = view.getAllByRole("button");
+    await waitFor(() => expect(buttons[0].style.top).not.toBe(""));
+    fireEvent.keyDown(document.body, { key: "Tab" });
+    act(() => { buttons[1].focus(); });
+    expect(view.container.querySelector("[data-on]")).toBe(buttons[1]);
   });
 });

@@ -1,0 +1,2 @@
+- 修复：右侧提问细条在点过某一条、鼠标移开后再切回窗口时，附近几条不再无故变长变粗，只有键盘聚焦才会放大。关联 #14504。
+- Fixed: the right-hand question rail no longer magnifies marks near one you pressed when the window regains focus with the mouse elsewhere; only keyboard focus does. Refs #14504.

@@ -51,6 +51,11 @@ export const EN_KERNEL: Record<string, string> = {
 
   "参数不符合该工具的约定，本次调用没有执行；请按工具说明补全或更正参数后重试": "The arguments break this tool's contract, so the call did not run; complete or correct them per the tool description and retry",
   "另一个会话持有所需的写入范围。本次操作未执行；请结束当前轮次，待该范围释放后再重试": "Another session holds the requested write claim. This operation did not run; end the current turn and retry after the claim is released",
+  "找不到该隔离结果，它可能已被应用或丢弃。未执行任何变更": "The isolated result no longer exists; it may have been applied or discarded. Nothing was changed",
+  "本会话未启用工作树隔离（[agent] worktree_isolation），本次任务未开始": "Worktree isolation is not enabled in this session ([agent] worktree_isolation), so the task did not start",
+  "工作树隔离需要一个已有提交的 Git 工作区，本次任务未开始": "Worktree isolation needs a Git workspace with a commit, so the task did not start",
+  "工作区在任务开始后改动了相同文件，未应用任何内容。请协调后重新应用或丢弃该结果": "The workspace changed the same files after the task began, so nothing was applied. Reconcile, then apply again or discard the result",
+  "此次隔离任务包含不支持的参数，未开始执行": "This isolated task combines arguments that are not supported, so it did not start",
   "搜索模型「{model}」的格式应为 服务/模型": "Search model “{model}” must be written as service/model",
   "搜索模型「{model}」所在的连接还没有添加：先添加这个连接，再选它": "Search model “{model}”'s connection has not been added yet: add that connection first, then pick it",
   "搜索模型「{model}」已不在配置里": "Search model “{model}” is no longer configured",

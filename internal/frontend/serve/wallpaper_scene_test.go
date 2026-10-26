@@ -115,8 +115,8 @@ func TestImportSceneWallpaperReadsTextureAudioAndParallax(t *testing.T) {
 	if !bytes.Equal(got.Image, wantImage) {
 		t.Errorf("image bytes differ from the texture's PNG")
 	}
-	if got.AudioMIME != "audio/mpeg" || string(got.Audio) != "ID3-test-audio" {
-		t.Errorf("audio = (%q, %q), want the mp3 beside the scene", got.AudioMIME, got.Audio)
+	if len(got.Audios) != 1 || got.Audios[0].MIME != "audio/mpeg" || string(got.Audios[0].Data) != "ID3-test-audio" {
+		t.Errorf("audios = %+v, want the mp3 beside the scene", got.Audios)
 	}
 	if got.Parallax != 0.03 {
 		t.Errorf("parallax = %v, want 0.03", got.Parallax)

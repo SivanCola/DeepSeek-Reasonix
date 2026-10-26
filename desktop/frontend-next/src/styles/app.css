@@ -3893,12 +3893,12 @@
   .code-more .studio-icon { width: 13px; height: 13px; transform: rotate(90deg); transition: transform var(--m-line) }
   .code-more[aria-expanded="true"] .studio-icon { transform: rotate(-90deg) }
   .md pre.term code { font: inherit; color: inherit; white-space: pre }
-  .md pre.term .hljs-comment, .md pre.term .hljs-quote { color: var(--faint); font-style: italic }
-  .md pre.term :is(.hljs-punctuation, .hljs-operator, .hljs-meta, .hljs-params, .hljs-subst) { color: var(--muted) }
+  .md pre.term .hljs-comment, .md pre.term .hljs-quote { color: var(--syn-comment, var(--faint)); font-style: italic }
+  .md pre.term :is(.hljs-meta, .hljs-params, .hljs-subst) { color: var(--muted) } .md pre.term .hljs-punctuation { color: var(--syn-punc, var(--muted)) } .md pre.term .hljs-operator { color: var(--syn-op, var(--muted)) } .md pre.term .hljs-variable { color: var(--syn-var, inherit) }
   .md pre.term :is(.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag, .hljs-variable.language_) { color: var(--syn-key) }
   .md pre.term :is(.hljs-string, .hljs-regexp, .hljs-char.escape_, .hljs-addition, .hljs-attribute, .hljs-meta .hljs-string) { color: var(--syn-str) }
   .md pre.term :is(.hljs-number, .hljs-symbol, .hljs-bullet, .hljs-link, .hljs-selector-attr, .hljs-template-variable) { color: var(--syn-num) }
-  .md pre.term :is(.hljs-title, .hljs-name, .hljs-section, .hljs-built_in, .hljs-type, .hljs-class, .hljs-attr, .hljs-property, .hljs-tag, .hljs-selector-class, .hljs-selector-id) { color: var(--syn-fn) }
+  .md pre.term :is(.hljs-title, .hljs-name, .hljs-section, .hljs-built_in, .hljs-attr, .hljs-property, .hljs-tag, .hljs-selector-class, .hljs-selector-id) { color: var(--syn-fn) } .md pre.term :is(.hljs-type, .hljs-class) { color: var(--syn-type, var(--syn-fn)) }
   .md pre.term .hljs-deletion { color: var(--del) }
   .md pre.term :is(.hljs-strong, .hljs-title.function_, .hljs-title.class_) { font-weight: var(--w-med) }
   .md pre.term .hljs-emphasis { font-style: italic }

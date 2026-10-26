@@ -382,7 +382,7 @@ export function Rail({ marks, total, scroll, flow, onJump, bound, scope, earlier
               data-action-contextmenu="rail.star"
               data-action-keydown="rail.star"
               title={m.msgIndex === undefined ? undefined : starred ? t("右键取消这处星标") : t("右键给这处加星标")}
-              onFocus={() => setAt(i)}
+              onFocus={(e) => { if (e.currentTarget.matches(":focus-visible")) setAt(i); }}
               onBlur={() => setAt(-1)}
               onClick={() => {
                 if (!folded) { onJump(m); return; }

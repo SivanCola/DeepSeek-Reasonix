@@ -1,12 +1,10 @@
 package mutation
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -82,18 +80,6 @@ func (c *Coordinator) records() ([]record, error) {
 		records = append(records, r)
 	}
 	return records, nil
-}
-
-func decodeCoordinationRecord(data []byte, r *record) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(r); err != nil {
-		return err
-	}
-	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
-		return fmt.Errorf("record must contain one JSON value: %w", ErrProtocol)
-	}
-	return nil
 }
 
 func (c *Coordinator) save(r record) error {

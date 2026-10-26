@@ -489,17 +489,11 @@ export function App({ hub }: { hub: HubPort }) {
     panes: runtimes.length,
     root: newSessionRoot,
     openPane,
-    refuse: (message) => {
-      setSettings(false);
-      setFeedback(null);
-      setError(message);
-    },
     fail: (e) => {
       setSettings(false);
       setFeedback(null);
       fail(e);
     },
-    clear: (message) => setError((cur) => (cur === message ? "" : cur)),
   });
 
   // The tab strip has nowhere to await: closing is the end of the gesture there,
@@ -718,11 +712,10 @@ export function App({ hub }: { hub: HubPort }) {
                   ⌘
                 </span>
                 <p className="t">{t("没有打开的会话")}</p>
-                {/* With no folder there is nowhere a session could open, so the
-                    one button offered is the step that makes it possible. */}
                 {!treeRead ? null : tree.length === 0 ? (
                   <>
-                    <p className="h">{t("会话在文件夹里打开，先添加一个")}</p>
+                    <p className="h">{t("没有文件夹也能开始：会话会在应用自己的目录里打开")}</p>
+                    <button data-action="session.new" onClick={() => void startConversation().catch(fail)}>{t("新建会话")}</button>
                     <button data-action="workspace.add" disabled={adder.busy} onClick={() => adder.add()}>{t("添加文件夹")}</button>
                   </>
                 ) : (

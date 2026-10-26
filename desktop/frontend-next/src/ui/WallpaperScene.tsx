@@ -4,10 +4,11 @@ import type { Wallpaper } from "../port/look";
 import { listenAction } from "./listen";
 
 /** The part of a Wallpaper Engine scene this window can replay: the extracted
- *  backdrop moves a little with the pointer, and its soundtrack loops behind
+ *  backdrop moves a little with the pointer, and its soundtracks loop behind
  *  the interface. Shaders and particles stay in Wallpaper Engine. */
 export function WallpaperScene({ wallpaper }: { wallpaper?: Wallpaper }) {
-  const audio = useRef<HTMLAudioElement>(null);
+  const audio = useRef<(HTMLAudioElement | null)[]>([]);
+  const sources = audioSources(wallpaper);
 
   useEffect(() => {
     const paper = wallpaper;
@@ -35,17 +36,21 @@ export function WallpaperScene({ wallpaper }: { wallpaper?: Wallpaper }) {
   }, [wallpaper?.kind, wallpaper?.parallax, wallpaper?.focusX, wallpaper?.focusY]);
 
   useEffect(() => {
-    if (audio.current) audio.current.volume = clampLevel(wallpaper?.volume ?? 1);
-  }, [wallpaper?.volume]);
+    for (const element of audio.current) {
+      if (element) element.volume = clampLevel(wallpaper?.volume ?? 1);
+    }
+  }, [wallpaper?.volume, sources.length]);
 
   useEffect(() => {
-    const element = audio.current;
-    if (!element || wallpaper?.kind !== "scene" || !wallpaper.audio || wallpaper.muted || (wallpaper.volume ?? 1) <= 0) return;
+    if (!sources.length || wallpaper?.kind !== "scene" || wallpaper.muted || (wallpaper.volume ?? 1) <= 0) return;
     const start = () => {
-      try {
-        void Promise.resolve(element.play()).catch(() => {});
-      } catch {
-        // Autoplay is refused until a gesture; the listeners below retry.
+      for (const element of audio.current) {
+        if (!element) continue;
+        try {
+          void Promise.resolve(element.play()).catch(() => {});
+        } catch {
+          // Autoplay is refused until a gesture; the listeners below retry.
+        }
       }
     };
     start();
@@ -54,15 +59,35 @@ export function WallpaperScene({ wallpaper }: { wallpaper?: Wallpaper }) {
     return () => {
       offPointer();
       offKey();
-      element.pause();
+      for (const element of audio.current) element?.pause();
     };
-  }, [wallpaper?.audio, wallpaper?.muted, wallpaper?.kind, wallpaper?.volume]);
+  }, [sources.join("\u0000"), wallpaper?.muted, wallpaper?.kind, wallpaper?.volume]);
 
-  if (wallpaper?.kind !== "scene" || !wallpaper.audio) return null;
+  if (!sources.length) return null;
   return createPortal(
-    <audio ref={audio} src={wallpaper.audio} loop muted={wallpaper.muted} preload="auto" hidden />,
+    <>
+      {sources.map((src, i) => (
+        <audio
+          key={`${i}:${src}`}
+          ref={(element) => {
+            audio.current[i] = element;
+          }}
+          src={src}
+          loop
+          muted={wallpaper?.muted}
+          preload="auto"
+          hidden
+        />
+      ))}
+    </>,
     document.body,
   );
+}
+
+function audioSources(wallpaper?: Wallpaper): string[] {
+  if (wallpaper?.kind !== "scene") return [];
+  if (wallpaper.audios?.length) return wallpaper.audios;
+  return wallpaper.audio ? [wallpaper.audio] : [];
 }
 
 function clampPct(value: number): number {

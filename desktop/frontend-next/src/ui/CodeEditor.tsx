@@ -55,11 +55,12 @@ const highlight = HighlightStyle.define([
   { tag: [tags.keyword, tags.tagName, tags.modifier, tags.operatorKeyword], color: "var(--syn-key)" },
   { tag: [tags.string, tags.regexp, tags.special(tags.string), tags.attributeValue], color: "var(--syn-str)" },
   { tag: [tags.number, tags.bool, tags.null, tags.atom], color: "var(--syn-num)" },
-  {
-    tag: [tags.function(tags.variableName), tags.function(tags.propertyName), tags.typeName, tags.className],
-    color: "var(--syn-fn)",
-  },
-  { tag: [tags.comment, tags.meta], color: "var(--faint)", fontStyle: "italic" },
+  { tag: [tags.function(tags.variableName), tags.function(tags.propertyName)], color: "var(--syn-fn)" },
+  { tag: [tags.typeName, tags.className], color: "var(--syn-type, var(--syn-fn))" },
+  { tag: [tags.comment, tags.meta], color: "var(--syn-comment, var(--faint))", fontStyle: "italic" },
+  { tag: [tags.operator, tags.compareOperator, tags.arithmeticOperator, tags.logicOperator, tags.bitwiseOperator, tags.updateOperator, tags.definitionOperator, tags.derefOperator, tags.controlOperator], color: "var(--syn-op, var(--text))" },
+  { tag: [tags.punctuation, tags.separator, tags.bracket, tags.angleBracket, tags.squareBracket, tags.paren, tags.brace], color: "var(--syn-punc, var(--text))" },
+  { tag: [tags.variableName, tags.propertyName, tags.definition(tags.variableName)], color: "var(--syn-var, var(--text))" },
   { tag: tags.heading, fontWeight: "bold" },
   { tag: tags.link, textDecoration: "underline" },
 ]);

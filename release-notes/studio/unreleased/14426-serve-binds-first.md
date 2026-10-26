@@ -1,2 +1,0 @@
-- 修复：`reasonix serve` 现在先绑定地址再打印启动信息；地址或端口无法使用时直接报错，不再先打印分享链接、令牌路径和非回环警告，显示的也是实际绑定的端口。修复 #14426。
-- Fixed: `reasonix serve` binds its address before printing anything, so a bad address or port fails with just the error and the share link names a port that is really listening. Fixes #14426.

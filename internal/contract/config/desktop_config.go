@@ -184,11 +184,12 @@ type AppearanceConfig struct {
 type WallpaperConfig struct {
 	File string `toml:"file"`
 	// A scene keeps the extracted backdrop in File and the soundtrack beside it.
-	Kind     string  `toml:"kind,omitempty"`
-	Title    string  `toml:"title,omitempty"`
-	Audio    string  `toml:"audio,omitempty"`
-	Parallax float64 `toml:"parallax,omitempty"`
-	Muted    bool    `toml:"muted,omitempty"`
+	Kind     string   `toml:"kind,omitempty"`
+	Title    string   `toml:"title,omitempty"`
+	Audio    string   `toml:"audio,omitempty"`
+	Audios   []string `toml:"audios,omitempty"`
+	Parallax float64  `toml:"parallax,omitempty"`
+	Muted    bool     `toml:"muted,omitempty"`
 	// 0..1; nil means the scene's default of 1.
 	Volume  *float64 `toml:"volume,omitempty"`
 	Opacity float64  `toml:"opacity"` // at rest, 0..1

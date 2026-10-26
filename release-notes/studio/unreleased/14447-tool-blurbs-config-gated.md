@@ -1,2 +1,0 @@
-- 修复：设置的「工具与权限」里，文件交付、脚本、顾问、多路并行和 MCP 资源读取这几个工具之前显示给模型看的英文原文，现在显示中文简介。关联 #14447。
-- Fixed: in Settings, Tools and permissions, the file-delivery, script, advisor, best-of-N and MCP resource tools showed model-facing English; they now have a blurb in your language. Refs #14447.

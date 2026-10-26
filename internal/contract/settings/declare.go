@@ -59,6 +59,7 @@ var table = []Entry{
 	{ID: "desktop.appearance.wallpaper.kind", Class: Preference, Effect: OnOpen},
 	{ID: "desktop.appearance.wallpaper.title", Class: Preference, Effect: OnOpen},
 	{ID: "desktop.appearance.wallpaper.audio", Class: Preference, Effect: OnOpen},
+	{ID: "desktop.appearance.wallpaper.audios", Class: Preference, Effect: OnOpen},
 	{ID: "desktop.appearance.wallpaper.parallax", Class: Preference, Effect: OnOpen},
 	{ID: "desktop.appearance.wallpaper.muted", Class: Preference, Effect: OnOpen},
 	{ID: "desktop.appearance.wallpaper.volume", Class: Preference, Effect: OnOpen},

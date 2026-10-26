@@ -1,2 +1,0 @@
-- 修复：放大设置窗口后，内容卡片居中在侧栏右侧的可用区域，左右留白相等，不再贴着侧栏、把窗口多出来的宽度全堆在右边。修复 #14418。
-- Fixed: in the enlarged settings window the content column is centred beside the navigation with equal room on both sides, not pushed against the nav. Fixes #14418.

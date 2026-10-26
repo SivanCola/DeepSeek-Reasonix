@@ -16,12 +16,16 @@ import (
 // sceneWallpaper is the part of a Wallpaper Engine scene the page can show
 // without its shader runtime: the backdrop, its soundtrack, and how far the
 // camera moves with the pointer.
+type sceneAudio struct {
+	Data []byte
+	MIME string
+}
+
 type sceneWallpaper struct {
 	Image     []byte
 	ImageMIME string
 	Title     string
-	Audio     []byte
-	AudioMIME string
+	Audios    []sceneAudio
 	Parallax  float64
 }
 
@@ -99,7 +103,7 @@ func importSceneWallpaper(project, pkg, preview []byte) (sceneWallpaper, error) 
 	if out.Image == nil {
 		return sceneWallpaper{}, errSceneNoImage
 	}
-	out.Audio, out.AudioMIME = sceneSound(files, scene)
+	out.Audios = sceneSounds(files, scene)
 	out.Parallax = 0.02
 	if scene.General.CameraParallax {
 		out.Parallax = scene.General.CameraParallaxAmount
@@ -172,30 +176,42 @@ func sceneTexture(files map[string][]byte, materialPath, texture string) ([]byte
 	return nil, false
 }
 
-func sceneSound(files map[string][]byte, scene sceneDocument) ([]byte, string) {
+const maxSceneAudioTracks = 8
+
+func sceneSounds(files map[string][]byte, scene sceneDocument) []sceneAudio {
+	seen := map[string]bool{}
+	out := make([]sceneAudio, 0, 2)
+	add := func(name string) {
+		name = cleanAssetPath(name)
+		if name == "" || seen[name] || len(out) >= maxSceneAudioTracks {
+			return
+		}
+		raw, ok := files[name]
+		mime := audioMIME(name)
+		if !ok || mime == "" || len(raw) == 0 {
+			return
+		}
+		seen[name] = true
+		out = append(out, sceneAudio{Data: raw, MIME: mime})
+	}
 	for _, object := range scene.Objects {
 		for _, sound := range object.Sound {
-			sound = cleanAssetPath(sound)
-			raw, ok := files[sound]
-			if !ok {
-				continue
-			}
-			if mime := audioMIME(sound); mime != "" {
-				return raw, mime
-			}
+			add(sound)
 		}
 	}
-	names := make([]string, 0, len(files))
-	for name := range files {
-		if audioMIME(name) != "" {
-			names = append(names, name)
+	if len(out) == 0 {
+		names := make([]string, 0, len(files))
+		for name := range files {
+			if audioMIME(name) != "" {
+				names = append(names, name)
+			}
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			add(name)
 		}
 	}
-	sort.Strings(names)
-	if len(names) == 0 {
-		return nil, ""
-	}
-	return files[names[0]], audioMIME(names[0])
+	return out
 }
 
 // parseWallpaperPackage reads Wallpaper Engine's PKG container. The table is
@@ -267,6 +283,9 @@ func imageFromTEX(raw []byte) ([]byte, string, error) {
 				return out, mime, nil
 			}
 		}
+	}
+	if out, mime, ok := dxtFromTEX(raw); ok {
+		return out, mime, nil
 	}
 	if start := bytes.Index(raw, jpegSignature); start >= 0 {
 		rest := raw[start:]

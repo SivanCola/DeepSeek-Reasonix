@@ -10,7 +10,6 @@ import (
 	"reasonix/internal/runtime/usecap"
 	"reasonix/internal/runtime/writeclaim"
 	"reasonix/internal/state/sessionstore"
-	"runtime/debug"
 	"strconv"
 	"strings"
 
@@ -535,31 +534,8 @@ func (t *TaskTool) settleSpecPrompts(ctx context.Context, spec *ProfileExecSpec)
 // RunProfileSpec executes a unified profile/task specification. Shared by task,
 // fleet items, and boot-wired skill runners so prompt, tools, claims, and
 // scheduling cannot drift across entry points.
-func (t *TaskTool) RunProfileSpec(ctx context.Context, spec ProfileExecSpec) (result string, err error) {
-	ctx, err = t.continuationScopeContext(ctx, spec)
-	if err != nil {
-		return "", err
-	}
-	if result, err, handled := t.dispatchProfile(ctx, spec); handled {
-		return result, err
-	}
-	// Per-child progress tracker: converts the child's reasoning/text/notice/
-	// retrying into reserved ToolProgress previews and guarantees exactly one
-	// terminal status (completed/cancelled/failed). The background job owns
-	// finish after handoff; every other exit finishes here, including
-	// validation errors and panics.
-	trk := newSubagentProgressTracker(ctx, subSink(ctx))
-	backgroundHandoff := false
-	defer func() {
-		if backgroundHandoff {
-			return
-		}
-		if p := recover(); p != nil {
-			trk.finish(nil, fmt.Errorf("panic: %v", p))
-			panic(p)
-		}
-		trk.finish(ctx.Err(), err)
-	}()
+func (t *TaskTool) runProfileSpec(ctx context.Context, spec ProfileExecSpec, exit *profileCompletion) (result string, err error) {
+	trk := exit.track
 	if err := t.settleSpecPrompts(ctx, &spec); err != nil {
 		return "", err
 	}
@@ -597,7 +573,7 @@ func (t *TaskTool) RunProfileSpec(ctx context.Context, spec ProfileExecSpec) (re
 		return "", err
 	}
 	// A handoff moves the ending to the job, which is where the child stops.
-	defer life.settleOnReturn(ctx, &backgroundHandoff, &result, &err)
+	exit.life = life
 	// Prove, admit, allocate: a foreground run holds its slot from here because
 	// the transcript below is the first thing it reserves, and a fan-out with
 	// sixty queued items must not hold sixty of them open.
@@ -622,17 +598,18 @@ func (t *TaskTool) RunProfileSpec(ctx context.Context, spec ProfileExecSpec) (re
 	if err != nil {
 		return "", err
 	}
+	exit.run = run
 
 	recoveryTaskID := subagentRecoveryTaskID(ctx, run.Ref)
 	backgroundWriter := (spec.Sched.RunInBackground || spec.Sched.BackgroundWriter) && !spec.Grant.ReadOnly
 	mutationObserver := t.childMutationObserver(recoveryTaskID, backgroundWriter)
 	runSession := func(runCtx context.Context, sink event.Sink, writerAlreadyRegistered bool) (string, error) {
 		if mutationObserver != nil && backgroundWriter && !writerAlreadyRegistered {
-			turn := mutationObserver.OwnershipTurn()
-			if err := mutationObserver.RegisterWriter(recoveryTaskID, "background_subagent", turn); err != nil {
+			releaseWriter, err := mutationObserver.RegisterWriterContext(runCtx, recoveryTaskID, "background_subagent", mutationObserver.OwnershipTurn())
+			if err != nil {
 				return "", err
 			}
-			defer mutationObserver.UnregisterWriter(recoveryTaskID)
+			defer releaseWriter()
 		}
 		if spec.Grant.ReadOnly {
 			return t.runReadOnlySubSession(withTaskContext(runCtx, spec.Context), spec.Task.Objective, subReg, sink, maxSteps, prov, pricing, ctxWin, run.Session, childDepth, recoveryTaskID, usageModelRef, mutationObserver, "read_only_"+spec.Worker.Kind, grant)
@@ -644,7 +621,6 @@ func (t *TaskTool) RunProfileSpec(ctx context.Context, spec ProfileExecSpec) (re
 	if spec.Sched.RunInBackground {
 		jm, ok := jobs.FromContext(ctx)
 		if !ok {
-			run.Release()
 			return "", fmt.Errorf("background execution is not available in this context")
 		}
 		// Legacy hard-cap remains only when no scheduler is attached. With a
@@ -656,7 +632,6 @@ func (t *TaskTool) RunProfileSpec(ctx context.Context, spec ProfileExecSpec) (re
 			var okReserve bool
 			releaseStart, running, okReserve = jm.ReserveStartForSession(jobs.SessionFromContext(ctx), "task", maxConcurrentBackgroundTasks)
 			if !okReserve {
-				run.Release()
 				return "", fmt.Errorf("%d background tasks are already running for this session (limit %d); collect their results with wait — or run this sub-task in the foreground — before starting more", running, maxConcurrentBackgroundTasks)
 			}
 			defer releaseStart()
@@ -664,65 +639,49 @@ func (t *TaskTool) RunProfileSpec(ctx context.Context, spec ProfileExecSpec) (re
 			releaseStart = func() {}
 		}
 		label := firstNonEmpty(spec.Task.Description, spec.Worker.Name, "task")
-		writerRegistered := false
+		var releaseWriter func()
 		if mutationObserver != nil && backgroundWriter {
 			turn := mutationObserver.OwnershipTurn()
-			if err := mutationObserver.RegisterWriter(recoveryTaskID, "background_subagent", turn); err != nil {
+			releaseWriter, err = mutationObserver.RegisterWriterContext(ctx, recoveryTaskID, "background_subagent", turn)
+			if err != nil {
 				releaseStart()
-				run.Release()
 				return "", err
 			}
-			writerRegistered = true
 		}
 		parentSession := agent.ParentSession(ctx)
 		backgroundEvidence := evidence.NewLedger()
 		slotReq := acquireReq
 		job := jm.StartForSession(jobs.SessionFromContext(ctx), "task", label, func(jobCtx context.Context, _ io.Writer) (result string, err error) {
-			if writerRegistered {
-				defer mutationObserver.UnregisterWriter(recoveryTaskID)
-			}
 			jobCtx = t.backgroundContext(jobCtx, ctx, parentSession)
 			jobCtx = evidence.WithLedger(jobCtx, backgroundEvidence)
-			defer run.Release()
 			defer func() { jobs.PublishEvidence(jobCtx, backgroundEvidence.Summary()) }()
-			defer func() {
-				if r := recover(); r != nil {
-					panicErr := fmt.Errorf("internal error: panic: %v\n%s", r, debug.Stack())
-					result = FormatSubagentRunResult("", run, true)
-					err = errors.Join(panicErr, t.transcripts.SaveFailed(run))
+			return t.runBackgroundProfile(jobCtx, run, life, trk, func() (string, error) {
+				// Queue for a concurrency/write slot here — not before Start —
+				// so the parent tool call returns a job id immediately.
+				releaseSlot, slotErr := t.acquireSlot(jobCtx, slotReq, spec.Sched)
+				if slotErr != nil {
+					// A refusal is orchestration, not execution: nothing ran under
+					// this run, so the store is owed no terminal for it.
+					return FormatSubagentRunResult("", run, true), slotErr
 				}
-				// The job owns the ending after the handoff, and settles the
-				// delegation where it can see the child stop.
-				life.settle(jobCtx, result, err)
-				// The job owns the terminal status: the parent tool call has
-				// already returned its job id by now.
-				trk.finish(jobCtx.Err(), err)
-			}()
-			// Queue for a concurrency/write slot here — not before Start —
-			// so the parent tool call returns a job id immediately.
-			releaseSlot, slotErr := t.acquireSlot(jobCtx, slotReq, spec.Sched)
-			if slotErr != nil {
-				// A refusal is orchestration, not execution: nothing ran under
-				// this run, so the store is owed no terminal for it.
-				return FormatSubagentRunResult("", run, true), slotErr
-			}
-			defer releaseSlot()
-			if err := t.beginExecution(jobCtx, life, spec.Context.Ephemeral, trk, run); err != nil {
-				return FormatSubagentRunResult("", run, true), err
-			}
-			answer, err := runSession(jobCtx, trk.wrap(), writerRegistered)
-			if err != nil {
-				return FormatSubagentRunResult("", run, true), errors.Join(err, t.saveRunTerminal(run, err))
-			}
-			if err := t.transcripts.SaveCompleted(run); err != nil {
-				return FormatSubagentRunResult("", run, true), errors.Join(err, t.transcripts.SaveFailed(run))
-			}
-			return FormatSubagentRunResult(answer, run, false), nil
-		})
+				defer releaseSlot()
+				if err := t.beginExecution(jobCtx, life, spec.Context.Ephemeral, trk, run); err != nil {
+					return FormatSubagentRunResult("", run, true), err
+				}
+				answer, err := runSession(jobCtx, trk.wrap(), releaseWriter != nil)
+				if err != nil {
+					return FormatSubagentRunResult("", run, true), errors.Join(err, t.saveRunTerminal(run, err))
+				}
+				if err := t.transcripts.SaveCompleted(run); err != nil {
+					return FormatSubagentRunResult("", run, true), errors.Join(err, t.transcripts.SaveFailed(run))
+				}
+				return FormatSubagentRunResult(answer, run, false), nil
+			})
+		}, t.uninvokedTaskFinalizer(ctx, run, life, trk), jobCleanup(run.Release), jobCleanup(releaseWriter))
 		releaseStart()
 		// Hand the tracker to the job goroutine: the outer defer must not
 		// finish (and close) it while the job still runs.
-		backgroundHandoff = true
+		exit.handedOff = true
 		queuedNote := ""
 		if t.scheduler != nil {
 			queuedNote = " It may wait in the session queue until a concurrency/write slot is free."
@@ -734,7 +693,6 @@ func (t *TaskTool) RunProfileSpec(ctx context.Context, spec ProfileExecSpec) (re
 	}
 
 	// Foreground: the slot has been held since before the transcript existed.
-	defer run.Release()
 	if err := t.beginExecution(ctx, life, spec.Context.Ephemeral, trk, run); err != nil {
 		return "", err
 	}

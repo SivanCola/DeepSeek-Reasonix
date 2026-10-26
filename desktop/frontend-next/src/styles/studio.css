@@ -2185,8 +2185,9 @@ button, input, select, textarea { font-size: calc(13.3333px * var(--fs-scale, 1)
   padding-top: 4px;
   border-top: 1px solid var(--hair);
 }
-.studio-user-foot .acctrow { width: 30px; min-width: 30px; height: 30px; margin: 0; padding: 0; overflow: hidden; }
+.studio-user-foot .acctrow { position: relative; top: -1px; width: 30px; min-width: 30px; height: 30px; margin: 0; padding: 0; border: 0; overflow: hidden; }
 .studio-user-foot .ini { width: 30px; height: 30px; border-radius: 9px; }
+.studio-user-foot .ini:not([data-off]) > span { text-box: trim-both cap alphabetic; transform: translateY(1px); }
 .studio-workspace-kind { color: var(--faint); font: 500 calc(11px * var(--fs-scale, 1))/1.5 var(--ui); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .turntools > .attach { order: 1 !important; }

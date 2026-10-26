@@ -75,20 +75,38 @@ type wallpaperView struct {
 	URL string `json:"url"`
 	// Kind is "image", "video" or "scene"; the kernel decides it from the
 	// stored type so the page never infers a renderer from a name.
-	Kind     string  `json:"kind"`
-	Title    string  `json:"title,omitempty"`
-	Audio    string  `json:"audio,omitempty"`
-	Parallax float64 `json:"parallax,omitempty"`
-	Muted    bool    `json:"muted,omitempty"`
-	Volume   float64 `json:"volume"`
-	Opacity  float64 `json:"opacity"`
-	Dim      float64 `json:"dim"`
-	FocusX   float64 `json:"focusX"`
-	FocusY   float64 `json:"focusY"`
+	Kind     string   `json:"kind"`
+	Title    string   `json:"title,omitempty"`
+	Audio    string   `json:"audio,omitempty"`
+	Audios   []string `json:"audios,omitempty"`
+	Parallax float64  `json:"parallax,omitempty"`
+	Muted    bool     `json:"muted,omitempty"`
+	Volume   float64  `json:"volume"`
+	Opacity  float64  `json:"opacity"`
+	Dim      float64  `json:"dim"`
+	FocusX   float64  `json:"focusX"`
+	FocusY   float64  `json:"focusY"`
 }
 
 func appearanceDir() string {
 	return filepath.Join(config.MemoryUserDir(), "appearance")
+}
+
+func wallpaperAudioNames(w config.WallpaperConfig) []string {
+	names := make([]string, 0, len(w.Audios)+1)
+	seen := map[string]bool{}
+	add := func(name string) {
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	add(w.Audio)
+	for _, name := range w.Audios {
+		add(name)
+	}
+	return names
 }
 
 func wallpaperVolume(w config.WallpaperConfig) float64 {
@@ -126,8 +144,11 @@ func viewOf(a config.AppearanceConfig, language, width string) appearanceView {
 			FocusX:   a.Wallpaper.FocusX,
 			FocusY:   a.Wallpaper.FocusY,
 		}
-		if a.Wallpaper.Audio != "" {
-			out.Wallpaper.Audio = "/appearance/wallpaper/" + a.Wallpaper.Audio
+		for _, name := range wallpaperAudioNames(a.Wallpaper) {
+			out.Wallpaper.Audios = append(out.Wallpaper.Audios, "/appearance/wallpaper/"+name)
+		}
+		if len(out.Wallpaper.Audios) > 0 {
+			out.Wallpaper.Audio = out.Wallpaper.Audios[0]
 		}
 	}
 	return out
@@ -216,11 +237,12 @@ func (s *Server) uploadWallpaper(w http.ResponseWriter, r *http.Request) {
 	}
 	edit := config.LoadForEdit(config.UserConfigPath())
 	paper := &edit.Desktop.Appearance.Wallpaper
-	prev, prevAudio := paper.File, paper.Audio
+	prev, prevAudios := paper.File, wallpaperAudioNames(*paper)
 	paper.File = name
 	paper.Kind = ""
 	paper.Title = ""
 	paper.Audio = ""
+	paper.Audios = nil
 	paper.Parallax = 0
 	paper.Muted = false
 	paper.Volume = nil
@@ -239,15 +261,16 @@ func (s *Server) uploadWallpaper(w http.ResponseWriter, r *http.Request) {
 	if prev != "" && prev != name {
 		_ = os.Remove(filepath.Join(appearanceDir(), prev))
 	}
-	if prevAudio != "" {
-		_ = os.Remove(filepath.Join(appearanceDir(), prevAudio))
+	for _, old := range prevAudios {
+		_ = os.Remove(filepath.Join(appearanceDir(), old))
 	}
 	writeJSON(w, viewOf(edit.Desktop.Appearance, edit.DesktopLanguage(), edit.DesktopConversationWidth()))
 }
 
 func (s *Server) clearWallpaper(w http.ResponseWriter, r *http.Request) {
 	edit := config.LoadForEdit(config.UserConfigPath())
-	prev, prevAudio := edit.Desktop.Appearance.Wallpaper.File, edit.Desktop.Appearance.Wallpaper.Audio
+	paper := edit.Desktop.Appearance.Wallpaper
+	prev, prevAudios := paper.File, wallpaperAudioNames(paper)
 	edit.Desktop.Appearance.Wallpaper = config.WallpaperConfig{}
 	if err := edit.SaveTo(config.UserConfigPath()); err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
@@ -256,8 +279,8 @@ func (s *Server) clearWallpaper(w http.ResponseWriter, r *http.Request) {
 	if prev != "" {
 		_ = os.Remove(filepath.Join(appearanceDir(), prev))
 	}
-	if prevAudio != "" {
-		_ = os.Remove(filepath.Join(appearanceDir(), prevAudio))
+	for _, old := range prevAudios {
+		_ = os.Remove(filepath.Join(appearanceDir(), old))
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -273,7 +296,13 @@ func (s *Server) wallpaperAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	paper := cfg.Desktop.Appearance.Wallpaper
-	if paper.File != name && paper.Audio != name {
+	allowed := paper.File == name
+	for _, audio := range wallpaperAudioNames(paper) {
+		if audio == name {
+			allowed = true
+		}
+	}
+	if !allowed {
 		notFound(w, "wallpaper", name)
 		return
 	}

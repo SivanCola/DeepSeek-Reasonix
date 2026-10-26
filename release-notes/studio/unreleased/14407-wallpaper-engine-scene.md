@@ -1,2 +1,0 @@
-- 新增：设置 → 外观 → 壁纸支持导入 Wallpaper Engine 的 Scene 文件夹，提取主图与音轨，并提供音量、静音与鼠标视差。关联 #14407。
-- Added: Wallpaper settings can import a Wallpaper Engine scene folder, extract its backdrop and soundtrack, and control volume, mute and pointer parallax. Refs #14407.

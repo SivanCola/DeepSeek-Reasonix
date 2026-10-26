@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"reasonix/internal/contract/config"
 )
@@ -70,23 +71,32 @@ func (s *Server) uploadWallpaperScene(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnprocessableEntity, err)
 		return
 	}
-	audioName := ""
-	if len(got.Audio) > 0 {
-		audioName, err = writeAudio(got.AudioMIME, got.Audio)
+	audioNames := make([]string, 0, len(got.Audios))
+	for _, audio := range got.Audios {
+		name, err := writeAudio(audio.MIME, audio.Data)
 		if err != nil {
 			_ = os.Remove(filepath.Join(appearanceDir(), imageName))
+			for _, written := range audioNames {
+				_ = os.Remove(filepath.Join(appearanceDir(), written))
+			}
 			writeErr(w, http.StatusUnprocessableEntity, err)
 			return
 		}
+		audioNames = append(audioNames, name)
 	}
 
 	edit := config.LoadForEdit(config.UserConfigPath())
 	paper := &edit.Desktop.Appearance.Wallpaper
-	prev, prevAudio := paper.File, paper.Audio
+	prev := paper.File
+	prevAudios := wallpaperAudioNames(*paper)
 	paper.File = imageName
 	paper.Kind = "scene"
 	paper.Title = got.Title
-	paper.Audio = audioName
+	paper.Audio = ""
+	paper.Audios = audioNames
+	if len(audioNames) > 0 {
+		paper.Audio = audioNames[0]
+	}
 	paper.Parallax = got.Parallax
 	paper.Muted = true
 	if paper.Volume == nil {
@@ -101,8 +111,8 @@ func (s *Server) uploadWallpaperScene(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := edit.SaveTo(config.UserConfigPath()); err != nil {
 		_ = os.Remove(filepath.Join(appearanceDir(), imageName))
-		if audioName != "" {
-			_ = os.Remove(filepath.Join(appearanceDir(), audioName))
+		for _, written := range audioNames {
+			_ = os.Remove(filepath.Join(appearanceDir(), written))
 		}
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -110,8 +120,10 @@ func (s *Server) uploadWallpaperScene(w http.ResponseWriter, r *http.Request) {
 	if prev != "" && prev != imageName {
 		_ = os.Remove(filepath.Join(appearanceDir(), prev))
 	}
-	if prevAudio != "" && prevAudio != audioName {
-		_ = os.Remove(filepath.Join(appearanceDir(), prevAudio))
+	for _, old := range prevAudios {
+		if !slices.Contains(audioNames, old) {
+			_ = os.Remove(filepath.Join(appearanceDir(), old))
+		}
 	}
 	writeJSON(w, viewOf(edit.Desktop.Appearance, edit.DesktopLanguage(), edit.DesktopConversationWidth()))
 }

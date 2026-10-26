@@ -1,0 +1,2 @@
+- 修复：子任务 provider 回调 panic 后，前台图和 transcript 会一致记录失败；旧式 nil panic 不再让后台子任务误报成功。关联 #14025。
+- Fixed: delegated provider panics now settle foreground graph and transcript as failed, and legacy nil panics cannot publish successful background work. Refs #14025.

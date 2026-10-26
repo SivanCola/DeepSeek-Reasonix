@@ -1,2 +1,0 @@
-- Fixed: refused writes release provisional paths while preserving earlier writes, concurrent calls and live user waits; cleanup does not retake paths yielded to a user. Refs #14025, #14133.
-- 修复：被拒绝的写入会释放临时路径，保留此前写入、并行调用和有效的用户等待；清理不会重新占住为等待用户而让出的路径。关联 #14025、#14133。

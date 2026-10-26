@@ -64,9 +64,9 @@ preserved, this permit is released, and the call stops before user code.
 
 Old undo is not restored after another action may have invalidated it.
 
-The legacy background `RegisterWriter` path still uses context-free admission
-under its registry mutex. Its cancellation, per-registration identity and
-publication lifetime require a separate lifecycle change.
+Background task/fleet callers use identified, cancellable registration outside
+the registry mutex; see [background writer admission](CHECKPOINT_WRITER_ADMISSION_SECURITY.md).
+The legacy context-free method remains available to existing callers.
 
 An asynchronous hook
 can outlive its synchronous callback; this slice does not register or reconcile

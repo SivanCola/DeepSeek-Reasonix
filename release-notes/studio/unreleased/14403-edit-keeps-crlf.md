@@ -1,2 +1,0 @@
-- 修复：在 CRLF 文件里，编辑的原文原样匹配时，替换文本里的换行不再以单独的 LF 写入、造成混合换行；每处替换跟随它所在那一行的换行。修复 #14403。
-- Fixed: in a CRLF file, a literal edit no longer writes the replacement's line breaks as bare LF and mixes endings; each replacement follows its own line's ending. Fixes #14403.

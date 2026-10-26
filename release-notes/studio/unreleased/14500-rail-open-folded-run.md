@@ -1,2 +1,0 @@
-- 新增：历史对话鱼眼里合并成一条的多轮对话，点一下会展开成具体每一条，再选要跳的那条。关联 #14396。
-- Added: a folded run on the conversation rail opens into its own questions on a click, so you pick the one you meant. Refs #14396.

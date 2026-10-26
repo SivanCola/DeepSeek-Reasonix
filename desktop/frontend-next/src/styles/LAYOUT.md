@@ -292,6 +292,17 @@ and selected states, while long titles truncate within the remaining width.
   the global icon navigation is not visible. It follows the window's existing
   navigation visibility state, including collapsed-only mode and narrow-window
   folds, so both columns never offer the same footer actions together.
+- The footer avatar box sits 1px above the row center. The signed-in initial
+  compensates for that box offset to keep its cap/alphabetic-trimmed position
+  unchanged. Latin and CJK initials retain their original size and weight.
+- The guard `perf/account-alignment.mjs` holds the `top: -1px` and inner
+  `translateY(1px)` pair together: those offsets cancel for the initial, while
+  `text-box: trim-both cap alphabetic` trims its surrounding font leading.
+- Text-box trimming requires Chromium 133+; the shipped Electron is newer.
+  The guard compares Latin and Han ink against the workspace label within
+  1 CSS px in both themes at 100% and 125% device scale.
+- The compact account button has no row divider; the footer owns the divider
+  above all three controls.
 - The docked workbench uses the divider's remembered width. Pointer dragging and
   keyboard resizing share that width; there is no intermediate width preset.
 - Full-workbench view preserves the divider width and keeps the conversation and

@@ -258,7 +258,7 @@ it("supports reader keyboard invocation, navigation and dismissal without submit
   select(read, "restart");
   expect(fireEvent.keyDown(read, { key: "F10", shiftKey: true })).toBe(false);
   const copy = await screen.findByRole("menuitem", { name: "复制" });
-  expect(document.activeElement).toBe(copy);
+  await waitFor(() => expect(document.activeElement).toBe(copy));
   await user.keyboard("{End}");
   expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "加入对话" }));
   await user.keyboard("{Escape}");

@@ -1,2 +1,0 @@
-- 新增：会话折叠设置新增独立的思考开头预览开关：收起时在标题下方单行显示，支持流式输出；折叠预设保留开关选择，旧预览选择自动迁移。关联 #14139。
-- Added: an independent collapsed-thinking preview switch: one line below the header, including while streaming. Presets preserve it; existing preview choices migrate automatically. Refs #14139.

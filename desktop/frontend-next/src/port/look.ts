@@ -97,6 +97,7 @@ export interface Wallpaper {
   // A Wallpaper Engine scene's title and soundtrack, when it has one.
   title?: string;
   audio?: string;
+  audios?: string[];
   parallax?: number;
   muted?: boolean;
   volume?: number;

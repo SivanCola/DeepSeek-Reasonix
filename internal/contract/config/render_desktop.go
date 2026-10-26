@@ -144,7 +144,17 @@ func renderAppearanceSection(b *strings.Builder, a AppearanceConfig) {
 		fmt.Fprintf(b, "title = %q\n", a.Wallpaper.Title)
 	}
 	if a.Wallpaper.Audio != "" {
-		fmt.Fprintf(b, "audio = %q   # a name inside the appearance directory\n", a.Wallpaper.Audio)
+		fmt.Fprintf(b, "audio = %q   # legacy first soundtrack inside the appearance directory\n", a.Wallpaper.Audio)
+	}
+	if len(a.Wallpaper.Audios) > 0 {
+		b.WriteString("audios = [")
+		for i, name := range a.Wallpaper.Audios {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			fmt.Fprintf(b, "%q", name)
+		}
+		b.WriteString("]   # soundtracks inside the appearance directory\n")
 	}
 	if a.Wallpaper.Parallax != 0 {
 		fmt.Fprintf(b, "parallax = %g   # pointer parallax for a scene, 0..0.2\n", a.Wallpaper.Parallax)

@@ -1,2 +1,0 @@
-- 修复：没有添加任何文件夹时新建会话不再提示「请先添加一个文件夹」，而是在应用自己的内置工作区里打开，不用先选项目就能开始对话。关联 #14363。
-- Fixed: starting a session with no folder added no longer says to add a folder first; it opens in the app's own workspace, so you can talk without picking a project. Refs #14363.

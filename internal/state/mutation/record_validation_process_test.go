@@ -7,12 +7,20 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 )
 
 func TestUnsupportedRecordSurvivesOwnerProcessDeath(t *testing.T) {
+	for _, shape := range []string{"extension", "version_duplicate", "version_case"} {
+		t.Run(shape, func(t *testing.T) { unsupportedRecordOwnerDeath(t, shape) })
+	}
+}
+
+func unsupportedRecordOwnerDeath(t *testing.T, shape string) {
+	t.Helper()
 	root, state := t.TempDir(), t.TempDir()
 	c := testCoordinator(t, root, state)
 	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestMutationProcessHelper$")
@@ -29,7 +37,7 @@ func TestUnsupportedRecordSurvivesOwnerProcessDeath(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	stop := sync.OnceFunc(func() { _ = cmd.Process.Kill(); _ = in.Close(); _ = cmd.Wait() })
+	stop := sync.OnceFunc(func() { _ = cmd.Process.Kill(); _ = cmd.Wait(); _ = in.Close() })
 	t.Cleanup(stop)
 	ready := make(chan string, 1)
 	go func() { line, _ := bufio.NewReader(out).ReadString('\n'); ready <- line }()
@@ -53,10 +61,22 @@ func TestUnsupportedRecordSurvivesOwnerProcessDeath(t *testing.T) {
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		t.Fatal(err)
 	}
-	fields["future_resources"] = json.RawMessage(`["retain"]`)
-	raw, err = json.Marshal(fields)
-	if err != nil {
-		t.Fatal(err)
+	if shape == "extension" {
+		fields["future_resources"] = json.RawMessage(`["retain"]`)
+		raw, err = json.Marshal(fields)
+		if err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		member := `"version":1`
+		if shape == "version_case" {
+			member = `"Version":1`
+		}
+		original := string(raw)
+		raw = []byte(strings.Replace(original, `"version":1`, `"version":99,`+member, 1))
+		if string(raw) == original {
+			t.Fatal("fixture did not change child version")
+		}
 	}
 	if err := os.WriteFile(paths[0], raw, 0600); err != nil {
 		t.Fatal(err)

@@ -12,7 +12,7 @@ interface Props {
  *  level appears while the pointer or keyboard focus is on it. */
 export function WallpaperVolume({ look, onLook }: Props) {
   const paper = look.wallpaper;
-  if (!paper || paper.kind !== "scene" || !paper.audio) return null;
+  if (!paper || paper.kind !== "scene" || !hasAudio(paper)) return null;
   const volume = clamp(paper.volume ?? 1);
   const silent = paper.muted || volume <= 0;
   const update = (patch: Partial<Wallpaper>) => onLook({ ...look, wallpaper: { ...paper, ...patch } });
@@ -67,6 +67,10 @@ export function WallpaperVolume({ look, onLook }: Props) {
     </div>,
     document.body,
   );
+}
+
+function hasAudio(paper: Wallpaper): boolean {
+  return Boolean(paper.audios?.length || paper.audio);
 }
 
 function clamp(value: number): number {

@@ -69,14 +69,17 @@ Older programs can still ignore these fields. This reader cannot retroactively
 fence them or establish complete cross-version coordination. Deleting an
 unfamiliar record is not a recovery instruction.
 
-Go JSON's existing field-name matching and duplicate-key rules remain unchanged.
-This is not a new canonical JSON protocol.
+Exact field names and duplicate-member rejection are documented in
+[record member validation](MUTATION_RECORD_MEMBERS_SECURITY.md). Legal spacing,
+member order and unique escaped names remain supported; this is not a
+canonical-byte JSON protocol.
 
 即使未知字段看似仅用于展示，本版也保守拒绝，等待明确的兼容性决策，不通过删字段
 继续执行。旧进程仍可能忽略这些字段，本次不能单方面约束它们。
 
-应由能够理解记录的兼容实现处理，不建议手动删记录绕过。字段名匹配和重复键仍遵循
-Go 既有解码规则，本次没有建立新的规范 JSON 格式。
+应由能够理解记录的兼容实现处理，不建议手动删记录绕过。精确字段名和重复字段拒绝
+另见[字段校验说明](MUTATION_RECORD_MEMBERS_SECURITY.md)；合法空白、换序及唯一转义
+名称仍受支持，不要求规范字节格式。
 
 ## Evidence / 验证
 
