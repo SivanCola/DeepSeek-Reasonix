@@ -168,9 +168,17 @@ export interface TeamSecretRequest {
   at?: number;
 }
 
+// A value the person deleted or replaced: it reaches no command, and is kept
+// only so the copies already in conversations stay masked.
+export interface TeamRetiredSecret {
+  name: string;
+  at?: number;
+}
+
 export interface TeamSecrets {
   secrets: TeamSecret[];
   requests: TeamSecretRequest[];
+  retired: TeamRetiredSecret[];
 }
 
 // What the window sends to save a secret.
@@ -248,6 +256,7 @@ export interface TeamPort {
   saveSecret(s: SecretSave): Promise<void>;
   cancelSecret(name: string, agent: string): Promise<void>;
   deleteSecret(name: string): Promise<void>;
+  forgetRetiredSecrets(): Promise<void>;
   schedules(): Promise<TeamSchedule[]>;
   saveSchedule(s: TeamSchedule): Promise<TeamSchedule>;
   deleteSchedule(id: string): Promise<void>;
@@ -323,6 +332,7 @@ export class SseTeam implements TeamPort {
   saveSecret(s: SecretSave) { return this.call<void>("POST", "/team/secrets", s); }
   cancelSecret(name: string, agent: string) { return this.call<void>("POST", `/team/secrets/${encodeURIComponent(name)}/cancel`, { agent }); }
   deleteSecret(name: string) { return this.call<void>("DELETE", `/team/secrets/${encodeURIComponent(name)}`); }
+  forgetRetiredSecrets() { return this.call<void>("DELETE", "/team/secrets-retired"); }
   schedules() { return this.call<TeamSchedule[]>("GET", "/team/schedules"); }
   saveSchedule(s: TeamSchedule) {
     return s.id ? this.call<TeamSchedule>("PATCH", `/team/schedules/${encodeURIComponent(s.id)}`, s) : this.call<TeamSchedule>("POST", "/team/schedules", s);

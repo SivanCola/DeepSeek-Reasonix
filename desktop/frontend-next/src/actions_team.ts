@@ -85,5 +85,7 @@ export const TEAM_ACTIONS: UIAction[] = [
   { id: "team.secret-scope", kind: "view", target: "none", proof: "interaction" },
   { id: "team.secret-delete-ask", kind: "view", target: "entity", proof: "interaction" },
   { id: "team.secret-delete", kind: "destructive", target: "entity", proof: "interaction" },
+  { id: "team.secret-forget-ask", kind: "view", target: "none", proof: "interaction" },
+  { id: "team.secret-forget", kind: "destructive", target: "none", proof: "interaction" },
   { id: "team.mention-open", kind: "kernel-mutation", target: "entity", proof: "interaction" },
 ];

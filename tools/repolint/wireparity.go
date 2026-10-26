@@ -144,6 +144,7 @@ var mirroredWireTypes = []wireMirror{
 	{"internal/frontend/serve/team_secret_routes.go", "secretView", tsTeamFile, "TeamSecret"},
 	{"internal/frontend/serve/team_secret_routes.go", "secretRequestView", tsTeamFile, "TeamSecretRequest"},
 	{"internal/frontend/serve/team_secret_routes.go", "secretsView", tsTeamFile, "TeamSecrets"},
+	{"internal/frontend/serve/team_secret_routes.go", "retiredView", tsTeamFile, "TeamRetiredSecret"},
 	{"internal/frontend/serve/team_memory_routes.go", "sharedMemoryView", tsTeamFile, "SharedMemory"},
 	{"internal/frontend/serve/history_page.go", "historyPageResponse", tsSessionFile, "HistoryPage"},
 	{"internal/frontend/serve/history_page.go", "historyPageToolContext", tsSessionFile, "HistoryToolContext"},

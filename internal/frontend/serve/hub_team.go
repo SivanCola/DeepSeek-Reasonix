@@ -84,9 +84,7 @@ func newHubTeam(h *Hub, opts TeamHostOptions) *hubTeam {
 	t := &hubTeam{h: h, opts: opts, store: teamroster.Store{Dir: opts.Dir}, stop: make(chan struct{}), done: make(chan struct{}),
 		seats: map[team.SeatRef]string{}, holds: map[string]*teamHold{}}
 	t.reviews = newTeamReviews(t)
-	if err := team.RegisterSecrets(t.store); err != nil {
-		slog.Warn("serve: read the team's secrets", "err", err)
-	}
+	team.WatchSecrets(t.store)
 	if err := t.claim(); err != nil && !errors.Is(err, teamroster.ErrReadOnly) {
 		slog.Warn("serve: open the team", "err", err)
 	}

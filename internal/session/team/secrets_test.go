@@ -3,11 +3,13 @@ package team
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
 
 	"reasonix/internal/base/secrets"
+	"reasonix/internal/state/teamroster"
 )
 
 func TestAnAgentAsksForASecretInItsOwnConversationOnly(t *testing.T) {
@@ -32,6 +34,7 @@ func TestAnAgentAsksForASecretInItsOwnConversationOnly(t *testing.T) {
 // never what it is, and only the agents it was given to see it in a shell.
 func TestASavedSecretReachesOnlyTheAgentsItWasGivenTo(t *testing.T) {
 	h := newHarness(t, "Chief", "Ada", "Ben")
+	WatchSecrets(h.store)
 	ctx := context.Background()
 	if _, err := h.svc.RequestSecret(ctx, Caller{Agent: h.id("Ada")}, "SHOP_KEY", "the shop"); err != nil {
 		t.Fatal(err)
@@ -39,12 +42,11 @@ func TestASavedSecretReachesOnlyTheAgentsItWasGivenTo(t *testing.T) {
 	if err := h.svc.UserSaveSecret(ctx, "SHOP_KEY", "sk-shop-0123456789", "the shop", []string{h.id("Ada")}, h.id("Ada")); err != nil {
 		t.Fatal(err)
 	}
-	defer secrets.UnregisterValue("sk-shop-0123456789")
 	book, _ := h.store.Secrets()
 	if len(book.Requests) != 0 || len(book.Secrets) != 1 {
 		t.Fatalf("book = %+v", book)
 	}
-	if got := secrets.MaskRegistered("key sk-shop-0123456789"); got != "key [secret:SHOP_KEY]" {
+	if got := secrets.Masker().String("key sk-shop-0123456789"); got != "key [secret:SHOP_KEY]" {
 		t.Fatalf("the saved value is not masked: %q", got)
 	}
 	told := h.panes.pane(SeatRef{Agent: h.id("Ada")}).deliveries()
@@ -57,15 +59,94 @@ func TestASavedSecretReachesOnlyTheAgentsItWasGivenTo(t *testing.T) {
 	if env := h.svc.SecretEnv(h.id("Ben")); len(env) != 0 {
 		t.Fatalf("Ben, who was not given it, has %v", env)
 	}
+}
 
-	if err := h.svc.UserDeleteSecret(ctx, "SHOP_KEY"); err != nil {
+// Deleting a secret stops it reaching commands; the copies already in
+// conversations stay masked until the person forgets the retired value, and
+// a value replaced under the same name is retired the same way.
+func TestADeletedOrReplacedValueIsRetiredNotUnmasked(t *testing.T) {
+	h := newHarness(t, "Chief", "Ada")
+	WatchSecrets(h.store)
+	ctx := context.Background()
+	if err := h.svc.UserSaveSecret(ctx, "ROTATED", "sk-rotate-old-0001", "", nil, ""); err != nil {
 		t.Fatal(err)
 	}
-	if got := secrets.MaskRegistered("sk-shop-0123456789"); got != "sk-shop-0123456789" {
-		t.Fatalf("a deleted secret is still masked: %q", got)
+	if err := h.svc.UserSaveSecret(ctx, "ROTATED", "sk-rotate-new-0002", "", nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.svc.UserDeleteSecret(ctx, "ROTATED"); err != nil {
+		t.Fatal(err)
 	}
 	if env := h.svc.SecretEnv(h.id("Ada")); len(env) != 0 {
 		t.Fatalf("after delete Ada has %v", env)
+	}
+	if got := secrets.Masker().String("sk-rotate-old-0001 sk-rotate-new-0002"); got != "[secret:ROTATED] [secret:ROTATED]" {
+		t.Fatalf("a retired value was unmasked: %q", got)
+	}
+	book, _ := h.store.Secrets()
+	if len(book.Retired) != 2 {
+		t.Fatalf("retired = %+v", book.Retired)
+	}
+	if err := h.svc.UserForgetRetired(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if book, _ := h.store.Secrets(); len(book.Retired) != 0 {
+		t.Fatalf("after forgetting, retired = %+v", book.Retired)
+	}
+}
+
+// Saving closes every request for the name, and every asker hears whether it
+// was given the secret: none is left waiting on a card that already closed.
+func TestEveryAgentThatAskedHearsTheAnswer(t *testing.T) {
+	h := newHarness(t, "Chief", "Ada", "Ben")
+	ctx := context.Background()
+	for _, who := range []string{"Ada", "Ben"} {
+		if _, err := h.svc.RequestSecret(ctx, Caller{Agent: h.id(who)}, "SHOP_KEY", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.svc.UserSaveSecret(ctx, "SHOP_KEY", "sk-asked-0123456789", "", []string{h.id("Ada")}, h.id("Ada")); err != nil {
+		t.Fatal(err)
+	}
+	ada := h.panes.pane(SeatRef{Agent: h.id("Ada")}).deliveries()
+	ben := h.panes.pane(SeatRef{Agent: h.id("Ben")}).deliveries()
+	if len(ada) != 1 || !strings.Contains(ada[0].Text, `status="saved"`) {
+		t.Fatalf("Ada was told %+v", ada)
+	}
+	if len(ben) != 1 || !strings.Contains(ben[0].Text, `status="withheld"`) || strings.Contains(ben[0].Text, "sk-asked") {
+		t.Fatalf("Ben was told %+v", ben)
+	}
+}
+
+func TestAnEmptyListOfAgentsIsRefusedNotReadAsEveryone(t *testing.T) {
+	h := newHarness(t, "Chief")
+	err := h.svc.UserSaveSecret(context.Background(), "NOBODY", "sk-nobody-0123456789", "", []string{}, "")
+	var fe *teamroster.FieldError
+	if !errors.As(err, &fe) || fe.Field != "agents" || !errors.Is(err, teamroster.ErrEmpty) {
+		t.Fatalf("empty agents = %v", err)
+	}
+}
+
+// What an agent writes on its request is bounded where it is written, so the
+// card that carries it back can always be saved; and the open requests are
+// bounded too.
+func TestARequestIsBoundedWhereItIsMade(t *testing.T) {
+	h := newHarness(t, "Chief", "Ada")
+	ctx := context.Background()
+	if _, err := h.svc.RequestSecret(ctx, Caller{Agent: h.id("Ada")}, "LONG", strings.Repeat("why ", 400)); err != nil {
+		t.Fatal(err)
+	}
+	for i := range teamroster.MaxSecretRequests + 5 {
+		if _, err := h.svc.RequestSecret(ctx, Caller{Agent: h.id("Ada")}, fmt.Sprintf("K%d", i), ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	book, _ := h.store.Secrets()
+	if len(book.Requests) != teamroster.MaxSecretRequests || book.Requests[len(book.Requests)-1].Name != fmt.Sprintf("K%d", teamroster.MaxSecretRequests+4) {
+		t.Fatalf("%d requests, last %+v", len(book.Requests), book.Requests[len(book.Requests)-1])
+	}
+	if err := h.svc.UserSaveSecret(ctx, "LONG", "sk-long-0123456789", strings.Repeat("why ", 400), nil, ""); err == nil {
+		t.Fatal("an unbounded purpose was saved")
 	}
 }
 
@@ -85,17 +166,18 @@ func TestADeclinedRequestTellsTheAgent(t *testing.T) {
 	}
 }
 
-func TestStoredSecretsAreMaskedFromTheStart(t *testing.T) {
+// A value another process saved is masked here on the next snapshot: masking
+// reads the store, it does not wait to be told.
+func TestAValueSavedPastThisServiceIsMaskedAtOnce(t *testing.T) {
 	h := newHarness(t, "Chief")
-	if err := h.svc.UserSaveSecret(context.Background(), "TOKEN", "tok-9876543210", "", nil, ""); err != nil {
+	WatchSecrets(h.store)
+	if err := h.store.EditSecrets(context.Background(), func(b *teamroster.SecretBook) error {
+		b.Secrets = append(b.Secrets, teamroster.Secret{Name: "ELSEWHERE", Value: "tok-elsewhere-9876543210"})
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
-	secrets.UnregisterValue("tok-9876543210")
-	defer secrets.UnregisterValue("tok-9876543210")
-	if err := RegisterSecrets(h.store); err != nil {
-		t.Fatal(err)
-	}
-	if got := secrets.MaskRegistered("tok-9876543210"); got != "[secret:TOKEN]" {
-		t.Fatalf("a stored secret was not registered: %q", got)
+	if got := secrets.Masker().String("tok-elsewhere-9876543210"); got != "[secret:ELSEWHERE]" {
+		t.Fatalf("a stored secret was not masked: %q", got)
 	}
 }

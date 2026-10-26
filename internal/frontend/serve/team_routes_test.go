@@ -361,8 +361,7 @@ func TestScheduledTasksAreKeptFromTheWindow(t *testing.T) {
 func TestSecretsAreAnsweredFromTheWindowAndNeverReadBack(t *testing.T) {
 	h, ids := teamHub(t, "Chief", "Ada")
 	c := newTeamClient(t, h)
-	const value = "sk-shop-0123456789"
-	defer secrets.UnregisterValue(value)
+	const value = "sk-routes-0123456789"
 	if !slices.Contains(secrets.HostSecretPaths(), h.team.store.SecretPath()) {
 		t.Fatal("the secrets file is not a host secret path")
 	}
@@ -381,8 +380,22 @@ func TestSecretsAreAnsweredFromTheWindowAndNeverReadBack(t *testing.T) {
 		t.Fatalf("after saving: %s", out)
 	}
 	c.refused("POST", "/team/secrets", map[string]any{"name": "PIN", "value": "12"}, 400, "team.invalid")
+	c.refused("POST", "/team/secrets", map[string]any{"name": "NOBODY", "value": "sk-nobody-0123456789", "agents": []string{}}, 400, "team.invalid")
 	if status, _ := c.do("DELETE", "/team/secrets/SHOP_KEY", nil); status != http.StatusNoContent {
 		t.Fatalf("delete = %d", status)
 	}
 	c.refused("DELETE", "/team/secrets/SHOP_KEY", nil, 404, "team.unknown_secret")
+	_, out = c.do("GET", "/team/secrets", nil)
+	if strings.Contains(string(out), value) || !strings.Contains(string(out), `"retired":[{"name":"SHOP_KEY"`) {
+		t.Fatalf("after deleting: %s", out)
+	}
+	if got := secrets.Masker().String(value); got != "[secret:SHOP_KEY]" {
+		t.Fatalf("a deleted value was unmasked: %q", got)
+	}
+	if status, _ := c.do("DELETE", "/team/secrets-retired", nil); status != http.StatusNoContent {
+		t.Fatalf("forget = %d", status)
+	}
+	if _, out = c.do("GET", "/team/secrets", nil); !strings.Contains(string(out), `"retired":[]`) {
+		t.Fatalf("after forgetting: %s", out)
+	}
 }

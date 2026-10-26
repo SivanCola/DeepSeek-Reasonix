@@ -21,7 +21,7 @@ export class MockTeam implements TeamPort {
 
   private prefs: TeamPrefs = { memoryReview: true };
   private tasks: TeamSchedule[] = [];
-  private vault: TeamSecrets = { secrets: [], requests: [] };
+  private vault: TeamSecrets = { secrets: [], requests: [], retired: [] };
 
   async secrets(): Promise<TeamSecrets> {
     return structuredClone(this.vault);
@@ -29,6 +29,7 @@ export class MockTeam implements TeamPort {
 
   async saveSecret(s: SecretSave) {
     this.record("saveSecret", s);
+    if (this.vault.secrets.some((x) => x.name === s.name)) this.vault.retired.push({ name: s.name });
     this.vault.secrets = [...this.vault.secrets.filter((x) => x.name !== s.name), { name: s.name, purpose: s.purpose, agents: s.agents, requestedBy: s.requester }];
     this.vault.requests = this.vault.requests.filter((q) => q.name !== s.name);
     this.bump();
@@ -42,7 +43,14 @@ export class MockTeam implements TeamPort {
 
   async deleteSecret(name: string) {
     this.record("deleteSecret", name);
+    this.vault.retired.push({ name });
     this.vault.secrets = this.vault.secrets.filter((x) => x.name !== name);
+    this.bump();
+  }
+
+  async forgetRetiredSecrets() {
+    this.record("forgetRetiredSecrets");
+    this.vault.retired = [];
     this.bump();
   }
 

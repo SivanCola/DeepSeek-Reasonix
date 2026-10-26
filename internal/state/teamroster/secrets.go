@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -24,6 +25,7 @@ const (
 	MinSecretBytes        = 4
 	MaxSecretBytes        = 16 << 10
 	MaxSecretPurposeRunes = 200
+	MaxSecretRequests     = 32
 	maxSecretNameRunes    = 40
 )
 
@@ -49,10 +51,27 @@ type SecretRequest struct {
 	At      time.Time `json:"at,omitzero"`
 }
 
+// RetiredSecret is a value the user deleted or replaced. It reaches no command,
+// and is kept only so the copies already in conversations stay masked.
+type RetiredSecret struct {
+	Name  string    `json:"name"`
+	Value string    `json:"value"`
+	At    time.Time `json:"at,omitzero"`
+}
+
 // SecretBook is the file's whole content.
 type SecretBook struct {
 	Secrets  []Secret        `json:"secrets"`
 	Requests []SecretRequest `json:"requests"`
+	Retired  []RetiredSecret `json:"retired,omitempty"`
+}
+
+// Retire keeps a value that no longer reaches commands, once per name.
+func (b *SecretBook) Retire(name, value string, at time.Time) {
+	if value == "" || slices.ContainsFunc(b.Retired, func(r RetiredSecret) bool { return r.Name == name && r.Value == value }) {
+		return
+	}
+	b.Retired = append(b.Retired, RetiredSecret{Name: name, Value: value, At: at})
 }
 
 // NormalizeSecretName turns what an agent or the user called a secret into the

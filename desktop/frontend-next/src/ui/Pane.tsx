@@ -75,6 +75,7 @@ import { RootMissingBanner } from "./RootMissingBanner";
 import { useConversationFiles } from "./useConversationFiles";
 import { NewAnswerAnchor } from "./NewAnswerLine";
 import { AgentHero } from "./team/AgentHero";
+import { SeatAgent } from "./team/seat";
 import { useFrozenNewAnswerAnchor } from "./newAnswerMark";
 import { onNewAnswerMarkerChange, sessionKey, showsNewAnswerMarker, useUnreadSince } from "../state/newAnswers";
 
@@ -504,6 +505,7 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFoc
       <PaneShown.Provider value={shown}>
       <LiveWork.Provider value={live}>
       <NewAnswerAnchor.Provider value={marker ? newAnswerAt : null}>
+      <SeatAgent.Provider value={rt.team && !rt.team.group ? rt.team.agent : ""}>
       <Transcript port={port} historyPaging={historyPaging}
         scope={rt.sessionPath}
         onSettings={onSettings}
@@ -540,6 +542,7 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFoc
         onOpenProject={onOpenProject}
         onKeepHere={onKeepHere}
       />
+      </SeatAgent.Provider>
       </NewAnswerAnchor.Provider>
       </LiveWork.Provider>
       </PaneShown.Provider>

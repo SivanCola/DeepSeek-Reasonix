@@ -2,11 +2,13 @@ package team
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 
 	"reasonix/internal/base/secrets"
+	"reasonix/internal/base/textutil"
 	"reasonix/internal/contract/hostframe"
 	"reasonix/internal/state/teamroster"
 )
@@ -28,7 +30,7 @@ func (s *Service) RequestSecret(ctx context.Context, c Caller, name, purpose str
 	if n == "" {
 		return "", &teamroster.FieldError{Field: "name", Err: teamroster.ErrInvalid}
 	}
-	purpose = strings.TrimSpace(purpose)
+	purpose = textutil.ClipGraphemes(strings.TrimSpace(purpose), teamroster.MaxSecretPurposeRunes, "…")
 	held := false
 	err := s.store.EditSecrets(ctx, func(b *teamroster.SecretBook) error {
 		if i := slices.IndexFunc(b.Secrets, func(sc teamroster.Secret) bool { return sc.Name == n }); i >= 0 && allowed(b.Secrets[i], c.Agent) {
@@ -37,6 +39,9 @@ func (s *Service) RequestSecret(ctx context.Context, c Caller, name, purpose str
 		}
 		b.Requests = slices.DeleteFunc(b.Requests, func(q teamroster.SecretRequest) bool { return q.Name == n && q.Agent == c.Agent })
 		b.Requests = append(b.Requests, teamroster.SecretRequest{Name: n, Purpose: purpose, Agent: c.Agent, At: s.now()})
+		if over := len(b.Requests) - teamroster.MaxSecretRequests; over > 0 {
+			b.Requests = slices.Delete(b.Requests, 0, over)
+		}
 		return nil
 	})
 	if err != nil {
@@ -50,52 +55,68 @@ func (s *Service) RequestSecret(ctx context.Context, c Caller, name, purpose str
 }
 
 func allowed(sc teamroster.Secret, agent string) bool {
-	return len(sc.Agents) == 0 || slices.Contains(sc.Agents, agent)
+	return sc.Agents == nil || slices.Contains(sc.Agents, agent)
 }
 
 // UserSaveSecret keeps a value the user typed, for the agents named (nil is
-// every agent), closes the request for it, and tells the asking agent how to
-// use it — never what it is.
+// every agent; an empty list names nobody and is refused). It closes every
+// open request for the name and tells each asker whether it was given the
+// secret and how to use it — never what it is. A replaced value is retired.
 func (s *Service) UserSaveSecret(ctx context.Context, name, value, purpose string, agents []string, requester string) error {
 	defer s.changed()
 	n := teamroster.NormalizeSecretName(name)
 	if n == "" {
 		return &teamroster.FieldError{Field: "name", Err: teamroster.ErrInvalid}
 	}
+	if agents != nil && len(agents) == 0 {
+		return &teamroster.FieldError{Field: "agents", Err: teamroster.ErrEmpty}
+	}
 	r, err := s.store.Load()
 	if err != nil {
 		return err
 	}
-	for _, a := range agents {
-		if _, ok := r.Agent(a); !ok {
+	for _, a := range append(slices.Clone(agents), requester) {
+		if _, ok := r.Agent(a); a != "" && !ok {
 			return teamroster.ErrUnknownAgent
 		}
 	}
-	var old string
+	saved := teamroster.Secret{Name: n, Value: value, Purpose: strings.TrimSpace(purpose), Agents: agents, RequestedBy: requester}
+	var askers []string
+	if requester != "" {
+		askers = append(askers, requester)
+	}
 	err = s.store.EditSecrets(ctx, func(b *teamroster.SecretBook) error {
 		now := s.now()
-		sc := teamroster.Secret{Name: n, Value: value, Purpose: strings.TrimSpace(purpose), Agents: agents, RequestedBy: requester, CreatedAt: now, UpdatedAt: now}
+		saved.CreatedAt, saved.UpdatedAt = now, now
 		if i := slices.IndexFunc(b.Secrets, func(x teamroster.Secret) bool { return x.Name == n }); i >= 0 {
-			old, sc.CreatedAt = b.Secrets[i].Value, b.Secrets[i].CreatedAt
-			b.Secrets[i] = sc
+			if old := b.Secrets[i]; old.Value != value {
+				b.Retire(n, old.Value, now)
+			}
+			saved.CreatedAt = b.Secrets[i].CreatedAt
+			b.Secrets[i] = saved
 		} else {
-			b.Secrets = append(b.Secrets, sc)
+			b.Secrets = append(b.Secrets, saved)
 		}
-		b.Requests = slices.DeleteFunc(b.Requests, func(q teamroster.SecretRequest) bool { return q.Name == n })
+		b.Requests = slices.DeleteFunc(b.Requests, func(q teamroster.SecretRequest) bool {
+			if q.Name == n && !slices.Contains(askers, q.Agent) {
+				askers = append(askers, q.Agent)
+			}
+			return q.Name == n
+		})
 		return nil
 	})
 	if err != nil {
 		return err
 	}
-	if old != "" && old != value {
-		secrets.UnregisterValue(old)
+	var errs []error
+	for _, a := range askers {
+		if !allowed(saved, a) {
+			errs = append(errs, s.tellSecret(ctx, a, n, "withheld", fmt.Sprintf("The user saved %s, but did not give it to you: your commands do not receive it. Say what you cannot do without it.", n)))
+			continue
+		}
+		errs = append(errs, s.tellSecret(ctx, a, n, "saved", fmt.Sprintf("The user saved %s for you. Shell commands read it as $%s%s. You cannot see its value; never print it, write it to a file, or send it anywhere it was not meant for.", n, SecretEnvPrefix, n)))
 	}
-	secrets.RegisterValue(n, value)
-	scope := "every agent on the team"
-	if len(agents) > 0 {
-		scope = "the agents the user chose"
-	}
-	return s.tellSecret(ctx, requester, n, "saved", fmt.Sprintf("The user saved %s for %s. Shell commands read it as $%s%s. You cannot see its value; never print it, write it to a file, or send it anywhere it was not meant for.", n, scope, SecretEnvPrefix, n))
+	return errors.Join(errs...)
 }
 
 // UserCancelSecret closes a request the user declined, and tells its agent.
@@ -111,23 +132,29 @@ func (s *Service) UserCancelSecret(ctx context.Context, name, agent string) erro
 	return s.tellSecret(ctx, agent, n, "declined", fmt.Sprintf("The user declined to give %s. Do not ask for it again unless they bring it up; say what you cannot do without it.", n))
 }
 
-// UserDeleteSecret removes a secret; commands no longer receive it.
+// UserDeleteSecret stops a secret reaching commands. Its value is retired, so
+// the copies already in conversations stay masked.
 func (s *Service) UserDeleteSecret(ctx context.Context, name string) error {
 	defer s.changed()
-	var gone string
-	err := s.store.EditSecrets(ctx, func(b *teamroster.SecretBook) error {
+	return s.store.EditSecrets(ctx, func(b *teamroster.SecretBook) error {
 		i := slices.IndexFunc(b.Secrets, func(x teamroster.Secret) bool { return x.Name == name })
 		if i < 0 {
 			return teamroster.ErrUnknownSecret
 		}
-		gone = b.Secrets[i].Value
+		b.Retire(name, b.Secrets[i].Value, s.now())
 		b.Secrets = slices.Delete(b.Secrets, i, i+1)
 		return nil
 	})
-	if err == nil {
-		secrets.UnregisterValue(gone)
-	}
-	return err
+}
+
+// UserForgetRetired drops every retired value from the file. This process
+// keeps masking what it already read until it exits.
+func (s *Service) UserForgetRetired(ctx context.Context) error {
+	defer s.changed()
+	return s.store.EditSecrets(ctx, func(b *teamroster.SecretBook) error {
+		b.Retired = nil
+		return nil
+	})
 }
 
 // SecretEnv is what an agent's shell commands receive: one variable per secret
@@ -147,19 +174,25 @@ func (s *Service) SecretEnv(agent string) []string {
 	return out
 }
 
-// RegisterSecrets marks every value stored for the team for masking, and the
-// file they live in as a secret path. A host calls it at start, before any
-// session is built, whether or not it holds the team's writer lease.
-func RegisterSecrets(store teamroster.Store) error {
+// WatchSecrets makes the team's secret file a secret path and the source of
+// what this process masks: every value stored or retired there, read again on
+// each snapshot, so a value another process saved is masked here too.
+func WatchSecrets(store teamroster.Store) {
 	secrets.RegisterHostSecretPath(store.SecretPath())
-	book, err := store.Secrets()
-	if err != nil {
-		return err
-	}
-	for _, sc := range book.Secrets {
-		secrets.RegisterValue(sc.Name, sc.Value)
-	}
-	return nil
+	secrets.WatchValues(store.SecretPath(), func() []secrets.Labeled {
+		book, err := store.Secrets()
+		if err != nil {
+			return nil
+		}
+		out := make([]secrets.Labeled, 0, len(book.Secrets)+len(book.Retired))
+		for _, sc := range book.Secrets {
+			out = append(out, secrets.Labeled{Label: sc.Name, Value: sc.Value})
+		}
+		for _, r := range book.Retired {
+			out = append(out, secrets.Labeled{Label: r.Name, Value: r.Value})
+		}
+		return out
+	})
 }
 
 func (s *Service) tellSecret(ctx context.Context, agent, name, status, note string) error {

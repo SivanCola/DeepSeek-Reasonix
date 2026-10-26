@@ -117,6 +117,7 @@ func (c *client) sendOpts() provider.SendOptions {
 }
 
 func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
+	req = provider.MaskOutbound(req)
 	requestCtx := provider.WithRequestAttemptCounter(ctx)
 	var uploaded []string
 	req.Messages, uploaded = c.resolveVideos(requestCtx, req.Messages)

@@ -43,6 +43,7 @@ func (h *Hub) registerTeamRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /team/secrets", t.writing(t.saveSecret))
 	mux.HandleFunc("POST /team/secrets/{name}/cancel", t.writing(t.cancelSecret))
 	mux.HandleFunc("DELETE /team/secrets/{name}", t.writing(t.deleteSecret))
+	mux.HandleFunc("DELETE /team/secrets-retired", t.writing(t.forgetRetired))
 	mux.HandleFunc("GET /team/schedules", t.schedules)
 	mux.HandleFunc("POST /team/schedules", t.writing(t.saveSchedule))
 	mux.HandleFunc("PATCH /team/schedules/{id}", t.writing(t.saveSchedule))

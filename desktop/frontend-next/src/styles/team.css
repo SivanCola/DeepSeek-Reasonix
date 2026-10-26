@@ -322,6 +322,10 @@
 .team-shared-text span { overflow: hidden; color: var(--muted); font-size: var(--fs-meta); text-overflow: ellipsis; white-space: nowrap; }
 .team-shared button { padding: 2px 8px; border: 1px solid var(--hair); border-radius: var(--r-pill); background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-meta); cursor: pointer; }
 .team-shared button[data-action="team.forget-shared"] { border-color: var(--err); color: var(--err-ink); }
+.team-secret-retired { display: flex; align-items: center; gap: 12px; padding: 6px 8px; }
+.team-secret-retired .team-note { flex: 1; }
+.team-secret-retired button { padding: 2px 8px; border: 1px solid var(--hair); border-radius: var(--r-pill); background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-meta); cursor: pointer; }
+.team-secret-retired button[data-action="team.secret-forget"] { border-color: var(--err); color: var(--err-ink); }
 .team-dialog-section h3 { margin: 0 0 6px; color: var(--muted); font-size: var(--fs-meta); font-weight: var(--w-semi); }
 .team-schedules li .sw { flex: none; }
 .team-weekdays { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; padding: 0; border: 0; min-inline-size: 0; }

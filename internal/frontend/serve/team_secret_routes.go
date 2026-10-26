@@ -24,9 +24,16 @@ type secretRequestView struct {
 	At      int64  `json:"at,omitempty"`
 }
 
+// retiredView names a value that reaches no command and stays masked.
+type retiredView struct {
+	Name string `json:"name"`
+	At   int64  `json:"at,omitempty"`
+}
+
 type secretsView struct {
 	Secrets  []secretView        `json:"secrets"`
 	Requests []secretRequestView `json:"requests"`
+	Retired  []retiredView       `json:"retired"`
 }
 
 // The largest body a secret's save carries: the value and a little around it.
@@ -38,12 +45,15 @@ func (t *hubTeam) secrets(w http.ResponseWriter, _ *http.Request) {
 		teamError(w, err)
 		return
 	}
-	out := secretsView{Secrets: []secretView{}, Requests: []secretRequestView{}}
+	out := secretsView{Secrets: []secretView{}, Requests: []secretRequestView{}, Retired: []retiredView{}}
 	for _, sc := range book.Secrets {
 		out.Secrets = append(out.Secrets, secretView{Name: sc.Name, Purpose: sc.Purpose, Agents: sc.Agents, RequestedBy: sc.RequestedBy, UpdatedAt: sc.UpdatedAt.UnixMilli()})
 	}
 	for _, q := range book.Requests {
 		out.Requests = append(out.Requests, secretRequestView{Name: q.Name, Purpose: q.Purpose, Agent: q.Agent, At: q.At.UnixMilli()})
+	}
+	for _, r := range book.Retired {
+		out.Retired = append(out.Retired, retiredView{Name: r.Name, At: r.At.UnixMilli()})
 	}
 	writeJSON(w, out)
 }
@@ -77,6 +87,14 @@ func (t *hubTeam) cancelSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := t.service().UserCancelSecret(r.Context(), r.PathValue("name"), in.Agent); err != nil {
+		teamError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (t *hubTeam) forgetRetired(w http.ResponseWriter, r *http.Request) {
+	if err := t.service().UserForgetRetired(r.Context()); err != nil {
 		teamError(w, err)
 		return
 	}
