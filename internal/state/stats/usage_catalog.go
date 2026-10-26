@@ -157,7 +157,7 @@ func usageEntry(day string, r record) usagecatalog.Entry {
 	if r.Turn {
 		turns = 1
 	}
-	return usagecatalog.Entry{Day: day, Source: r.Source, ModelRef: r.ModelRef, Provider: providerOf(r.ModelRef),
+	return usagecatalog.Entry{Day: day, Source: r.Source, Agent: r.Agent, ModelRef: r.ModelRef, Provider: providerOf(r.ModelRef),
 		Prompt: r.Prompt, Completion: r.Completion, Reasoning: r.Reasoning, CacheHit: r.CacheHit,
 		CacheMiss: r.CacheMiss, Total: r.Total, Requests: r.Requests, Turns: turns}.WithCost(usagecatalog.Priced{
 		Amount: r.CostAmount, Currency: r.CostCurrency, CNY: r.ValuationCNY, USD: r.ValuationUSD, Estimated: r.CostEstimated,

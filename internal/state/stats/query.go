@@ -93,6 +93,7 @@ type RangeStats struct {
 	Hourly    []HourlyTokens  `json:"hourly,omitempty"`
 	Models    []ModelUsage    `json:"models"`
 	Providers []ProviderUsage `json:"providers"`
+	Agents    []AgentUsage    `json:"agents"`
 }
 
 // SourceFilter selects which source labels to aggregate; "" or "all" includes
@@ -128,8 +129,11 @@ func (w *Writer) Query(f SourceFilter) (RangeStats, error) {
 			if catalog.Ready(context.Background(), w.dir, days) {
 				rows, err := catalog.Query(context.Background(), f.From.Format(dayLayout), f.To.Format(dayLayout), f.Source,
 					usagecatalog.CostView(f.Currency))
-				if err == nil {
-					return rangeStatsFromRollups(f, days, rows), nil
+				agents, agentErr := catalog.QueryAgents(context.Background(), f.From.Format(dayLayout), f.To.Format(dayLayout), f.Source)
+				if err == nil && agentErr == nil {
+					out := rangeStatsFromRollups(f, days, rows)
+					out.Agents = agentsFromRollups(agents, out.Tokens)
+					return out, nil
 				}
 			}
 			catalog.RequestReconcileDir(w.dir)
@@ -146,6 +150,7 @@ func emptyRange(f SourceFilter) RangeStats {
 		Daily:     []DailyTokens{},
 		Models:    []ModelUsage{},
 		Providers: []ProviderUsage{},
+		Agents:    []AgentUsage{},
 	}
 }
 
@@ -166,6 +171,7 @@ func aggregateDays(recordsByDay map[string][]record, days []string, f SourceFilt
 	view := usagecatalog.CostView(f.Currency)
 	modelTotals := map[string]int64{}
 	providerTotals := map[string]int64{}
+	agents := agentTally{}
 	totalCost := newCostBooks()
 	active := map[string]bool{} // day -> active
 	for _, day := range days {
@@ -207,6 +213,7 @@ func aggregateDays(recordsByDay map[string][]record, days []string, f SourceFilt
 				out.Requests += requests
 				dayRequests += requests
 			}
+			agents.add(rec, requests)
 			if rec.Total > 0 {
 				model := rec.ModelRef
 				if model == "" {
@@ -249,6 +256,7 @@ func aggregateDays(recordsByDay map[string][]record, days []string, f SourceFilt
 	out.Cost, out.EstimateCost = moneySorted(totalCost.billed), moneySorted(totalCost.estimate)
 	out.Models = modelsSorted(modelTotals)
 	out.Providers = providersSorted(providerTotals)
+	out.Agents = agents.sorted(out.Tokens)
 	if len(out.Models) > 0 {
 		out.TopModel = out.Models[0].Model
 	}
@@ -333,7 +341,7 @@ func hourlyBuckets(day string, recs []record, f SourceFilter) []HourlyTokens {
 }
 
 func rangeStatsFromRollups(f SourceFilter, days []string, rows []usagecatalog.Rollup) RangeStats {
-	out := RangeStats{From: f.From.Format(dayLayout), To: f.To.Format(dayLayout), Daily: []DailyTokens{}, Models: []ModelUsage{}, Providers: []ProviderUsage{}}
+	out := RangeStats{From: f.From.Format(dayLayout), To: f.To.Format(dayLayout), Daily: []DailyTokens{}, Models: []ModelUsage{}, Providers: []ProviderUsage{}, Agents: []AgentUsage{}}
 	byDay := map[string][]usagecatalog.Rollup{}
 	for _, row := range rows {
 		byDay[row.Day] = append(byDay[row.Day], row)

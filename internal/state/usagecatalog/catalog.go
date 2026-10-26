@@ -25,7 +25,7 @@ import (
 
 // SchemaVersion names the projection file, so a bump retires the old one
 // rather than migrating it: every column here is replayable from the JSONL.
-const SchemaVersion = 7
+const SchemaVersion = 8
 
 type AppendReceipt struct {
 	Path     string
@@ -38,6 +38,7 @@ type AppendReceipt struct {
 type Entry struct {
 	Day        string
 	Source     string
+	Agent      string // the team agent whose seat made the call; empty off the team
 	ModelRef   string
 	Provider   string
 	Prompt     int
@@ -178,9 +179,10 @@ CREATE TABLE usage_records(
  cache_miss INTEGER NOT NULL,total INTEGER NOT NULL,requests INTEGER NOT NULL,turns INTEGER NOT NULL,
  cost INTEGER NOT NULL DEFAULT 0,cost_currency TEXT NOT NULL DEFAULT '',cost_estimated INTEGER NOT NULL DEFAULT 0,
  cost_incomplete INTEGER NOT NULL DEFAULT 0,
- valuation_cny INTEGER,valuation_usd INTEGER,billing_mode TEXT NOT NULL DEFAULT '',
+ valuation_cny INTEGER,valuation_usd INTEGER,billing_mode TEXT NOT NULL DEFAULT '',agent TEXT NOT NULL DEFAULT '',
  PRIMARY KEY(file_path,byte_offset)
 );
+CREATE INDEX idx_usage_records_agent ON usage_records(day,agent) WHERE agent<>'';
 CREATE TABLE usage_rollups(
  day TEXT NOT NULL,source TEXT NOT NULL,model_ref TEXT NOT NULL,provider TEXT NOT NULL,
  prompt INTEGER NOT NULL,completion INTEGER NOT NULL,reasoning INTEGER NOT NULL,cache_hit INTEGER NOT NULL,
@@ -393,10 +395,11 @@ func insertRecord(ctx context.Context, tx *sql.Tx, receipt AppendReceipt, entry 
 	}
 	_, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO usage_records(file_path,byte_offset,byte_length,line_hash,day,source,
         model_ref,provider,prompt,completion,reasoning,cache_hit,cache_miss,total,requests,turns,cost,cost_currency,cost_estimated,
-        cost_incomplete,valuation_cny,valuation_usd,billing_mode) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        cost_incomplete,valuation_cny,valuation_usd,billing_mode,agent) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		receipt.Path, receipt.Offset, receipt.Length, receipt.LineHash, entry.Day, entry.Source, entry.ModelRef, entry.Provider,
 		entry.Prompt, entry.Completion, entry.Reasoning, entry.CacheHit, entry.CacheMiss, entry.Total, entry.Requests, entry.Turns,
-		entry.Cost, entry.CostCurrency, estimated, incomplete, valuationArg(entry, "CNY"), valuationArg(entry, "USD"), entry.BillingMode)
+		entry.Cost, entry.CostCurrency, estimated, incomplete, valuationArg(entry, "CNY"), valuationArg(entry, "USD"), entry.BillingMode,
+		entry.Agent)
 	return err
 }
 
@@ -467,6 +470,7 @@ type rawRecord struct {
 	Timestamp  time.Time `json:"ts"`
 	ModelRef   string    `json:"model"`
 	Source     string    `json:"source"`
+	Agent      string    `json:"agent"`
 	Prompt     int       `json:"prompt"`
 	Completion int       `json:"completion"`
 	Reasoning  int       `json:"reasoning"`
@@ -498,7 +502,7 @@ func entryFromRaw(day string, raw rawRecord) Entry {
 		turns = 1
 	}
 	incomplete := CostIncomplete(raw.CostComplete, raw.Total, raw.CostAmount)
-	return Entry{Day: day, Source: raw.Source, ModelRef: raw.ModelRef, Provider: providerOf(raw.ModelRef), Prompt: raw.Prompt,
+	return Entry{Day: day, Source: raw.Source, Agent: raw.Agent, ModelRef: raw.ModelRef, Provider: providerOf(raw.ModelRef), Prompt: raw.Prompt,
 		Completion: raw.Completion, Reasoning: raw.Reasoning, CacheHit: raw.CacheHit, CacheMiss: raw.CacheMiss,
 		Total: raw.Total, Requests: raw.Requests, Turns: turns}.WithCost(Priced{Amount: raw.CostAmount,
 		Currency: raw.CostCurrency, CNY: raw.ValuationCNY, USD: raw.ValuationUSD, Estimated: raw.CostEstimated,

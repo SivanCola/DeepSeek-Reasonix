@@ -19,8 +19,9 @@ const reviewMaxTokens = 2048
 
 // memoryReviewer asks the title model, the cheap one a host keeps for short
 // chores, with thinking off; nil when none is configured, and no review runs.
-// Its spend is recorded as memory-review usage beside the title's.
-func memoryReviewer() team.Reviewer {
+// Its spend is recorded as memory-review usage of agent, the one reviewed (none
+// for a group's log).
+func memoryReviewer(agent string) team.Reviewer {
 	cfg, err := config.Load()
 	if err != nil {
 		return nil
@@ -41,7 +42,7 @@ func memoryReviewer() team.Reviewer {
 		slog.Warn("serve: the memory review model could not start", "err", err)
 		return nil
 	}
-	sink := stats.NewRecorder(event.Discard, config.StatsDir(), "serve")
+	sink := stats.NewRecorder(event.Discard, config.StatsDir(), "serve").ForAgent(agent)
 	quote := boot.QuoteContextFor(cfg)
 	modelRef := entry.Name + "/" + entry.Model
 	return func(ctx context.Context, system, prompt string) (string, error) {

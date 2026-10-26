@@ -68,6 +68,8 @@ Studio keeps a team of long-lived agents beside the user's projects.
 | Memory review | After a turn the user spoke in, the title model reviews it and saves or forgets facts. It runs 2 s after the turn, and the team settings turn it off. |
 | Schedules | A prompt for an agent or a group: once, daily, weekly, or every 10 minutes to 7 days. A slot missed by more than 2 minutes is skipped, not made up. |
 | Who fires them | The Studio host that holds the team's writer lease, on its tick. A fired run is gated at the agent's own approval mode. |
+| Browser | Each agent's browser runs on its own profile (`agent-<id>`), in every seat, so one agent's logins are never another's. |
+| Usage | Every call from an agent's seat, its memory review included, is recorded under the agent; the usage page lists spend by agent, and the agent's drawer sums its conversations. |
 
 ## 7. Secrets
 
@@ -98,4 +100,3 @@ default, and a secret already saved under the name keeps the agents it had.
 | Short values | Values under 8 bytes are masked only between non-word characters, and a value split across two progress chunks is not recognised in the window. |
 | Memory review | Runs on the title model, which reads up to 3000 characters of each of the user's lines in the turn. |
 | Terminal | `/team` lists the team and `/msg` queues a message, delivered when a Studio host holding the team ticks. ACP seats no session on the team. |
-| Browser, usage | Per-agent browser profiles and usage by agent are not built. |

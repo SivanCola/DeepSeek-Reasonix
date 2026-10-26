@@ -136,7 +136,7 @@ func (r *teamReviews) review(seat team.SeatRef) {
 	}
 	ask := r.ask
 	if ask == nil {
-		if ask = memoryReviewer(); ask == nil {
+		if ask = memoryReviewer(seat.Agent); ask == nil {
 			return
 		}
 	}
