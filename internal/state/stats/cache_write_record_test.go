@@ -54,8 +54,8 @@ func quoteForUsage(t *testing.T, usage *provider.Usage) *pricing.CostQuote {
 		ModelRef:    anthropicModelRef,
 		UsageSource: "executor",
 	})
-	if !quote.CostComplete {
-		t.Fatalf("fixture quote is incomplete: %+v", quote)
+	if quote.CostComplete == usage.Estimated {
+		t.Fatalf("fixture quote completeness disagrees with usage provenance: %+v", quote)
 	}
 	return &quote
 }
@@ -191,6 +191,27 @@ func TestCacheSplitProvenanceIsRecorded(t *testing.T) {
 	}
 	reportedLine := recordUsageLine(t, reported, quoteForUsage(t, reported))
 	imputedLine := recordUsageLine(t, imputed, quoteForUsage(t, imputed))
+	for _, check := range []struct {
+		line      string
+		estimated bool
+	}{{reportedLine, false}, {imputedLine, true}} {
+		row := rowMap(t, check.line)
+		if row["cost_complete"] != !check.estimated || row["display_complete"] != !check.estimated {
+			t.Fatalf("row completeness lost provenance: %s", check.line)
+		}
+		if check.estimated {
+			if row["incomplete_reason"] != "missing_price_or_usage" || row["display_status"] != pricing.DisplayStatusUnavailable {
+				t.Fatalf("estimated row certified for display: %s", check.line)
+			}
+			for _, key := range []string{"selected_amount", "selected_currency", "selected_cost"} {
+				if _, ok := row[key]; ok {
+					t.Fatalf("estimated row retained selected alias %s: %s", key, check.line)
+				}
+			}
+		} else if row["selected_amount"] != "0.0153" || row["selected_currency"] != "USD" || row["display_status"] != pricing.DisplayStatusMatched {
+			t.Fatalf("reported row lost display selection: %s", check.line)
+		}
+	}
 
 	if !reflect.DeepEqual(rowSansProvenance(t, reportedLine), rowSansProvenance(t, imputedLine)) {
 		t.Fatalf("fixture rows differ beyond provenance\nreported: %s\nimputed:  %s", reportedLine, imputedLine)
@@ -223,13 +244,14 @@ func TestCacheSplitProvenanceIsRecorded(t *testing.T) {
 	}
 }
 
-// rowSansProvenance drops the fields that only describe when a row was written
-// and how its split was learned, so the numbers and money can be compared.
+// rowSansProvenance compares original amounts and tokens independently of the
+// separately asserted provenance and selected-display facts.
 func rowSansProvenance(t *testing.T, line string) map[string]any {
 	t.Helper()
 	row := rowMap(t, line)
-	delete(row, "ts")
-	delete(row, "estimated")
+	for _, key := range []string{"ts", "estimated", "cost_complete", "display_complete", "display_status", "incomplete_reason", "selected_amount", "selected_currency", "selected_cost"} {
+		delete(row, key)
+	}
 	return row
 }
 

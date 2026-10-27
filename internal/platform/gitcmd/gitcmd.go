@@ -188,7 +188,7 @@ func Detached(cmd *exec.Cmd) (cleanup func(), err error) {
 	}
 	env = slices.DeleteFunc(slices.Clone(env), func(kv string) bool {
 		name, _, _ := strings.Cut(strings.ToUpper(kv), "=")
-		return name == "GIT_DIR" || name == "GIT_WORK_TREE" || name == "GIT_COMMON_DIR" || name == "GIT_CEILING_DIRECTORIES"
+		return storageOverride(name) || name == "GIT_DIR" || name == "GIT_WORK_TREE" || name == "GIT_COMMON_DIR" || name == "GIT_CEILING_DIRECTORIES"
 	})
 	cmd.Dir = dir
 	cmd.Env = append(env, "GIT_CEILING_DIRECTORIES="+filepath.Dir(dir))
@@ -230,7 +230,7 @@ func Env() []string {
 		case "GIT_LITERAL_PATHSPECS", "GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS":
 			return true
 		}
-		return false
+		return storageOverride(strings.ToUpper(key))
 	})
 	return append(env,
 		// Read-only probes must not take the index lock.
@@ -242,4 +242,11 @@ func Env() []string {
 		// repository's remote configuration (git 2.44 and later).
 		"GIT_NO_LAZY_FETCH=1",
 	)
+}
+
+// storageOverride identifies ambient locations that override a Repo's pinned
+// identity. Trusted host callers can still append an explicit private index or
+// object directory after command construction.
+func storageOverride(name string) bool {
+	return name == "GIT_INDEX_FILE" || name == "GIT_OBJECT_DIRECTORY" || name == "GIT_ALTERNATE_OBJECT_DIRECTORIES"
 }

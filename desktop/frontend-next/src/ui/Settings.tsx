@@ -1,3 +1,4 @@
+import { WindowControls } from "./WindowControls";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { onSettingsWideChange, setSettingsWide, settingsWide } from "../state/settingsWide";
 import { StudioIcon } from "./StudioIcon";
@@ -355,12 +356,13 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
             }
           }}
         />
-        <button className="btn sm" type="button" data-action="settings.expand" aria-pressed={wide} aria-label={t("放大设置窗口")} title={t("放大设置窗口")} onClick={() => setSettingsWide(!wide)}>
-          <StudioIcon name="expand" />
+        <button className="btn sm" type="button" data-action="settings.expand" aria-pressed={wide} aria-label={t("放大设置窗口")} title={t(wide ? "缩小设置窗口" : "放大设置窗口")} onClick={() => setSettingsWide(!wide)}>
+          <StudioIcon name={wide ? "collapseAll" : "expand"} />
         </button>
         <button className="btn sm" data-action="settings.close" disabled={updatingPkg.applying} onClick={close}>
           {t("关闭")} <span className="esc">Esc</span>
         </button>
+        {wide && <WindowControls />}
         {found !== null && (
           <div className="prefs-found" role="listbox" aria-label={t("搜索设置")}>
             {found.length === 0 ? (

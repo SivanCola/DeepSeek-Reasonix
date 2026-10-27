@@ -84,6 +84,7 @@ func (b *sharedBudget) exceeded() (string, string) {
 
 // InheritTaskBudget preserves the root spend owner when a background job changes context.
 func InheritTaskBudget(dst, src context.Context) context.Context {
+	dst = InheritRootTokenBudget(dst, src)
 	if b, ok := src.Value(sharedBudgetKey{}).(*sharedBudget); ok {
 		return context.WithValue(dst, sharedBudgetKey{}, b)
 	}

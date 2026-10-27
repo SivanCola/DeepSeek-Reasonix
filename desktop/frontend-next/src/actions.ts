@@ -460,6 +460,7 @@ export const ACTIONS: UIAction[] = [
   { id: "provider.preset", kind: "view", target: "entity", proof: "interaction" },
   { id: "provider.preset-retry", kind: "repeatable", target: "none", proof: "interaction" },
   { id: "provider.preset-toggle", kind: "view", target: "none", proof: "interaction" },
+  { id: "provider.preset-vendor", kind: "view", target: "entity", proof: "interaction" },
   { id: "provider.preset-back", kind: "view", target: "none", proof: "interaction" },
   { id: "provider.preset-cancel", kind: "view", target: "none", proof: "interaction" },
   { id: "provider.add-start", kind: "view", target: "none", proof: "interaction" },
@@ -650,6 +651,7 @@ export const ACTIONS: UIAction[] = [
   { id: "deck.agents", kind: "view", target: "none", proof: "interaction" },
   { id: "deck.jobs", kind: "view", target: "none", proof: "interaction" },
   { id: "plan.fold", kind: "view", target: "none", proof: "interaction" },
+  { id: "plan.collapse", kind: "view", target: "none", proof: "interaction" },
   { id: "workbench.file", kind: "view", target: "entity", proof: "interaction" },
   { id: "tool-approval.mode", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
   // The folder-trust question and the no-sandbox note beside the composer.

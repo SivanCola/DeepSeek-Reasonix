@@ -484,6 +484,7 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFoc
       className="pane"
       data-browser-size={browserSize.size}
       data-run={run}
+      data-plan={tab === "flow" && (s.plan.length > 0 || status?.goal) ? "" : undefined}
       data-off={visible ? undefined : ""}
       aria-hidden={visible ? undefined : true}
       data-active={active ? "" : undefined}

@@ -781,6 +781,11 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 				NotAdded: !cfg.ProviderAdded(p.Name),
 			}
 			capabilitiesFor(cfg, p, model, &entry)
+			vendor, relay := presetVendor(p)
+			entry.ServiceMark = vendor
+			if !relay {
+				entry.Mark = vendor
+			}
 			out = append(out, entry)
 		}
 	}

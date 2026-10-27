@@ -407,9 +407,15 @@ export function Transcript({ items, port, historyPaging, entering, onEntered, br
     return () => ro.disconnect();
   }, [follow]);
 
-  const last = items.length > 0 ? items[items.length - 1] : undefined;
+  let tail = items.length - 1;
+  while (tail >= 0) {
+    const item = items[tail];
+    if (item.t !== "user" || !item.pending) break;
+    tail--;
+  }
+  const last = items[tail];
   const live = last?.t === "say" && !last.done ? last : undefined;
-  const blocks = useBlocks(items, live ? items.length - 1 : items.length, revision);
+  const blocks = useBlocks(items, live ? tail : items.length, revision);
   const blockKeys = useBlockKeys(blocks);
   const loadOlder = useHistoryAnchor(historyPaging, scroll, blocks, hidden, landing, release, land);
   useOlderPageIntent({ scroll, hidden, load: loadOlder, generation: landing });

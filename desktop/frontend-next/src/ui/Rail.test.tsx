@@ -87,6 +87,32 @@ describe("a rail longer than it can show", () => {
     expect(Math.abs(picked - 1000)).toBeLessThanOrEqual(40);
   });
 
+  it("opens a folded run on hover, with no press at all", async () => {
+    const { view, onJump } = await rail(2000);
+    const nav = view.container.querySelector(".srail") as HTMLElement;
+    nav.getBoundingClientRect = () => ({ top: 0, height: 600, left: 0, width: 20, right: 20, bottom: 600, x: 0, y: 0, toJSON: () => ({}) });
+    const run = view.container.querySelector<HTMLElement>(".srail-m[data-folded]")!;
+    // The pointer only arrives; it never presses. A run stands for several
+    // questions, so the list is the only answer that names one of them.
+    fireEvent.mouseMove(nav, { clientY: parseFloat(run.style.top) });
+    await waitFor(() => expect(view.container.querySelector(".srail-sub")).not.toBeNull());
+    expect(view.container.querySelectorAll(".srail-subrow").length).toBeGreaterThan(1);
+    expect(onJump).not.toHaveBeenCalled();
+  });
+
+  it("takes the run away again once the pointer leaves it", async () => {
+    const { view } = await rail(2000);
+    const nav = view.container.querySelector(".srail") as HTMLElement;
+    nav.getBoundingClientRect = () => ({ top: 0, height: 600, left: 0, width: 20, right: 20, bottom: 600, x: 0, y: 0, toJSON: () => ({}) });
+    const run = view.container.querySelector<HTMLElement>(".srail-m[data-folded]")!;
+    fireEvent.mouseMove(nav, { clientY: parseFloat(run.style.top) });
+    await waitFor(() => expect(view.container.querySelector(".srail-sub")).not.toBeNull());
+    // Leaving closes it after a short grace, so crossing the gap to the list
+    // itself does not count as leaving.
+    fireEvent.mouseLeave(nav);
+    await waitFor(() => expect(view.container.querySelector(".srail-sub")).toBeNull());
+  });
+
   it("opens a folded run instead of guessing which question it stands for", async () => {
     const { view, onJump } = await rail(2000);
     const run = view.container.querySelector<HTMLElement>(".srail-m[data-folded]");

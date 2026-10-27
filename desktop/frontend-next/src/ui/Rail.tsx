@@ -160,9 +160,19 @@ export function Rail({ marks, total, scroll, flow, onJump, bound, scope, earlier
   const [groups, setGroups] = useState<RailView[] | null>(null);
   const [at, setAt] = useState(-1);
   // Which folded run has been opened into its own questions. A run is one line
-  // standing for many; without this a press can only mean "the first of them",
-  // which is not the question the reader pointed at.
+  // standing for many; opening it lets the reader pick the question they meant.
   const [opened, setOpened] = useState<number | null>(null);
+  // The pointer crosses a gap between a run and the list beside it, so closing
+  // waits briefly instead of dropping the list the moment the line is left.
+  const closer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const hold = useCallback(() => {
+    if (closer.current !== undefined) { clearTimeout(closer.current); closer.current = undefined; }
+  }, []);
+  const release = useCallback(() => {
+    hold();
+    closer.current = setTimeout(() => setOpened(null), 200);
+  }, [hold]);
+  useEffect(() => () => { hold(); }, [hold]);
   // Which mark the keys last walked to. Kept apart from `at`, which the pointer
   // owns: hovering somewhere else must not move where the keys resume from.
   const here = useRef(-1);
@@ -319,9 +329,15 @@ export function Rail({ marks, total, scroll, flow, onJump, bound, scope, earlier
         best = i;
       }
     });
-    // Give every two-pixel mark a generous hit corridor; the visible line can
-    // stay quiet without demanding pixel-perfect pointing.
-    setAt(dist <= 40 ? best : -1);
+    const next = dist <= 40 ? best : -1;
+    setAt(next);
+    // A folded run stands for several questions and cannot say which one the
+    // pointer means, so reaching it opens the run itself. Reaching a single
+    // question closes it again; passing over bare track leaves both alone.
+    const hit = next >= 0 ? view[next] : null;
+    if (!hit) return;
+    hold();
+    setOpened(hit.single ? null : next);
   };
 
   if (marks.length === 0) return null;
@@ -350,10 +366,12 @@ export function Rail({ marks, total, scroll, flow, onJump, bound, scope, earlier
           const rect = e.currentTarget.getBoundingClientRect();
           aim(railLocalY(e.clientY, rect.top, rect.height, geom.current.rail));
         }}
-        onMouseLeave={() => setAt(-1)}
+        onMouseLeave={() => { setAt(-1); release(); }}
         onClick={(e) => {
           if (e.target !== e.currentTarget) return;
-          if (shown) onJump(marks[shown.from]);
+          // `at` rather than `shown`: a folded run opens on hover now, which
+          // suppresses the peek, but a press on bare track must still land.
+          if (at >= 0 && at < view.length) onJump(marks[view[at].from]);
         }}
       >
         {view.map((v, i) => {
@@ -415,6 +433,8 @@ export function Rail({ marks, total, scroll, flow, onJump, bound, scope, earlier
         <div
           className="srail-sub"
           style={{ top: Math.min(Math.max(view[opened].top, 60), Math.max(60, geom.current.rail - 60)) }}
+          onMouseEnter={hold}
+          onMouseLeave={release}
         >
           <div className="srail-subhd">{t("第 {a} 至 {b} 条", { a: view[opened].from + 1, b: view[opened].to + 1 })}</div>
           {Array.from({ length: view[opened].to - view[opened].from + 1 }, (_, k) => {

@@ -1,2 +1,0 @@
-- 修复：没有添加任何文件夹时，主区域也能直接新建会话，设置和反馈会在应用自己的目录里开出会话来打开，不再提示先添加文件夹。关联 #14465。
-- Fixed: with no folder added, the main area offers a new session, and settings and feedback open one in the app's own workspace instead of asking for a folder first. Refs #14465.

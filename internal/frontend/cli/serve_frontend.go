@@ -263,6 +263,7 @@ func runServeWithOptions(args []string, opts serveRunOptions) int {
 	token := fs.String("token", "", "pre-shared token for auth=token (auto-generated if empty)")
 	password := fs.String("password", "", "password for auth=password (use --hash-password to store a hash instead)")
 	hashPassword := fs.Bool("hash-password", false, "print a bcrypt hash of --password and exit")
+	allowOpenNetwork := fs.Bool("allow-open-network", false, "allow --auth none on an address other machines can reach (anyone on the network can then read sessions and history)")
 	behindProxy := fs.Bool("behind-proxy", false, "trust X-Forwarded-For / X-Forwarded-Proto headers from a reverse proxy")
 	publicURL := fs.String("public-url", "", "the address a phone opens to reach this server, e.g. https://agent.example.com behind a TLS proxy; used for the share link and its QR code")
 	portFile := fs.String("port-file", "", "write the actual bound listen address (host:port) to this file after binding")
@@ -335,6 +336,10 @@ func runServeWithOptions(args []string, opts serveRunOptions) int {
 	})
 	if code != 0 {
 		return code
+	}
+	if err := serve.OpenBindRefusal(serveCfg, *addr, *allowOpenNetwork); err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 2
 	}
 
 	// Own the active session file for the server's lifetime; the serve

@@ -1,2 +1,0 @@
-- 修复：隔离任务被拒绝时（结果不存在、未启用隔离、不是 Git 工作区、整合冲突、参数不支持），工具卡片会说明原因，不再空白。关联 #14025。
-- Fixed: tool cards now say why an isolated task was refused (unknown result, isolation off, no Git workspace, apply conflict, unsupported arguments). Refs #14025.

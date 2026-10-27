@@ -465,9 +465,11 @@ and selected states, while long titles truncate within the remaining width.
   off screen are read by nobody. Settled cards mount in blocks and an unseen
   block leaves the DOM entirely, holding its place with the height last measured.
   Inside a block a second layer of `content-visibility` skips layout and paint
-  for the part of it that is off screen. The last card is excluded: the one being
-  written changes height every frame, and a structural pseudo-class cannot pick
-  it without invalidating its siblings.
+  for the part of it that is off screen. The live assistant card is excluded:
+  it changes height every frame. A structural pseudo-class cannot pick it
+  without invalidating its siblings.
+- Pending user input does not settle the live assistant card. Find that card
+  before the queued rows so streamed deltas stay outside the cached blocks.
 - `auto` remembers a card once it has been laid out; the fallback height is what
   a card the reader has never reached is assumed to be. `display: contents` on
   the frame between block and card keeps the card the block's child everywhere
