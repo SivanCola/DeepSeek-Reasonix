@@ -464,6 +464,21 @@ Reordering other
 entries cannot override a declared `workspace`. These values come only from the
 user's host configuration, and disabled hosts are refused before any link reuse.
 
+Every remote project offers **Remove from the list**, including directories
+discovered from remote history or an open pane while disconnected. Removal keeps
+the host configuration, remote files, and session history.
+
+Open a project's menu with its **…** button, a right click anywhere on its row,
+or **Shift+F10** when the row has keyboard focus. These entrances work for both
+local and remote projects. **Esc** closes the menu and restores focus to its trigger.
+
+The local host book
+remembers the removal across refreshes and restarts; explicitly adding or opening
+the directory restores it.
+
+A running conversation blocks removal of its project,
+including grouped worktrees, before any of that project's panes are closed.
+
 The active SSH project's secondary line shows its actual connection directory,
 including isolated worktrees. Its project menu shows the default connection
 directory used by Refresh; these can differ. Settings' default action explicitly
