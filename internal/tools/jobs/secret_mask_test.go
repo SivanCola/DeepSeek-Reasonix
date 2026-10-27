@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -38,5 +39,25 @@ func TestABackgroundJobKeepsItsOutputMasked(t *testing.T) {
 	}
 	if strings.Contains(string(data), "sk-job") || !strings.Contains(string(data), "key=[secret:JOB_KEY] loaded") || !strings.Contains(string(data), "finished with [secret:JOB_KEY]") {
 		t.Fatalf("log on disk = %q", data)
+	}
+}
+
+// A job that fails with no result reports its error in the result's place;
+// that text is masked too.
+func TestAFailedJobsErrorIsMasked(t *testing.T) {
+	secretstest.Hold("JOB_ERR_KEY", "sk-job-err-0123456789")
+	m := NewManager(event.Discard)
+	defer m.Close()
+	m.SetActiveSessionPath("session", filepath.Join(testenv.TempDir(t), "session.jsonl"))
+	j := m.StartForSession("session", "bash", "fails", func(context.Context, io.Writer) (string, error) {
+		return "", errors.New("auth failed with sk-job-err-0123456789")
+	})
+	<-j.done
+	j.mu.Lock()
+	path := j.artifact.path
+	j.mu.Unlock()
+	data, _ := os.ReadFile(path)
+	if strings.Contains(string(data), "sk-job-err") {
+		t.Fatalf("log = %q", data)
 	}
 }

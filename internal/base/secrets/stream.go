@@ -29,7 +29,7 @@ func NewStream(out io.Writer) *Stream { return &Stream{out: out} }
 func (s *Stream) Write(p []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.mask == nil || time.Since(s.taken) > streamRefresh {
+	if s.taken.IsZero() || time.Since(s.taken) > streamRefresh {
 		s.mask, s.taken = Masker(), time.Now()
 	}
 	buf := append(s.held, p...)

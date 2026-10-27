@@ -96,6 +96,7 @@ default, and a secret already saved under the name keeps the agents it had.
 | Secrets at rest | Stored unencrypted. On macOS and Linux with the sandbox on, agents' commands are denied the file; on Windows or with the sandbox off they can read it, and the card says so before a value is typed. |
 | Secrets in commands | A command can read a value and print it transformed (base64, hex); the mask matches the value, not what was done to it. Give a secret only to agents you trust. |
 | Secret scope | "Only Ada" governs which commands receive the variable, in all of Ada's seats, groups included. Session files are not isolated: another agent's commands can read Ada's, where what the user typed is kept as typed. |
+| Shared folders | An agent's checks see only its own writes: another agent working in a folder they share can change what those checks rely on without either receipt saying so. |
 | Signed bytes elsewhere | A brokered or extension-hosted model that verifies signed bytes holding a value can refuse the turn, since those bytes reach it masked. |
 | Short values | Values under 8 bytes are masked only between non-word characters. |
 | Memory review | Runs on the title model, which reads up to 3000 characters of each of the user's lines in the turn. |

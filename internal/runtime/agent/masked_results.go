@@ -17,5 +17,6 @@ func maskResults(results []string, outcomes []toolOutcome) {
 	for i := range outcomes {
 		outcomes[i].output = m.String(outcomes[i].output)
 		outcomes[i].rawOutput = m.String(outcomes[i].rawOutput)
+		outcomes[i].errMsg = m.String(outcomes[i].errMsg)
 	}
 }

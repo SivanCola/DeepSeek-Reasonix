@@ -38,3 +38,22 @@ func TestAToolsResultIsMaskedBeforeItIsKept(t *testing.T) {
 		t.Fatalf("outcome = %q", batch.outcomes[0].output)
 	}
 }
+
+// A result is masked where it is bounded, before a large one is spilled to the
+// sessions folder or handed back to a nested caller, and so is the original
+// kept beside a cut.
+func TestAResultIsMaskedBeforeItIsSpilledOrKept(t *testing.T) {
+	secretstest.Hold("SPILL_KEY", "sk-spill-0123456789")
+	a := New(nil, tool.NewRegistry(), sessionstore.NewSession(""), Options{Gate: &stubGate{}}, event.Discard)
+	big := strings.Repeat("line\n", 20000) + "KEY=sk-spill-0123456789\n"
+	body, _, _ := a.boundToolOutput(big, "grep", "c1", `{}`, false)
+	if strings.Contains(body, "sk-spill") {
+		t.Fatal("the bounded result kept the value")
+	}
+	var o toolOutcome
+	o.truncMsg, o.bound.Kind = "cut", event.BoundTruncated
+	o.keepFull(big)
+	if strings.Contains(o.rawOutput, "sk-spill") || strings.Contains(o.unbounded, "sk-spill") || !strings.Contains(o.rawOutput, "[secret:SPILL_KEY]") {
+		t.Fatal("the kept original holds the value")
+	}
+}

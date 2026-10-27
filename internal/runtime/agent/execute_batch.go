@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"reasonix/internal/base/secrets"
 	"reasonix/internal/contract/delivery"
 	"reasonix/internal/contract/event"
 	"reasonix/internal/contract/provider"
@@ -92,6 +93,7 @@ type toolOutcome struct {
 // keepFull records what the bound replaced: rawOutput for the conversation when
 // it cut the middle, unbounded for a nested caller whenever it changed anything.
 func (o *toolOutcome) keepFull(full string) {
+	full = secrets.Masker().String(full)
 	if o.truncMsg != "" {
 		o.rawOutput = full
 	}

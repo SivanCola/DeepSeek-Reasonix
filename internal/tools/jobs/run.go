@@ -31,7 +31,6 @@ func (m *Manager) launchJob(ctx context.Context, j *Job, run func(context.Contex
 		out := secrets.NewStream(jobWriter{j})
 		result, err := runRecovered(ctx, out, run)
 		_ = out.Flush()
-		result = secrets.Masker().String(result)
 		cleanupErr := j.finalize(Finalization{Invoked: true, Err: err})
 		if cleanupErr != nil {
 			err = errors.Join(err, cleanupErr)
@@ -55,6 +54,7 @@ func (m *Manager) launchJob(ctx context.Context, j *Job, run func(context.Contex
 		default:
 			st = Done
 		}
+		result = secrets.Masker().String(result)
 		finishedAt := nowMs()
 		if result != "" {
 			j.mu.Lock()
