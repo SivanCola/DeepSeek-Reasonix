@@ -75,6 +75,7 @@ import { RootMissingBanner } from "./RootMissingBanner";
 import { useConversationFiles } from "./useConversationFiles";
 import { NewAnswerAnchor } from "./NewAnswerLine";
 import { AgentHero } from "./team/AgentHero";
+import { TeamSpeaker } from "./team/TeamSpeaker";
 import { SeatAgent } from "./team/seat";
 import { useFrozenNewAnswerAnchor } from "./newAnswerMark";
 import { onNewAnswerMarkerChange, sessionKey, showsNewAnswerMarker, useUnreadSince } from "../state/newAnswers";
@@ -505,6 +506,7 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFoc
       <PaneShown.Provider value={shown}>
       <LiveWork.Provider value={live}>
       <NewAnswerAnchor.Provider value={marker ? newAnswerAt : null}>
+      <TeamSpeaker seat={rt.team}>
       <SeatAgent.Provider value={rt.team && !rt.team.group ? rt.team.agent : ""}>
       <Transcript port={port} historyPaging={historyPaging}
         scope={rt.sessionPath}
@@ -543,6 +545,7 @@ function PaneView({ port, hub, rt, title, active, visible, sideHost, side, onFoc
         onKeepHere={onKeepHere}
       />
       </SeatAgent.Provider>
+      </TeamSpeaker>
       </NewAnswerAnchor.Provider>
       </LiveWork.Provider>
       </PaneShown.Provider>

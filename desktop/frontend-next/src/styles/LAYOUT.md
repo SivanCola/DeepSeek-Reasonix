@@ -1736,6 +1736,11 @@ A sub-agent row, by the list's own width:
 - The host writes the greeting, so it costs nothing, works before any provider is set up, and never lands as a message in a conversation whose prefix the cache holds.
 - A starter fills the composer; it never sends. A model chip switches the conversation's model and records it as the agent's model for a first open.
 
+## Agent reply identity
+
+- Reply headers use the runtime seat's agent avatar and name, including a member's group conversation. The model badge remains the model recorded on that reply. Ordinary sessions retain the default Reasonix identity.
+- 回复标题显示所属会话 Agent 的头像和昵称，群聊成员的独立会话也遵循此规则；模型标签保留该回复实际使用的模型。普通会话保留 Reasonix 默认身份。
+
 ## Agent details drawer
 
 - The agent's name in the chrome crumb is the drawer's switch. The drawer sits over the right edge of the panes area rather than in the `.side` rail, so it needs no column of its own and the conversation keeps its width when it closes.
