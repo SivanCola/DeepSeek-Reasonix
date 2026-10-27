@@ -179,6 +179,14 @@ tool_timeout_seconds = { "generate_video" = 1800 }   # optional raw MCP tool nam
 
 For the full schema and every field's contract, see [`SPEC.md` §5](./SPEC.md#5-configuration-toml).
 
+The startup tool summary reuses a trusted snapshot in the current Reasonix data
+directory for up to 24 hours. Probes refreshed by another data directory do not
+replace that valid snapshot.
+
+On expiry, transient probe failures retain previous
+successful observations, keeping the system prefix stable across rebuilds and
+restarts; definitive changes, such as a removed tool, are adopted on refresh.
+
 Installed and project-configured MCP servers need no per-tool trust
 list. The dedicated two-model Planner may use every non-destructive MCP tool,
 even when the server omits `readOnlyHint`; strict read-only sub-agents still

@@ -188,6 +188,10 @@ tool_timeout_seconds = { "generate_video" = 1800 }   # 可选：raw MCP tool 名
 
 完整 schema 与每个字段的契约见 [`SPEC.md` §5](./SPEC.md#5-configuration-toml)。
 
+启动工具摘要会复用当前 Reasonix 数据目录中仍可信的快照，有效期为 24 小时。其他数据目录
+刷新探测结果不会替换这份有效快照。快照过期后，临时探测失败会保留先前的成功记录，让系统
+前缀在运行时重建和应用重启之间保持稳定；工具被移除等确定性变化会在刷新时生效。
+
 已安装或由项目配置声明的 MCP server 不需要逐工具信任名单。独立双模型 Planner 可使用所有
 非 destructive 工具，即使 server 没有声明 `readOnlyHint`；严格只读 subagent 仍要求
 `readOnlyHint: true` 且无 `destructiveHint`。
