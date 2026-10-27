@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"fmt"
+	"reasonix/internal/session/team"
 	"strings"
 
 	"reasonix/internal/contract/surfacespec"
@@ -63,9 +64,11 @@ func (c *Controller) prepareInboxRun(env sessioninbox.PromptEnvelope, origin ses
 		raw = submit
 	}
 	requests := controlInvocationsFromInbox(env)
+	ceiling := env.Extra[team.ExtraCeiling]
 	if len(requests) == 0 {
 		return func(ctx context.Context) error {
-			return c.runTurnLoop(c.withTurnTags(ctx, turnTags{format: strings.TrimSpace(env.Format), via: env.Via}), orchestratedTurn{
+			c.holdTurnCeiling(ceiling)
+			return c.runTurnLoop(c.withTurnTags(ctx, turnTags{format: strings.TrimSpace(env.Format), via: env.Via, origin: teamOrigin(env.Extra)}), orchestratedTurn{
 				input: submit, raw: raw, display: display, images: c.frozenTurnImages(frozenImages),
 				synthetic: origin.IsHost(), opensTurn: origin.IsHost(),
 			})
@@ -76,7 +79,8 @@ func (c *Controller) prepareInboxRun(env sessioninbox.PromptEnvelope, origin ses
 		return nil, err.Error(), nil
 	}
 	return func(ctx context.Context) error {
-		return c.runPreparedInvocationTurn(c.withTurnTags(ctx, turnTags{format: strings.TrimSpace(env.Format), via: env.Via}), prepared, submit, raw, display, frozenImages)
+		c.holdTurnCeiling(ceiling)
+		return c.runPreparedInvocationTurn(c.withTurnTags(ctx, turnTags{format: strings.TrimSpace(env.Format), via: env.Via, origin: teamOrigin(env.Extra)}), prepared, submit, raw, display, frozenImages)
 	}, "", nil
 }
 
