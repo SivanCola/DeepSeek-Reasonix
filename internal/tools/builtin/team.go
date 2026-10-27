@@ -40,6 +40,12 @@ func (t *teamTool) Description() string     { return t.description }
 func (t *teamTool) Schema() json.RawMessage { return json.RawMessage(t.schema) }
 func (t *teamTool) ReadOnly() bool          { return t.readOnly }
 
+// Team dispatch and turn control mutate the parent's team state; a strictly
+// read-only child must not execute them under the parent's identity.
+func (t *teamTool) ReadOnlyExecutionHostMutation() bool {
+	return t.name != "list_agents" && t.name != "read_group"
+}
+
 func (t *teamTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	dir, ok := t.link.Directory()
 	if !ok {

@@ -42,3 +42,17 @@ func TestASwitchToYoloUnderACeilingDrainsNothing(t *testing.T) {
 		t.Fatalf("switching to YOLO under a ceiling auto-allowed %d pending approvals", len(drained))
 	}
 }
+
+func TestDispatchGrantPreservesTheTeamTurnCeiling(t *testing.T) {
+	c := New(Options{})
+	t.Cleanup(c.Close)
+	c.SetToolApprovalMode(ToolApprovalYolo)
+	c.holdTurnCeiling(ToolApprovalAsk)
+	if got := c.DispatchGrant().Approval; got != ToolApprovalAsk {
+		t.Fatalf("dispatch grant = %q, want ask", got)
+	}
+	c.releaseTurnCeiling()
+	if got := c.DispatchGrant().Approval; got != ToolApprovalYolo {
+		t.Fatalf("ordinary dispatch grant = %q, want yolo", got)
+	}
+}
