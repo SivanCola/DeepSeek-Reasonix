@@ -179,14 +179,6 @@ tool_timeout_seconds = { "generate_video" = 1800 }   # optional raw MCP tool nam
 
 For the full schema and every field's contract, see [`SPEC.md` §5](./SPEC.md#5-configuration-toml).
 
-The startup tool summary reuses a trusted snapshot in the current Reasonix data
-directory for up to 24 hours. Probes refreshed by another data directory do not
-replace that valid snapshot.
-
-On expiry, transient probe failures retain previous
-successful observations, keeping the system prefix stable across rebuilds and
-restarts; definitive changes, such as a removed tool, are adopted on refresh.
-
 Installed and project-configured MCP servers need no per-tool trust
 list. The dedicated two-model Planner may use every non-destructive MCP tool,
 even when the server omits `readOnlyHint`; strict read-only sub-agents still
@@ -483,6 +475,11 @@ local and remote projects. **Esc** closes the menu and restores focus to its tri
 The local host book
 remembers the removal across refreshes and restarts; explicitly adding or opening
 the directory restores it.
+
+There is no hidden-directory list or one-click Undo/Restore control. To restore
+a directory, add its path again or explicitly open that directory on the host.
+The host's **Show in sidebar** setting only restores host visibility; it does not
+restore individually removed directories.
 
 A running conversation blocks removal of its project,
 including grouped worktrees, before any of that project's panes are closed.
