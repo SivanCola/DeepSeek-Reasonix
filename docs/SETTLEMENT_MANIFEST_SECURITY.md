@@ -51,6 +51,19 @@ Path validation concerns logical Git spelling. Literal magic, quotes, newlines,
 Unicode and backslashes remain data. A later publisher must resolve actual
 platform identities and aliases under host-opened roots and acquire write authority.
 
+The codec does not reject a `.git` component; this format check is not write
+authorization. Before any production apply, the consumer must reject `.git`
+components case-insensitively and deny resolved access to repository metadata.
+
+That denial must cover the actual git/common directories, symlink and platform
+aliases, and linked-worktree metadata reached outside the visible `.git` name.
+A spelling-only filter cannot establish that boundary.
+
+编码器目前不拒绝 `.git` 路径分量；格式校验不授予写权限。生产整合接入前，消费方
+必须不区分大小写地拒绝 `.git` 分量，并禁止解析后的访问落入仓库元数据。
+该边界必须覆盖实际 git/common 目录、符号链接、平台别名及 linked-worktree 元数据，
+不能仅靠可见名称过滤。
+
 Modes are logical Git modes. Native permission bits, ownership, ACLs and extended
 attributes are not encoded. The future physical journal must retain the native
 metadata its rollback promises, and refuse transitions it cannot materialize.
