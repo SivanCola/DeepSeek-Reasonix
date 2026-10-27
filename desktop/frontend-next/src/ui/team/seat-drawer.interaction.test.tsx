@@ -40,7 +40,7 @@ async function window_(seat: RuntimeView["team"] = { agent: "a-1" }) {
       <Chrome port={null} status={{ preset: "balanced", toolApprovalMode: "ask", workspaceRoot: ROOT, sessionPath: "/s.jsonl" } as never}
         title="会话" steer={0} account={null} theme="dark" onTheme={vi.fn()} onFind={vi.fn()}
         view="flow" rows={0} surfaces={0} onView={vi.fn()} hub={hub} seat={seat} onError={vi.fn()} />
-      <TeamLayer hub={hub} active="r2" seat={seat} root={ROOT} onAdoptPane={adopt} />
+      <TeamLayer hub={hub} active="r2" seat={seat} root={ROOT} onAdoptPane={async (rt) => adopt(await rt)} />
     </>,
   );
   return { hub, team, adopt };

@@ -70,7 +70,7 @@ it("a hidden agent leaves the rail and comes back from the hidden list", async (
 it("duplicating an agent copies its look and work but not its conversation, then opens the copy", async () => {
   const { hub, team } = await seeded();
   const adopt = vi.fn();
-  render(<TeamRail hub={hub} active="" onAdoptPane={adopt} />);
+  render(<TeamRail hub={hub} active="" onAdoptPane={async (rt) => adopt(await rt)} />);
   await userEvent.click(within(await menuFor(/^Ada /)).getByRole("menuitem", { name: "复制 Agent" }));
   await waitFor(() => expect(adopt).toHaveBeenCalled());
   const create = team.calls.find((c) => c.method === "createAgent" && (c.args[0] as { name: string }).name === "Ada 副本");

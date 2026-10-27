@@ -34,7 +34,7 @@ function eventText(l: GroupLine, name: string): string {
 
 // One group's chat over the panes: its log, who is speaking or working, and a
 // composer whose mentions are member ids rather than names typed out.
-export function GroupStage({ hub, active, onAdoptPane }: { hub: HubPort; active: string; onAdoptPane: (rt: RuntimeView) => void }) {
+export function GroupStage({ hub, active, onAdoptPane }: { hub: HubPort; active: string; onAdoptPane: (rt: RuntimeView | Promise<RuntimeView>) => void }) {
   const id = useGroupStage();
   const { view, team, shown } = useTeam(hub);
   const opened = useRef(active);
@@ -53,7 +53,7 @@ function GroupChat({ group, view, team, onAdoptPane, onSaved }: {
   group: TeamGroup;
   view: TeamView;
   team: NonNullable<ReturnType<HubPort["team"]>>;
-  onAdoptPane: (rt: RuntimeView) => void;
+  onAdoptPane: (rt: RuntimeView | Promise<RuntimeView>) => void;
   onSaved: (v: TeamView) => void;
 }) {
   const [lines, setLines] = useState<GroupLine[]>([]);
@@ -98,7 +98,7 @@ function GroupChat({ group, view, team, onAdoptPane, onSaved }: {
   };
   const openMember = async (agent: string) => {
     try {
-      onAdoptPane(await team.openMember(group.id, agent));
+      await onAdoptPane(team.openMember(group.id, agent));
     } catch (e) {
       pushToast(reason(e));
     }

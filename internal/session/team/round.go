@@ -31,8 +31,9 @@ type roundBook struct {
 }
 
 type stepIntent struct {
-	pass bool
-	hand []string
+	pass    bool
+	hand    []string
+	ceiling string
 }
 
 type seatActivity struct {
@@ -313,11 +314,10 @@ func (s *Service) settleSteps(ctx context.Context, seat SeatRef, st Settlement) 
 	var errs []error
 	for _, key := range st.Steps {
 		in := s.rounds.takeIntent(key)
-		var ceiling string
 		late := false
 		switch {
 		case rs.Speaking != nil && rs.Speaking.Key == key && rs.Speaking.Member == seat.Agent:
-			ceiling, rs.Speaking = rs.Speaking.Ceiling, nil
+			rs.Speaking = nil
 		case slices.Contains(rs.Working, seat.Agent):
 			rs.Working = slices.DeleteFunc(rs.Working, func(m string) bool { return m == seat.Agent })
 			late = true
@@ -328,7 +328,7 @@ func (s *Service) settleSteps(ctx context.Context, seat SeatRef, st Settlement) 
 		if len(in.hand) > 0 {
 			slots := make([]teamroster.Slot, 0, len(in.hand))
 			for _, m := range in.hand {
-				slots = append(slots, teamroster.Slot{Member: m, Cause: teamroster.CauseHand, By: seat.Agent, Ceiling: ceiling})
+				slots = append(slots, teamroster.Slot{Member: m, Cause: teamroster.CauseHand, By: seat.Agent, Ceiling: in.ceiling})
 			}
 			rs.Queue = callNext(rs.Queue, slots)
 		}
@@ -387,7 +387,7 @@ func (s *Service) HandTurn(c Caller, to []string) error {
 	if len(ids) == 0 {
 		return ErrHandSize
 	}
-	return s.markIntent(c, func(in *stepIntent) { in.hand = ids })
+	return s.markIntent(c, func(in *stepIntent) { in.hand, in.ceiling = ids, c.Ceiling })
 }
 
 func (s *Service) markIntent(c Caller, fn func(*stepIntent)) error {

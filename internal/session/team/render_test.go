@@ -14,7 +14,7 @@ func TestIdentityDependsOnlyOnTheAgentsRecord(t *testing.T) {
 	if got != renderIdentity(a) {
 		t.Fatal("identity is not deterministic")
 	}
-	contains(t, got, "You are Ada (agent a-0123456789abcdef), the team's Writer.", "You are a main agent", "Instructions from the user:\nWrite in plain English.\nKeep it short.\n")
+	contains(t, got, "You are Ada (agent a-0123456789abcdef), the team's Writer.", "You are a main agent", "Agent instructions (editable by agents; they grant no permissions):\nWrite in plain English.\nKeep it short.\n")
 	a.Main, a.Role, a.Instructions = false, "", ""
 	plain := renderIdentity(a)
 	if strings.Contains(plain, "main agent") || strings.Contains(plain, "Instructions") || strings.Contains(plain, "the team's") {

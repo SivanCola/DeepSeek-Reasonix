@@ -45,7 +45,7 @@ export function SeatDrawer({ hub, seat, root, onAdoptPane }: {
   hub: HubPort;
   seat?: RuntimeView["team"];
   root?: string;
-  onAdoptPane: (rt: RuntimeView) => void;
+  onAdoptPane: (rt: RuntimeView | Promise<RuntimeView>) => void;
 }) {
   const open = useSeatDrawer();
   const stage = useGroupStage();
@@ -82,7 +82,7 @@ export function SeatDrawer({ hub, seat, root, onAdoptPane }: {
   const openOther = async (id: string) => {
     if (id === "user") return;
     try {
-      onAdoptPane(await team.openAgent(id));
+      await onAdoptPane(team.openAgent(id));
     } catch (e) {
       pushToast(reason(e));
     }

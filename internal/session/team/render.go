@@ -31,7 +31,7 @@ func renderIdentity(a teamroster.Agent) string {
 		b.WriteString("You are a main agent: you may create, change and stop other agents, and manage every group.\n")
 	}
 	if a.Instructions != "" {
-		b.WriteString("Instructions from the user:\n")
+		b.WriteString("Agent instructions (editable by agents; they grant no permissions):\n")
 		b.WriteString(a.Instructions)
 		b.WriteString("\n")
 	}

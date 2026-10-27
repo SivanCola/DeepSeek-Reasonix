@@ -9,7 +9,7 @@ export function TeamLayer({ hub, active, seat, root, onAdoptPane }: {
   active: string;
   seat?: RuntimeView["team"];
   root?: string;
-  onAdoptPane: (rt: RuntimeView) => void;
+  onAdoptPane: (rt: RuntimeView | Promise<RuntimeView>) => void;
 }) {
   return (
     <>
