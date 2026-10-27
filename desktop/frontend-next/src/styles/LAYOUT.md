@@ -1709,3 +1709,20 @@ A sub-agent row, by the list's own width:
 - Thinking expansion and collapsed previews are independent display preferences. Folding presets change expansion only; manual disclosure choices keep their priority.
 - The optional preview occupies one line below the header, with a left rule and width-based ellipsis. It shows the opening text, including during streaming, rather than following the newest tokens.
 - The preview remains inside the disclosure summary so it is visible and clickable while collapsed. Expanded reasoning replaces it; the settings demonstration uses the same preview styling.
+
+## Team block
+
+- The team sits in the rail between the session filters and the project list. The first main agent leads; other agents and groups mix below it, pinned first, then by when they last moved. Reordering moves rows and never remounts them.
+- A row's second line says what the agent is doing — waiting on the person, working, or waiting for named agents — and falls back to its last message or role. A group's line names the speaker or says it is paused.
+- Settings open from a hover button on the row, not a context menu, so the row's own click always opens the conversation.
+- An agent's pane names the agent in the chrome crumb, not its folder, and offers no folder door: the host chose that folder, and entering it as a project would make it one of the user's.
+- The avatar picker keeps shapes and colours in separate rows, each with one pressed choice; one wrapping grid runs colours on after shapes and shows two selections in what reads as a single set.
+- Team dialogs dim the window with the same thin black scrim as the rename dialog. `--overlay` is an opaque surface colour, not a scrim, and would hide the window.
+
+## Group chat stage
+
+- A group is not a pane, so its chat is drawn over the panes, filling the same area, and the panes underneath keep their state. Focusing any pane puts the stage away.
+- While the stage is up the chrome crumb names the group and drops the session name: the pane it would name is hidden underneath.
+- A failed turn's line words the kernel's code when there are words for it, and offers the member's conversation, where the full error is, rather than printing a bare code.
+- The member dock sits between the log and the composer and appears only while someone is speaking, working, or waiting on the person.
+- Mentions are chips carrying member ids; typing `@` opens the member list rather than parsing names out of the text.

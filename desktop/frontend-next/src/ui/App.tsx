@@ -63,6 +63,8 @@ import { singleFlight } from "./singleflight";
 import { useTreeRead } from "./useTreeRead";
 import { useSidebarOpen } from "./sidebaropen";
 import { useOpenPane } from "./useOpenPane";
+import { useAdoptPane } from "./team/useAdoptPane";
+import { GroupStage } from "./team/GroupStage";
 import { useOpenRemotePane } from "./useOpenRemotePane";
 import { useNewConversation } from "./useNewConversation";
 import { markSettled } from "../boot/gate";
@@ -365,6 +367,7 @@ export function App({ hub }: { hub: HubPort }) {
   }, [active, panePorts, hidePrefs]);
 
   const openPane = useOpenPane({ hub, runtimes, panePorts, active, reportsRef, runsRef, setRuntimes, setActive, setTakeover, reloadPanes: refreshPanes, sw });
+  const adoptPane = useAdoptPane(setRuntimes, focusPane);
 
   // Awaitable because deleting a conversation has to close its pane first and
   // then wait: the kernel refuses to erase a transcript its runtime still holds,
@@ -568,7 +571,7 @@ export function App({ hub }: { hub: HubPort }) {
         onTheme={() => setTheme(scheme === "dark" ? "light" : "dark")}
         onFind={find.toggle}
         view={report.view} rows={report.rows} surfaces={report.surfaces} onView={showView}
-        hub={hub} onError={fail}
+        hub={hub} seat={runtimes.find((rt) => rt.id === active)?.team} onError={fail}
       />
 
       <WallpaperStage sky={!!pack?.sky && effects !== "reduced"} look={look} onLook={onLook} />
@@ -619,6 +622,7 @@ export function App({ hub }: { hub: HubPort }) {
           onNew={startConversation}
           onOpenRemote={openRemotePane}
           onFocusPane={focusPane}
+          onAdoptPane={adoptPane}
           onClosePanes={closePanes}
           onPause={(runtimeId) => void panePorts.get(runtimeId)?.cancel()}
           onBranch={branchSession}
@@ -691,7 +695,7 @@ export function App({ hub }: { hub: HubPort }) {
                   sessionRef={sessionRefs[rt.id]}
                   alert={rt.id === active ? bar : undefined}
                   connect={first.connect}
-                  needsProject={needsProject}
+                  needsProject={needsProject && !rt.team}
                   onOpenProject={openProject}
                   onKeepHere={keepHere}
                   onSettings={openSettings}
@@ -726,6 +730,7 @@ export function App({ hub }: { hub: HubPort }) {
                 )}
               </div>
             )}
+            <GroupStage hub={hub} active={active} onAdoptPane={adoptPane} />
           </div>
 
           {!activePaneShown && bar}

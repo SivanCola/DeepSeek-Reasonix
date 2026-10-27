@@ -724,6 +724,7 @@ export function fromHistory(msgs: HistoryMessage[], options: { snapshot?: string
       const legacyHostRepair = m.content.startsWith("The following tools are unavailable in the current workflow phase:");
       const text = m.hostAuthored || legacyHostRepair ? "" : stripControl(m.content);
       if (text) out.push({ t: "user", id: allocate(), text, msgIndex: m.msgIndex, steer: m.steer, via: m.via, attachments: m.attachments, at: m.createdAt });
+      if (m.origin) out.push({ t: "origin", id: allocate(), origin: m.origin, text: m.content, msgIndex: m.msgIndex });
       continue;
     }
     if (m.role === "assistant") {

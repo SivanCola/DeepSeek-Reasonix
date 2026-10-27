@@ -1,3 +1,4 @@
+import { OriginLine } from "./team/OriginLine";
 import { Fragment, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type RefObject, type SetStateAction } from "react";
 import { t } from "../i18n";
 import type { Item, Waiting } from "../state/session";
@@ -780,6 +781,8 @@ const Row = memo(function Row({
       return <ExtensionCard ext={it.ext} onInvoke={onExtInvoke} onSubmit={onExtSubmit} />;
     case "notice":
       return <NoticeCard item={it} onSettings={onSettings} />;
+    case "origin":
+      return <OriginLine origin={it.origin} text={it.text} />;
   }
       })()}
     </div>
