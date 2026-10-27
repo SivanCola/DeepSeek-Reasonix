@@ -7,6 +7,7 @@ export function ModelGroupChips({ headings, chosen, onChange }: { headings: Menu
   if (headings.length < 2) return null;
   return (
     <div className="mchips" role="group" aria-label={t("按服务商筛选")}>
+      <button type="button" className="mchip" data-action="model.group-clear" aria-pressed={chosen.length === 0} onClick={() => onChange([])}>{t("全部")}</button>
       {headings.map((h) => {
         const on = chosen.includes(h.value);
         return (
