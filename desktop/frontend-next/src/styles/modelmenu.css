@@ -28,7 +28,7 @@
 :root .portmenu.composer-menu.compact-model-menu button.mi:not(.plain) { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto 16px; gap: 10px; min-height: 72px; padding: 12px 8px; border-radius: 8px; }
 :root .portmenu.composer-menu.compact-model-menu button.mi:not(.plain) + button.mi:not(.plain) { border-top: 1px solid var(--hair); }
 :root .portmenu.composer-menu.compact-model-menu button.mi[data-on]::after { content: none; }
-:root .portmenu.composer-menu.compact-model-menu .mi :is(.vendor-mark, .mi-mono) { width: 32px; height: 32px; font-size: 15px; }
+:root .portmenu.composer-menu.compact-model-menu .mi :is(.vendor-mark, .mi-mono) { width: 32px; height: 32px; font-size: calc(15px * var(--fs-scale, 1)); }
 :root .portmenu.composer-menu.compact-model-menu .menu-model-mark { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 7px; background: var(--raised); }
 :root .portmenu.composer-menu.compact-model-menu .studio-item-line { gap: 4px 6px; }
 :root .portmenu.composer-menu.compact-model-menu .studio-item-line > .lb { font-weight: var(--w-semi); line-height: 1.4; }
