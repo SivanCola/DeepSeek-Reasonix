@@ -15,16 +15,16 @@ export function TeamLayer({ hub, active, seat, root, port, onMemory, onAdoptPane
   root?: string;
   port?: AgentPort | null;
   onMemory?: () => void;
-  onAdoptPane: (rt: RuntimeView) => void;
+  onAdoptPane: (rt: RuntimeView | Promise<RuntimeView>) => void;
 }) {
   useEffect(() => {
     const team = hub.team();
     if (!team) return;
     setAgentOpener(async (agent) => {
-      const rt = await team.openAgent(agent);
+      const pending = team.openAgent(agent);
       closeGroupStage();
-      onAdoptPane(rt);
-      return rt;
+      await onAdoptPane(pending);
+      return pending;
     });
     return () => setAgentOpener(null);
   }, [hub, onAdoptPane]);

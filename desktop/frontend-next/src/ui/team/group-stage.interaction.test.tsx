@@ -32,8 +32,8 @@ async function launch(active = "r1") {
   const adopt = vi.fn<(rt: RuntimeView) => void>();
   const ui = (on: string) => (
     <>
-      <TeamRail hub={hub} active={on} onAdoptPane={adopt} />
-      <GroupStage hub={hub} active={on} onAdoptPane={adopt} />
+      <TeamRail hub={hub} active={on} onAdoptPane={async (rt) => adopt(await rt)} />
+      <GroupStage hub={hub} active={on} onAdoptPane={async (rt) => adopt(await rt)} />
     </>
   );
   const view = render(ui(active));

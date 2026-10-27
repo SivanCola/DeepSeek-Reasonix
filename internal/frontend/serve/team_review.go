@@ -37,18 +37,28 @@ type teamReviews struct {
 	mu     sync.Mutex
 	timers map[team.SeatRef]*time.Timer
 	work   chan team.SeatRef
+	life   reviewLifetime
+}
+
+type reviewLifetime struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	done   chan struct{}
 }
 
 func newTeamReviews(t *hubTeam) *teamReviews {
 	r := &teamReviews{t: t, delay: teamReviewDelay, timers: map[team.SeatRef]*time.Timer{}, work: make(chan team.SeatRef, 64)}
+	r.life.ctx, r.life.cancel = context.WithCancel(context.Background())
+	r.life.done = make(chan struct{})
 	go r.loop()
 	return r
 }
 
 func (r *teamReviews) loop() {
+	defer close(r.life.done)
 	for {
 		select {
-		case <-r.t.stop:
+		case <-r.life.ctx.Done():
 			return
 		case seat := <-r.work:
 			r.review(seat)
@@ -56,22 +66,43 @@ func (r *teamReviews) loop() {
 	}
 }
 
+func (r *teamReviews) close() {
+	r.mu.Lock()
+	r.life.cancel()
+	for seat, timer := range r.timers {
+		timer.Stop()
+		delete(r.timers, seat)
+	}
+	r.mu.Unlock()
+	<-r.life.done
+}
+
 // schedule reviews seat once it has been still for the delay.
 func (r *teamReviews) schedule(seat team.SeatRef) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.life.ctx.Err() != nil {
+		return
+	}
 	if old := r.timers[seat]; old != nil {
 		old.Stop()
 	}
-	r.timers[seat] = time.AfterFunc(r.delay, func() {
+	var timer *time.Timer
+	timer = time.AfterFunc(r.delay, func() {
 		r.mu.Lock()
+		if r.timers[seat] != timer {
+			r.mu.Unlock()
+			return
+		}
 		delete(r.timers, seat)
 		r.mu.Unlock()
 		select {
+		case <-r.life.ctx.Done():
 		case r.work <- seat:
 		default:
 		}
 	})
+	r.timers[seat] = timer
 }
 
 // cancel drops a waiting review for a seat whose next turn has begun.
@@ -127,7 +158,7 @@ func (r *teamReviews) saveCursor(c reviewCursor) {
 }
 
 func (r *teamReviews) review(seat team.SeatRef) {
-	if r.t.service() == nil {
+	if r.life.ctx.Err() != nil || r.t.service() == nil {
 		return
 	}
 	roster, err := r.t.store.Load()
@@ -145,11 +176,14 @@ func (r *teamReviews) review(seat team.SeatRef) {
 	if !ok {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), teamReviewTimeout)
+	ctx, cancel := context.WithTimeout(r.life.ctx, teamReviewTimeout)
 	defer cancel()
 	report, err := team.ReviewMemory(ctx, store, lines, ask)
 	if err != nil {
 		slog.Warn("serve: review an agent's memory", "agent", seat.Agent, "group", seat.Group, "err", err)
+		return
+	}
+	if ctx.Err() != nil {
 		return
 	}
 	advance()

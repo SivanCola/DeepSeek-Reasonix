@@ -52,9 +52,9 @@ type reviewChange struct {
 	Body        string `json:"body"`
 }
 
-// ReviewMemory folds what was said into store, through the same remember and
-// forget tools an agent uses, so a review names, updates and archives facts
-// exactly as the agent would. Lines with nothing the person said ask no model.
+// ReviewMemory reconciles background facts against their observed revisions.
+// Automatic changes preserve pinned guidance. Lines with nothing the person
+// said ask no model.
 func ReviewMemory(ctx context.Context, store memory.Store, lines []ReviewLine, ask Reviewer) (ReviewReport, error) {
 	if !slices.ContainsFunc(lines, func(l ReviewLine) bool { return l.User && strings.TrimSpace(l.Text) != "" }) {
 		return ReviewReport{}, nil
@@ -72,41 +72,38 @@ func ReviewMemory(ctx context.Context, store memory.Store, lines []ReviewLine, a
 		return ReviewReport{}, err
 	}
 	var report ReviewReport
-	remember, forget := memory.NewRememberTool(store), memory.NewForgetTool(store)
 	for _, ch := range changes[:min(len(changes), reviewMaxChanges)] {
+		if err := ctx.Err(); err != nil {
+			return report, err
+		}
 		var target *memory.Memory
 		if ch.Entry >= 1 && ch.Entry <= len(facts) {
 			target = &facts[ch.Entry-1]
 		}
 		switch {
 		case ch.Op == "add" && strings.TrimSpace(ch.Body) != "":
-			if run(ctx, remember, map[string]string{"description": ch.Description, "type": ch.Type, "body": ch.Body}) {
-				report.Added++
+			_, err = store.SaveWithOptions(memory.Memory{Name: ch.Description, Description: ch.Description,
+				Type: memory.NormalizeType(ch.Type), Body: ch.Body, Activation: memory.ActivationRelevant}, memory.SaveOptions{RequireCreate: true})
+			if err != nil {
+				return report, err
 			}
+			report.Added++
 		case ch.Op == "edit" && target != nil && strings.TrimSpace(ch.Body) != "":
-			if run(ctx, remember, map[string]string{"name": target.Name, "description": firstNonEmpty(ch.Description, target.Description), "body": ch.Body}) {
-				report.Edited++
+			next := *target
+			next.Description, next.Body = firstNonEmpty(ch.Description, target.Description), ch.Body
+			_, err = store.SaveWithOptions(next, memory.SaveOptions{ExpectedRevision: target.Revision, RequireExpectedRevision: true, RequireUnpinned: true})
+			if err != nil {
+				return report, err
 			}
+			report.Edited++
 		case ch.Op == "remove" && target != nil:
-			if run(ctx, forget, map[string]string{"name": target.Name}) {
-				report.Removed++
+			if _, err := store.ArchiveAt(target.ID, target.Revision); err != nil {
+				return report, err
 			}
+			report.Removed++
 		}
 	}
 	return report, nil
-}
-
-func run(ctx context.Context, t interface {
-	Execute(context.Context, json.RawMessage) (string, error)
-}, args map[string]string) bool {
-	for k, v := range args {
-		if v == "" {
-			delete(args, k)
-		}
-	}
-	raw, _ := json.Marshal(args)
-	_, err := t.Execute(ctx, raw)
-	return err == nil
 }
 
 func firstNonEmpty(a, b string) string {
@@ -138,7 +135,16 @@ func reviewPrompt(facts []memory.Memory, lines []ReviewLine) string {
 		if lines[i].User {
 			limit = reviewUserChars
 		}
-		line := fmt.Sprintf("[%s] %s", lines[i].From, clip(lines[i].Text, limit))
+		source := "agent"
+		if lines[i].User {
+			source = "user"
+		}
+		encoded, _ := json.Marshal(struct {
+			Source string `json:"source"`
+			Name   string `json:"name"`
+			Text   string `json:"text"`
+		}{source, lines[i].From, clip(lines[i].Text, limit)})
+		line := string(encoded)
 		room -= len(line)
 		said = append(said, line)
 	}

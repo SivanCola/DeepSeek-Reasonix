@@ -36,7 +36,7 @@ export function TeamMenu({ team, view, target, at, unread, lead, anchor, onClose
   onClose: () => void;
   onSettings: () => void;
   onShown: (view: TeamView) => void;
-  onOpened: (rt: RuntimeView) => void;
+  onOpened: (rt: RuntimeView | Promise<RuntimeView>) => void;
 }) {
   const menu = useRef<HTMLDivElement>(null);
   const [confirming, setConfirming] = useState(false);
@@ -74,7 +74,7 @@ export function TeamMenu({ team, view, target, at, unread, lead, anchor, onClose
       const next = await team.createAgent({ name: copy, role: a.role, instructions: a.instructions, avatar: a.avatar, model: a.model, folder: a.folder, permission: a.permission });
       onShown(next);
       const made = next.agents.find((x) => x.name === copy);
-      if (made) onOpened(await team.openAgent(made.id));
+      if (made) await onOpened(team.openAgent(made.id));
     } catch (e) {
       pushToast(reason(e));
     }

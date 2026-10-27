@@ -39,7 +39,7 @@ func TestTheTeamCommandsWorkFromAnySession(t *testing.T) {
 	if got := lastNotice(t, notices()); !strings.Contains(got, "sent to Ada Lovelace") {
 		t.Fatalf("/msg = %q", got)
 	}
-	queued, err := store.TakeUserMessages(context.Background())
+	queued, err := store.PendingUserMessages(context.Background())
 	if err != nil || len(queued) != 1 || queued[0].To != ada || queued[0].Text != "write the weekly report" {
 		t.Fatalf("outbox = %+v, %v", queued, err)
 	}

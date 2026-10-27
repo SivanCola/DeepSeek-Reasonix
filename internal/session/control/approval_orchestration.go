@@ -214,6 +214,7 @@ func (c *Controller) newInteractiveGate() *permission.Gate {
 	policy.Ask = append(policy.Ask,
 		permission.Rule{Tool: memoryRememberTool},
 		permission.Rule{Tool: memoryForgetTool},
+		permission.Rule{Tool: memorySharedTool},
 	)
 	var approver permission.Approver = gateApprover{c}
 	if mode == ToolApprovalDontAsk {

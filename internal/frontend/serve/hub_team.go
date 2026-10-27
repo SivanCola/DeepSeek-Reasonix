@@ -120,6 +120,7 @@ func (t *hubTeam) service() *team.Service {
 
 func (t *hubTeam) close() {
 	close(t.stop)
+	t.reviews.close()
 	<-t.done
 	if w := t.writer.Load(); w != nil {
 		w.release()
@@ -140,11 +141,6 @@ func (t *hubTeam) seatLock(seat team.SeatRef) *sync.Mutex {
 func (t *hubTeam) liveRuntime(seat team.SeatRef) (*Runtime, bool) {
 	t.mu.Lock()
 	id, ok := t.seats[seat]
-	if ok {
-		if hold := t.holds[id]; hold != nil {
-			hold.used = time.Now()
-		}
-	}
 	t.mu.Unlock()
 	if !ok {
 		return nil, false
@@ -169,6 +165,11 @@ func (t *hubTeam) Ensure(ctx context.Context, seat team.SeatRef) (team.Pane, err
 	lock.Lock()
 	defer lock.Unlock()
 	if rt, ok := t.liveRuntime(seat); ok {
+		t.mu.Lock()
+		if hold := t.holds[rt.ID]; hold != nil {
+			hold.used = time.Now()
+		}
+		t.mu.Unlock()
 		return runtimePane{rt}, nil
 	}
 	rt, err := t.open(ctx, seat)

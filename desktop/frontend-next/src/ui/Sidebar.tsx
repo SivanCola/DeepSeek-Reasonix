@@ -63,7 +63,7 @@ interface Props {
   onNew?: () => Promise<void>;
   onOpenRemote: (host: string, workspace?: string, sessionPath?: string) => Promise<void>;
   onFocusPane: (id: string) => void;
-  onAdoptPane?: (rt: RuntimeView) => void;
+  onAdoptPane?: (rt: RuntimeView | Promise<RuntimeView>) => void;
   onClosePanes: (ids: string[]) => Promise<void>;
   onPause: (runtimeId: string) => void;
   onBranch?: (runtimeId: string, name: string) => Promise<void>;
@@ -89,7 +89,7 @@ interface Props {
  *  session filter is on, whether the switcher is open, and which workspaces are
  *  folded. Everything else belongs to the window and arrives as a prop. */
 // A pane the team opened, for a caller that only knows how to focus panes.
-const onFocusPaneOf = (focus: (id: string) => void) => (rt: RuntimeView) => focus(rt.id);
+const onFocusPaneOf = (focus: (id: string) => void) => async (rt: RuntimeView | Promise<RuntimeView>) => focus((await rt).id);
 
 export function Sidebar({
   hub,

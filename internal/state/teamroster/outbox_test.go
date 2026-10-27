@@ -6,8 +6,8 @@ import (
 )
 
 // A message the user sent from a window that does not hold the team waits in
-// the outbox until the holder takes it; taking it empties the outbox.
-func TestTheOutboxHoldsWhatTheUserSentUntilItIsTaken(t *testing.T) {
+// the outbox until the holder acknowledges its delivery.
+func TestTheOutboxHoldsWhatTheUserSentUntilItIsAcknowledged(t *testing.T) {
 	s := Store{Dir: t.TempDir()}
 	ctx := context.Background()
 	ada := newAgentID()
@@ -17,11 +17,21 @@ func TestTheOutboxHoldsWhatTheUserSentUntilItIsTaken(t *testing.T) {
 	if _, err := s.QueueUserMessage(ctx, ada, "   "); err == nil {
 		t.Fatal("an empty message was queued")
 	}
-	got, err := s.TakeUserMessages(ctx)
+	got, err := s.PendingUserMessages(ctx)
 	if err != nil || len(got) != 1 || got[0].To != ada || got[0].Text != "write the weekly report" || got[0].ID == "" {
 		t.Fatalf("taken = %+v, %v", got, err)
 	}
-	if again, _ := s.TakeUserMessages(ctx); len(again) != 0 {
-		t.Fatalf("the outbox kept %+v after it was taken", again)
+	if again, _ := s.PendingUserMessages(ctx); len(again) != 1 {
+		t.Fatalf("reading the queue lost unacknowledged messages: %+v", again)
+	}
+	newer, err := s.QueueUserMessage(ctx, ada, "A newer request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AckUserMessage(ctx, got[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := s.PendingUserMessages(ctx); len(again) != 1 || again[0].ID != newer.ID {
+		t.Fatalf("acknowledgement lost a newer request: %+v", again)
 	}
 }
