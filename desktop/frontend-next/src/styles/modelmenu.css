@@ -10,3 +10,44 @@
 .mchip[aria-pressed="true"] { color: var(--text); background: var(--overlay); border-color: var(--text); }
 .mchip.clear { border-style: dashed; }
 .mchip:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+:root .portmenu.composer-menu.compact-model-menu {
+  --choice-width: 440px;
+  --choice-size: calc(14px * var(--fs-scale, 1));
+  --choice-note: calc(12px * var(--fs-scale, 1));
+  padding: 12px;
+  overflow-x: hidden;
+}
+:root .portmenu.composer-menu.compact-model-menu .studio-picker-title { padding: 4px 8px 12px; margin-bottom: 8px; border: 0; }
+:root .portmenu.composer-menu.compact-model-menu .studio-picker-title b { color: var(--text); font-size: calc(17px * var(--fs-scale, 1)); font-weight: var(--w-semi); }
+:root .portmenu.composer-menu.compact-model-menu .mfind { width: calc(100% - 16px); margin: 0 8px 12px; padding: 9px 11px; font-size: var(--choice-size); border-radius: 8px; }
+:root .portmenu.composer-menu.compact-model-menu .mchips { gap: 6px; margin: 0 8px 12px; }
+:root .portmenu.composer-menu.compact-model-menu .mchip { font-size: var(--choice-note); padding: 6px 12px; max-width: 100%; overflow-wrap: anywhere; }
+:root .portmenu.composer-menu.compact-model-menu .mi.head { margin: 6px 0; padding: 6px 8px; min-height: 24px; border: 0; }
+:root .portmenu.composer-menu.compact-model-menu .mi.head .lb { font-size: var(--choice-note); }
+:root .portmenu.composer-menu.compact-model-menu button.mi:not(.plain) { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto 16px; gap: 10px; min-height: 72px; padding: 12px 8px; border-radius: 8px; }
+:root .portmenu.composer-menu.compact-model-menu button.mi:not(.plain) + button.mi:not(.plain) { border-top: 1px solid var(--hair); }
+:root .portmenu.composer-menu.compact-model-menu button.mi[data-on]::after { content: none; }
+:root .portmenu.composer-menu.compact-model-menu .mi :is(.vendor-mark, .mi-mono) { width: 32px; height: 32px; font-size: calc(15px * var(--fs-scale, 1)); }
+:root .portmenu.composer-menu.compact-model-menu .menu-model-mark { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 7px; background: var(--raised); }
+:root .portmenu.composer-menu.compact-model-menu .studio-item-line { gap: 4px 6px; }
+:root .portmenu.composer-menu.compact-model-menu .studio-item-line > .lb { font-weight: var(--w-semi); line-height: 1.4; }
+:root .portmenu.composer-menu.compact-model-menu .studio-item-meta { color: var(--muted); font: 400 var(--choice-note)/1.45 var(--ui); overflow-wrap: anywhere; }
+:root .portmenu.composer-menu.compact-model-menu .mi .ds { font-size: var(--choice-note); overflow-wrap: anywhere; }
+:root .portmenu.composer-menu.compact-model-menu .menu-item-status { display: inline-flex; align-items: center; gap: 5px; padding: 4px 6px; border: 1px solid transparent; border-radius: 6px; font-size: var(--choice-note); white-space: nowrap; color: var(--muted); }
+:root .portmenu.composer-menu.compact-model-menu .menu-item-status[data-tone="warning"] { color: var(--warn-ink); background: color-mix(in srgb, var(--warn) 8%, transparent); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+:root .portmenu.composer-menu.compact-model-menu .menu-item-status[data-tone="positive"] svg { color: var(--ok-ink, var(--ok)); }
+:root .portmenu.composer-menu.compact-model-menu .menu-item-status svg { width: 14px; height: 14px; flex: none; }
+:root .portmenu.composer-menu.compact-model-menu .menu-selection { width: 16px; height: 16px; visibility: hidden; }
+:root .portmenu.composer-menu.compact-model-menu .menu-selection[data-selected] { visibility: visible; }
+:root .portmenu.composer-menu.compact-model-menu .menu-item-note { display: flex; align-items: center; gap: 8px; padding: 12px 8px; color: var(--muted); font: 400 var(--choice-note)/1.5 var(--ui); }
+:root .portmenu.composer-menu.compact-model-menu .menu-item-note svg { width: 16px; height: 16px; flex: none; }
+:root .portmenu.composer-menu.compact-model-menu .mi.plain { display: flex; align-items: center; gap: 12px; padding: 12px 8px; border-top: 1px solid var(--hair); border-radius: 0; }
+:root .portmenu.composer-menu.compact-model-menu .mi.plain > svg { width: 20px; height: 20px; flex: none; }
+@media (max-width: 480px) {
+  :root .portmenu.composer-menu.compact-model-menu { padding: 8px; }
+  :root .portmenu.composer-menu.compact-model-menu button.mi:not(.plain) { grid-template-columns: 26px minmax(0, 1fr) auto 14px; gap: 7px; padding: 10px 6px; }
+  :root .portmenu.composer-menu.compact-model-menu .mi :is(.vendor-mark, .mi-mono) { width: 26px; height: 26px; }
+  :root .portmenu.composer-menu.compact-model-menu .menu-model-mark { width: 26px; height: 26px; }
+  :root .portmenu.composer-menu.compact-model-menu .menu-item-status { gap: 4px; padding-inline: 4px; font-size: calc(11px * var(--fs-scale, 1)); }
+}

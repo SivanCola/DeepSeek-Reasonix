@@ -5,6 +5,9 @@ import { groupVendors } from "./Models";
 import { t } from "../i18n";
 import { KIND_LABEL } from "./vendors";
 import { orderAccounts } from "../state/providerorder";
+import { modelHealthStatus, type ModelHealth } from "./modelhealth";
+
+type ModelMenuItem = MenuItem & { account?: { heading: MenuItem; order: number } };
 
 // modelTooltip names the active model with the picker's canonical account label.
 export function modelTooltip(models: ModelEntry[], current: string | undefined, label: string): string {
@@ -16,19 +19,22 @@ export function modelTooltip(models: ModelEntry[], current: string | undefined, 
 // Every account gets a heading with its endpoint: the provider name is the
 // config's word for an entry, not the user's for an endpoint, and two doors onto
 // one account share it. Rows carry the wire format beside the model name.
-export function modelMenu(models: ModelEntry[], order: readonly string[] = [], current?: string): MenuItem[] {
+export function modelMenu(models: ModelEntry[], order: readonly string[] = [], current?: string, health: ModelHealth = {}): ModelMenuItem[] {
   const accounts = orderAccounts(groupVendors(models), order);
-  const out: MenuItem[] = [];
+  const out: ModelMenuItem[] = [];
   for (const [i, a] of accounts.entries()) {
     const mono = monogram(a.label, a.key);
     const mark = a.kinds.flatMap((k) => a.byKind[k]).map((m) => m.serviceMark ?? m.mark).find(Boolean);
-    out.push({ value: `__account:${a.key}`, label: a.label, right: a.host, header: true, divide: i > 0, mono, mark });
+    const heading = { value: `__account:${a.key}`, label: a.label, right: a.host, header: true, divide: i > 0, mono, mark };
+    out.push(heading);
     for (const kind of a.kinds) {
       for (const m of a.byKind[kind]) {
         out.push({
           value: m.ref,
           label: m.modelAlias?.trim() || m.model,
           desc: m.modelAlias?.trim() ? m.model : undefined,
+          account: { heading, order: i },
+          status: modelHealthStatus(health[m.provider]),
           meta: t(KIND_LABEL[kind] ?? kind),
           badge: m.vision ? t("读图") : undefined,
           mono,
@@ -68,20 +74,21 @@ export function monogram(label: string, key: string): { letter: string; tone: nu
 }
 
 /** The headings a menu offers to narrow by, in the order they appear. */
-export function groupHeadings(items: MenuItem[]): MenuItem[] {
-  return items.filter((it) => it.header);
+export function groupHeadings(items: ModelMenuItem[]): MenuItem[] {
+  const accounts = new Map(items.filter((it) => it.account).map((it) => [it.account!.heading.value, it.account!]));
+  return [...accounts.values()].sort((a, b) => a.order - b.order).map((a) => a.heading);
 }
 
 /** The remembered choices that are still on offer. A choice for an account no
  *  longer listed must not empty the menu, so it simply stops counting. */
-export function chosenGroups(items: MenuItem[], selected: readonly string[]): string[] {
+export function chosenGroups(items: ModelMenuItem[], selected: readonly string[]): string[] {
   const offered = new Set(groupHeadings(items).map((h) => h.value));
   return selected.filter((key) => offered.has(key));
 }
 
 /** The rows of the chosen groups. What belongs to no group (the current model,
  *  pinned before the first heading) and every action stay. */
-export function narrowToGroups(items: MenuItem[], chosen: readonly string[]): MenuItem[] {
+export function narrowToGroups(items: ModelMenuItem[], chosen: readonly string[]): ModelMenuItem[] {
   if (chosen.length === 0) return items;
   let inGroup = false;
   let keep = true;
@@ -94,4 +101,18 @@ export function narrowToGroups(items: MenuItem[], chosen: readonly string[]): Me
     if (it.plain) return true;
     return inGroup ? keep : true;
   });
+}
+
+export function compactModelMenu(items: ModelMenuItem[], current?: string): MenuItem[] {
+  const rows = items.filter((it) => !it.header && !it.plain).map((it) => ({
+    ...it, selectionMark: true, meta: [it.account?.heading.label, it.meta].filter(Boolean).join(" · "),
+    searchText: it.account?.heading.right,
+  }));
+  const held = rows.find((it) => it.value === current);
+  const others = rows.filter((it) => it !== held);
+  return [
+    ...(held ? [{ value: "__current", label: t("当前选择"), header: true }, held] : []),
+    ...(others.length ? [{ value: "__others", label: t("其他模型"), header: true }, ...others] : []),
+    ...items.filter((it) => it.plain).map((it) => ({ ...it, desc: undefined, note: t("连接检测不代表模型调用可用") })),
+  ];
 }

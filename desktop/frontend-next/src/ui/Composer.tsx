@@ -4,15 +4,17 @@ import { t } from "../i18n";
 import { UNCONFIGURED_REF } from "./ConnectNote";
 import { reason } from "../i18n/kernel";
 import { keepPasteAsFile, PasteKeep, type PasteChip } from "./pastekeep";
-import type { AgentPort, ChipCall, ModelEntry, SessionStatus, WorkspaceGit } from "../port/port";
+import type { AgentPort, ChipCall, SessionStatus, WorkspaceGit } from "../port/port";
 import { Picker } from "./Menu";
 import { BranchChip } from "./BranchChip";
 import { WorktreeChip } from "./WorktreeChip";
 import { useWorktreeSetup, WorktreeSetupFailure } from "./useWorktreeSetup";
 import { WorktreeSetupPage } from "./WorktreeSetupPage";
 import { Policy } from "./Policy";
-import { chosenGroups, groupHeadings, modelMenu, modelTooltip, narrowToGroups } from "./modelmenu";
+import { chosenGroups, compactModelMenu, groupHeadings, modelMenu, modelTooltip, narrowToGroups } from "./modelmenu";
+import { ChevronRight, Settings } from "lucide-react";
 import { ModelGroupChips } from "./ModelGroupChips";
+import { useModelHealth } from "./modelhealth";
 import { effortMenu, effortReading, effortsFor, forcesThinkingFor, routeEffortPick } from "./effort";
 import { CompletionMenu, useCompletion } from "./Completion";
 import { ChipMirror, useSkillChips } from "./ChipMirror";
@@ -102,8 +104,9 @@ export function Composer({ port, status, running, quote, restore, inject, focus,
   const submittingRef = useRef(false);
   const stoppingRef = useRef(false);
   const picker = useRef<HTMLInputElement>(null);
-  const [models, setModels] = useState<ModelEntry[]>([]);
-  const menuItems = modelMenu(models, providerOrder, status?.modelRef);
+  const modelHealth = useModelHealth(port, pulse);
+  const { models, loadModels } = modelHealth;
+  const menuItems = modelMenu(models, providerOrder, status?.modelRef, modelHealth.readings);
   const chosenModelGroups = chosenGroups(menuItems, modelGroups);
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const box = useRef<HTMLTextAreaElement>(null);
@@ -123,11 +126,6 @@ export function Composer({ port, status, running, quote, restore, inject, focus,
   // Set only when a completion moved the caret: the browser puts it at the end
   // of a programmatic value, which is wrong for anything accepted mid-line.
   const pending = useRef<number | [number, number] | null>(null);
-
-  const loadModels = useCallback(() => {
-    port.models().then(setModels).catch(() => setModels([]));
-  }, [port]);
-  useEffect(loadModels, [loadModels, pulse]);
 
   // A drop lands where the caret is, and the handler that receives it was built
   // once — so the position it reads has to be a ref, not the render's copy.
@@ -712,13 +710,13 @@ export function Composer({ port, status, running, quote, restore, inject, focus,
             place="bottom"
             title={modelTooltip(models, status?.modelRef, modelLb)}
             current={status?.modelRef}
-            items={narrowToGroups(menuItems, chosenModelGroups)}
+            items={compactModelMenu(narrowToGroups(menuItems, chosenModelGroups), status?.modelRef).map((it) => it.plain ? { ...it, icon: <Settings aria-hidden="true" />, endIcon: <ChevronRight aria-hidden="true" /> } : it)}
             head={<ModelGroupChips headings={groupHeadings(menuItems)} chosen={chosenModelGroups} onChange={writeModelFilter} />}
-            menuClassName="studio-model-menu composer-menu"
+            menuClassName="studio-model-menu composer-menu compact-model-menu"
             searchAlways
             searchPlaceholder={t("搜索模型或服务商…")}
             menuTitle={<><b>{t("选择模型")}</b><small>{t("用于后续任务")}</small></>}
-            onOpen={loadModels}
+            onOpen={() => { void modelHealth.check(loadModels()); }}
             pending={busy["model"]}
             onPick={(ref) => ref === "__manage-models" ? onSettings("providers") : change("model", () => port.setModel(ref))}
             label={<><span className="nm">{modelLb}</span><StudioIcon name="down" /></>}
