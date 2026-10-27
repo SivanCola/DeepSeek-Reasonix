@@ -39,6 +39,9 @@ func (h *Hub) registerTeamRoutes(mux *http.ServeMux) {
 // writing refuses a write when another process holds the team.
 func (t *hubTeam) writing(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if refuseDevice(w, r) {
+			return
+		}
 		if t.service() == nil {
 			refuse(w, http.StatusConflict, "team.read_only", "the team is open for writing in another Reasonix window", nil)
 			return
