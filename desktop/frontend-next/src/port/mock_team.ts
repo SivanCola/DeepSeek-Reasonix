@@ -252,6 +252,7 @@ export class MockTeam implements TeamPort {
     this.logs.set(id, lines);
     g.lastSeq = lines.length;
     if (line.text) g.preview = line.text;
+    g.lastEvent = line.kind === "event" ? lines.at(-1) : undefined;
     this.bump();
   }
 

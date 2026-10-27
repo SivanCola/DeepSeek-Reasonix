@@ -18,6 +18,10 @@ try {
   await page.waitForFunction(() => document.querySelectorAll(".team-rail .team-row").length >= 41);
   await page.waitForTimeout(400);
 
+  const edges = await page.evaluate(() =>
+    [...document.querySelectorAll(".team-rail .team-row-name")].map((n) => Math.round(n.getBoundingClientRect().left)));
+  check("every row's name starts at one edge, agents and groups alike", new Set(edges).size === 1, `left edges ${[...new Set(edges)].join(", ")}`);
+
   const sliding = () => page.evaluate(() =>
     [...document.querySelectorAll(".team-rail .team-row")].filter((r) => r.getAnimations().some((a) => a.playState === "running")).map((r) => r.dataset.key));
   check("rows mount still", (await sliding()).length === 0, `${(await sliding()).length} sliding after load`);
@@ -29,6 +33,11 @@ try {
     while (el && !(el.scrollHeight > el.clientHeight + 1)) el = el.parentElement;
     window.__scroller = el;
   });
+  const scrolls = await page.evaluate(() => {
+    const s = window.__scroller;
+    return !!s && /(auto|scroll)/.test(getComputedStyle(s).overflowY) && !!s.querySelector(".projects-header");
+  });
+  check("a long team scrolls with the projects, not out of reach", scrolls);
   const order = () => page.evaluate(() => [...document.querySelectorAll(".team-rail .team-row")].map((r) => r.dataset.key));
   const keep = () => page.evaluate(() => [...document.querySelectorAll(".team-rail .team-row")].every((r) => window.__rows.has(r)));
 

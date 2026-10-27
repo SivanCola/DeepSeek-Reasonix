@@ -6,6 +6,8 @@ export const TEAM_ACTIONS: UIAction[] = [
   { id: "team.bootstrap", kind: "kernel-mutation", target: "none", proof: "interaction" },
   { id: "team.agent-new", kind: "view", target: "none", proof: "interaction" },
   { id: "team.group-new", kind: "view", target: "none", proof: "interaction" },
+  { id: "team.fold", kind: "view", target: "none", proof: "interaction" },
+  { id: "team.rail-menu", kind: "view", target: "none", proof: "interaction" },
   { id: "team.agent-open", kind: "kernel-mutation", target: "entity", proof: "interaction" },
   { id: "team.agent-settings", kind: "view", target: "entity", proof: "interaction" },
   { id: "team.group-open", kind: "view", target: "entity", proof: "interaction" },

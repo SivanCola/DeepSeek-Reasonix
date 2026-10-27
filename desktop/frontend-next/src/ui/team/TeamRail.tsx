@@ -1,16 +1,22 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { createPortal } from "react-dom";
 import { t } from "../../i18n";
 import { reason } from "../../i18n/kernel";
 import type { HubPort, RuntimeView } from "../../port/hub";
 import type { TeamAgent, TeamGroup, TeamView } from "../../port/team";
 import { useTeam } from "../../state/team";
+import { setTeamFolded, useTeamFolded } from "../../state/teamFold";
 import { closeGroupStage, openGroupStage, useGroupStage } from "../../state/teamStage";
 import { isUnread, noteSeen, useTeamUnread } from "../../state/teamUnread";
 import { pushToast } from "../../state/toasts";
+import { useDismiss } from "../dismiss";
+import { pinToViewport } from "../place";
 import { StudioIcon } from "../StudioIcon";
+import { workspaceMenuKeys } from "../WorkspaceOrder";
 import { AgentAvatar, GroupAvatar } from "./AgentAvatar";
 import { AgentDialog } from "./AgentDialog";
 import { GroupDialog } from "./GroupDialog";
+import { eventText } from "./groupEvents";
 import { TeamMenu, type MenuTarget } from "./TeamMenu";
 import { useReorderMotion } from "./useReorderMotion";
 import { UnreadDot } from "../UnreadMark";
@@ -56,6 +62,7 @@ function groupTitle(g: TeamGroup, names: Map<string, string>): string {
 function groupLine(g: TeamGroup, names: Map<string, string>): string {
   if (g.round.parked) return t("已暂停，等你继续");
   if (g.round.speaking) return t("{name} 正在发言", { name: names.get(g.round.speaking) ?? g.round.speaking });
+  if (g.lastEvent) return eventText(g.lastEvent, names.get(g.lastEvent.from) ?? t("另一个 Agent"));
   return g.preview ?? "";
 }
 
@@ -72,6 +79,18 @@ export function TeamRail({ hub, active, onAdoptPane }: { hub: HubPort; active: s
   const menuRow = useRef<HTMLElement | null>(null);
   const list = useRef<HTMLUListElement>(null);
   const unread = useTeamUnread();
+  const folded = useTeamFolded();
+  const [more, setMore] = useState(false);
+  const moreButton = useRef<HTMLButtonElement>(null);
+  const moreMenu = useRef<HTMLDivElement>(null);
+  useDismiss(more, moreButton, () => { setMore(false); moreButton.current?.focus(); }, moreMenu);
+  useEffect(() => {
+    if (more) moreMenu.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+  }, [more]);
+  useLayoutEffect(() => {
+    const anchor = moreButton.current?.getBoundingClientRect();
+    if (more && anchor && moreMenu.current) pinToViewport(moreMenu.current, anchor.right + 8, anchor.top - 7, 12);
+  }, [more]);
   useReorderMotion(list, view ? teamRows(view, showHidden).rows.map((r) => (r.kind === "agent" ? r.agent.id : r.group.id)).join(" ") : "");
   useEffect(() => {
     if (!view) return;
@@ -83,6 +102,7 @@ export function TeamRail({ hub, active, onAdoptPane }: { hub: HubPort; active: s
   if (unavailable || !view || !team) return null;
   const names = new Map(view.agents.map((a) => [a.id, a.name]));
   const { lead, rows, hidden } = teamRows(view, showHidden);
+  const waiting = view.agents.filter((a) => a.activity.state === "needs_you").length;
   const readOnly = !!view.readOnly;
   const menuAt = (kind: "agent" | "group", id: string, ev: MouseEvent<HTMLElement>) => {
     if (readOnly) return;
@@ -126,7 +146,7 @@ export function TeamRail({ hub, active, onAdoptPane }: { hub: HubPort; active: s
       data-unread={isUnread(unread, a.id, a.lastActivityAt) ? "" : undefined} data-hidden={a.hidden ? "" : undefined}>
       <button type="button" className="team-row-open" data-action-click="team.agent-open" data-action-contextmenu="team.menu" data-action-keydown="team.menu" data-target={a.id}
         onClick={() => void openAgent(a.id)} onContextMenu={(ev) => menuAt("agent", a.id, ev)} onKeyDown={(ev) => menuKey("agent", a.id, ev)}>
-        <AgentAvatar agent={a} size={main ? 36 : 28} />
+        <span className="team-row-mark"><AgentAvatar agent={a} size={main ? 32 : 28} /></span>
         <span className="team-row-text">
           <span className="team-row-name">{a.name}{isUnread(unread, a.id, a.lastActivityAt) && <>{" "}<UnreadDot /></>}</span>{" "}
           <span className="team-row-line">{agentLine(a, names)}</span>
@@ -147,7 +167,7 @@ export function TeamRail({ hub, active, onAdoptPane }: { hub: HubPort; active: s
       <button type="button" className="team-row-open" data-action-click="team.group-open" data-action-contextmenu="team.menu" data-action-keydown="team.menu" data-target={g.id}
         onClick={() => { noteSeen([{ id: g.id, at: g.lastActivityAt, looking: true }]); openGroupStage(g.id); }}
         onContextMenu={(ev) => menuAt("group", g.id, ev)} onKeyDown={(ev) => menuKey("group", g.id, ev)}>
-        <GroupAvatar members={g.members.map((id) => view.agents.find((a) => a.id === id)).filter((a): a is TeamAgent => !!a)} />
+        <span className="team-row-mark"><GroupAvatar members={g.members.map((id) => view.agents.find((a) => a.id === id)).filter((a): a is TeamAgent => !!a)} /></span>
         <span className="team-row-text">
           <span className="team-row-name">{groupTitle(g, names)}{isUnread(unread, g.id, g.lastActivityAt) && <>{" "}<UnreadDot /></>}</span>{" "}
           <span className="team-row-line">{groupLine(g, names)}</span>
@@ -177,21 +197,42 @@ export function TeamRail({ hub, active, onAdoptPane }: { hub: HubPort; active: s
   return (
     <section className="team-rail" aria-label={t("团队")}>
       <div className="team-rail-head">
-        <h2>{t("团队")}</h2>
+        <span className="team-rail-title">
+          <h2>{t("团队")}</h2>
+          {view.agents.length > 0 && (
+            <button type="button" className="team-rail-fold" data-action="team.fold" aria-expanded={!folded}
+              aria-label={folded ? t("展开团队") : t("收起团队")} title={folded ? t("展开团队") : t("收起团队")} onClick={() => setTeamFolded(!folded)}>
+              <StudioIcon name={folded ? "chevron" : "down"} />
+            </button>
+          )}
+          {folded && waiting > 0 && <span className="team-rail-waiting">{t("{n} 个在等你", { n: waiting })}</span>}
+        </span>
         {!readOnly && view.agents.length > 0 && (
           <>
             <button type="button" data-action="team.agent-new" aria-label={t("新建 Agent")} title={t("新建 Agent")} onClick={() => setDialog({ kind: "agent" })}>
               <StudioIcon name="plus" />
             </button>
-            <button type="button" data-action="team.group-new" aria-label={t("新建群聊")} title={t("新建群聊")} disabled={view.agents.length < 2}
-              onClick={() => setDialog({ kind: "group" })}>
-              <StudioIcon name="chat" />
+            <button ref={moreButton} type="button" data-action="team.rail-menu" aria-label={t("团队的更多操作")} title={t("更多操作")}
+              aria-haspopup="menu" aria-expanded={more} onClick={() => setMore((v) => !v)}>
+              <StudioIcon name="more" />
             </button>
           </>
         )}
       </div>
+      {more && createPortal(
+        <div ref={moreMenu} className="session-pop" role="menu" aria-label={t("团队的更多操作")} data-action-keydown="team.rail-menu" onKeyDown={workspaceMenuKeys}>
+          <div className="session-pop-head"><b>{t("团队")}</b></div>
+          <div className="session-pop-group">
+            <button type="button" role="menuitem" data-action="team.group-new" disabled={view.agents.length < 2}
+              onClick={() => { setMore(false); setDialog({ kind: "group" }); }}>
+              <StudioIcon name="chat" /><span>{t("新建群聊")}</span>
+            </button>
+          </div>
+        </div>,
+        document.body,
+      )}
       {readOnly && <p className="team-note">{t("团队正在另一个 Reasonix 窗口中编辑，这里只能查看")}</p>}
-      {view.agents.length === 0 ? (
+      {folded && view.agents.length > 0 ? null : view.agents.length === 0 ? (
         !readOnly && (
           <div className="team-welcome">
             <h3>{t("组建你的团队")}</h3>
@@ -207,7 +248,7 @@ export function TeamRail({ hub, active, onAdoptPane }: { hub: HubPort; active: s
           {rows.map((r) => (r.kind === "agent" ? agentRow(r.agent) : groupRow(r.group)))}
         </ul>
       )}
-      {hidden > 0 && (
+      {!folded && hidden > 0 && (
         <button type="button" className="team-hidden-toggle" data-action="team.show-hidden" aria-pressed={showHidden} onClick={() => setShowHidden((v) => !v)}>
           {showHidden ? t("收起已隐藏的 {n} 个", { n: hidden }) : t("已隐藏 {n} 个", { n: hidden })}
         </button>

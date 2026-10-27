@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { t } from "../../i18n";
-import { reason, say } from "../../i18n/kernel";
+import { reason } from "../../i18n/kernel";
 import type { HubPort, RuntimeView } from "../../port/hub";
 import type { GroupLine, TeamAgent, TeamGroup, TeamView } from "../../port/team";
 import { useTeam } from "../../state/team";
@@ -9,6 +9,7 @@ import { pushToast } from "../../state/toasts";
 import { StudioIcon } from "../StudioIcon";
 import { AgentAvatar, GroupAvatar } from "./AgentAvatar";
 import { GroupDialog } from "./GroupDialog";
+import { eventText } from "./groupEvents";
 import "../../styles/team.css";
 import "../../styles/team-stage.css";
 
@@ -16,24 +17,6 @@ const EVERYONE = "*";
 // How many lines one read of the log brings: the latest on open, then the
 // ones before, a page at a time, on request.
 const PAGE = 200;
-
-function eventText(l: GroupLine, name: string): string {
-  switch (l.event) {
-    case "passed": return t("{name} 没有补充", { name });
-    case "missed": return t("{name} 超时未回应，轮到下一位", { name });
-    case "working": return t("{name} 转入后台继续工作", { name });
-    case "finished": return t("{name} 完成了工作", { name });
-    case "failed": {
-      const why = l.code ? say({ code: l.code }) : "";
-      return why ? t("{name} 这一轮失败了：{why}", { name, why }) : t("{name} 这一轮失败了", { name });
-    }
-    case "paused": return t("Agent 之间已接力 {n} 次，已暂停", { n: l.count ?? 0 });
-    case "resumed": return t("已继续");
-    case "stopped": return t("你停止了 {name}", { name });
-    case "cut": return t("{name} 的发言被中断", { name });
-  }
-  return "";
-}
 
 // One group's chat over the panes: its log, who is speaking or working, and a
 // composer whose mentions are member ids rather than names typed out.

@@ -79,21 +79,24 @@ type teamRoundView struct {
 }
 
 type teamGroupView struct {
-	ID             string        `json:"id"`
-	Name           string        `json:"name,omitempty"`
-	Notice         string        `json:"notice,omitempty"`
-	Members        []string      `json:"members"`
-	Admin          string        `json:"admin,omitempty"`
-	Mode           string        `json:"mode"`
-	RelayLimit     int           `json:"relayLimit,omitempty"`
-	Folder         string        `json:"folder,omitempty"`
-	Pinned         bool          `json:"pinned,omitempty"`
-	Hidden         bool          `json:"hidden,omitempty"`
-	Archived       bool          `json:"archived,omitempty"`
-	LastSeq        int64         `json:"lastSeq,omitempty"`
-	LastActivityAt int64         `json:"lastActivityAt,omitempty"`
-	Preview        string        `json:"preview,omitempty"`
-	Round          teamRoundView `json:"round"`
+	ID             string   `json:"id"`
+	Name           string   `json:"name,omitempty"`
+	Notice         string   `json:"notice,omitempty"`
+	Members        []string `json:"members"`
+	Admin          string   `json:"admin,omitempty"`
+	Mode           string   `json:"mode"`
+	RelayLimit     int      `json:"relayLimit,omitempty"`
+	Folder         string   `json:"folder,omitempty"`
+	Pinned         bool     `json:"pinned,omitempty"`
+	Hidden         bool     `json:"hidden,omitempty"`
+	Archived       bool     `json:"archived,omitempty"`
+	LastSeq        int64    `json:"lastSeq,omitempty"`
+	LastActivityAt int64    `json:"lastActivityAt,omitempty"`
+	Preview        string   `json:"preview,omitempty"`
+	// LastEvent is the group's latest line when it is an event, which has no
+	// text for Preview: the sidebar says what happened in the window's words.
+	LastEvent *teamroster.GroupLine `json:"lastEvent,omitempty"`
+	Round     teamRoundView         `json:"round"`
 }
 
 // view assembles the team as it stands.
@@ -192,6 +195,9 @@ func (t *hubTeam) groupView(g teamroster.Group) teamGroupView {
 	if lines, err := t.store.LinesBefore(g.ID, 0, 1); err == nil && len(lines) == 1 {
 		v.LastSeq, v.LastActivityAt = lines[0].Seq, lines[0].At.UnixMilli()
 		v.Preview = strings.TrimSpace(lines[0].Text)
+		if lines[0].Kind == teamroster.LineEvent {
+			v.LastEvent = &lines[0]
+		}
 	}
 	if rs, err := t.store.Round(g.ID); err == nil {
 		if rs.Speaking != nil {

@@ -77,6 +77,8 @@ export interface TeamGroup {
   lastSeq?: number;
   lastActivityAt?: number;
   preview?: string;
+  // The group's latest line when it is an event, which has no text to preview.
+  lastEvent?: GroupLine;
   round: TeamRound;
 }
 

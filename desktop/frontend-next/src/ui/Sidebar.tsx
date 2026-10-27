@@ -13,6 +13,7 @@ import { ContentMatches } from "./ContentMatches";
 import { useDestinations } from "./navdest";
 import { ICON, type Section } from "./prefsnav";
 import { RailSearch } from "./railsearch";
+import { RailSlots } from "./railSlots";
 import { RemoteHosts, remoteProjectKey, remoteWorkspaces } from "./RemoteHosts";
 import { remoteProjects } from "./remoteProjects";
 import { StudioIcon } from "./StudioIcon";
@@ -232,6 +233,16 @@ export function Sidebar({
     ? new Set([...folded].filter((key) => !foldable.includes(key))) : new Set([...folded, ...foldable]));
 
 
+  const filters = (
+    <div className="studio-session-filters" role="group" aria-label={t("会话范围")}>
+      <div className="studio-session-segments">
+        <button data-action="session.filter" data-value="all" aria-pressed={railScope === "all"} onClick={() => setRailScope("all")}><span>{t("全部")}</span></button>
+        <button data-action="session.filter" data-value="live" aria-pressed={railScope === "live"} onClick={() => setRailScope("live")}><span>{t("进行中")}</span></button>
+        <button data-action="session.filter" data-value="pinned" aria-pressed={railScope === "pinned"} onClick={() => setRailScope("pinned")}><span>{t("置顶")}</span></button>
+        <button data-action="session.filter" data-value="archived" aria-pressed={railScope === "archived"} onClick={() => setRailScope("archived")}><span>{t("归档")}</span></button>
+      </div>
+    </div>
+  );
   return (
     <>
     {projectPicker && <OpenProject hub={hub} adder={adder} hosts={shownRemotes}
@@ -286,16 +297,8 @@ export function Sidebar({
             ))}
           </div>
         )}
-        <div className="studio-session-filters" role="group" aria-label={t("会话范围")}>
-          <div className="studio-session-segments">
-            <button data-action="session.filter" data-value="all" aria-pressed={railScope === "all"} onClick={() => setRailScope("all")}><span>{t("全部")}</span></button>
-            <button data-action="session.filter" data-value="live" aria-pressed={railScope === "live"} onClick={() => setRailScope("live")}><span>{t("进行中")}</span></button>
-            <button data-action="session.filter" data-value="pinned" aria-pressed={railScope === "pinned"} onClick={() => setRailScope("pinned")}><span>{t("置顶")}</span></button>
-            <button data-action="session.filter" data-value="archived" aria-pressed={railScope === "archived"} onClick={() => setRailScope("archived")}><span>{t("归档")}</span></button>
-          </div>
-        </div>
       </div>
-      <TeamRail hub={hub} active={active} onAdoptPane={onAdoptPane ?? onFocusPaneOf(onFocusPane)} />
+      <RailSlots.Provider value={{ lead: <TeamRail hub={hub} active={active} onAdoptPane={onAdoptPane ?? onFocusPaneOf(onFocusPane)} />, filters }}>
       <RailSearch>
       <ContentMatches hub={hub} tree={tree} onOpen={onOpen} onError={onError} onReference={onReferenceSession} />
       <Workspaces
@@ -357,6 +360,7 @@ export function Sidebar({
         ) : null}
       </Workspaces>
       </RailSearch>
+      </RailSlots.Provider>
       </div>
       {!navShown && <div className="railfoot">
         {destinations.some(([mark]) => mark === "usage") && <button className="studio-wallet" data-action="settings.section" data-value="usage" onClick={() => onSettings("usage")}><span aria-hidden="true"><StudioIcon name="wallet" /></span><b>{t("钱包与用量")}</b>{wallet && <small>{hideAmounts ? MASK : wallet}</small>}</button>}

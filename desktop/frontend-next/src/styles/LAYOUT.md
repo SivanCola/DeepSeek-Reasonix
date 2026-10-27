@@ -1712,8 +1712,11 @@ A sub-agent row, by the list's own width:
 
 ## Team block
 
-- The team sits in the rail between the session filters and the project list. The first main agent leads; other agents and groups mix below it, pinned first, then by when they last moved. Reordering moves rows and never remounts them.
-- A row's second line says what the agent is doing — waiting on the person, working, or waiting for named agents — and falls back to its last message or role. A group's line names the speaker or says it is paused.
+- The team leads the rail's scroll, above the project list and in the same scroll, so a long team scrolls with the projects instead of pushing them out of reach. The session filters sit under the projects' heading: they filter sessions, never the team.
+- The team's heading matches the projects': title, fold, new agent, and a more menu (new group chat), at the same inset and button size. Folded, it keeps a count of the agents waiting on the person.
+- The first main agent leads; other agents and groups mix below it, pinned first, then by when they last moved. Reordering moves rows and never remounts them.
+- Every row has a fixed avatar column, so names start at one edge whether the mark is an agent or a group. The main agent wears a star; unread is a dot after the name.
+- A row's second line says what the agent is doing — waiting on the person, working, or waiting for named agents — and falls back to its latest message or role. A group's line names the speaker, says it is paused, or phrases its latest event as the chat does.
 - The row's own click always opens the conversation. Settings sit on a hover button; the right-click menu (and the ContextMenu key) carries the rest — pin, unread, duplicate, main role, hide, delete — with delete taking a second press.
 - Unread is this machine's fact: a row is unread when it moved after it was last looked at, or when the person marked it. Hidden rows are counted under the list and drawn on request, dimmed.
 - An agent's pane names the agent in the chrome crumb, not its folder, and offers no folder door: the host chose that folder, and entering it as a project would make it one of the user's.

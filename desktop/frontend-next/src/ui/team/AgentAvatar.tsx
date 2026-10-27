@@ -70,7 +70,7 @@ export function AgentAvatar({ agent, size = 28, star = agent.main, badges = true
           <circle className="team-avatar-eye" cx="14.5" cy="12" r="1.3" />
         </svg>
       )}
-      {badges && star && <span className="team-avatar-star" />}
+      {badges && star && <span className="team-avatar-star"><svg viewBox="0 0 10 10"><path d="M5 .5l1.4 2.9 3.1.4-2.3 2.2.6 3.1L5 7.6 2.2 9.1l.6-3.1L.5 3.8l3.1-.4z" /></svg></span>}
       {badges && state === "working" && <span className="team-avatar-dot" />}
       {badges && state === "needs_you" && <span className="team-avatar-ask">?</span>}
     </span>

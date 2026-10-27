@@ -202,5 +202,9 @@ export const EN_TEAM: Record<string, string> = {
   "已保存 {name} · {scope}": "Saved {name} · {scope}",
   "已拒绝提供 {name}": "Declined {name}",
   "你对机密请求的答复": "Your answer to a secret request",
+  "收起团队": "Collapse the team",
+  "展开团队": "Expand the team",
+  "{n} 个在等你": "{n} waiting for you",
+  "团队的更多操作": "More team actions",
   "{name} 的对话": "{name}'s conversation",
 };

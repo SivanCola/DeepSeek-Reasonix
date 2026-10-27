@@ -102,7 +102,8 @@ it("the avatar picker keeps shapes and colours apart, and creates what was picke
 it("a group is made from ticked members, and an admin answers by default", async () => {
   const { hub, team } = await seeded();
   render(<TeamRail hub={hub} active="" onAdoptPane={vi.fn()} />);
-  await userEvent.click(await screen.findByRole("button", { name: "新建群聊" }));
+  await userEvent.click(await screen.findByRole("button", { name: "团队的更多操作" }));
+  await userEvent.click(screen.getByRole("menuitem", { name: "新建群聊" }));
   const dialog = await screen.findByRole("dialog", { name: "新建群聊" });
   const members = within(dialog).getByRole("group", { name: "成员" });
   const create = within(dialog).getByRole("button", { name: "创建" });
@@ -157,4 +158,39 @@ it("an agent's settings say what its conversations have spent", async () => {
   await userEvent.click(await screen.findByRole("button", { name: "Ada 的设置" }));
   const dialog = await screen.findByRole("dialog", { name: "Agent 设置" });
   expect(within(dialog).getByText(/用量：输入 12,000 · 输出 3,000 tokens · 缓存命中 75%/)).toBeTruthy();
+});
+
+// The block folds away like the projects below it, keeps that across a
+// reload, and still says who is waiting on the person while folded.
+it("the team folds, stays folded, and counts who is waiting meanwhile", async () => {
+  localStorage.removeItem("rx-team-folded");
+  const { hub, team } = await seeded();
+  const view = render(<TeamRail hub={hub} active="" onAdoptPane={vi.fn()} />);
+  await screen.findByRole("button", { name: "Ada 写手" });
+  await userEvent.click(screen.getByRole("button", { name: "收起团队" }));
+  expect(screen.queryByRole("button", { name: "Ada 写手" })).toBeNull();
+  act(() => team.setActivity("a-1", { state: "needs_you", runtime: "r9" }));
+  expect(await screen.findByText("1 个在等你")).toBeTruthy();
+  view.unmount();
+  render(<TeamRail hub={hub} active="" onAdoptPane={vi.fn()} />);
+  expect(await screen.findByRole("button", { name: "展开团队" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Ada 写手" })).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "展开团队" }));
+  expect(await screen.findByRole("button", { name: "Ada 等你处理" })).toBeTruthy();
+});
+
+it("a group whose last line is an event says what happened", async () => {
+  const { hub, team } = await seeded();
+  const g = await team.createGroup({ name: "Launch", members: ["a-chief", "a-1"] });
+  const id = g.groups.at(-1)!.id;
+  team.addLine(id, { from: "a-1", kind: "event", event: "stopped" });
+  render(<TeamRail hub={hub} active="" onAdoptPane={vi.fn()} />);
+  expect(await screen.findByRole("button", { name: "Launch 你停止了 Ada" })).toBeTruthy();
+});
+
+it("the main agent wears a star", async () => {
+  const { hub } = await seeded();
+  render(<TeamRail hub={hub} active="" onAdoptPane={vi.fn()} />);
+  const chief = await screen.findByRole("button", { name: "Chief 首席助理" });
+  expect(chief.querySelector(".team-avatar-star svg")).toBeTruthy();
 });

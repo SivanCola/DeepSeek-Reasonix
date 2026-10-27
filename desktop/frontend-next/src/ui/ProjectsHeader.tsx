@@ -1,8 +1,9 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { t } from "../i18n";
 import type { Adder } from "./addws";
 import { useDismiss } from "./dismiss";
+import { RailSlots } from "./railSlots";
 import { pinToViewport } from "./place";
 import { StudioIcon } from "./StudioIcon";
 import { workspaceMenuKeys } from "./WorkspaceOrder";
@@ -18,6 +19,7 @@ export function ProjectsHeader({ adder, canSelect, selecting, onSelect, onToggle
   searching?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const { lead, filters } = useContext(RailSlots);
   const more = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const close = () => { setOpen(false); more.current?.focus(); };
@@ -31,6 +33,8 @@ export function ProjectsHeader({ adder, canSelect, selecting, onSelect, onToggle
   }, [open]);
 
   return (
+    <>
+    {lead}
     <div className="projects-header">
       <div className="projects-heading">
         <span className="projects-heading-title">{t("项目")}
@@ -53,6 +57,7 @@ export function ProjectsHeader({ adder, canSelect, selecting, onSelect, onToggle
           </button>
         </span>
       </div>
+      {filters}
       {open && createPortal(
         <div ref={menu} className="session-pop" role="menu" aria-label={t("项目列表的更多操作")}
           data-action-keydown="machine.menu" onKeyDown={workspaceMenuKeys}>
@@ -66,5 +71,6 @@ export function ProjectsHeader({ adder, canSelect, selecting, onSelect, onToggle
         </div>, document.body,
       )}
     </div>
+    </>
   );
 }
