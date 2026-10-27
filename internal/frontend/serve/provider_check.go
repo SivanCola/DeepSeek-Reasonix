@@ -78,6 +78,7 @@ func refuseKeyOriginChange(w http.ResponseWriter, saved *config.ProviderEntry, d
 }
 
 func (s *Server) registerProviderCheckRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /providers/health", s.providerHealth)
 	mux.HandleFunc("POST /providers/check", s.checkProvider)
 	mux.HandleFunc("POST /providers/check/model", s.checkProviderModel)
 }

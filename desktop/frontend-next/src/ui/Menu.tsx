@@ -3,12 +3,25 @@ import { createPortal } from "react-dom";
 import { t } from "../i18n";
 import { placeInViewport, useFollow, zoom } from "./place";
 import { hasVendorMark, VendorMark } from "./vendormarks";
+import { Check, CircleAlert, CircleDot, Info, LoaderCircle } from "lucide-react";
+
+export interface MenuStatus {
+  label: string;
+  tone: "warning" | "positive" | "neutral" | "checking";
+  detail?: string;
+}
 
 export interface MenuItem {
   value: string;
   label: string;
   desc?: string;
   right?: string;
+  status?: MenuStatus;
+  icon?: ReactNode;
+  endIcon?: ReactNode;
+  note?: string;
+  selectionMark?: boolean;
+  searchText?: string;
   // Dense choice menus sometimes need one short machine-facing label beside
   // the human one (for example "深入  High") without pushing that label to
   // the far edge of the row.
@@ -244,6 +257,7 @@ export function Picker({
           {shown.map((it, i) => (
             <Fragment key={it.value}>
               {it.divide && i > 0 && <div className="div" />}
+              {it.note && <div className="menu-item-note"><Info aria-hidden="true" />{it.note}</div>}
               {it.header ? (
                 <div className="mi head">
                   <Lead it={it} />
@@ -259,6 +273,8 @@ export function Picker({
                   role={it.toggle === undefined ? "menuitem" : "menuitemcheckbox"}
                   aria-checked={it.toggle}
                   aria-current={it.value === current ? true : undefined}
+                  aria-description={it.status?.detail}
+                  title={it.status?.detail}
                   disabled={it.disabled}
                   data-on={it.value === current ? "" : undefined}
                   data-lead={it.value === lead ? "" : undefined}
@@ -266,7 +282,7 @@ export function Picker({
                   data-recommended={it.recommended ? "" : undefined}
                   onClick={() => take(it.value)}
                 >
-                  {it.mono || hasVendorMark(it.mark) ? <Lead it={it} /> : <span className="dot" />}
+                  {it.icon ?? (it.selectionMark ? <span className="menu-model-mark"><Lead it={it} /></span> : it.mono || hasVendorMark(it.mark) ? <Lead it={it} /> : <span className="dot" />)}
                   <span className="tx">
                     <span className="studio-item-line">
                       <span className="lb">{it.label}</span>
@@ -282,6 +298,12 @@ export function Picker({
                   )}
                   {it.toggle !== undefined && <span className="studio-item-switch" aria-hidden="true" />}
                   {it.right && <span className="rt">{it.right}</span>}
+                  {it.status && <span className="menu-item-status" data-tone={it.status.tone}>
+                    {it.status.tone === "warning" ? <CircleAlert aria-hidden="true" /> : it.status.tone === "checking" ? <LoaderCircle aria-hidden="true" /> : <CircleDot aria-hidden="true" />}
+                    {it.status.label}
+                  </span>}
+                  {it.endIcon}
+                  {it.selectionMark && <Check className="menu-selection" data-selected={it.value === current ? "" : undefined} aria-hidden="true" />}
                 </button>
               )}
             </Fragment>
@@ -294,7 +316,7 @@ export function Picker({
 }
 
 function Lead({ it }: { it: MenuItem }) {
-  if (hasVendorMark(it.mark)) return <VendorMark slug={it.mark} />;
+  if (hasVendorMark(it.mark)) return <VendorMark slug={it.mark} size={it.selectionMark ? 24 : undefined} />;
   return it.mono ? <Mono {...it.mono} /> : null;
 }
 
@@ -318,7 +340,7 @@ function matching(items: MenuItem[], query: string): MenuItem[] {
     // Actions are not data — filtering them out would take "打开其他目录…"
     // away exactly when the query found nothing and the user needs it.
     if (it.plain) return false;
-    const hay = `${head}|${normalize(`${it.label} ${it.right ?? ""} ${it.meta ?? ""} ${it.desc ?? ""}`)}`;
+    const hay = `${head}|${normalize(`${it.label} ${it.right ?? ""} ${it.meta ?? ""} ${it.desc ?? ""} ${it.searchText ?? ""}`)}`;
     return words.every((w) => hay.includes(w));
   });
   return items.filter((it, i) => {
