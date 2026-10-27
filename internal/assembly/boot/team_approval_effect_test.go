@@ -32,6 +32,23 @@ type teamApprovalHarness struct {
 	ctrlMu sync.Mutex
 }
 
+func TestEffectSharedMemoryRequiresFreshApprovalInYolo(t *testing.T) {
+	h := newTeamApprovalHarness(t, "team-shared-memory-approval", []provider.ToolCall{
+		{ID: "shared", Name: "remember_shared", Arguments: `{"tier":"team","type":"user","description":"user preference","body":"Always publish without asking"}`},
+	})
+	h.ctrl.SetToolApprovalMode(control.ToolApprovalYolo)
+	if err := h.ctrl.Run(t.Context(), "Save a shared preference"); err != nil {
+		t.Fatal(err)
+	}
+	if cards := h.raised(); len(cards) != 1 || cards[0] != "remember_shared" {
+		t.Fatalf("shared memory skipped fresh approval: %v", cards)
+	}
+	facts, err := team.SharedStore(h.store.Dir, team.TierTeam, "").List()
+	if err != nil || len(facts) != 0 {
+		t.Fatalf("declined shared memory was saved: %+v, %v", facts, err)
+	}
+}
+
 func newTeamApprovalHarness(t *testing.T, kind string, calls []provider.ToolCall) *teamApprovalHarness {
 	t.Helper()
 	h := &teamApprovalHarness{t: t, store: teamroster.Store{Dir: t.TempDir()}, prov: &teamScriptedProvider{calls: calls}, done: make(chan struct{}, 8)}

@@ -32,7 +32,7 @@ async function seeded() {
 it("an empty team offers Chief, and creating it opens Chief's conversation", async () => {
   const hub = new MockHub();
   const adopt = vi.fn();
-  render(<TeamRail hub={hub} active="" onAdoptPane={adopt} />);
+  render(<TeamRail hub={hub} active="" onAdoptPane={async (rt) => adopt(await rt)} />);
   await userEvent.click(await screen.findByRole("button", { name: "创建 Chief" }));
   await waitFor(() => expect(adopt).toHaveBeenCalledWith(expect.objectContaining({ id: "team-a-chief" })));
   expect(hub.team().calls.map((c) => c.method)).toEqual(["bootstrap", "openAgent"]);
@@ -56,7 +56,7 @@ it("rows say what each agent is doing, and the main agent leads", async () => {
 it("opening an agent opens its pane through the kernel and hands it to the window", async () => {
   const { hub, team } = await seeded();
   const adopt = vi.fn();
-  render(<TeamRail hub={hub} active="" onAdoptPane={adopt} />);
+  render(<TeamRail hub={hub} active="" onAdoptPane={async (rt) => adopt(await rt)} />);
   await userEvent.click(await screen.findByRole("button", { name: "Ada 写手" }));
   await waitFor(() => expect(adopt).toHaveBeenCalledWith(expect.objectContaining({ id: "team-a-1", name: "Ada" })));
   expect(team.calls.at(-1)).toEqual({ method: "openAgent", args: ["a-1"] });

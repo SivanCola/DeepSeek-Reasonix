@@ -12,7 +12,7 @@ export function TeamLayer({ hub, active, seat, root, port, onMemory, onAdoptPane
   root?: string;
   port?: AgentPort | null;
   onMemory?: () => void;
-  onAdoptPane: (rt: RuntimeView) => void;
+  onAdoptPane: (rt: RuntimeView | Promise<RuntimeView>) => void;
 }) {
   return (
     <>

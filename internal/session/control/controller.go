@@ -255,6 +255,7 @@ const (
 const (
 	memoryRememberTool = "remember"
 	memoryForgetTool   = "forget"
+	memorySharedTool   = "remember_shared"
 )
 
 // RememberResult describes what happened when an approval rule was persisted.

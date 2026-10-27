@@ -686,7 +686,7 @@ func ParseToolApprovalMode(mode string) (string, bool) {
 // narrow operation in interactive or headless mode.
 func RequiresFreshHumanApprovalTool(tool string) bool {
 	switch tool {
-	case planApprovalTool, memoryRememberTool, memoryForgetTool, permission.ConfirmTool, permission.OriginConfirmTool, SandboxEscapeApprovalTool, ManagedConfigWriteApprovalTool, NetworkEgressApprovalTool, PaidSearchApprovalTool, MCPSignInApprovalTool, MCPScopeUpgradeApprovalTool, SettingApprovalTool, SettingElevatedApprovalTool, TeamChangeApprovalTool:
+	case planApprovalTool, memoryRememberTool, memoryForgetTool, memorySharedTool, permission.ConfirmTool, permission.OriginConfirmTool, SandboxEscapeApprovalTool, ManagedConfigWriteApprovalTool, NetworkEgressApprovalTool, PaidSearchApprovalTool, MCPSignInApprovalTool, MCPScopeUpgradeApprovalTool, SettingApprovalTool, SettingElevatedApprovalTool, TeamChangeApprovalTool:
 		return true
 	default:
 		return false
@@ -745,7 +745,7 @@ func permissionRequestHookPayload(tool, subject string, args json.RawMessage) (s
 	switch tool {
 	case planApprovalTool:
 		return "", nil, false
-	case memoryRememberTool, memoryForgetTool:
+	case memoryRememberTool, memoryForgetTool, memorySharedTool:
 		return "", nil, true
 	default:
 		return subject, args, true
