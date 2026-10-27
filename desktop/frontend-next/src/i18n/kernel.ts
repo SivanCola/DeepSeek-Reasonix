@@ -813,6 +813,23 @@ const SAID: Record<string, string> = {
   "loopback.misconfigured": "本机通道未建立，请重新打开 Studio 后重试",
   "serve.host_rejected": "该服务未开启认证，只接受发往本机或其监听地址的请求",
   "auth.launch_token_required": "该服务未开启认证，修改与审批需要本次启动的令牌，请用启动时打印的链接打开",
+  "team.read_only": "团队正在另一个 Reasonix 窗口中编辑，这里只能查看",
+  "team.store_failed": "团队数据未能读写，请稍后重试",
+  "team.unknown_agent": "团队中没有这个 Agent",
+  "team.unknown_group": "没有这个群聊",
+  "team.not_member": "该 Agent 不是这个群的成员",
+  "team.group_size": "群聊需要 2 到 12 名成员",
+  "team.name_taken": "这个名字已被使用",
+  "team.last_main": "团队至少需要一个主 Agent",
+  "team.too_long": "内容超出长度上限",
+  "team.invalid": "内容不符合要求，请检查后重试",
+  "team.conflict": "团队已被其他操作修改，请刷新后重试",
+  "team.newer_schema": "团队数据由更新版本的 Reasonix 写入，这里只能查看",
+  "team.archived": "这个群聊已归档，不再接收新消息",
+  "team.unavailable": "该 Agent 的会话暂时无法打开",
+  "turn.timeout": "这一轮超时了",
+  "turn.final_readiness": "多次尝试后仍未通过交付检查",
+  "turn.paused": "这一轮在一个明确的边界处暂停了",
 };
 
 /** Reason is what a refused request answers with. `error` is English fallback
