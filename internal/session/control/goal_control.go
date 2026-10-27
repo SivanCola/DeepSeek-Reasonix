@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"reasonix/internal/base/i18n"
+	"reasonix/internal/runtime/agent"
 	"reasonix/internal/runtime/goaleval"
 )
 
@@ -68,6 +69,11 @@ func (c *Controller) ResumeGoal() bool {
 				c.goals.restore(prior)
 				c.notice("Task budget could not be renewed: " + err.Error())
 				return false
+			}
+			if roles, ok := c.runner.(interface{ PlannerAgent() *agent.Agent }); ok {
+				if planner := roles.PlannerAgent(); planner != nil {
+					planner.ResetTaskBudget()
+				}
 			}
 		}
 		c.executor.RestoreDeliveryCheckpoint(c.goals.deliveryState())

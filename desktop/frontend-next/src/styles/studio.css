@@ -1391,7 +1391,7 @@ body { background: var(--page) !important; }
 .workbench-search svg { width: 15px; height: 15px; color: var(--faint); }
 .workbench-search input { min-width: 0; width: 100%; border: 0; outline: 0; background: transparent; color: var(--text); font: 500 calc(12px * var(--fs-scale, 1))/1 var(--ui); }
 .workbench-search button { width: 20px; height: 20px; padding: 0; border: 0; display: grid; place-items: center; background: transparent; color: var(--muted); }
-.workbench-changes { flex: none; max-height: 34%; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; border-bottom: 1px solid var(--hair); scrollbar-gutter: stable; }
+.workbench-changes { flex: none; max-height: 34%; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; border-bottom: 1px solid var(--hair); scrollbar-gutter: stable; } .workbench-git { flex: 0 1 auto; min-height: 0; max-height: 65%; overflow-y: auto; scrollbar-gutter: stable; }
 .workbench-changes .workbench-explorer-head { position: sticky; top: 0; z-index: 1; border-bottom: 0; background: var(--page); }
 .workbench-changes > button { flex: none; }
 .workbench-changes:has(.commit-card:not([data-phase="idle"])) { max-height: 80%; }

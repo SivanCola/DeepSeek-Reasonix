@@ -223,6 +223,32 @@ jobs:
           WINDOWS_SANDBOX_WAIT_MS: "20000"
         run: go test -count=1 -p 4 -timeout=18m ./internal/runtime/agent/... ./internal/platform/appidentity/... ./internal/assembly/boot/... ./internal/state/checkpoint/... ./internal/frontend/cli/... ./internal/session/control/... ./internal/base/filelock/... ./internal/base/fileutil/... ./internal/ext/hook/... ./internal/state/instruction/... ./internal/ext/mcplaunch/... ./internal/platform/notify/... ./internal/base/proc/... ./internal/platform/remote/... ./internal/platform/repair/... ./internal/safety/sandbox/... ./internal/base/sysproxy/... ./internal/state/workspacelease/... ./cmd/...
 
+      - name: test (Windows published command job owner)
+        if: env.RUN_STEPS == 'true' && runner.os == 'Windows' && github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/published-job-owner"
+          mkdir -p "$evidence"
+          go test -count=1 -timeout=3m -json -run '^TestPublishedJob' ./internal/base/proc | tee "$evidence/positive.jsonl"
+          node scripts/published-job-evidence.mjs positive "$evidence/positive.jsonl"
+          node scripts/published-job-evidence.mjs overlay "$evidence"
+          set +e
+          go test -count=1 -timeout=3m -json -overlay="$evidence/overlay.json" -run '^TestPublishedJob' ./internal/base/proc > "$evidence/negative.jsonl"
+          old_result=$?
+          set -e
+          test "$old_result" -eq 1
+          node scripts/published-job-evidence.mjs negative "$evidence/negative.jsonl"
+
+      - name: upload Windows published command job owner evidence
+        if: always() && env.RUN_STEPS == 'true' && runner.os == 'Windows' && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: published-job-owner-windows-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/published-job-owner/
+          if-no-files-found: error
+          retention-days: 7
+
       - name: test (Windows isolation owners)
         if: env.RUN_STEPS == 'true' && runner.os == 'Windows' && github.event_name == 'pull_request'
         timeout-minutes: 25
@@ -400,6 +426,35 @@ jobs:
           name: coordinator-root-budget-windows-${{ github.run_attempt }}
           path: ${{ runner.temp }}/coordinator-root-budget.jsonl
           if-no-files-found: ignore
+          retention-days: 7
+
+      - name: test (Windows resumed Goal planner budget)
+        if: env.RUN_STEPS == 'true' && runner.os == 'Windows' && github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -count=1 -timeout=3m -json -run '^Test(GoalResumeRenewsPlannerBudget|GoalNonBudgetResumeKeepsPlannerBudget|GoalTokenBudgetPausesAndResumes|EffectGoalResumeRenewsPlannerBudget)$' ./internal/session/control ./internal/assembly/boot | tee "$RUNNER_TEMP/goal-planner-resume.jsonl"
+          jq -se '
+            ["TestGoalResumeRenewsPlannerBudget",
+             "TestGoalNonBudgetResumeKeepsPlannerBudget",
+             "TestGoalNonBudgetResumeKeepsPlannerBudget/manual_pause",
+             "TestGoalNonBudgetResumeKeepsPlannerBudget/not_resumable",
+             "TestGoalTokenBudgetPausesAndResumes",
+             "TestEffectGoalResumeRenewsPlannerBudget"] as $required |
+            [.[] | select(.Test != null and .Action == "pass") | .Test] as $passed |
+            [.[] | select(.Test == null and .Action == "pass") | .Package] as $packages |
+            all(.[]; .Action != "fail" and .Action != "skip") and
+            (($required - $passed) | length == 0) and
+            ((["reasonix/internal/session/control", "reasonix/internal/assembly/boot"] - $packages) | length == 0)
+          ' "$RUNNER_TEMP/goal-planner-resume.jsonl"
+
+      - name: upload Windows resumed Goal planner budget inventory
+        if: always() && env.RUN_STEPS == 'true' && runner.os == 'Windows' && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: goal-planner-resume-windows-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/goal-planner-resume.jsonl
+          if-no-files-found: error
           retention-days: 7
 
       - name: test (Windows root wall budget)
