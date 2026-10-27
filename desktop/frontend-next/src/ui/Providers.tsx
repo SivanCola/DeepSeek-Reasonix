@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Clip } from "./Clip";
+import { ProviderHealthSetting } from "./ProviderHealthSetting";
 import { useEscape } from "./dismiss";
 import { t } from "../i18n";
 import type { Protocol, ProviderCheck, ProviderCheckDraft, ProviderDraft, ProviderEdit, ProviderEntry, ProviderModelCheck, ProviderModelCheckRequest, ProviderProbe, ProviderRemoval, ProviderPreset, ProviderPresetInstall } from "../port/port";
@@ -21,6 +22,8 @@ import { RemovalNotice, removalChangedRoles, type Removal } from "./ProviderRemo
 // is knowable by asking the endpoint.
 
 export type Port = {
+  providerHealthSettings?: import("../port/port").AgentPort["providerHealthSettings"];
+  saveProviderHealthSettings?: import("../port/port").AgentPort["saveProviderHealthSettings"];
   providers(): Promise<ProviderEntry[]>;
   protocols(): Promise<Protocol[]>;
   providerPresets(): Promise<ProviderPreset[]>;
@@ -306,6 +309,7 @@ export function Providers({ port, onChanged, onFailed, protocol, onProtocol, act
         </button>
       </div>
       <div className="pmain" ref={pmain}>
+        <ProviderHealthSetting port={port} onChanged={onChanged} onFailed={onFailed} />
         {removal && (removal.report || !accounts.some((a) => a.key === removal.key)) && (
           <RemovalNotice removal={removal} />
         )}
