@@ -19,7 +19,7 @@ func (a *Agent) refuseMarkedMCPCall(plan *toolCallPlan) (toolOutcome, bool) {
 	if _, ok := tool.MCPBindingFor(plan.execTool); !ok {
 		return toolOutcome{}, false
 	}
-	labels := secrets.Masker().Marks(string(plan.execArgs))
+	labels := secrets.Masker().MarksJSON(plan.execArgs)
 	if len(labels) == 0 {
 		return toolOutcome{}, false
 	}

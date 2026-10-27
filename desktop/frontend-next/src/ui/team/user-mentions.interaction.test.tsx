@@ -28,7 +28,7 @@ async function draw(text: string) {
   render(
     <>
       <TeamRail hub={hub} active="" onAdoptPane={vi.fn()} />
-      <TeamLayer hub={hub} active="" onAdoptPane={adopt} />
+      <TeamLayer hub={hub} active="" onAdoptPane={async (rt) => adopt(await rt)} />
       <UserText text={text} />
     </>,
   );

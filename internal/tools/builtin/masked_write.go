@@ -19,7 +19,7 @@ const CodeMaskedSecretCommand = "secret.masked_command"
 // refuseMaskedWrite stops a write that would put a secret's mark where the
 // file holds its value: a model that read a masked copy writes the mark back.
 func refuseMaskedWrite(args json.RawMessage) error {
-	labels := secrets.Masker().Marks(string(args))
+	labels := secrets.Masker().MarksJSON(args)
 	if len(labels) == 0 {
 		return nil
 	}
@@ -35,7 +35,7 @@ func refuseMaskedWrite(args json.RawMessage) error {
 // refuseMaskedCommand stops a shell command carrying a secret's mark: written
 // to a file or sent as a credential, the mark goes where the value belongs.
 func refuseMaskedCommand(args json.RawMessage) error {
-	labels := secrets.Masker().Marks(string(args))
+	labels := secrets.Masker().MarksJSON(args)
 	if len(labels) == 0 {
 		return nil
 	}

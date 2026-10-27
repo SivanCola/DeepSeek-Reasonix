@@ -367,7 +367,7 @@ export function App({ hub }: { hub: HubPort }) {
   }, [active, panePorts, hidePrefs]);
 
   const openPane = useOpenPane({ hub, runtimes, panePorts, active, reportsRef, runsRef, setRuntimes, setActive, setTakeover, reloadPanes: refreshPanes, sw });
-  const adoptPane = useAdoptPane(setRuntimes, focusPane);
+  const adoptPane = useAdoptPane(setRuntimes, focusPane, sw);
 
   // Awaitable because deleting a conversation has to close its pane first and
   // then wait: the kernel refuses to erase a transcript its runtime still holds,

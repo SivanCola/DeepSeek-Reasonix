@@ -20,13 +20,24 @@ type Signed struct {
 // an adapter is about to send; every adapter calls it, so no path to a model
 // skips it. What keep names stays whole: altering it fails the request.
 func MaskOutbound(req Request, keep Signed) Request {
-	req.Messages = MaskMessages(req.Messages, keep)
+	m := secrets.Masker()
+	req.Messages = maskMessages(m, req.Messages, keep)
+	if m != nil && len(req.Tools) > 0 {
+		req.Tools = slices.Clone(req.Tools)
+		for i := range req.Tools {
+			req.Tools[i].Description = m.String(req.Tools[i].Description)
+			req.Tools[i].Parameters = m.JSON(req.Tools[i].Parameters)
+		}
+	}
 	return req
 }
 
 // MaskMessages is MaskOutbound for messages leaving the host another way.
 func MaskMessages(msgs []Message, keep Signed) []Message {
-	m := secrets.Masker()
+	return maskMessages(secrets.Masker(), msgs, keep)
+}
+
+func maskMessages(m *secrets.Mask, msgs []Message, keep Signed) []Message {
 	if m == nil {
 		return msgs
 	}
@@ -47,7 +58,7 @@ func maskMessage(m *secrets.Mask, msg Message, keep Signed) Message {
 		calls := slices.Clone(msg.ToolCalls)
 		for i := range calls {
 			if !keep.ToolCalls || calls[i].ThoughtSignature == "" {
-				calls[i].Arguments = m.String(calls[i].Arguments)
+				calls[i].Arguments = string(m.JSON(json.RawMessage(calls[i].Arguments)))
 			}
 		}
 		msg.ToolCalls = calls

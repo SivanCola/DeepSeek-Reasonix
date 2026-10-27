@@ -96,6 +96,7 @@ func ToolCallsFromProtocol(calls []protocol.ProviderToolCall) []provider.ToolCal
 // RequestToProtocol copies a completion request into the credential-free wire
 // form the host sends to an extension-hosted provider.
 func RequestToProtocol(req provider.Request) protocol.ProviderRequest {
+	req = provider.MaskOutbound(req, provider.Signed{})
 	tools := make([]protocol.ProviderToolSchema, 0, len(req.Tools))
 	for _, s := range req.Tools {
 		tools = append(tools, protocol.ProviderToolSchema{

@@ -42,3 +42,18 @@ func TestAStreamPassesOnWhatCannotBeginAValue(t *testing.T) {
 		t.Fatalf("flush lost the held fragment: %q", out.String())
 	}
 }
+
+func TestRunningStreamMasksNewlySavedValuesImmediately(t *testing.T) {
+	var current []Labeled
+	WatchValues(t.Name(), func() []Labeled { return current })
+	t.Cleanup(func() { WatchValues(t.Name(), func() []Labeled { return nil }) })
+	var out bytes.Buffer
+	s := NewStream(&out)
+	_, _ = s.Write([]byte("ready\n"))
+	current = []Labeled{{Label: "STREAM_NEW", Value: "newly-saved-stream-value"}}
+	_, _ = s.Write([]byte("newly-saved-stream-value\n"))
+	_ = s.Flush()
+	if got := out.String(); got != "ready\n[secret:STREAM_NEW]\n" {
+		t.Fatalf("stream leaked a newly saved value: %q", got)
+	}
+}

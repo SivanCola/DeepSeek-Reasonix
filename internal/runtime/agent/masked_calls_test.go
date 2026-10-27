@@ -28,6 +28,10 @@ func TestAnMCPCallCarryingASecretsMarkIsRefused(t *testing.T) {
 	if !out.blocked || out.refusalCode != CodeMaskedSecretCall || !strings.Contains(out.output, "MCP_KEY") || rec.execs != 0 {
 		t.Fatalf("marked call = %+v, execs %d", out, rec.execs)
 	}
+	out = a.executeOne(context.Background(), &a.turn, provider.ToolCall{Name: "mcp__srv__raw", Arguments: `{"token":"\u005bsecret:MCP_KEY]"}`})
+	if !out.blocked || out.refusalCode != CodeMaskedSecretCall || rec.execs != 0 {
+		t.Fatalf("encoded marked call = %+v, execs %d", out, rec.execs)
+	}
 	out = a.executeOne(context.Background(), &a.turn, provider.ToolCall{Name: "mcp__srv__raw", Arguments: `{"q":"plain"}`})
 	if out.blocked || rec.execs != 1 {
 		t.Fatalf("plain call = %+v, execs %d", out, rec.execs)

@@ -2,6 +2,7 @@ package boot
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -47,7 +48,10 @@ func TestEveryProviderKindMasksSecretsOnTheWire(t *testing.T) {
 			if err != nil {
 				t.Fatalf("kind %s does not build from a bare entry: %v", kind, err)
 			}
-			ch, err := p.Stream(context.Background(), provider.Request{Messages: []provider.Message{
+			ch, err := p.Stream(context.Background(), provider.Request{Tools: []provider.ToolSchema{{
+				Name: "fixture", Description: "Use " + value,
+				Parameters: json.RawMessage(`{"type":"object","properties":{"token":{"type":"string","default":"\u0073k-wire-0123456789abcdef"}}}`),
+			}}, Messages: []provider.Message{
 				{Role: provider.RoleSystem, Content: "you hold " + value},
 				{Role: provider.RoleUser, Content: "use " + value},
 			}})
@@ -61,7 +65,12 @@ func TestEveryProviderKindMasksSecretsOnTheWire(t *testing.T) {
 				t.Fatalf("kind %s sent nothing (err %v)", kind, err)
 			}
 			for _, b := range bodies {
-				if strings.Contains(b, value) || !strings.Contains(b, "[secret:WIRE_KEY]") {
+				var decoded any
+				if err := json.Unmarshal([]byte(b), &decoded); err != nil {
+					t.Fatalf("kind %s sent invalid JSON: %v", kind, err)
+				}
+				normalized, _ := json.Marshal(decoded)
+				if strings.Contains(string(normalized), value) || !strings.Contains(b, "[secret:WIRE_KEY]") {
 					t.Fatalf("kind %s put %s on the wire", kind, b)
 				}
 			}

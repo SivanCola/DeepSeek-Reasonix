@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"reasonix/internal/base/fileutil"
 )
 
 // OutboxFile holds what the user sent agents from a window that does not hold
@@ -45,9 +47,8 @@ func (s Store) QueueUserMessage(ctx context.Context, to, text string) (UserMessa
 	return m, err
 }
 
-// TakeUserMessages returns every queued message and empties the outbox, both
-// under its lock, so a message is taken once.
-func (s Store) TakeUserMessages(ctx context.Context) ([]UserMessage, error) {
+// PendingUserMessages snapshots the queue without acknowledging delivery.
+func (s Store) PendingUserMessages(ctx context.Context) ([]UserMessage, error) {
 	path := filepath.Join(s.Dir, OutboxFile)
 	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
@@ -64,7 +65,28 @@ func (s Store) TakeUserMessages(ctx context.Context) ([]UserMessage, error) {
 		}); err != nil {
 			return err
 		}
-		return os.Remove(path)
+		return nil
 	})
 	return out, err
+}
+
+// AckUserMessage removes one delivered message while preserving newer sends.
+func (s Store) AckUserMessage(ctx context.Context, id string) error {
+	return s.withLock(ctx, s.Dir, OutboxFile, func() error {
+		path := filepath.Join(s.Dir, OutboxFile)
+		var data []byte
+		if err := readJSONL(path, func(line []byte) error {
+			var m UserMessage
+			if err := json.Unmarshal(line, &m); err != nil {
+				return err
+			}
+			if m.ID != id {
+				data = append(append(data, line...), '\n')
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		return fileutil.AtomicWriteFile(path, data, 0o600)
+	})
 }

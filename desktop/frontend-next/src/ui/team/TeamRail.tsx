@@ -69,7 +69,7 @@ function groupLine(g: TeamGroup, names: Map<string, string>): string {
 // The team's block in the sidebar: the agents and the group chats they meet
 // in. Opening an agent opens its own conversation as a pane; opening a group
 // fills the main area with that group's chat.
-export function TeamRail({ hub, active, onAdoptPane }: { hub: HubPort; active: string; onAdoptPane: (rt: RuntimeView) => void }) {
+export function TeamRail({ hub, active, onAdoptPane }: { hub: HubPort; active: string; onAdoptPane: (rt: RuntimeView | Promise<RuntimeView>) => void }) {
   const { view, unavailable, team, shown } = useTeam(hub);
   const stage = useGroupStage();
   const [dialog, setDialog] = useState<{ kind: "agent" | "group"; id?: string } | null>(null);
@@ -121,9 +121,8 @@ export function TeamRail({ hub, active, onAdoptPane }: { hub: HubPort; active: s
   const openAgent = async (id: string) => {
     noteSeen([{ id, at: view.agents.find((a) => a.id === id)?.lastActivityAt, looking: true }]);
     try {
-      const rt = await team.openAgent(id);
       closeGroupStage();
-      onAdoptPane(rt);
+      await onAdoptPane(team.openAgent(id));
     } catch (e) {
       pushToast(reason(e));
     }
@@ -257,7 +256,7 @@ export function TeamRail({ hub, active, onAdoptPane }: { hub: HubPort; active: s
         <TeamMenu team={team} view={view} target={menuTarget} at={{ x: menu.x, y: menu.y }} anchor={menuRow}
           unread={isUnread(unread, menu.id, menuTarget.kind === "agent" ? menuTarget.agent.lastActivityAt : menuTarget.group.lastActivityAt)}
           lead={menuTarget.kind === "agent" && menuTarget.agent === lead}
-          onClose={() => setMenu(null)} onSettings={() => setDialog({ kind: menu.kind, id: menu.id })} onShown={shown} onOpened={(rt) => { closeGroupStage(); onAdoptPane(rt); }} />
+          onClose={() => setMenu(null)} onSettings={() => setDialog({ kind: menu.kind, id: menu.id })} onShown={shown} onOpened={(rt) => { closeGroupStage(); return onAdoptPane(rt); }} />
       )}
       {dialog?.kind === "agent" && (dialog.id === undefined || editing) && (
         <AgentDialog team={team} agent={editing} onClose={() => setDialog(null)} onSaved={done} />

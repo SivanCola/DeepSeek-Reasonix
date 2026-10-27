@@ -44,6 +44,12 @@ func (t *teamTool) ReadOnly() bool          { return t.readOnly }
 // group's log, never the workspace.
 func (t *teamTool) WritesHostStateOnly() bool { return true }
 
+// Team dispatch and turn control mutate the parent's team state; a strictly
+// read-only child must not execute them under the parent's identity.
+func (t *teamTool) ReadOnlyExecutionHostMutation() bool {
+	return t.name != "list_agents" && t.name != "read_group" && t.name != "recall_shared"
+}
+
 func (t *teamTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	dir, ok := t.link.Directory()
 	if !ok {

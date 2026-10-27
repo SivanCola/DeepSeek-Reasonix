@@ -1,7 +1,6 @@
 package secrets
 
 import (
-	"bytes"
 	"encoding/json"
 	"net/url"
 	"slices"
@@ -126,55 +125,6 @@ func (m *Mask) String(s string) string {
 		}
 	}
 	return s
-}
-
-// JSON masks the strings inside a raw JSON document, decoded and encoded again
-// so a mark never lands inside an escape sequence. A document holding no value
-// is returned as it was.
-func (m *Mask) JSON(raw json.RawMessage) json.RawMessage {
-	if m == nil || !m.touches(string(raw)) {
-		return raw
-	}
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.UseNumber()
-	var doc any
-	if dec.Decode(&doc) != nil {
-		return json.RawMessage(m.String(string(raw)))
-	}
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if enc.Encode(m.walk(doc)) != nil {
-		return raw
-	}
-	return json.RawMessage(bytes.TrimSuffix(buf.Bytes(), []byte("\n")))
-}
-
-func (m *Mask) touches(s string) bool {
-	for _, v := range m.values {
-		for _, form := range v.forms {
-			if strings.Contains(s, form) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func (m *Mask) walk(v any) any {
-	switch t := v.(type) {
-	case string:
-		return m.String(t)
-	case []any:
-		for i := range t {
-			t[i] = m.walk(t[i])
-		}
-	case map[string]any:
-		for k, x := range t {
-			t[k] = m.walk(x)
-		}
-	}
-	return v
 }
 
 // Marks returns the labels whose mark appears in s: text a model wrote back

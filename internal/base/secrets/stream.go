@@ -4,23 +4,16 @@ import (
 	"bytes"
 	"io"
 	"sync"
-	"time"
 )
-
-// streamRefresh is how long a Stream masks with one snapshot before it reads
-// the sources again: a write per output chunk cannot afford a file read each.
-const streamRefresh = 2 * time.Second
 
 // Stream masks text written in pieces. A trailing fragment that could begin a
 // held value is kept back until the rest arrives or Flush, so a value split
 // across two writes is still recognised; text that cannot begin one passes on
 // at once, so a reader waiting for a line is not delayed.
 type Stream struct {
-	mu    sync.Mutex
-	out   io.Writer
-	held  []byte
-	mask  *Mask
-	taken time.Time
+	mu   sync.Mutex
+	out  io.Writer
+	held []byte
 }
 
 // NewStream masks what is written to it before it reaches out.
@@ -29,13 +22,11 @@ func NewStream(out io.Writer) *Stream { return &Stream{out: out} }
 func (s *Stream) Write(p []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.taken.IsZero() || time.Since(s.taken) > streamRefresh {
-		s.mask, s.taken = Masker(), time.Now()
-	}
+	m := Masker()
 	buf := append(s.held, p...)
-	cut := s.mask.cut(buf)
+	cut := m.cut(buf)
 	if cut > 0 {
-		if _, err := io.WriteString(s.out, s.mask.String(string(buf[:cut]))); err != nil {
+		if _, err := io.WriteString(s.out, m.String(string(buf[:cut]))); err != nil {
 			return 0, err
 		}
 	}

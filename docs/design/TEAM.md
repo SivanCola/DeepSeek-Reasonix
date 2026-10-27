@@ -61,6 +61,12 @@ Studio keeps a team of long-lived agents beside the user's projects.
 | A model choosing an agent's folder | Fresh `team_change` card every time; no posture, grant, hook or rule answers it. |
 | Main agent, permission, relay limit, deletion | User only, through `/team` routes. |
 
+Delegated work inherits the effective turn ceiling. Strict read-only workers
+cannot dispatch team work or mutate team state, including through deferred tools.
+Roster, schedule and secret management routes are host-only for paired devices.
+
+委派任务继承当前回合的有效审批上限。严格只读的工作 Agent 不能调度团队工作或修改团队状态，延迟加载工具也遵守此边界。配对设备不能调用仅限主机的名册、定时任务和密钥管理接口。
+
 ## 6. Memory and schedules
 
 | Feature | Behaviour |
@@ -71,6 +77,12 @@ Studio keeps a team of long-lived agents beside the user's projects.
 | Who fires them | The Studio host that holds the team's writer lease, on its tick. A fired run is gated at the agent's own approval mode. |
 | Browser | Each agent's browser runs on its own profile (`agent-<id>`), in every seat, so one agent's logins are never another's. |
 | Usage | Every call from an agent's seat, its memory review included, is recorded under the agent; the usage page lists spend by agent, and the agent's drawer sums its conversations. |
+
+`remember_shared` requires fresh human approval. Automatic review preserves
+pinned guidance and checks the observed revision before editing or archiving a
+fact. Shutdown cancels and joins reviews before releasing the team's writer lease.
+
+`remember_shared` 每次都需要人工审批。自动整理保留固定指导，修改或归档事实前检查读取时的版本；主机关闭时先取消并等待整理退出，再释放团队写入租约。
 
 ## 7. Secrets
 
@@ -87,6 +99,15 @@ default, and a secret already saved under the name keeps the agents it had.
 | Delete and replace | The value stops reaching commands and is kept as retired, so copies already in conversations stay masked. Forgetting retired values is a separate, confirmed action. |
 | Writing back | The file tools and their previews refuse text carrying a mark (`secret.masked_write`); so do shell commands (`secret.masked_command`) and MCP calls, proxied ones included (`secret.masked_call`). |
 | What is kept | Every tool's result, a command's failure tail and progress, and a background job's log are masked before they are drawn or stored; a value split across two writes is held back until it can be recognised. |
+
+JSON masking inspects decoded string and numeric tokens, including object keys
+and duplicate keys. Tool descriptions and schemas cross the same boundary.
+
+JSON with no matching value retains its exact bytes; a prefix containing a
+registered value must change to remove it. Output streams refresh their mask
+on every write so a newly saved value has no timed cache exemption.
+
+JSON 脱敏检查解码后的字符串和数字，包括对象键名及重复键；工具说明和 schema 同样脱敏。没有命中密钥的 JSON 保持原始字节；前缀含有已登记密钥时，必须改变字节以去除它。输出流每次写入都刷新脱敏状态，新保存的密钥不存在定时缓存豁免。
 
 ## 8. Known limits
 
