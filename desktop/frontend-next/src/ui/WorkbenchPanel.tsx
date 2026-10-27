@@ -25,7 +25,7 @@ import { useTabNames } from "./useTabNames";
 import { useTabClose } from "./useTabClose";
 import { BrowserTabMenu } from "./BrowserTabMenu";
 import { WorkbenchFileMenu, type FileMenu } from "./WorkbenchFileMenu";
-import { WorkbenchSelectionMenu, type SelectionMenu } from "./WorkbenchSelectionMenu";
+import { useWorkbenchTextMenu } from "./useWorkbenchTextMenu";
 import { WorkbenchGit } from "./WorkbenchGit";
 import { workspaceDrag } from "./filedrag";
 import { useGitRepos } from "./useGitRepos";
@@ -295,17 +295,10 @@ export function WorkbenchPanel({
     onActiveFile?.(shown && !launcher && !showFiles && filePath ? filePath : undefined);
     return () => onActiveFile?.(undefined);
   }, [filePath, shown, launcher, showFiles, onActiveFile]);
-  const [selectionMenu, setSelectionMenu] = useState<SelectionMenu | null>(null);
-  // A right-click over text selected in an open file offers to bring that passage into the
-  // conversation; anywhere else, or with nothing selected, the browser's own menu stays.
-  const offerSelectionMenu = (e: MouseEvent<HTMLElement>) => {
-    if (!onQuoteSelection || !filePath) return;
-    const selection = document.getSelection();
-    const text = selection?.toString().trim() ?? "";
-    if (!selection || selection.isCollapsed || !text || !e.currentTarget.contains(selection.anchorNode)) return;
-    e.preventDefault();
-    setSelectionMenu({ text, x: e.clientX, y: e.clientY, anchor: e.currentTarget });
-  };
+  const textMenu = useWorkbenchTextMenu({
+    path: filePath, mode, scope, shown: shown && !launcher && !showFiles,
+    onQuote: onQuoteSelection, onError: setFailed,
+  });
   const grantedFile = parseGrantedFile(filePath);
   const readable = /\.(md|markdown|mdx)$/i.test(grantedFile?.rel ?? filePath);
   const hasDocument = documentView(grantedFile?.rel ?? filePath);
@@ -562,7 +555,7 @@ export function WorkbenchPanel({
               onBrowser={() => void addBrowser()}
             />
           )}
-          <div className="workbench-content" hidden={launcher || !active} data-action-contextmenu="workbench.quote-selection" onContextMenu={offerSelectionMenu}>
+          <div className="workbench-content" hidden={launcher || !active} data-action-contextmenu="workbench.quote-selection" {...textMenu.readerProps}>
           {browsers.map((id) => (
             <ManualBrowserPanel
               key={id}
@@ -623,11 +616,11 @@ export function WorkbenchPanel({
               ) : busy && !file ? (
                 <div className="workbench-empty">{t("正在读取…")}</div>
               ) : mode === "diff" ? (
-                <div className="workbench-diff">
+                <div className="workbench-diff" tabIndex={0}>
                   <DiffView path={active.path} diff={diff} />
                 </div>
               ) : mode === "read" && file && file.path === (grantedFile?.rel ?? active.path) ? (
-                <div className="workbench-read">
+                <div className="workbench-read" tabIndex={0}>
                   <LazyMarkdown text={draft} local={docRefs} />
                 </div>
               ) : file && file.path === (grantedFile?.rel ?? active.path) ? (
@@ -640,6 +633,7 @@ export function WorkbenchPanel({
                     onChange={setDraft}
                     onSave={() => void save()}
                     readOnly={!!grantedFile || !!file.readOnly}
+                    onTextContextMenu={textMenu.offer}
                   />
                 </Suspense>
               ) : null}
@@ -760,9 +754,7 @@ export function WorkbenchPanel({
           )}
         </aside>
       </div>
-      {selectionMenu && shown && onQuoteSelection && filePath && (
-        <WorkbenchSelectionMenu menu={selectionMenu} onQuote={(text) => onQuoteSelection(text, filePath)} onClose={() => setSelectionMenu(null)} />
-      )}
+      {textMenu.menu}
       {tabMenu && <BrowserTabMenu menu={tabMenu} others={tabOthers.length > 0} right={tabRight.length > 0} onDismiss={dismissTabMenu} onClose={(mode) => {
         const target = tabMenu.surface;
         returning.current = keyOf(target);

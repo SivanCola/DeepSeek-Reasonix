@@ -276,6 +276,18 @@ pack states a shape, never a number the layout has to agree with.
 - `--read` is the conversation body's own size, separate from interface zoom, so
   "I cannot read this" adjusts one thing. The value here is the first-frame
   fallback; the real default is `look.ts`'s `readDefault()`.
+- Execution content derives size from `--read`. Appearance also projects
+  `--read-scale` as the selected body size divided by the language's default.
+- The root's `--activity-scale` multiplies that ratio by the interface text scale.
+  Activity groups inherit the product as their local `--fs-scale`, including
+  work folded at turn completion.
+- Composing at the root avoids self-reference and prevents nested activity
+  groups from multiplying the scale again.
+- Activity title, running, failed and action counts retain one 11px/500 scale,
+  1.5 line-height and the running chip's 2px vertical padding. Interface and
+  body-size changes scale all four equally; the common 500 weight stays fixed.
+  Tool rows and input details retain reading/weight preferences.
+- Labels use `--ui`; tool names, paths and input use `--mono`.
 - `--column` is the reading column's width. The composer is laid at it in
   every measure; the transcript takes it through `--doc`.
 - `--doc` is the column the transcript is laid in: `--column`, or the whole

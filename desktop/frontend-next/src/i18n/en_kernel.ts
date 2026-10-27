@@ -3,6 +3,8 @@
 // code adds one here. i18n.test.ts is what stops one from being forgotten.
 
 export const EN_KERNEL: Record<string, string> = {
+  "历史内容已改变，正在重新读取最近的消息": "History changed. Reloading the latest messages.",
+  "当前内核不支持历史分页": "This kernel does not support history paging.",
   "此会话的组合已绑定原项目，请在目标项目新建会话": "This conversation's composition is bound to its project. Start a new conversation in the target project",
   "起始分支已不存在，请重新选择分支": "The source branch no longer exists. Choose another branch",
   "会话或工作目录已改变，请新建会话后重新选择 worktree": "The session or workspace changed. Start a new session to select a worktree",
@@ -48,6 +50,11 @@ export const EN_KERNEL: Record<string, string> = {
 
   "参数不符合该工具的约定，本次调用没有执行；请按工具说明补全或更正参数后重试": "The arguments break this tool's contract, so the call did not run; complete or correct them per the tool description and retry",
   "另一个会话持有所需的写入范围。本次操作未执行；请结束当前轮次，待该范围释放后再重试": "Another session holds the requested write claim. This operation did not run; end the current turn and retry after the claim is released",
+  "找不到该隔离结果，它可能已被应用或丢弃。未执行任何变更": "The isolated result no longer exists; it may have been applied or discarded. Nothing was changed",
+  "本会话未启用工作树隔离（[agent] worktree_isolation），本次任务未开始": "Worktree isolation is not enabled in this session ([agent] worktree_isolation), so the task did not start",
+  "工作树隔离需要一个已有提交的 Git 工作区，本次任务未开始": "Worktree isolation needs a Git workspace with a commit, so the task did not start",
+  "工作区在任务开始后改动了相同文件，未应用任何内容。请协调后重新应用或丢弃该结果": "The workspace changed the same files after the task began, so nothing was applied. Reconcile, then apply again or discard the result",
+  "此次隔离任务包含不支持的参数，未开始执行": "This isolated task combines arguments that are not supported, so it did not start",
   "搜索模型「{model}」的格式应为 服务/模型": "Search model “{model}” must be written as service/model",
   "搜索模型「{model}」所在的连接还没有添加：先添加这个连接，再选它": "Search model “{model}”'s connection has not been added yet: add that connection first, then pick it",
   "搜索模型「{model}」已不在配置里": "Search model “{model}” is no longer configured",
@@ -265,9 +272,14 @@ export const EN_KERNEL: Record<string, string> = {
   "本机没有操作系统沙箱，「关进沙箱」一档无法保存": "This machine has no OS sandbox, so the jailed mode cannot be saved",
 
   "该文件夹仍有 {n} 个打开的面板，请先关闭再移除": "This folder still has {n} open panes — close them before removing it",
-  "不支持该图片格式，请改用 PNG、JPEG、WebP、AVIF 或 GIF":
-    "That image format will not work — use PNG, JPEG, WebP, AVIF or GIF",
+  "不支持该格式，请改用图片（PNG、JPEG、WebP、AVIF、GIF）或视频（MP4、WebM）":
+    "That format is not supported; use an image (PNG, JPEG, WebP, AVIF, GIF) or a video (MP4, WebM)",
   "图片内容为空": "The image is empty",
+  "场景包过大，请压缩至 {limit} MB 以内": "That scene package is too large — bring it under {limit} MB",
+  "无法读取这个 Wallpaper Engine 场景": "This Wallpaper Engine scene could not be read",
+  "只支持 Scene 类型的 Wallpaper Engine 壁纸": "Only Scene wallpapers from Wallpaper Engine are supported",
+  "这个场景里没有可用的主图": "This scene has no backdrop to show",
+  "不支持该音频格式": "That audio format is not supported",
   "压缩阈值未能保存：{detail}": "The compaction threshold was not saved: {detail}",
   "本次请求未包含阈值，未做任何修改": "The request carried no threshold, so nothing changed",
   "{host} 上的内核没有应答，连接可能断了": "The kernel on {host} is not answering — the connection may be down",
@@ -475,7 +487,6 @@ export const EN_KERNEL: Record<string, string> = {
   "已有一个迁移正在进行，请等待其完成": "A move is already running — wait for it to finish",
   "这不是有效的插件名称": "That is not a plugin name",
   "该插件未安装": "That plugin is not installed",
-  "图片数据不是 base64 编码": "The image data is not base64",
   "HTTP 上不提供 shell 命令": "Shell commands are not served over HTTP",
   "这个会话里没有这条调用的输出": "This session has no output for that call",
   "要取的输出范围不对，请重新展开这条输出": "The part of the output asked for is not valid; open the output again",
@@ -544,7 +555,6 @@ export const EN_KERNEL: Record<string, string> = {
   "余额地址必须是 http 或 https 开头的网址": "The balance address must be an http or https URL",
   "这个余额格式不在可选范围内": "That balance format is not one of the available ones",
   "额外设置中的「{path}」不能为空值（null）": "“{path}” in the extra settings cannot be null",
-  "图片过大，请压缩至 {limit} MB 以内": "That image is too large — bring it under {limit} MB",
   "{path} 不在当前工作树中，无法查看其改动": "{path} is not inside this working tree, so its changes cannot be shown",
   "无法读取该文件的改动 —— git 未返回结果": "Could not read this file's changes — git returned nothing usable",
   "无法读取本次运行的轨迹记录，因此无法确定其覆盖范围":
@@ -649,6 +659,8 @@ export const EN_KERNEL: Record<string, string> = {
     "A fetch backend did not answer; the next one in the chain was tried. See the notice for details",
   "配置的网页抓取后端无法使用，已跳过；检查用户配置里的 web_fetch_backends":
     "A configured fetch backend cannot be used and was skipped; check web_fetch_backends in your user config",
+  "这个会话创建之后，有内置工具发生了变化；它按当时记录的工具继续，模型服务商的缓存需要重新建立，第一次回复可能稍慢":
+    "A built-in tool changed after this conversation started. It continues with the tools it recorded; the model provider's cache has to be rebuilt, so the first reply may be slower.",
   "搜索后端没有返回结果，已换用链里的下一个后端；详情见通知":
     "A search backend did not answer; the next one in the chain was tried. See the notice for details",
   "配置的搜索后端无法使用，已跳过；检查用户配置里的 web_search_backends 和 searxng_url":

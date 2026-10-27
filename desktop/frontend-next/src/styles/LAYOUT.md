@@ -292,6 +292,17 @@ and selected states, while long titles truncate within the remaining width.
   the global icon navigation is not visible. It follows the window's existing
   navigation visibility state, including collapsed-only mode and narrow-window
   folds, so both columns never offer the same footer actions together.
+- The footer avatar box sits 1px above the row center. The signed-in initial
+  compensates for that box offset to keep its cap/alphabetic-trimmed position
+  unchanged. Latin and CJK initials retain their original size and weight.
+- The guard `perf/account-alignment.mjs` holds the `top: -1px` and inner
+  `translateY(1px)` pair together: those offsets cancel for the initial, while
+  `text-box: trim-both cap alphabetic` trims its surrounding font leading.
+- Text-box trimming requires Chromium 133+; the shipped Electron is newer.
+  The guard compares Latin and Han ink against the workspace label within
+  1 CSS px in both themes at 100% and 125% device scale.
+- The compact account button has no row divider; the footer owns the divider
+  above all three controls.
 - The docked workbench uses the divider's remembered width. Pointer dragging and
   keyboard resizing share that width; there is no intermediate width preset.
 - Full-workbench view preserves the divider width and keeps the conversation and
@@ -454,9 +465,11 @@ and selected states, while long titles truncate within the remaining width.
   off screen are read by nobody. Settled cards mount in blocks and an unseen
   block leaves the DOM entirely, holding its place with the height last measured.
   Inside a block a second layer of `content-visibility` skips layout and paint
-  for the part of it that is off screen. The last card is excluded: the one being
-  written changes height every frame, and a structural pseudo-class cannot pick
-  it without invalidating its siblings.
+  for the part of it that is off screen. The live assistant card is excluded:
+  it changes height every frame. A structural pseudo-class cannot pick it
+  without invalidating its siblings.
+- Pending user input does not settle the live assistant card. Find that card
+  before the queued rows so streamed deltas stay outside the cached blocks.
 - `auto` remembers a card once it has been laid out; the fallback height is what
   a card the reader has never reached is assumed to be. `display: contents` on
   the frame between block and card keeps the card the block's child everywhere
@@ -1690,3 +1703,9 @@ A sub-agent row, by the list's own width:
 
 - The panel stays anchored above its own composer. Collapsing it leaves a header with separate expand and close controls so the conversation can be read without discarding the side question.
 - The mounted content keeps its draft, quotes, answers and pending request while collapsed. Errors, quotes and replies share the scroll region; the input stays outside it.
+
+## Collapsed thinking
+
+- Thinking expansion and collapsed previews are independent display preferences. Folding presets change expansion only; manual disclosure choices keep their priority.
+- The optional preview occupies one line below the header, with a left rule and width-based ellipsis. It shows the opening text, including during streaming, rather than following the newest tokens.
+- The preview remains inside the disclosure summary so it is visible and clickable while collapsed. Expanded reasoning replaces it; the settings demonstration uses the same preview styling.

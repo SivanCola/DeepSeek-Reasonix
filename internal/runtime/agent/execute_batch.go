@@ -176,7 +176,6 @@ func (a *Agent) executeBatch(ctx context.Context, turn *turnRuntime, calls []pro
 		if p := outcomes[i].preview; p != nil {
 			calls[i].Diff, calls[i].Added, calls[i].Removed = p.Diff, p.Added, p.Removed
 		}
-		recordWorkspaceMutation(a.svc.sink, outcomes[i].workspaceMutation)
 		if outcomes[i].executed {
 			surfaceWriters[i] = outcomes[i].workspaceMutation != nil
 		}
@@ -337,11 +336,7 @@ func (a *Agent) executeBatch(ctx context.Context, turn *turnRuntime, calls []pro
 		if startedAt[i] > 0 {
 			tr.StartedAt = startedAt[i]
 			tr.EndedAt = startedAt[i] + durations[i]
-			if mutation := o.workspaceMutation; mutation != nil {
-				tr.WorkspaceMutation = true
-				tr.WorkspacePaths = append([]string(nil), mutation.Paths...)
-				tr.WorkspaceAllPaths = mutation.AllPaths
-			}
+			attachWorkspaceMutation(&tr, o.workspaceMutation)
 		}
 		a.emitToolCard(ctx, c, tr, o.todoEcho)
 		a.emitToolOutcomeWarnings(o)
