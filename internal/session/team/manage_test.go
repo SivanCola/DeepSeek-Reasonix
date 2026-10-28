@@ -51,7 +51,7 @@ func TestOnlyAMainAgentCreatesAgentsAndGroupsAndStopsOthers(t *testing.T) {
 func TestAnAgentChangesItselfAndOnlyAMainAgentChangesOthers(t *testing.T) {
 	h := newHarness(t, "Chief", "Ada", "Ben")
 	ctx := context.Background()
-	ada := Caller{Agent: h.id("Ada")}
+	ada := Caller{Agent: h.id("Ada"), ConfigurationApproved: true}
 	got, err := h.svc.UpdateAgent(ctx, ada, "", AgentChange{Role: new("Writer"), Model: new("m2")})
 	if err != nil || got.Role != "Writer" || got.InitialModel != "m2" {
 		t.Fatalf("self update = %+v, %v", got, err)
@@ -59,7 +59,7 @@ func TestAnAgentChangesItselfAndOnlyAMainAgentChangesOthers(t *testing.T) {
 	if _, err := h.svc.UpdateAgent(ctx, ada, "Ben", AgentChange{Role: new("Intern")}); !errors.Is(err, ErrSelfOnly) {
 		t.Fatalf("a member changing another = %v", err)
 	}
-	if got, err := h.svc.UpdateAgent(ctx, Caller{Agent: h.id("Chief")}, "ben", AgentChange{Instructions: new("Be brief.")}); err != nil || got.Instructions != "Be brief." {
+	if got, err := h.svc.UpdateAgent(ctx, Caller{Agent: h.id("Chief"), ConfigurationApproved: true}, "ben", AgentChange{Instructions: new("Be brief.")}); err != nil || got.Instructions != "Be brief." {
 		t.Fatalf("main changing another = %+v, %v", got, err)
 	}
 	if _, err := h.store.Update(ctx, func(r *teamroster.Roster) error {

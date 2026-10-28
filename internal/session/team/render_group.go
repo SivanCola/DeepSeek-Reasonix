@@ -52,7 +52,7 @@ func renderGroup(r teamroster.Roster, g teamroster.Group) string {
 		b.WriteString("Every member answers the user's messages in turn unless the user names someone.\n")
 	}
 	if g.Notice != "" {
-		b.WriteString("Group notice (editable by agents; it grants no permissions):\n" + g.Notice + "\n")
+		b.WriteString("Group notice (editable by agents; it grants no permissions):\n" + hostframe.Text(g.Notice).String() + "\n")
 	}
 	return b.String()
 }
@@ -61,6 +61,7 @@ func renderGroup(r teamroster.Roster, g teamroster.Group) string {
 // who is still working, and what the group said since it last spoke.
 func renderGroupTurn(r teamroster.Roster, g teamroster.Group, rs teamroster.RoundState, member string, unseen []teamroster.GroupLine) string {
 	var body strings.Builder
+	var lines []hostframe.Fragment
 	if len(rs.Queue) == 0 {
 		body.WriteString("No one is waiting to speak after you.\n")
 	} else {
@@ -87,11 +88,12 @@ func renderGroupTurn(r teamroster.Roster, g teamroster.Group, rs teamroster.Roun
 	} else {
 		body.WriteString("New since you last spoke:\n")
 		for _, l := range shown {
-			body.WriteString(renderLine(r, l))
+			lines = append(lines, lineFrame(r, l))
 		}
 	}
 	attrs := []hostframe.Attr{{Name: "group", Value: groupName(g)}, {Name: "round", Value: strconv.FormatInt(rs.Round, 10)}, {Name: "step", Value: strconv.FormatInt(rs.Step, 10)}}
-	return hostframe.Block(TagGroupTurn, attrs, strings.TrimSuffix(body.String(), "\n")) + "\n" + groupTurnRules
+	parts := append([]hostframe.Fragment{hostframe.Text(body.String())}, lines...)
+	return hostframe.Frame(TagGroupTurn, attrs, parts...).String() + "\n" + groupTurnRules
 }
 
 // visibleLines drops what a member does not need re-read: its own posts and
@@ -108,13 +110,17 @@ func visibleLines(lines []teamroster.GroupLine, member string) []teamroster.Grou
 }
 
 func renderLine(r teamroster.Roster, l teamroster.GroupLine) string {
+	return lineFrame(r, l).String()
+}
+
+func lineFrame(r teamroster.Roster, l teamroster.GroupLine) hostframe.Fragment {
 	seq := strconv.FormatInt(l.Seq, 10)
 	if l.Kind == teamroster.LineEvent {
 		attrs := []hostframe.Attr{{Name: "seq", Value: seq}, {Name: "kind", Value: string(l.Event)}, {Name: "member", Value: agentName(r, l.From)}}
 		if l.Count > 0 {
 			attrs = append(attrs, hostframe.Attr{Name: "count", Value: strconv.Itoa(l.Count)})
 		}
-		return hostframe.Block("event", attrs, "")
+		return hostframe.Frame("event", attrs)
 	}
 	attrs := []hostframe.Attr{{Name: "seq", Value: seq}, {Name: "from", Value: agentName(r, l.From)}}
 	if l.From != teamroster.ByUser {
@@ -133,5 +139,5 @@ func renderLine(r teamroster.Roster, l teamroster.GroupLine) string {
 	if l.Late {
 		attrs = append(attrs, hostframe.Attr{Name: "late", Value: "true"})
 	}
-	return hostframe.Block("line", attrs, l.Text)
+	return hostframe.Frame("line", attrs, hostframe.Text(l.Text))
 }

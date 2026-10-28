@@ -34,6 +34,7 @@ type teamApprovalHarness struct {
 
 func newTeamApprovalHarness(t *testing.T, kind string, calls []provider.ToolCall) *teamApprovalHarness {
 	t.Helper()
+	requireTeamExecution(t)
 	h := &teamApprovalHarness{t: t, store: teamroster.Store{Dir: t.TempDir()}, prov: &teamScriptedProvider{calls: calls}, done: make(chan struct{}, 8)}
 	var chief string
 	if _, err := h.store.Update(context.Background(), func(r *teamroster.Roster) error {
@@ -140,7 +141,19 @@ func TestEffectATeamTurnIsHeldToTheCeilingItCarries(t *testing.T) {
 	h.prov.calls = []provider.ToolCall{write("held"), {}, write("own"), {}, write("forged"), {}}
 	h.allow = true
 	h.ctrl.SetToolApprovalMode(control.ToolApprovalYolo)
-	if err := h.ctrl.DeliverTeam(team.Delivery{Key: "team-x-1", Kind: team.DeliverMessage, From: "a-0123456789abcdef", Exchange: "x-0123456789abcdef", Text: "write the file", Ceiling: control.ToolApprovalAsk}); err != nil {
+	roster, err := h.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	open := func(text, ceiling string) teamroster.Exchange {
+		x, _, err := h.store.OpenExchange(t.Context(), teamroster.Exchange{From: "a-0123456789abcdef", To: roster.Agents[0].ID, ReplyTo: teamroster.ReplyToUser, Ceiling: ceiling}, text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return x
+	}
+	first := open("write the file", control.ToolApprovalAsk)
+	if err := h.ctrl.DeliverTeam(team.Delivery{Key: "team-x-1", Kind: team.DeliverMessage, From: first.From, Exchange: first.ID, Text: "write the file", Ceiling: control.ToolApprovalAsk}); err != nil {
 		t.Fatal(err)
 	}
 	h.waitTurn()
@@ -154,7 +167,8 @@ func TestEffectATeamTurnIsHeldToTheCeilingItCarries(t *testing.T) {
 		t.Fatalf("the ceiling outlived its turn: cards %v", cards)
 	}
 	h.ctrl.SetToolApprovalMode(control.ToolApprovalAsk)
-	if err := h.ctrl.DeliverTeam(team.Delivery{Key: "team-x-2", Kind: team.DeliverMessage, From: "a-0123456789abcdef", Exchange: "x-1123456789abcdef", Text: "write again", Ceiling: control.ToolApprovalYolo}); err != nil {
+	second := open("write again", control.ToolApprovalYolo)
+	if err := h.ctrl.DeliverTeam(team.Delivery{Key: "team-x-2", Kind: team.DeliverMessage, From: second.From, Exchange: second.ID, Text: "write again", Ceiling: control.ToolApprovalYolo}); err != nil {
 		t.Fatal(err)
 	}
 	h.waitTurn()

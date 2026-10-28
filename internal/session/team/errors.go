@@ -3,6 +3,8 @@ package team
 import "errors"
 
 var (
+	// ErrConfigurationApproval is a standing change without fresh human approval.
+	ErrConfigurationApproval = errors.New("changing standing configuration requires user approval")
 	// ErrSelf is an agent messaging itself.
 	ErrSelf = errors.New("an agent cannot message itself")
 	// ErrEmptyMessage is a message with no text.
