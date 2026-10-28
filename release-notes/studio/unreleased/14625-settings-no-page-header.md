@@ -1,0 +1,2 @@
+- 改进：设置页顶部的标题块（分类名、设置项数量）去掉了，导航已经标明当前位置，第一张卡片直接出现在页面顶部。关联 #14625。
+- Changed: the title block at the top of each settings page (section name and setting count) is gone; the navigation already shows where you are, so the first card now sits at the top. Refs #14625.

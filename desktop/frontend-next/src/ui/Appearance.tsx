@@ -22,6 +22,7 @@ import { SessionQuickSection } from "./SessionQuickSection";
 import { NavEntriesSection } from "./NavEntriesSection";
 import { NavRailSection } from "./NavRailSection";
 import { GraphicsSection } from "./GraphicsSection";
+import { GlobalShortcutSection } from "./GlobalShortcutSection";
 import { SendShortcut } from "./SendShortcut";
 import { KeysSheet } from "./KeysSheet";
 import { SessionTabsSetting } from "./SessionTabsSetting";
@@ -73,13 +74,11 @@ const WEIGHTS: [string, string, string][] = [
   ["heavy", "加粗", "小字号下更扎实，屏幕距离较远或有反光时更易读"],
 ];
 
-// Two answers, because there are two: a line short enough that the eye finds
-// the next one without hunting, or a window used to its edge. A step between
-// them would be a number nobody could tell apart from its neighbour.
 const MEASURES: [string, string, string][] = [
   ["standard", "适宜阅读", "每行长度控制在一眼能回到行首的范围"],
   ["full", "铺满窗口", "正文跟随窗口宽度，宽屏上不留两侧空白"],
   ["full-all", "连输入框一起铺满", "正文和输入框都跟随窗口宽度；输入框很宽时一行不易回到行首"],
+  ["custom", "自定义比例", "按比例调整对话和输入框占用的区域"],
 ];
 
 const EFFECTS: [EffectsMode, string, string][] = [
@@ -158,6 +157,7 @@ export function Appearance({ port, theme, onTheme, contrast, onContrast, weight,
   // Until the kernel has announced its range there is nothing to draw the
   // slider from; it is held inert rather than given a range of its own.
   const zoomRange = look.zoomRange ?? { min: 0, max: 2, step: 1 };
+  const widthRange = look.widthRange ?? { min: 0, max: 2, step: 1 };
   const setPaper = useCallback(
     (patch: Partial<NonNullable<Look["wallpaper"]>>) =>
       look.wallpaper && onLook({ ...look, wallpaper: { ...look.wallpaper, ...patch } }),
@@ -360,31 +360,38 @@ export function Appearance({ port, theme, onTheme, contrast, onContrast, weight,
               ))}
             </div>
           </div>
-          {/* Beside the size because they are one question asked twice: how big
-              the letters are, and how far they run before the eye comes back. */}
           <div className="prow">
             <span className="tx">{t("行宽")}</span>
             <div className="seg" data-text role="group" aria-label={t("正文行宽")}>
               {MEASURES.map(([id, name, why]) => (
                 <button key={id} data-action="appearance.measure" data-value={id}
-                  aria-pressed={(look.width || "standard") === id} title={t(why)} onClick={() => set({ width: id })}>
+                  aria-pressed={(look.width || "standard") === id} title={t(why)}
+                  disabled={id === "custom" && !look.widthRange} onClick={() => set({ width: id })}>
                   {t(name)}
                 </button>
               ))}
             </div>
           </div>
+          {look.width === "custom" && (
+            <div className="prow">
+              <span className="tx">{t("对话区域宽度")}</span>
+              <input className="slider" type="range"
+                style={at(look.widthPercent ?? 1, widthRange.min, widthRange.max)}
+                min={widthRange.min} max={widthRange.max} step={widthRange.step}
+                disabled={!look.widthRange} value={look.widthPercent ?? 1}
+                aria-label={t("对话区域宽度")} aria-valuetext={pct((look.widthPercent ?? 1) / 100)}
+                data-action="appearance.measure" data-value="custom"
+                onChange={(e) => set({ widthPercent: Number(e.target.value) })} />
+              <span className="now">{pct((look.widthPercent ?? 1) / 100)}</span>
+            </div>
+          )}
         </div>
-        <p className="hint">{t("行宽只管正文：代码、命令与工具输出始终占满可用宽度。")}</p>
+        <p className="hint">{t(look.width === "custom"
+          ? "自定义比例同时调整对话和输入框；窄窗口会优先保证可用空间。"
+          : "行宽只管正文：代码、命令与工具输出始终占满可用宽度。")}</p>
         <ApplyNote id="size" />
       </section>
 
-      <details className="advset personal">
-        <summary>
-          <span className="tx">
-            <span className="lb">{t("更多个性化")}</span>
-            <span className="ds">{look.wallpaper ? t("已设置自定义壁纸") : t("壁纸与背景位置")}</span>
-          </span>
-        </summary>
       <section className="grp" id="set-wallpaper" data-setting="wallpaper">
         <div className="grp-hd">
           <h3>{t("壁纸")}</h3>
@@ -422,6 +429,8 @@ export function Appearance({ port, theme, onTheme, contrast, onContrast, weight,
           {look.wallpaper && (
             <div
               className="paperview"
+              role="img"
+              aria-label={t("壁纸")}
               ref={setView}
               style={{
                 backgroundImage: look.wallpaper.kind === "video" ? undefined : `url("${look.wallpaper.url}")`,
@@ -527,7 +536,6 @@ export function Appearance({ port, theme, onTheme, contrast, onContrast, weight,
         </div>
         <ApplyNote id="wallpaper" />
       </section>
-      </details>
 
       <section className="grp" id="set-language" data-setting="language">
         <div className="grp-hd">
@@ -561,6 +569,7 @@ export function Appearance({ port, theme, onTheme, contrast, onContrast, weight,
       <NewAnswerSection />
       <GraphicsSection />
       <SendShortcut />
+      <GlobalShortcutSection />
       <KeysSheet />
       <EscStopSetting />
       <PageSleepSetting />

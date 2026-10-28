@@ -1,0 +1,2 @@
+- 调整：设置里的「图形渲染」从「外观与主题」页移到「窗口与性能」页，和窗口、休眠这类与占用相关的选项放在一起。修复 #14719。
+- Changed: "Graphics rendering" in Settings moves from the Appearance and theme page to the Window and performance page, next to the other options that affect resource use. Fixes #14719.

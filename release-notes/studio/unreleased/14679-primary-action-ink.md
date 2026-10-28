@@ -1,0 +1,2 @@
+- 修复：设置里主按钮（编辑模型后的「保存」、人设页的「新建预设」、版本页的「加入 QQ 群」）的文字与底色几乎同色、看不清的问题。修复 #14679。
+- Fixed: primary buttons in Settings (Save after editing a model, New preset, Join the QQ group) no longer draw their label in almost the same colour as their fill. Fixes #14679.

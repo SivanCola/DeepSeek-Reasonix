@@ -1028,9 +1028,17 @@ desktop profile. New projects start expanded. These display choices stay on
 this device; they do not change sessions or synchronize to another client.
 
 Ordinary Reasonix-managed worktree chats appear under their original project,
-without a separate project row for each checkout. The chat header shows Local
-checkout or Worktree, with its actual working directory available on hover;
-worktree chats also carry a sidebar marker.
+without a separate project row for each checkout.
+
+Only isolated worktrees carry a neutral Isolated worktree label in the chat
+header and composer directory picker. Otherwise, the header has no directory
+badge and the picker shows just the branch name.
+
+Hover for an explanation and the actual directory path. Worktrees separate code
+directories; ports, databases, and other runtime resources may still be shared.
+
+Before sending, a selected worktree explains that creation starts when the
+message is sent. Worktree chats also carry a sidebar marker.
 
 Reopening history uses that chat's working directory, while starting a chat
 from the project uses the original directory. Ordering, search, paging, pins

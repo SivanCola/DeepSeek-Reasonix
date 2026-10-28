@@ -46,11 +46,12 @@ type RunDiagnostics struct {
 type TrackedCommand struct {
 	cmd *exec.Cmd
 
-	mu     sync.Mutex
-	job    *TrackedJob
-	tree   *TreeTracker
-	killed bool
-	diag   RunDiagnostics
+	mu       sync.Mutex
+	job      *TrackedJob
+	tree     *TreeTracker
+	killed   bool
+	diag     RunDiagnostics
+	rootWait <-chan struct{}
 }
 
 // RunCommand starts cmd and waits for it. When tracking is enabled, cancellation
@@ -75,7 +76,9 @@ func RunCommand(ctx context.Context, cmd *exec.Cmd, opts RunOptions) (*TrackedCo
 		return tracked, err
 	}
 	tracked.setStarted(job)
-	tracked.setTree(TrackTree(cmd))
+	if !job.Tracked() {
+		tracked.setTree(TrackTree(cmd))
+	}
 	return tracked, waitForTrackedCommand(ctx, tracked, cmd.Wait, opts.CancelWaitGrace, opts.CancelRetryInterval, opts.CancelRetryFor)
 }
 
@@ -138,7 +141,13 @@ func normalizeRunOptions(opts RunOptions) RunOptions {
 
 func waitForTrackedCommand(ctx context.Context, tracked *TrackedCommand, wait func() error, grace, retryEvery, retryFor time.Duration) error {
 	waitCh := make(chan error, 1)
-	go func() { waitCh <- wait() }()
+	done := make(chan struct{})
+	tracked.mu.Lock()
+	tracked.rootWait = done
+	tracked.mu.Unlock()
+	go func() {
+		publishRootWait(done, waitCh, wait())
+	}()
 
 	select {
 	case err := <-waitCh:
@@ -180,10 +189,9 @@ func (p *TrackedCommand) Kill() {
 	p.killed = true
 	p.diag.KillCalls++
 	job := p.job
-	p.job = nil
 	tree := p.tree
 	p.mu.Unlock()
-	if !firstKill {
+	if !firstKill && !job.Tracked() {
 		job = nil
 	}
 	job.Kill(p.cmd)
@@ -230,9 +238,7 @@ func (p *TrackedCommand) setStarted(job *TrackedJob) {
 	}
 	p.mu.Lock()
 	killed := p.killed
-	if !killed {
-		p.job = job
-	}
+	p.job = job
 	p.diag.RootPID = rootPID
 	p.diag.Tracked = true
 	p.diag.JobObjectCreated = job.Tracked()

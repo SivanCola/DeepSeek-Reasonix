@@ -368,6 +368,7 @@ it("does not clear a completion when focus returns to settings covering the conv
   render(<App hub={k.hub} />);
   await row(/Billing refactor/);
   await userEvent.click(screen.getByRole("button", { name: "设置" }));
+  await screen.findByRole("dialog", { name: "设置" });
   focused(false);
   k.unread.add(MAIN);
   await k.emit(MAIN, { kind: "turn_started" });
@@ -379,7 +380,9 @@ it("does not clear a completion when focus returns to settings covering the conv
   expect(k.viewed).not.toContain(MAIN);
   expect(badge).toHaveBeenLastCalledWith(true);
   await userEvent.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "设置" })).toBeNull());
   await waitFor(() => expect(badge).toHaveBeenLastCalledWith(false));
+  expect(k.viewed).toContain(MAIN);
 });
 
 describe("mark as read from the row menu", () => {

@@ -1,0 +1,2 @@
+- 修复：输入框下方的执行权限、模式、模型、强度等菜单展开时，不再被上方的计划条盖住一截。修复 #14720。
+- Fixed: the permission, mode, model and effort menus under the composer are no longer partly covered by the plan bar floating above them. Fixes #14720.

@@ -3,6 +3,7 @@ import type { ModelEntry } from "../port/port";
 import type { MenuItem } from "./Menu";
 import { groupVendors } from "./Models";
 import { t } from "../i18n";
+import { UNCONFIGURED_REF } from "./ConnectNote";
 import { KIND_LABEL } from "./vendors";
 import { orderAccounts } from "../state/providerorder";
 
@@ -11,6 +12,14 @@ export function modelTooltip(models: ModelEntry[], current: string | undefined, 
   const account = groupVendors(models).find((a) =>
     a.kinds.some((kind) => a.byKind[kind].some((model) => model.ref === current)));
   return account ? `${account.label} / ${label}` : current ?? label;
+}
+
+// modelLabel is how the composer names the session's model: the alias, else the
+// entry's short form, else the id without its provider.
+export function modelLabel(models: ModelEntry[], status: { modelRef?: string; label?: string } | null | undefined): string {
+  if (status?.modelRef === UNCONFIGURED_REF) return t("未连接");
+  const m = models.find((x) => x.ref === status?.modelRef);
+  return m?.modelAlias?.trim() || m?.modelShort || (status?.modelRef?.replace(/^[^/]+\//, "") ?? status?.label ?? "—");
 }
 
 // Every account gets a heading with its endpoint: the provider name is the
@@ -27,7 +36,7 @@ export function modelMenu(models: ModelEntry[], order: readonly string[] = [], c
       for (const m of a.byKind[kind]) {
         out.push({
           value: m.ref,
-          label: m.modelAlias?.trim() || m.model,
+          label: m.modelAlias?.trim() || m.modelShort || m.model,
           desc: m.modelAlias?.trim() ? m.model : undefined,
           meta: t(KIND_LABEL[kind] ?? kind),
           badge: m.vision ? t("读图") : undefined,

@@ -42,6 +42,7 @@ node perf/panes.mjs      # 并行窗格的代价：两个会话同时流式
 node perf/verify.mjs     # 行为验证：跟随、块的装卸、切页往返、大会话树
 node perf/panels.mjs     # 两侧栏：收起补间、拖动改宽、上下限、窄屏退场
 node perf/look.mjs       # 外观验证：字号、界面缩放、自定义字体、壁纸上传与调节（含焦点）
+node perf/measure.mjs    # Custom conversation percentage, preset retention, narrow composer controls and populated phone layout
 node perf/pick.mjs       # 补全菜单：/ 和 @ 的选中态，深浅两色下各走一遍
 node perf/models.mjs     # 连接面板：网关报出一百多个模型时，这一屏还能不能用
 node perf/side.mjs       # 右栏：端点自己写的一句话有多长，都不该改变栏宽
@@ -49,6 +50,7 @@ node perf/queue.mjs      # 待送达：正文读不回来时，「改」不许�
 node perf/reask.mjs      # 改写框：没有换行的长段落，框要长到让人读得到全文，宽屏和手机宽度各一遍
 node perf/composer-reflow.mjs # Draft and skill-chip wrapping during column transitions, interface zoom and native scrollbar gutters
 node perf/composer-toolbar-row.mjs # The buttons under the composer stay on one row from 900 to 400 px of conversation width, with the widest realistic labels
+node perf/workbench-save.mjs # File toolbar sizing, Save contrast and edit/save/read states: light/dark × Chinese/English × desktop/browser × wide/phone
 node perf/onboarding.mjs # First-run setup: zoom-aware card bounds, resize, scrolling, focus and completion
 node perf/running.mjs    # 执行过程：在跑的步骤自己在动、收起后由标题接着动，步骤行没有空栏
 node perf/lang.mjs       # 双语验证：英文启动、界面译文到位、切回中文

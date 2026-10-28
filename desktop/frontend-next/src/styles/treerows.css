@@ -1,4 +1,4 @@
-.projects-header { margin: 8px 15px 6px; }
+.projects-header { flex: none; margin: 8px 15px 6px; }
 .projects-heading { display: flex; align-items: center; justify-content: space-between; min-height: 28px; padding-inline: 7px; color: var(--faint); font: var(--w-med) var(--fs-meta)/1.4 var(--ui); }
 .projects-heading-actions { display: flex; align-items: center; gap: 2px; }
 .projects-heading-title { display: flex; align-items: center; gap: 6px; }

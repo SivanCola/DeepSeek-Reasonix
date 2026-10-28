@@ -190,7 +190,6 @@ export function Queue({ queue, running, onRead, onEdit, onMove, onCancel, onSend
                 ? t("尚未送达，可以改，也可以取回")
                 : t("正在送出…")}
         </span>
-        {queue.paused && <span className="qflag" data-hold="">{t("已暂停")}</span>}
         {queue.readonly && <span className="qflag" data-ro="">{t("只读")}</span>}
         {/* The kernel pauses itself when it recovers entries: something was
             said that no one has since re-confirmed. */}
@@ -218,7 +217,7 @@ export function Queue({ queue, running, onRead, onEdit, onMove, onCancel, onSend
           const coded = it.blockCode ? BLOCK_WHY[it.blockCode] : undefined;
           const why = coded ? t(coded) : it.blockReason;
           return (
-            <div key={it.id} className="qi" data-state={it.state}>
+            <div key={it.id} className="qi" data-state={it.state} title={why || undefined}>
               {/* The chip is the answer to "did that land". Its wording says
                   which turn the line goes into; the title says when. */}
               {ordinary(it) ? (
@@ -257,7 +256,7 @@ export function Queue({ queue, running, onRead, onEdit, onMove, onCancel, onSend
                 <Overflow className="pv" text={it.preview} />
               )}
               {!!it.refs?.length && <span className="rf">{t("冻结 {n} 文件", { n: it.refs.length })}</span>}
-              {why && <span className="qwhy">{why}</span>}
+              {why && (it.state === "blocked" || it.state === "uncertain") && <span className="qwhy" title={why}>{why}</span>}
               {unread?.id === it.id && (
                 <span className="qwhy" data-err="" role="alert">
                   {t("无法读取该条的正文，未打开编辑：{why}", { why: unread.why })}
@@ -266,15 +265,15 @@ export function Queue({ queue, running, onRead, onEdit, onMove, onCancel, onSend
               {live && (
                 <span className="qacts">
                   {items.length > 1 && <>
-                    <button data-action="queue.move" data-target={it.id} data-value="up" onClick={() => onMove(it.id, i - 1)} disabled={i === 0} title={t("上移")} aria-label={t("上移")}>
+                    <button className="qmove" data-action="queue.move" data-target={it.id} data-value="up" onClick={() => onMove(it.id, i - 1)} disabled={i === 0} title={t("上移")} aria-label={t("上移")}>
                       <StudioIcon name="arrow" />
                     </button>
-                    <button data-action="queue.move" data-target={it.id} data-value="down" onClick={() => onMove(it.id, i + 1)} disabled={i === items.length - 1} title={t("下移")} aria-label={t("下移")}>
+                    <button className="qmove" data-action="queue.move" data-target={it.id} data-value="down" onClick={() => onMove(it.id, i + 1)} disabled={i === items.length - 1} title={t("下移")} aria-label={t("下移")}>
                       <StudioIcon name="arrow" data-flip="" />
                     </button>
                   </>}
-                  <button data-action="queue.edit" data-target={it.id} onClick={() => void open(it.id)} title={t("编辑")}>
-                    {t("改")}
+                  <button data-action="queue.edit" data-target={it.id} onClick={() => void open(it.id)} title={t("编辑")} aria-label={t("改")}>
+                    <StudioIcon name="edit" />
                   </button>
                   {/* Waiting is the normal case and needs no button. This is the
                       other one: the turn in front of this line is not worth
@@ -304,8 +303,8 @@ export function Queue({ queue, running, onRead, onEdit, onMove, onCancel, onSend
                 </span>
               )}
               {live && (
-                <button className="x" data-action="queue.cancel" data-target={it.id} onClick={() => onCancel(it.id)} title={t("取回")}>
-                  {t("取回")}
+                <button className="x" data-action="queue.cancel" data-target={it.id} onClick={() => onCancel(it.id)} title={t("取回")} aria-label={t("取回")}>
+                  <StudioIcon name="rewind" />
                 </button>
               )}
             </div>

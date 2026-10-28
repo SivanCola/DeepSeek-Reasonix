@@ -21,11 +21,15 @@ and selected states, while long titles truncate within the remaining width.
 
 ## Project header actions
 
+- The project header is a non-shrinking sibling of the tree scroller. Local and
+  remote rows share that scroller; adding a project, folding all projects and
+  entering batch selection remain reachable at either end of the list.
+- Batch selection returns focus to the header menu when it ends.
 - The open-project and more-actions buttons share `--overlay` hover fill and
   `--text` ink. The more-actions button retains both while its menu is open.
   Project-row actions keep their `--raised` fill.
-- `perf/project-header.mjs` checks hover parity, menu dismissal, keyboard focus
-  and the folder picker in both schemes.
+- `perf/project-header.mjs` checks hover parity, menu dismissal, keyboard focus,
+  the folder picker and a long mixed local/remote list in both schemes.
 
 ## Reset and the window
 
@@ -267,21 +271,22 @@ and selected states, while long titles truncate within the remaining width.
   that land", so the state is a chip on the row. The count and the byte total
   each refuse alone: a header showing one of them is wrong about the other
   exactly when it matters.
-- The number of entries is capped (64); their height is not. The head stays put
-  and the rows grow; total height comes from `.composeaux`, and the rule here
-  only says that the rows scroll rather than the head scrolling away with them.
-- `steer_consumed` means this turn has already read the line into its context:
-  it cannot be taken back, and `AckDequeue` removes it when the turn ends. It
-  stops being a card and becomes a record — still visible, because a crash before
-  the write has to leave it on screen, but no longer a card's height. Its border
-  goes transparent rather than away, or the column loses its alignment.
-- Its actions are quiet but present: a row of controls that exists only under the
-  pointer reads as a row that does nothing.
+- The queue is the upper half of the composer, sharing its surface and outer
+  frame. Transparent 38px rows have 12px horizontal padding and 2px gaps; only
+  status pills carry status colour. A quiet separator leads into the input.
+- The head stays put while roughly five rows fit before internal scrolling,
+  with edge fades. `.composeaux` still owns the shared height budget.
+- `steer_consumed` and `running` entries leave this pending strip: they have
+  already reached the transcript and are not input waiting to be sent.
+- Edit and withdraw use icons with unchanged accessible names and titles.
+  Withdraw restores input, never discards it. Move controls reveal on hover or
+  focus and remain visible on touch; their keyboard order is unchanged.
 - Everything stacked above the input shares one ceiling, `--aux-budget`, so a
   full queue scrolls inside it instead of taking the transcript.
-- The studio composer's chrome is taller than the one the budget was set
-  against, so studio lowers it (28vh, 19vh when short): with 64 queued lines the
-  transcript keeps 40% of the pane, which `perf/budget.mjs` holds.
+- Without notices, a queue gets a 44vh auxiliary budget (28vh when short),
+  capped at 420px (260px when short), so about five compact rows fit. Notices
+  restore the smaller 28vh/19vh budget to protect transcript space; the input
+  stays visible under the 64-entry pressure case in `perf/budget.mjs`.
 - The queued line is the only thing on screen that has not happened yet, so its
   cancel sits beside "queued" and stays visible. A cancel revealed on hover is no
   cancel.
@@ -342,6 +347,9 @@ and selected states, while long titles truncate within the remaining width.
   the pane's tab-row line so the two rows read as one: the strip is
   `--pane-bar-h` less the card's top inset and border. `perf/dock.mjs` holds
   the two lines together.
+- The file toolbar gives spare width to the truncated path; optional controls
+  and Save keep their intrinsic widths. Enabled Save uses accent foreground ink;
+  disabled Save uses opaque muted ink on a neutral surface.
 - The workbench is hidden, not unmounted. It holds the open files and a browser
   per tab, each with its own history, and a glance at the conversation must not
   cost them. `.scroll[data-pane="browser"][hidden]` was already written for it.
@@ -453,7 +461,25 @@ and selected states, while long titles truncate within the remaining width.
   keeps the reading width, where the line being typed stays one glance. The
   full-all measure is the opt-in that moves `--column` with it, for a reader who
   wants the composer on the same edges as the transcript.
-- Below 680px both columns take the phone rule instead (see *Phones*).
+- Custom percentage sets `--doc`, `--column` and `--wide` from
+  `--measure-width`: 30–100% of the conversation pane, with rail clearance.
+- Settings → Appearance → Size → Line width offers presets and a 1% slider,
+  initially 80%. `desktop.appearance.width_percent` persists independently of
+  `desktop.conversation_width`, so selecting a preset retains the custom value.
+- An unchanged effective percentage stays unset in the stored configuration.
+- Only custom mode shows the conversation-and-composer hint; presets retain
+  the prose-width guidance for code, commands and tool output.
+- The composer is a `conversation` container as well as the pane: toolbar labels
+  respond to the width of the composer, including a custom percentage, rather
+  than assuming it fills the pane.
+- The default reading-width composer retains mode and workspace labels: labels
+  retire at 720px of actual composer space rather than at the pane's old 780px.
+- The workspace control remains available even below 360px of composer space.
+  Model and effort labels shrink together before the toolbar wraps below 280px;
+  compacting labels must not remove access to workspace configuration.
+- Below 760px the transcript and composer take the phone width instead. The
+  populated flow selector must retain enough specificity to override its
+  percentage width, not just the empty conversation's rule.
 - Docking the agent's browser puts the pane on a grid, and the browser's column
   spans the body's row and the composer's. Inside the conversation column `100%`
   is that column, so the composer's own centring keeps it off the divider, and
@@ -846,6 +872,9 @@ what exists.
   only content.
 - A very faint gilt line under the header says this is the window's own thing,
   not content.
+- The header's expand/restore and close buttons share a 32px hit-region height,
+  matching the search control's minimum height. Inline-flex centres SVG and text
+  content independently of font fallback; native window controls retain their own sizing.
 - The search entry sits beside the title. That position used to hold one
   explanation addressed to two of the three tiers; that sentence now lives on
   each settings block (`.apply`). Results are laid under the header without
@@ -1618,6 +1647,10 @@ A sub-agent row, by the list's own width:
   the edited title; pending requests disable all editing and dismissal.
 - The native dialog owns focus containment and the backdrop. Its colours follow
   the active light or dark palette.
+- Typography follows the shared modal hierarchy: `--fs-title`/`--w-semi` for
+  the heading and `--fs-ui`/`--w-reg` for hints, input, errors and actions.
+  Interface size and weight preferences apply at every width; narrow screens
+  retain the same type roles rather than introducing another font size.
 
 ## Card shell
 

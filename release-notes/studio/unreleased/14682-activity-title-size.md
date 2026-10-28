@@ -1,0 +1,2 @@
+- 修复：对话里「执行过程」一行的字号与同级的「思考」一行统一（原来小了一号）。修复 #14682。
+- Fixed: the "Execution" row in a conversation now uses the same text size as the "Thinking" row at the same level, instead of one size smaller. Fixes #14682.
