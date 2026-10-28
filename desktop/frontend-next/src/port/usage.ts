@@ -87,6 +87,10 @@ export interface UsageReport {
   // Set when a counted call's money is unknown (no rate card, or a quote that
   // could not price its usage). cost is then a floor, not the bill.
   costIncomplete?: boolean;
+  // How many of those counted calls are under that floor, and the distinct
+  // reasons the rows recorded (the kernel's incomplete-reason vocabulary).
+  unpricedCalls?: number;
+  incompleteReasons?: string[];
   active_days: number;
   top_model: string;
   top_provider: string;
@@ -98,4 +102,31 @@ export interface UsageReport {
   providers: UsageProvider[];
   // Absent from a kernel that does not record which agent spent.
   agents?: UsageAgent[];
+}
+
+export interface UploadDay {
+  day: string;
+  bytes: number;
+}
+
+export interface UploadProvider {
+  provider: string;
+  bytes: number;
+  requests: number;
+  percent: number;
+}
+
+// What model providers were sent: request bodies as they went out, before the
+// connection adds its own overhead. Downloads are not counted.
+export interface UploadReport {
+  from: string;
+  to: string;
+  bytes: number;
+  requests: number;
+  daily: UploadDay[];
+  providers: UploadProvider[];
+}
+
+export interface UploadUsagePort {
+  uploadUsage(days: number): Promise<UploadReport>;
 }

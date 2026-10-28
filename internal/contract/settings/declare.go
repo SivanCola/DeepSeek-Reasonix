@@ -41,6 +41,7 @@ var table = []Entry{
 	{ID: "desktop.status_bar_items", Class: Preference, Effect: OnOpen},
 	{ID: "desktop.default_tool_approval_mode", Class: Guarded, Effect: OnOpen},
 	{ID: "desktop.check_updates", Class: Guarded, Effect: OnOpen},
+	{ID: "desktop.provider_health_checks", Class: Guarded, Effect: Immediate},
 	{ID: "desktop.update_channel", Class: Guarded, Effect: OnOpen},
 	{ID: "desktop.telemetry", Class: Guarded, Effect: OnOpen},
 	{ID: "desktop.metrics", Class: Guarded, Effect: OnOpen},

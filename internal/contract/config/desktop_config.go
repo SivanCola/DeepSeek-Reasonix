@@ -88,6 +88,8 @@ func (c *Config) UnrecognizedDesktopToolApprovalMode() string {
 // separate from top-level language and [ui] so desktop choices do not affect CLI
 // language, terminal colours, or provider-visible prompt/request data.
 type DesktopConfig struct {
+	ProviderHealthChecks bool `toml:"provider_health_checks"`
+
 	Language   string `toml:"language"`    // auto|en|zh; empty/auto = browser/OS auto-detect
 	Currency   string `toml:"currency"`    // legacy display currency; migrated to [billing].display_currency
 	Theme      string `toml:"theme"`       // auto|dark|light; empty resolves to auto

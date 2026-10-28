@@ -82,10 +82,15 @@ type RangeStats struct {
 	CostEstimated bool `json:"costEstimated,omitempty"`
 	// CostIncomplete marks a total that counted usage for at least one call
 	// whose money is unknown. Cost is then a floor, not the whole bill.
-	CostIncomplete bool   `json:"costIncomplete,omitempty"`
-	ActiveDays     int    `json:"active_days"`
-	TopModel       string `json:"top_model"`
-	TopProvider    string `json:"top_provider"`
+	CostIncomplete bool `json:"costIncomplete,omitempty"`
+	// UnpricedCalls is how many of the counted calls are under that floor.
+	UnpricedCalls int `json:"unpricedCalls,omitempty"`
+	// IncompleteReasons names why those calls were unpriced, sorted and
+	// deduplicated; a row with no recorded reason still counts above.
+	IncompleteReasons []string `json:"incompleteReasons,omitempty"`
+	ActiveDays        int      `json:"active_days"`
+	TopModel          string   `json:"top_model"`
+	TopProvider       string   `json:"top_provider"`
 	// Series
 	Daily []DailyTokens `json:"daily"`
 	// Hourly is filled only when the range is one calendar day; the day
@@ -127,12 +132,7 @@ func (w *Writer) Query(f SourceFilter) (RangeStats, error) {
 		if catalog := manager.catalog.Load(); catalog != nil {
 			days := daysInRange(f.From, f.To)
 			if catalog.Ready(context.Background(), w.dir, days) {
-				rows, err := catalog.Query(context.Background(), f.From.Format(dayLayout), f.To.Format(dayLayout), f.Source,
-					usagecatalog.CostView(f.Currency))
-				agents, agentErr := catalog.QueryAgents(context.Background(), f.From.Format(dayLayout), f.To.Format(dayLayout), f.Source)
-				if err == nil && agentErr == nil {
-					out := rangeStatsFromRollups(f, days, rows)
-					out.Agents = agentsFromRollups(agents, out.Tokens)
+				if out, ok := rangeStatsFromCatalog(f, days, catalog); ok {
 					return out, nil
 				}
 			}
@@ -141,6 +141,29 @@ func (w *Writer) Query(f SourceFilter) (RangeStats, error) {
 		}
 	}
 	return w.queryJSONL(f)
+}
+
+// rangeStatsFromCatalog combines totals, agents and unpriced facts from one
+// ready projection; an unavailable component falls back to the exact read.
+func rangeStatsFromCatalog(f SourceFilter, days []string, catalog *usagecatalog.Catalog) (RangeStats, bool) {
+	ctx := context.Background()
+	from, to := f.From.Format(dayLayout), f.To.Format(dayLayout)
+	rows, err := catalog.Query(ctx, from, to, f.Source, usagecatalog.CostView(f.Currency))
+	if err != nil {
+		return RangeStats{}, false
+	}
+	calls, reasons, err := catalog.UnpricedInRange(ctx, from, to, f.Source)
+	if err != nil {
+		return RangeStats{}, false
+	}
+	agents, err := catalog.QueryAgents(ctx, from, to, f.Source)
+	if err != nil {
+		return RangeStats{}, false
+	}
+	out := rangeStatsFromRollups(f, days, rows)
+	out.Agents = agentsFromRollups(agents, out.Tokens)
+	out.UnpricedCalls, out.IncompleteReasons = calls, reasons
+	return out, true
 }
 
 func emptyRange(f SourceFilter) RangeStats {
@@ -173,6 +196,7 @@ func aggregateDays(recordsByDay map[string][]record, days []string, f SourceFilt
 	providerTotals := map[string]int64{}
 	agents := agentTally{}
 	totalCost := newCostBooks()
+	unpricedReasons := map[string]bool{}
 	active := map[string]bool{} // day -> active
 	for _, day := range days {
 		recs := recordsByDay[day]
@@ -229,8 +253,12 @@ func aggregateDays(recordsByDay map[string][]record, days []string, f SourceFilt
 				totalCost.add(mode, currency, pricing.Amount(amount))
 				out.CostEstimated = out.CostEstimated || (mode == "" && rec.CostEstimated)
 			}
-			if usagecatalog.CostIncomplete(rec.CostComplete, rec.Total, rec.CostAmount) {
+			if reason, unpriced := usagecatalog.UnpricedReason(rec.CostComplete, rec.Total, rec.CostAmount, rec.IncompleteReason); unpriced {
 				out.CostIncomplete = true
+				out.UnpricedCalls++
+				if reason != "" {
+					unpricedReasons[reason] = true
+				}
 			}
 			dayActive = dayActive || rec.Total > 0 || requests > 0
 		}
@@ -253,6 +281,7 @@ func aggregateDays(recordsByDay map[string][]record, days []string, f SourceFilt
 			dayRequests, dayTurns, dayCacheHit, dayCacheMiss))
 	}
 	out.ActiveDays = len(active)
+	out.IncompleteReasons = sortedReasons(unpricedReasons)
 	out.Cost, out.EstimateCost = moneySorted(totalCost.billed), moneySorted(totalCost.estimate)
 	out.Models = modelsSorted(modelTotals)
 	out.Providers = providersSorted(providerTotals)
@@ -461,6 +490,20 @@ func moneySorted(tally map[string]pricing.Amount) []pricing.Money {
 		out = append(out, pricing.MoneyOf(amount, currency))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Currency < out[j].Currency })
+	return out
+}
+
+// sortedReasons renders the distinct reasons in a stable order so a repeated
+// query returns the same JSON. No unnamed reason enters the list.
+func sortedReasons(seen map[string]bool) []string {
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(seen))
+	for reason := range seen {
+		out = append(out, reason)
+	}
+	sort.Strings(out)
 	return out
 }
 

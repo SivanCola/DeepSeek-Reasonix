@@ -27,6 +27,7 @@ func quotedSink(cfg *config.Config, opts Options, trace *otlp.Exporter) (event.S
 			}
 		}
 		quoted = rec
+		stats.StartUploadMeter(opts.roots().StatsDir())
 	}
 	return event.Sync(event.NewCostQuoteSink(quoted, ctx)), ctx
 }

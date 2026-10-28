@@ -14,6 +14,20 @@ export interface ThemeBackground {
   taskOpacity: number;
   overlayStrength: number;
   textGlow?: "default" | "none";
+  surfaceOpacity?: ThemeSurfaceOpacities;
+}
+
+export interface ThemeSurfaceOpacities {
+  light?: ThemeSurfaceOpacity;
+  dark?: ThemeSurfaceOpacity;
+}
+
+export interface ThemeSurfaceOpacity {
+  nav?: number;
+  rail?: number;
+  chrome?: number;
+  side?: number;
+  compose?: number;
 }
 
 // A live backdrop the window draws, rather than a picture it places. Absent on

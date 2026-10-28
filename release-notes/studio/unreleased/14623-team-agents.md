@@ -12,6 +12,7 @@
 - Agent 可以向你要密钥：命令里读得到，发给模型的内容里显示为 [secret:名称]。 #14623
 - 在 Agent 的对话里 @ 另一个 Agent 或引用它的对话；终端里用 /team 和 /msg。 #14623
 - 用量页按 Agent 统计；每个 Agent 的浏览器用自己的登录状态。 #14623
+- 按 Agent 用量与未定价调用原因可同时显示；升级时重建本地用量缓存，保留原始记录。 #14623
 
 <!-- lang:en -->
 
@@ -29,3 +30,4 @@ Team: long-lived agents that hand work to each other and take turns in group cha
 - Agents can ask you for a key: commands read it, and what a model reads shows [secret:NAME]. #14623
 - Mention another agent or quote its chat from an agent's chat; /team and /msg in the terminal. #14623
 - Usage by agent on the usage page; each agent's browser keeps its own logins. #14623
+- Agent usage and unpriced-call reasons remain available together. Upgrading rebuilds the local usage cache while preserving the original records. #14623

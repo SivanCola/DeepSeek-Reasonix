@@ -384,7 +384,8 @@ class BenchPort extends MockPort {
       // Lines the person queued: the panel leaves out the host's own queued
       // continuations, so a seed of those would draw nothing.
       intent: (QUEUE_IMAGES && i === 0 ? "steer" : "followup") as "steer" | "followup",
-      state: "queued" as const,
+      state: QUEUE_STATES && i < 2 ? (i === 0 ? "blocked" as const : "uncertain" as const) : "queued" as const,
+      ...(QUEUE_STATES && i < 2 ? { blockReason: "This queued instruction needs review before delivery. ".repeat(5) } : {}),
       ...(QUEUE_IMAGES && i === 0 ? { images: true } : {}),
       // 三种长度，各有各的对照：第一条没被截断（不该弹），第二条长到撞天花板
       // （浮层要自己滚），其余是寻常的被截断行。内核把 preview 截到 120 runes，
@@ -499,6 +500,7 @@ const SWITCH_MS = Number(query.get("switchms") ?? 0);
 // ?queue= is how many lines are already waiting when the window opens.
 const QUEUE = Number(query.get("queue") ?? 0);
 const QUEUE_BODY = query.has("queuebody");
+const QUEUE_STATES = query.has("queuestates");
 // ?queueimages makes the first seeded line a steer that carries a picture.
 const QUEUE_IMAGES = query.has("queueimages");
 const JOBS = Number(query.get("jobs") ?? 0);
