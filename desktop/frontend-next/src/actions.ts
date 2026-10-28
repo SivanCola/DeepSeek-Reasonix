@@ -109,6 +109,7 @@ export const ACTIONS: UIAction[] = [
   { id: "appearance.session-quick-actions", kind: "view", target: "none", proof: "interaction" },
   { id: "appearance.new-answer-marker", kind: "view", target: "none", proof: "interaction" },
   { id: "appearance.graphics", kind: "view", target: "none", proof: "interaction" },
+  { id: "window.global-shortcut", kind: "shell-native", target: "none", proof: "browser" },
   { id: "appearance.session-tabs", kind: "view", target: "none", proof: "interaction" },
   { id: "appearance.esc-stop", kind: "view", target: "none", proof: "interaction" },
   { id: "appearance.page-sleep", kind: "view", target: "none", proof: "interaction" },
@@ -296,6 +297,7 @@ export const ACTIONS: UIAction[] = [
   { id: "toast.report", kind: "view", target: "none", proof: "interaction" },
   { id: "errbar.report", kind: "view", target: "none", proof: "interaction" },
   { id: "toast.dismiss", kind: "view", target: "entity", proof: "interaction" },
+  { id: "toast.act", kind: "kernel-mutation", target: "entity", proof: "interaction" },
   { id: "model.group", kind: "view", target: "entity", proof: "interaction" },
   { id: "model.group-clear", kind: "view", target: "none", proof: "interaction" },
   { id: "paste.save", kind: "kernel-mutation", target: "none", proof: "interaction" },
@@ -593,6 +595,7 @@ export const ACTIONS: UIAction[] = [
   { id: "appearance.effects", kind: "view", target: "none", proof: "browser" },
   { id: "pane.close", kind: "destructive", target: "none", proof: "authority-effect" },
   { id: "settings.section", kind: "navigation", target: "none", proof: "interaction" },
+  { id: "settings.page", kind: "navigation", target: "none", proof: "interaction" },
   // Finding a setting changes what is on screen and nothing else: it reaches
   // no kernel state, and the jump it offers is settings.section, because
   // arriving from a search is the same arrival as arriving from the nav.

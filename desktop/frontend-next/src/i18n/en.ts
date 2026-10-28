@@ -577,6 +577,9 @@ export const EN: Record<string, string> = {
 
   // ── 会话树 ───────────────────────────────────────────────────────
   "新会话": "New session",
+  "这个会话的历史超过了安全读取上限，没有打开（文件完好，未改动）。可以只取最近的内容，另存为新会话继续。": "This session's history is over the safe read limit, so it was not opened (the file is intact and unchanged). You can carry only its most recent part over into a new session.",
+  "从最近的内容继续": "Continue from the most recent part",
+  "已从最近的内容另存为新会话，较早的 {n} 条没有带入；原会话文件保持不变。": "Saved the most recent part as a new session; {n} earlier messages were not carried over. The original session file is unchanged.",
   "标签数已到上限 {n}，已把「{title}」从标签栏收起，对话仍在列表里。": "The open-session limit ({n}) was reached, so \"{title}\" was folded out of the tab bar. The conversation is still in the list.",
   "打开项目文件夹": "Open project folder",
   "新会话 {n}": "New session {n}",
@@ -755,9 +758,6 @@ export const EN: Record<string, string> = {
   "代码块、命令、差异与工具输出共用这一等宽字体，不跟随界面主题改变。":
     "Code blocks, commands, diffs and tool output share this monospace font and do not change with the interface theme.",
   "等宽字体": "Monospace font",
-  "更多个性化": "More personalization",
-  "已设置自定义壁纸": "Custom wallpaper set",
-  "壁纸与背景位置": "Wallpaper and background position",
   "文字粗细": "Text weight",
   "视觉效果": "Visual effects",
   "窗口持续占用显卡时，改为「节能」：界面不变，只去掉磨砂玻璃、动态天空和颗粒这几层。": "If the window keeps your GPU busy, choose Reduced: the layout stays as it is, only frosted glass, the animated sky and the grain layer go.",
@@ -966,7 +966,6 @@ export const EN: Record<string, string> = {
   "返回正文": "Back to the conversation",
   "完成": "Done",
   "快捷键": "Keyboard shortcuts",
-  "下列按键在窗口中生效；标着 ⌘ 的地方，Windows 与 Linux 上是 Ctrl。": "These work anywhere in the window. Where a chord shows ⌘, Windows and Linux use Ctrl.",
   "在对话里查找": "Find in the conversation",
   "搜索会话": "Search conversations",
   "在提问之间移动": "Move between your questions",

@@ -1,8 +1,7 @@
 import type { SurfaceActionRequest, SurfaceActionRecord } from "./surface";
 import type { AgentComposition, AgentPresetVersion, AgentPresetCatalog, CompositionSummary } from "./composition";
 export type * from "./composition";
-import { DeliveryError, HttpError } from "./http_error";
-import type { DeliveryFault } from "./http_error";
+import { DeliveryError, HttpError, type DeliveryFault } from "./http_error";
 import type { SideProgress } from "./side";
 
 /** What `subscribe` hands back: the disposer, and where the transport has one, a
@@ -20,10 +19,10 @@ export type { AdjudicationEntry, AdjudicationState, Adjudications } from "./adju
 import type { HookCatalog, HookDryRun, HookEntry, HookEventInfo, HookSource } from "./hook";
 import type { CapabilityScope, McpCatalog, McpDraft, McpDraftServer, McpEntry, McpInstallResult, McpInstallScope, McpLoad, McpRisk, McpTool, ScopeLayer } from "./mcp";
 import type { MemoryCatalog, MemoryEdit, MemoryEntry, UnreadableMemory } from "./memory";
-import type { UsageQuery, UsageReport } from "./usage";
+import type { UploadUsagePort, UsageQuery, UsageReport } from "./usage";
 export { DEFAULT_USAGE_DAYS } from "./usage";
 export type { MemoryEdit } from "./memory";
-export type { Money, UsageDay, UsageHour, UsageModel, UsageProvider, UsageQuery, UsageReport } from "./usage";
+export type { Money, UploadDay, UploadProvider, UploadReport, UsageDay, UsageHour, UsageModel, UsageProvider, UsageQuery, UsageReport } from "./usage";
 import type { CompactionSettings, Completion, CompletionItem, ModelEntry, ModelMode, ModelPrice, RoleAssignments, RoleOverride } from "./model";
 import type { NetworkProbe, NetworkSettings } from "./network";
 import type { ApprovalDefault, ApprovalMode, WorkspaceTrust, ApprovalVerdict, BrowserTab, Checkpoint, HistoryMessage, HostTodo, JobEntry, JobOutput, Preset, RewindPlan, ToolOutputPage, RewindResult, RewindUndo, RewindScope, SessionEntry, SessionStatus, SessionUsage, SourceUsage, WalletLine, WalletReading, PlanAction } from "./session";
@@ -32,6 +31,7 @@ import type { SkillCatalog, SkillEntry, SkillUpdateChange, SkillUpdatePlan } fro
 import type { SubagentRun, SubagentTranscript } from "./subagent";
 import type { StudioCrash, StudioLogs, UpdateMode, UpdateProgress, VersionEntry, VersionHub, VersionNotes } from "./version";
 import type { ChangeDiff, CommitFile, CommitProposal, CommitRequest, CommitResult, DiscardRequest, GitCommitFiles, GitRepos, PushRequest, PushResult, PushPlan, StageRequest, WorkspaceBranch, WorkspaceBranches, WorkspaceChange, WorkspaceChanges, WorkspaceEntry, WorkspaceFile, WorkspaceFiles, WorkspaceGit, WorkspaceInfo, WorkspacePreviewPort } from "./workspace";
+import type { SessionTailPort } from "./session_tail";
 
 // The port is one contract; its subjects each keep their own file, the way the
 // wire and the layers below already do. This is where a reader still finds
@@ -183,7 +183,7 @@ export interface TrayPrefs {
   closeToTray: boolean;
 }
 
-export interface AgentPort extends WorkspacePreviewPort {
+export interface AgentPort extends WorkspacePreviewPort, SessionTailPort, UploadUsagePort {
   providerSetup(): Promise<ProviderSetup | null>;
   saveProviderKey(apiKey: string): Promise<void>;
   // The models that answer the job asked about; "chat" when none is named.

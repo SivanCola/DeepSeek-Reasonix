@@ -428,6 +428,35 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      - name: test (Windows resumed Goal planner budget)
+        if: env.RUN_STEPS == 'true' && runner.os == 'Windows' && github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -count=1 -timeout=3m -json -run '^Test(GoalResumeRenewsPlannerBudget|GoalNonBudgetResumeKeepsPlannerBudget|GoalTokenBudgetPausesAndResumes|EffectGoalResumeRenewsPlannerBudget)$' ./internal/session/control ./internal/assembly/boot | tee "$RUNNER_TEMP/goal-planner-resume.jsonl"
+          jq -se '
+            ["TestGoalResumeRenewsPlannerBudget",
+             "TestGoalNonBudgetResumeKeepsPlannerBudget",
+             "TestGoalNonBudgetResumeKeepsPlannerBudget/manual_pause",
+             "TestGoalNonBudgetResumeKeepsPlannerBudget/not_resumable",
+             "TestGoalTokenBudgetPausesAndResumes",
+             "TestEffectGoalResumeRenewsPlannerBudget"] as $required |
+            [.[] | select(.Test != null and .Action == "pass") | .Test] as $passed |
+            [.[] | select(.Test == null and .Action == "pass") | .Package] as $packages |
+            all(.[]; .Action != "fail" and .Action != "skip") and
+            (($required - $passed) | length == 0) and
+            ((["reasonix/internal/session/control", "reasonix/internal/assembly/boot"] - $packages) | length == 0)
+          ' "$RUNNER_TEMP/goal-planner-resume.jsonl"
+
+      - name: upload Windows resumed Goal planner budget inventory
+        if: always() && env.RUN_STEPS == 'true' && runner.os == 'Windows' && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: goal-planner-resume-windows-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/goal-planner-resume.jsonl
+          if-no-files-found: error
+          retention-days: 7
+
       - name: test (Windows root wall budget)
         if: env.RUN_STEPS == 'true' && runner.os == 'Windows' && github.event_name == 'pull_request'
         timeout-minutes: 5
@@ -639,6 +668,38 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      - name: test (Windows explicit skill root budget)
+        if: env.RUN_STEPS == 'true' && runner.os == 'Windows' && github.event_name == 'pull_request'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -count=1 -timeout=3m -json -run '^(TestProfileRootBudgetLifetime|TestProfileBudgetPreparationUsesTurnAdmission|TestEffectExplicitSkillRootBudget)$' ./internal/session/control ./internal/assembly/boot | tee "$RUNNER_TEMP/explicit-skill-root-budget.jsonl"
+          jq -se '
+            [.[] | select(.Test == null and .Action == "pass") | .Package] as $packages |
+            [.[] | select(.Test != null and .Action == "pass") | .Test] as $tests |
+            all(.[]; .Action != "skip" and .Action != "fail") and
+            (["reasonix/internal/session/control", "reasonix/internal/assembly/boot"] - $packages | length) == 0 and
+            (["TestProfileRootBudgetLifetime", "TestProfileRootBudgetLifetime/new_task",
+              "TestProfileRootBudgetLifetime/same_scope", "TestProfileRootBudgetLifetime/new_scope",
+              "TestProfileRootBudgetLifetime/reset", "TestProfileRootBudgetLifetime/new_session",
+              "TestProfileRootBudgetLifetime/inherited", "TestProfileRootBudgetLifetime/context_zero",
+              "TestProfileBudgetPreparationUsesTurnAdmission", "TestEffectExplicitSkillRootBudget",
+              "TestEffectExplicitSkillRootBudget/profile", "TestEffectExplicitSkillRootBudget/preview",
+              "TestEffectExplicitSkillRootBudget/slash", "TestEffectExplicitSkillRootBudget/chips",
+              "TestEffectExplicitSkillRootBudget/goal", "TestEffectExplicitSkillRootBudget/context_zero",
+              "TestEffectExplicitSkillRootBudget/unconfigured"] - $tests | length) == 0
+          ' "$RUNNER_TEMP/explicit-skill-root-budget.jsonl"
+
+      - name: upload Windows explicit skill root budget inventory
+        if: always() && env.RUN_STEPS == 'true' && runner.os == 'Windows' && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: explicit-skill-root-budget-windows-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/explicit-skill-root-budget.jsonl
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: test (Windows root triage budget)
         if: env.RUN_STEPS == 'true' && runner.os == 'Windows' && github.event_name == 'pull_request'
         timeout-minutes: 5
@@ -698,6 +759,34 @@ jobs:
           name: root-auxiliary-budget-windows-${{ github.run_attempt }}
           path: ${{ runner.temp }}/root-auxiliary-budget.jsonl
           if-no-files-found: ignore
+          retention-days: 7
+
+      - name: test (Windows local cost quote)
+        if: env.RUN_STEPS == 'true' && runner.os == 'Windows' && github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -count=1 -timeout=3m -json -run '^Test(LocalBudgetUsesOccurrenceQuote|LocalCost.*|UsageQuote.*|EffectLocalCostUsesOccurrenceQuote)$' ./internal/contract/event ./internal/runtime/agent ./internal/assembly/boot | tee "$RUNNER_TEMP/local-cost-quote.jsonl"
+          jq -se '
+            ["TestLocalBudgetUsesOccurrenceQuote", "TestLocalBudgetUsesOccurrenceQuote/peak", "TestLocalBudgetUsesOccurrenceQuote/offpeak",
+             "TestLocalCostKeepsOriginalCurrencyBuckets", "TestLocalCostFixedPointThresholdAndUnknown",
+             "TestUsageQuoteUsesOneOwnerAndOccurrence", "TestUsageQuoteLegacyAndNilSinks",
+             "TestEffectLocalCostUsesOccurrenceQuote", "TestEffectLocalCostUsesOccurrenceQuote/peak",
+             "TestEffectLocalCostUsesOccurrenceQuote/offpeak", "TestEffectLocalCostUsesOccurrenceQuote/relay"] as $required |
+            [.[] | select(.Test != null and .Action == "pass") | .Test] as $passed |
+            [.[] | select(.Test == null and .Action == "pass") | .Package] as $packages |
+            all(.[]; .Action != "fail" and .Action != "skip") and
+            (($required - $passed) | length == 0) and
+            ((["reasonix/internal/contract/event", "reasonix/internal/runtime/agent", "reasonix/internal/assembly/boot"] - $packages) | length == 0)
+          ' "$RUNNER_TEMP/local-cost-quote.jsonl"
+
+      - name: upload Windows local cost quote inventory
+        if: always() && env.RUN_STEPS == 'true' && runner.os == 'Windows' && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: local-cost-quote-windows-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/local-cost-quote.jsonl
+          if-no-files-found: error
           retention-days: 7
 
       - name: test (Windows estimated usage quotes)

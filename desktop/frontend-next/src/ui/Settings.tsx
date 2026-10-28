@@ -11,8 +11,11 @@ import type { CapabilityScope, McpEntry, ModelEntry, PluginPackage, SkillEntry }
 import { useSettingsSearch } from "./useSettingsSearch";
 import { useSettingLanding } from "./useSettingLanding";
 import { bytes, tokens as fmtTokens } from "../i18n/format";
+import { STORAGE_TALLY_DELAY, cachedStorageTotal, storageTotal } from "./storageTally";
 import { SECTION_NAME } from "./prefsnav";
 import { SettingsNav } from "./SettingsNav";
+import { SettingsPageStyle } from "./SettingsPageStyle";
+import { firstPage, pageOf } from "./settingPages";
 import { Group, SCOPE_SAID } from "./Group";
 import { PlanApproval, DefaultMode } from "./PlanApproval";
 import { PeersSection } from "./PeersSection";
@@ -92,6 +95,11 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
   const localPort = localWorkspacePort ?? homePort;
   const [openedSection, openedAnchor = ""] = (opened ?? "").split(":", 2);
   const [at, setAt] = useState<Section>((openedSection as Section) || "session");
+  const [pages, setPages] = useState<Partial<Record<Section, string>>>(() => {
+    const first = pageOf((openedSection as Section) || "session", openedAnchor);
+    return first ? { [(openedSection as Section) || "session"]: first } : {};
+  });
+  const pageNow = pages[at] ?? firstPage(at);
   // 搜索的语料是这张表，不是屏幕上的 DOM：分区是按需挂载的，读 DOM 就只搜得到
   // 当前这一页，而为了搜索把每一页都挂起来会让隐藏页面开始发请求。
   const [query, setQuery] = useState("");
@@ -184,12 +192,14 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
     let alive = true;
     setTally({});
     const put = (k: Section, v: string) => { if (alive) setTally((prev) => ({ ...prev, [k]: v })); };
-    homePort.storage().then((st) => put("storage", bytes(st.roots.reduce((n, r) => n + (r.bytes || 0), 0)))).catch(() => {});
+    const known = cachedStorageTotal(homePort);
+    if (known !== undefined) put("storage", bytes(known));
+    const walk = known !== undefined ? undefined : setTimeout(() => { storageTotal(homePort).then((n) => put("storage", bytes(n))).catch(() => {}); }, STORAGE_TALLY_DELAY);
     // The same window Usage itself opens on, or the list and the page it opens
     // would report two different totals for one word.
     homePort.usage(DEFAULT_DAYS).then((u) => put("usage", fmtTokens(u.tokens))).catch(() => {});
     homePort.versions().then((v) => put("versions", v.current || "dev")).catch(() => {});
-    return () => { alive = false; };
+    return () => { alive = false; clearTimeout(walk); };
   }, [homePort]);
 
   // Focus lands once, when the pane opens, and goes back where it came from on
@@ -313,6 +323,8 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
   const go = (section: Section, anchor: string) => {
     navigation.leave(() => {
       setAt(section);
+      const target = pageOf(section, anchor);
+      if (target) setPages((p) => ({ ...p, [section]: target }));
       setQuery("");
       setLanded(anchor);
       if (section === "ext") setExtTab(anchor === "market" ? "market" : "installed");
@@ -398,9 +410,9 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
       </div>
       <ConfigTrouble port={port} onRepaired={onChanged} />
       <div className="prefs-body">
-        <SettingsNav at={at} values={nav} shown={shown} danger={danger} disabled={updatingPkg.applying} onSelect={(section) => { if (section !== at) navigation.leave(() => { setLanded(""); setAt(section); }); }} />
+        <SettingsNav at={at} values={nav} shown={shown} danger={danger} disabled={updatingPkg.applying} onSelect={(section) => { if (section !== at) navigation.leave(() => { setLanded(""); setAt(section); }); }} page={pageNow} onPage={(section, page) => navigation.leave(() => { setLanded(""); setPages((p) => ({ ...p, [section]: page })); })} />
 
-        <div className="prefs-main" key={at} role="tabpanel" aria-labelledby={`prefs-${at}`} data-sec={at}>
+        <div className="prefs-main" key={at} role="tabpanel" aria-labelledby={pageNow ? `prefs-${at}-${pageNow}` : `prefs-${at}`} data-sec={at}>
           <Boundary
             fallback={
               <div className="find" data-lvl="err" role="alert">
@@ -412,6 +424,7 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
           {/* Keyed on the section: replacing this column is the navigation,
               and it is the one thing here whose mount really is the cause. */}
           <div className="prefs-col" key={at}>
+          <SettingsPageStyle section={at} page={pageNow} />
           <SettingsHeading section={at} value={nav[at]} danger={danger(at)} />
           {/* Every refused write on every page lands in one state, so it is
               said in one place. Copied onto the pages somebody remembered, it
