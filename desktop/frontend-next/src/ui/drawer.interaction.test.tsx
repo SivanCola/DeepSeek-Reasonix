@@ -22,6 +22,9 @@ describe("navigation closes the phone drawer", () => {
     act(() => openGroupStage("group-a"));
     expect(screen.getByRole("status").textContent).toBe("closed");
     fireEvent.click(screen.getByText("Open drawer"));
+    act(() => openGroupStage("group-a"));
+    expect(screen.getByRole("status").textContent).toBe("closed");
+    fireEvent.click(screen.getByText("Open drawer"));
     view.rerender(<Scene active="agent-b" />);
     expect(screen.getByRole("status").textContent).toBe("closed");
   });
