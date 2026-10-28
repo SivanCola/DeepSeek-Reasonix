@@ -13,6 +13,7 @@ import (
 
 	"reasonix/internal/base/fileutil"
 	"reasonix/internal/contract/provider"
+	"reasonix/internal/session/control"
 	"reasonix/internal/session/team"
 	"reasonix/internal/state/memory"
 	"reasonix/internal/state/sessionstore"
@@ -162,7 +163,7 @@ func (r *teamReviews) review(seat team.SeatRef) {
 		return
 	}
 	roster, err := r.t.store.Load()
-	if err != nil || roster.Prefs.MemoryReviewOff {
+	if err != nil || !roster.Prefs.MemoryReviewOn || roster.Prefs.MemoryReviewOff {
 		return
 	}
 	ask := r.ask
@@ -189,6 +190,16 @@ func (r *teamReviews) review(seat team.SeatRef) {
 	advance()
 	r.saveCursor(cursor)
 	if report != (team.ReviewReport{}) {
+		note := team.MemoryReviewNote(report)
+		if seat.Group != "" {
+			if err := r.t.service().RecordMemoryChange(ctx, seat.Agent, seat.Group, note); err != nil {
+				slog.Warn("serve: report memory review", "err", err)
+			}
+		} else if rt, ok := r.t.liveRuntime(seat); ok {
+			if ctrl, ok := rt.Server.Controller().(*control.Controller); ok {
+				ctrl.NotifyTeamMemory(note)
+			}
+		}
 		r.t.changed()
 	}
 }

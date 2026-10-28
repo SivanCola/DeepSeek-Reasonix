@@ -3,11 +3,13 @@ package team
 import (
 	"context"
 	"errors"
+	"os"
 	"slices"
 	"strings"
 	"testing"
 
 	"reasonix/internal/base/secrets"
+	"reasonix/internal/state/teamroster"
 )
 
 func TestAnAgentAsksForASecretInItsOwnConversationOnly(t *testing.T) {
@@ -24,6 +26,30 @@ func TestAnAgentAsksForASecretInItsOwnConversationOnly(t *testing.T) {
 	g := groupOf(t, h, h.id("Chief"), h.id("Chief"), h.id("Ada"))
 	if _, err := h.svc.RequestSecret(ctx, Caller{Agent: h.id("Ada"), Group: g}, "x", ""); !errors.Is(err, ErrPrivateOnly) {
 		t.Fatalf("a request from a group seat = %v, want ErrPrivateOnly", err)
+	}
+}
+
+type unavailableCredentials struct{}
+
+func (unavailableCredentials) Save(string) (string, error) {
+	return "", teamroster.ErrSecretCredentials
+}
+func (unavailableCredentials) Read(string) (string, error) {
+	return "", teamroster.ErrSecretCredentials
+}
+
+func TestFailedCredentialMigrationStillMasksLegacyValues(t *testing.T) {
+	store := teamroster.Store{Dir: t.TempDir(), Credentials: unavailableCredentials{}}
+	const value = "migration-private-0123456789"
+	if err := os.WriteFile(store.SecretPath(), []byte(`{"secrets":[{"name":"MIGRATION","value":"`+value+`"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	defer secrets.UnregisterValue(value)
+	if err := RegisterSecrets(store); !errors.Is(err, teamroster.ErrSecretCredentials) {
+		t.Fatalf("migration = %v", err)
+	}
+	if secrets.MaskRegistered(value) == value {
+		t.Fatal("failed migration left a known secret unmasked")
 	}
 }
 
@@ -87,7 +113,7 @@ func TestADeclinedRequestTellsTheAgent(t *testing.T) {
 
 func TestStoredSecretsAreMaskedFromTheStart(t *testing.T) {
 	h := newHarness(t, "Chief")
-	if err := h.svc.UserSaveSecret(context.Background(), "TOKEN", "tok-9876543210", "", nil, ""); err != nil {
+	if err := h.svc.UserSaveSecret(context.Background(), "TOKEN", "tok-9876543210", "", []string{h.id("Chief")}, ""); err != nil {
 		t.Fatal(err)
 	}
 	secrets.UnregisterValue("tok-9876543210")
@@ -97,5 +123,16 @@ func TestStoredSecretsAreMaskedFromTheStart(t *testing.T) {
 	}
 	if got := secrets.MaskRegistered("tok-9876543210"); got != "[secret:TOKEN]" {
 		t.Fatalf("a stored secret was not registered: %q", got)
+	}
+}
+
+func TestSavingASecretRequiresExplicitRecipients(t *testing.T) {
+	h := newHarness(t, "Chief")
+	if err := h.svc.UserSaveSecret(t.Context(), "TOKEN", "private-123456789", "", nil, ""); err == nil {
+		t.Fatal("missing recipients granted every agent")
+	}
+	book, err := h.store.Secrets()
+	if err != nil || len(book.Secrets) != 0 {
+		t.Fatalf("rejected save changed secrets: %v", err)
 	}
 }

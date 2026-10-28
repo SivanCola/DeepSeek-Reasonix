@@ -54,6 +54,7 @@ func (m *mixedPanes) Live(seat team.SeatRef) (team.Pane, bool) {
 // session, and when that turn ends its answer comes back to the sender on its
 // own, carried by nothing but the controller's settlement.
 func TestEffectAnAgentsMessageIsAnsweredThroughTheReceiversRealTurn(t *testing.T) {
+	requireTeamExecution(t)
 	store := teamroster.Store{Dir: t.TempDir()}
 	var ada, ben string
 	if _, err := store.Update(context.Background(), func(r *teamroster.Roster) error {
@@ -164,9 +165,8 @@ func TestEffectAnAgentsMessageIsAnsweredThroughTheReceiversRealTurn(t *testing.T
 	}
 }
 
-// A message the user sent an agent from another window runs as the user's own
-// turn: it lands as theirs, with no origin row and nothing framed around it.
-func TestEffectAUserMessageFromAnotherWindowIsTheUsersTurn(t *testing.T) {
+func TestEffectTerminalOutboxIsHostInputWithoutUserAuthority(t *testing.T) {
+	requireTeamExecution(t)
 	home := isolateConfigHome(t)
 	t.Setenv("REASONIX_HOME", filepath.Join(home, ".reasonix"))
 	dir := robustTempDir(t)
@@ -197,7 +197,7 @@ func TestEffectAUserMessageFromAnotherWindowIsTheUsersTurn(t *testing.T) {
 			landed = &m
 		}
 	}
-	if landed == nil || landed.HostAuthored || landed.Origin != nil {
-		t.Fatalf("the user's message landed as %+v", landed)
+	if landed == nil || !landed.HostAuthored || landed.Origin == nil || landed.Origin.Agent != "terminal" || !strings.Contains(sessionstore.UserMessageText(*landed), "author is not authenticated") {
+		t.Fatalf("terminal input claimed user authority: %+v", landed)
 	}
 }

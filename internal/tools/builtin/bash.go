@@ -225,7 +225,7 @@ func (b bash) executeDetailed(ctx context.Context, args json.RawMessage) (tool.D
 	}
 
 	argv, wrapped := prepared.Argv, prepared.Wrapped
-	cmdEnv := applyEnvOverrides(shellrun.CommandEnv(ctx), slices.Concat(shellEnvOverrides(b.sb.ShellEnv), b.secrets(), prepared.EnvOverrides))
+	cmdEnv := applyEnvOverrides(shellrun.CommandEnv(ctx), slices.Concat(shellEnvOverrides(b.sb.ShellEnv), b.secrets(p.Command), prepared.EnvOverrides))
 	if err := checkCommandLine(argv); err != nil {
 		return refusedBeforeLaunch(ex, start, tool.ShellPhasePreflight, err)
 	}
@@ -285,11 +285,19 @@ func (b bash) executeDetailed(ctx context.Context, args json.RawMessage) (tool.D
 }
 
 // secrets are the secret variables this command receives.
-func (b bash) secrets() []string {
+func (b bash) secrets(command string) []string {
 	if b.secretEnv == nil {
 		return nil
 	}
-	return b.secretEnv()
+	names := shellparse.ExpandedVariables(command)
+	var selected []string
+	for _, assignment := range b.secretEnv() {
+		name, _, ok := strings.Cut(assignment, "=")
+		if ok && names[name] {
+			selected = append(selected, assignment)
+		}
+	}
+	return selected
 }
 
 func applyTerminalResult(ex *tool.ShellExecution, err error) {

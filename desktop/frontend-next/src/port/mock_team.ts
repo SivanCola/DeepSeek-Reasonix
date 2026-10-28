@@ -19,7 +19,7 @@ export class MockTeam implements TeamPort {
     private readonly changed: () => void,
   ) {}
 
-  private prefs: TeamPrefs = { memoryReview: true };
+  private prefs: TeamPrefs = { memoryReview: false };
   private tasks: TeamSchedule[] = [];
   private vault: TeamSecrets = { secrets: [], requests: [] };
 

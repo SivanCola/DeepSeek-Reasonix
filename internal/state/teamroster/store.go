@@ -25,7 +25,10 @@ var errNoDir = errors.New("teamroster: no store directory")
 
 // Store is the team kept in Dir. The zero Dir is refused rather than read as
 // the working directory.
-type Store struct{ Dir string }
+type Store struct {
+	Dir         string
+	Credentials SecretCredentials
+}
 
 func (s Store) path() (string, error) {
 	if s.Dir == "" {
@@ -91,7 +94,8 @@ func decode(data []byte) (Roster, error) {
 	if r.SchemaVersion < 1 {
 		return Roster{}, fmt.Errorf("%w: schema version %d", ErrCorrupt, r.SchemaVersion)
 	}
-	if err := r.Validate(); err != nil {
+	// Older oversized teams remain readable and may shrink, but may not grow.
+	if err := r.validateWithin(max(MaxAgents, len(r.Agents)), max(MaxGroups, len(r.Groups))); err != nil {
 		return Roster{}, fmt.Errorf("%w: %w", ErrCorrupt, err)
 	}
 	return r, nil
@@ -120,11 +124,12 @@ func (s Store) update(ctx context.Context, revision *uint64, mutate func(*Roster
 		if revision != nil && *revision != r.Revision {
 			return ErrConflict
 		}
+		agents, groups := max(MaxAgents, len(r.Agents)), max(MaxGroups, len(r.Groups))
 		if err := mutate(&r); err != nil {
 			return err
 		}
 		r.normalize()
-		if err := r.Validate(); err != nil {
+		if err := r.validateWithin(agents, groups); err != nil {
 			return err
 		}
 		r.SchemaVersion = SchemaVersion

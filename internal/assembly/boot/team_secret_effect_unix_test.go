@@ -20,6 +20,7 @@ import (
 // printed comes back masked, and so would anything else that echoed it.
 func TestEffectATeamSecretReachesTheShellAndNeverTheProvider(t *testing.T) {
 	home := statedBootHome(t)
+	t.Setenv("REASONIX_HOME", home)
 	dir := testenv.TempDir(t)
 	store := teamroster.Store{Dir: testenv.TempDir(t)}
 	var ada string
@@ -31,7 +32,7 @@ func TestEffectATeamSecretReachesTheShellAndNeverTheProvider(t *testing.T) {
 	}
 	svc := team.New(team.Options{Store: store})
 	const value = "sk-shop-0123456789"
-	if err := svc.UserSaveSecret(context.Background(), "SHOP_KEY", value, "the shop", nil, ""); err != nil {
+	if err := svc.UserSaveSecret(context.Background(), "SHOP_KEY", value, "the shop", []string{ada}, ""); err != nil {
 		t.Fatal(err)
 	}
 	defer secrets.UnregisterValue(value)

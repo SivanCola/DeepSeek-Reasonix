@@ -31,7 +31,7 @@ func (s *Service) RequestSecret(ctx context.Context, c Caller, name, purpose str
 	purpose = strings.TrimSpace(purpose)
 	held := false
 	err := s.store.EditSecrets(ctx, func(b *teamroster.SecretBook) error {
-		if i := slices.IndexFunc(b.Secrets, func(sc teamroster.Secret) bool { return sc.Name == n }); i >= 0 && allowed(b.Secrets[i], c.Agent) {
+		if i := slices.IndexFunc(b.Secrets, func(sc teamroster.Secret) bool { return sc.Name == n }); i >= 0 && b.Secrets[i].Value != "" && allowed(b.Secrets[i], c.Agent) {
 			held = true
 			return nil
 		}
@@ -50,14 +50,17 @@ func (s *Service) RequestSecret(ctx context.Context, c Caller, name, purpose str
 }
 
 func allowed(sc teamroster.Secret, agent string) bool {
-	return len(sc.Agents) == 0 || slices.Contains(sc.Agents, agent)
+	return slices.Contains(sc.Agents, agent)
 }
 
-// UserSaveSecret keeps a value the user typed, for the agents named (nil is
-// every agent), closes the request for it, and tells the asking agent how to
+// UserSaveSecret keeps a value the user typed for explicitly named agents,
+// closes the request for it, and tells the asking agent how to
 // use it — never what it is.
 func (s *Service) UserSaveSecret(ctx context.Context, name, value, purpose string, agents []string, requester string) error {
 	defer s.changed()
+	if len(agents) == 0 {
+		return &teamroster.FieldError{Field: "agents", Err: teamroster.ErrEmpty}
+	}
 	n := teamroster.NormalizeSecretName(name)
 	if n == "" {
 		return &teamroster.FieldError{Field: "name", Err: teamroster.ErrInvalid}
@@ -151,15 +154,25 @@ func (s *Service) SecretEnv(agent string) []string {
 // file they live in as a secret path. A host calls it at start, before any
 // session is built, whether or not it holds the team's writer lease.
 func RegisterSecrets(store teamroster.Store) error {
+	store = WithSecretCredentials(store)
 	secrets.RegisterHostSecretPath(store.SecretPath())
-	book, err := store.Secrets()
+	meta, err := store.SecretMetadata()
 	if err != nil {
 		return err
 	}
+	for _, sc := range meta.Secrets {
+		secrets.RegisterValue(sc.Name, sc.Value)
+	}
+	if slices.ContainsFunc(meta.Secrets, func(sc teamroster.Secret) bool { return sc.Slot == "" && sc.Value != "" }) {
+		if err := store.EditSecrets(context.Background(), func(*teamroster.SecretBook) error { return nil }); err != nil {
+			return err
+		}
+	}
+	book, err := store.Secrets()
 	for _, sc := range book.Secrets {
 		secrets.RegisterValue(sc.Name, sc.Value)
 	}
-	return nil
+	return err
 }
 
 func (s *Service) tellSecret(ctx context.Context, agent, name, status, note string) error {

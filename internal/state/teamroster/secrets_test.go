@@ -17,7 +17,7 @@ func TestASecretNameIsNormalisedIntoAnEnvironmentSuffix(t *testing.T) {
 }
 
 func TestSecretsAreKeptInAFileOnlyTheUserReads(t *testing.T) {
-	s := Store{Dir: t.TempDir()}
+	s := Store{Dir: t.TempDir(), Credentials: testSecretCredentials{}}
 	ctx := context.Background()
 	if err := s.EditSecrets(ctx, func(b *SecretBook) error {
 		b.Requests = append(b.Requests, SecretRequest{Name: "SHOP_KEY", Purpose: "the shop API", Agent: newAgentID()})

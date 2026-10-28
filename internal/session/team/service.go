@@ -32,6 +32,7 @@ type Service struct {
 
 // New returns a Service over o.
 func New(o Options) *Service {
+	o.Store = WithSecretCredentials(o.Store)
 	now := o.Now
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
@@ -54,6 +55,8 @@ type Caller struct {
 	Step    string
 	Serving []string
 	Ceiling string
+	// ConfigurationApproved means the host obtained fresh human approval for this exact change.
+	ConfigurationApproved bool
 }
 
 // MessageRequest is what message_agent asks for. To is an agent id or its

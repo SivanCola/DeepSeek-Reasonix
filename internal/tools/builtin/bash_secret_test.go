@@ -34,3 +34,17 @@ func TestABashCommandReadsAGivenSecretAndPrintsItMasked(t *testing.T) {
 		t.Fatalf("a secret no longer given still reached the command: %q", out)
 	}
 }
+
+func TestUnrelatedShellCommandsReceiveNoGrantedSecrets(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell")
+	}
+	b := bash{workDir: t.TempDir(), secretEnv: func() []string { return []string{"REASONIX_SECRET_SHOP_KEY=private-123456789"} }}
+	for _, command := range []string{`env`, `name=REASONIX_SECRET_SHOP_KEY; printenv "$name"`, `printf '%s' '$REASONIX_SECRET_SHOP_KEY'`} {
+		args, _ := json.Marshal(map[string]string{"command": command})
+		out, _ := b.Execute(t.Context(), args)
+		if strings.Contains(out, "private-123456789") {
+			t.Fatalf("unreferenced secret reached %q", command)
+		}
+	}
+}

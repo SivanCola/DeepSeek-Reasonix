@@ -15,8 +15,7 @@ import (
 	"reasonix/internal/base/fileutil"
 )
 
-// SecretFile holds the secrets the user gave the team. The host registers it as
-// a secret path, so sandboxed commands and the read tools are denied it.
+// SecretFile holds credential references and grants; legacy plaintext is migrated.
 const SecretFile = "secrets.json"
 
 // Bounds on a secret.
@@ -30,10 +29,11 @@ const (
 var secretName = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,39}$`)
 
 // Secret is a value the user saved for agents to use without seeing it.
-// Agents nil means every agent on the team may use it.
+// Empty Agents authorizes nobody.
 type Secret struct {
 	Name        string    `json:"name"`
-	Value       string    `json:"value"`
+	Value       string    `json:"value,omitempty"`
+	Slot        string    `json:"slot,omitempty"`
 	Purpose     string    `json:"purpose,omitempty"`
 	Agents      []string  `json:"agents,omitempty"`
 	RequestedBy string    `json:"requestedBy,omitempty"`
@@ -84,7 +84,7 @@ func (sc Secret) check() error {
 	switch {
 	case !secretName.MatchString(sc.Name):
 		return fieldErr("name", ErrInvalid)
-	case len(sc.Value) < MinSecretBytes:
+	case len(sc.Value) < MinSecretBytes && !(sc.Value == "" && sc.Slot != ""):
 		return fieldErr("value", ErrEmpty)
 	case len(sc.Value) > MaxSecretBytes:
 		return fieldErr("value", ErrTooLong)
@@ -104,6 +104,16 @@ func (s Store) SecretPath() string { return filepath.Join(s.Dir, SecretFile) }
 
 // Secrets returns the secrets the user saved and the requests still open.
 func (s Store) Secrets() (SecretBook, error) {
+	book, err := s.SecretMetadata()
+	if err == nil {
+		err = s.resolveSecrets(&book)
+	}
+	return book, err
+}
+
+// SecretMetadata reads labels, recipients and credential references. Legacy
+// plaintext is retained only until the next successful migration or edit.
+func (s Store) SecretMetadata() (SecretBook, error) {
 	data, err := os.ReadFile(s.SecretPath())
 	if errors.Is(err, fs.ErrNotExist) {
 		return SecretBook{}, nil
@@ -122,9 +132,18 @@ func (s Store) Secrets() (SecretBook, error) {
 // by the user alone, only if every secret still checks.
 func (s Store) EditSecrets(ctx context.Context, mutate func(*SecretBook) error) error {
 	return s.withLock(ctx, s.Dir, SecretFile, func() error {
-		book, err := s.Secrets()
+		book, err := s.SecretMetadata()
 		if err != nil {
 			return err
+		}
+		if err := s.resolveSecrets(&book); err != nil && !errors.Is(err, ErrSecretCredentials) {
+			return err
+		}
+		original := map[string]string{}
+		for _, sc := range book.Secrets {
+			if sc.Slot != "" {
+				original[sc.Slot] = sc.Value
+			}
 		}
 		if err := mutate(&book); err != nil {
 			return err
@@ -133,6 +152,9 @@ func (s Store) EditSecrets(ctx context.Context, mutate func(*SecretBook) error) 
 			if err := sc.check(); err != nil {
 				return err
 			}
+		}
+		if err := s.storeSecretValues(&book, original); err != nil {
+			return err
 		}
 		data, err := json.Marshal(book)
 		if err != nil {

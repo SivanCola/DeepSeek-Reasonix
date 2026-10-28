@@ -43,7 +43,7 @@ it("the agent's request becomes a card the person fills in, and the value never 
   const input = within(card).getByLabelText("密钥");
   expect(input.getAttribute("type")).toBe("password");
   await userEvent.type(input, "sk-shop-0123456789");
-  await userEvent.click(within(card).getByRole("radio", { name: "只给 Ada" }));
+  expect((within(card).getByRole("radio", { name: "只给 Ada" }) as HTMLInputElement).checked).toBe(true);
   await userEvent.click(within(card).getByRole("button", { name: "保存" }));
   await waitFor(() => expect(team.calls.at(-1)?.method).toBe("saveSecret"));
   expect(team.calls.at(-1)?.args[0]).toEqual({ name: "SHOP_KEY", value: "sk-shop-0123456789", purpose: "to call the shop API", agents: ["a-1"], requester: "a-1" });
@@ -63,11 +63,11 @@ it("settings list what was saved, never its value, and remove it with two presse
   const hub = new MockHub();
   const team = hub.team();
   await team.bootstrap("Chief");
-  await team.saveSecret({ name: "SHOP_KEY", value: "sk-shop-0123456789", purpose: "the shop" });
+  await team.saveSecret({ name: "SHOP_KEY", value: "sk-shop-0123456789", purpose: "the shop", agents:["a-chief"] });
   render(<TeamSection hub={hub} />);
   const list = await screen.findByRole("list", { name: "机密" });
   expect(within(list).getByText("SHOP_KEY")).toBeTruthy();
-  expect(within(list).getByText(/所有 Agent/)).toBeTruthy();
+  expect(within(list).getByText(/只给 Chief/)).toBeTruthy();
   expect(document.body.innerHTML).not.toContain("sk-shop");
   await userEvent.click(within(list).getByRole("button", { name: "删除 SHOP_KEY" }));
   await userEvent.click(within(list).getByRole("button", { name: "确认删除 SHOP_KEY" }));

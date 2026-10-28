@@ -329,11 +329,11 @@ func TestRecoverTellsTheSenderAboutAMessageACrashCutOff(t *testing.T) {
 	if err := h.svc.Recover(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if h.exchange(x.ID).State != teamroster.ExchangeInterrupted || h.exchange(delivered.Exchange).State != teamroster.ExchangeDelivered {
+	if h.exchange(x.ID).State != teamroster.ExchangeInterrupted || h.exchange(delivered.Exchange).State != teamroster.ExchangeInterrupted {
 		t.Fatalf("after recovery: %s, %s", h.exchange(x.ID).State, h.exchange(delivered.Exchange).State)
 	}
 	got := h.inbox("Chief")
-	if len(got) != 1 {
+	if len(got) != 2 {
 		t.Fatalf("Chief's inbox = %+v", got)
 	}
 	contains(t, got[0].Text, `status="interrupted" code="team.interrupted"`)

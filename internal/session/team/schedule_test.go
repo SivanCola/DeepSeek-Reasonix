@@ -85,7 +85,7 @@ func TestADueGroupTaskIsPostedAsTheUsersMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines, _ := h.store.Lines(g, 0, 0)
-	if len(lines) != 1 || lines[0].From != teamroster.ByUser || lines[0].Schedule != sc.ID || !strings.Contains(lines[0].Text, "plan the week") {
+	if len(lines) != 1 || lines[0].From != teamroster.BySchedule || lines[0].Schedule != sc.ID || !strings.Contains(lines[0].Text, "plan the week") {
 		t.Fatalf("group log = %+v", lines)
 	}
 	if rs, _ := h.store.Round(g); rs.Speaking == nil {
@@ -145,7 +145,7 @@ func TestAQueuedUserMessageReachesItsAgentAsTheUsersWords(t *testing.T) {
 		}
 	}
 	got := h.panes.pane(SeatRef{Agent: h.id("Ada")}).deliveries()
-	if len(got) != 1 || got[0].Kind != DeliverUserMessage || got[0].Text != "write the weekly report" || got[0].From != teamroster.ByUser {
+	if len(got) != 1 || got[0].Kind != DeliverUserMessage || got[0].Text != "write the weekly report" || got[0].From != "terminal" || got[0].Ceiling != "ask" {
 		t.Fatalf("deliveries = %+v", got)
 	}
 }

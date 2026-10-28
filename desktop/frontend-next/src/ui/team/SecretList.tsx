@@ -37,7 +37,7 @@ export function SecretList({ team, view }: { team: TeamPort; view: TeamView }) {
       {!readOnly && book.requests.map((q) => (
         <div key={`${q.name}-${q.agent}`} className="team-secret" role="group" aria-label={t("{agent} 需要 {name}", { agent: agentName(q.agent), name: q.name })}>
           <b>{t("{agent} 需要 {name}", { agent: agentName(q.agent), name: q.name })}</b>
-          <SecretForm team={team} name={q.name} purpose={q.purpose} agent={q.agent} agentName={agentName(q.agent)} onDone={() => setRound((n) => n + 1)} />
+          <SecretForm team={team} name={q.name} purpose={q.purpose} agent={q.agent} agentName={agentName(q.agent)} agents={view.agents} onDone={() => setRound((n) => n + 1)} />
         </div>
       ))}
       {book.secrets.length === 0 ? (
@@ -48,7 +48,7 @@ export function SecretList({ team, view }: { team: TeamPort; view: TeamView }) {
             <li key={s.name}>
               <span className="team-shared-text">
                 <b>{s.name}</b>
-                <span>{[s.purpose, s.agents?.length ? t("只给 {name}", { name: s.agents.map(agentName).join("、") }) : t("所有 Agent")].filter(Boolean).join(" · ")}</span>
+                <span>{[s.purpose, s.agents?.length ? t("只给 {name}", { name: s.agents.map(agentName).join("、") }) : t("尚未授权任何成员")].filter(Boolean).join(" · ")}</span>
               </span>
               {!readOnly && (
                 <button type="button" data-action={confirming === s.name ? "team.secret-delete" : "team.secret-delete-ask"} data-target={s.name}

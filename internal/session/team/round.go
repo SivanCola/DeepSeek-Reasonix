@@ -178,7 +178,11 @@ func (s *Service) userPost(ctx context.Context, group string, post teamroster.Gr
 	if err != nil {
 		return teamroster.GroupLine{}, err
 	}
-	line, err := s.store.AppendLine(ctx, group, teamroster.GroupLine{From: teamroster.ByUser, Kind: teamroster.LinePost, Text: text, Mentions: ids, At: s.now(), Schedule: post.Schedule})
+	from, cause, ceiling := teamroster.ByUser, teamroster.CauseUser, ""
+	if post.Schedule != "" {
+		from, cause, ceiling = teamroster.BySchedule, teamroster.CauseSchedule, "ask"
+	}
+	line, err := s.store.AppendLine(ctx, group, teamroster.GroupLine{From: from, Kind: teamroster.LinePost, Text: text, Mentions: ids, At: s.now(), Schedule: post.Schedule})
 	if err != nil {
 		return line, err
 	}
@@ -188,7 +192,7 @@ func (s *Service) userPost(ctx context.Context, group string, post teamroster.Gr
 	}
 	rs.Round++
 	rs.Relays = 0
-	rs.Queue = callNext(rs.Queue, openingSpeakers(*g, ids, everyone, teamroster.ByUser, teamroster.CauseUser, ""))
+	rs.Queue = callNext(rs.Queue, openingSpeakers(*g, ids, everyone, from, cause, ceiling))
 	for _, p := range rs.Parked {
 		if !slices.ContainsFunc(rs.Queue, func(q teamroster.Slot) bool { return q.Member == p.Member }) {
 			rs.Queue = append(rs.Queue, p)

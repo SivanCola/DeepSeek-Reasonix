@@ -17,10 +17,11 @@ import (
 type SlotCause string
 
 const (
-	CauseUser    SlotCause = "user"
-	CauseMention SlotCause = "mention"
-	CauseHand    SlotCause = "hand"
-	CausePost    SlotCause = "post"
+	CauseUser     SlotCause = "user"
+	CauseSchedule SlotCause = "schedule"
+	CauseMention  SlotCause = "mention"
+	CauseHand     SlotCause = "hand"
+	CausePost     SlotCause = "post"
 )
 
 // Slot is one member waiting for its turn. By is who called it, and Ceiling
@@ -60,14 +61,14 @@ func (r *RoundState) check() error {
 		slots = append(slots, r.Speaking.Slot)
 	}
 	for _, s := range slots {
-		if !agentID.MatchString(s.Member) || (s.By != "" && s.By != ByUser && !agentID.MatchString(s.By)) {
+		if !agentID.MatchString(s.Member) || (s.By != "" && s.By != ByUser && s.By != BySchedule && !agentID.MatchString(s.By)) {
 			return fieldErr("round.member", ErrInvalid)
 		}
 		if !ceiling.MatchString(s.Ceiling) {
 			return fieldErr("ceiling", ErrInvalid)
 		}
 		switch s.Cause {
-		case CauseUser, CauseMention, CauseHand, CausePost:
+		case CauseUser, CauseMention, CauseHand, CausePost, CauseSchedule:
 		default:
 			return fieldErr("round.cause", ErrInvalid)
 		}

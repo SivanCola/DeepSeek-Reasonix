@@ -11,6 +11,9 @@ import (
 
 func TestTeamReviewStopsBeforeTheWriterLeaseIsReleased(t *testing.T) {
 	h, ids := teamHub(t, "Chief", "Ada")
+	if err := h.team.service().UserSetMemoryReview(t.Context(), true); err != nil {
+		t.Fatal(err)
+	}
 	c := newTeamClient(t, h)
 	g := c.view("POST", "/team/groups", map[string]any{"members": []string{ids["Chief"], ids["Ada"]}}).Groups[0].ID
 	if _, err := h.team.store.AppendLine(t.Context(), g, teamroster.GroupLine{From: teamroster.ByUser, Kind: teamroster.LinePost, Text: "Remember the launch"}); err != nil {

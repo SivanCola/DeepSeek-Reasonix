@@ -96,6 +96,9 @@ func (f *teamEffectPanes) Live(seat team.SeatRef) (team.Pane, bool) {
 // teamEffectSession builds one session through the real assembly, seated when
 // seat is set, and runs one prompt against p.
 func teamEffectSession(t *testing.T, kind string, p *teamScriptedProvider, seat control.TeamSeat) []provider.Request {
+	if seat != nil {
+		requireTeamExecution(t)
+	}
 	t.Helper()
 	home := isolateConfigHome(t)
 	t.Setenv("REASONIX_HOME", filepath.Join(home, ".reasonix"))

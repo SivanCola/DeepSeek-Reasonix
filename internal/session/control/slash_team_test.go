@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -50,5 +51,31 @@ func TestTheTeamCommandsWorkFromAnySession(t *testing.T) {
 	c.managementNotice("/msg")
 	if got := lastNotice(t, notices()); !strings.Contains(got, "usage") {
 		t.Fatalf("no arguments = %q", got)
+	}
+}
+
+func TestMsgExactIDWinsOverLongerAgentNameInEitherOrder(t *testing.T) {
+	for _, reverse := range []bool{false, true} {
+		t.Run(map[bool]string{false: "target-first", true: "target-last"}[reverse], func(t *testing.T) {
+			c, _ := settingsController(t)
+			store := c.teamStore()
+			var target string
+			_, err := store.Update(t.Context(), func(r *teamroster.Roster) error {
+				target = r.AddAgent(teamroster.Agent{Name: "Receiver", Main: true, CreatedBy: teamroster.ByUser}).ID
+				r.AddAgent(teamroster.Agent{Name: target + " extra", CreatedBy: teamroster.ByUser})
+				if reverse {
+					slices.Reverse(r.Agents)
+				}
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.queueUserMessage(target + " extra payload")
+			messages, err := store.PendingUserMessages(t.Context())
+			if err != nil || len(messages) != 1 || messages[0].To != target || messages[0].Text != "extra payload" {
+				t.Fatalf("ID routing = %+v, %v", messages, err)
+			}
+		})
 	}
 }
