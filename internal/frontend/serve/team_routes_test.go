@@ -379,8 +379,8 @@ func TestSecretsAreAnsweredFromTheWindowAndNeverReadBack(t *testing.T) {
 	if strings.Contains(string(out), value) || !strings.Contains(string(out), `"requests":[]`) || !strings.Contains(string(out), `"name":"SHOP_KEY"`) {
 		t.Fatalf("after saving: %s", out)
 	}
-	c.refused("POST", "/team/secrets", map[string]any{"name": "PIN", "value": "12"}, 400, "team.invalid")
 	c.refused("POST", "/team/secrets", map[string]any{"name": "NOBODY", "value": "sk-nobody-0123456789", "agents": []string{}}, 400, "team.invalid")
+	c.refused("POST", "/team/secrets", map[string]any{"name": "PIN", "value": "12", "agents": []string{ids["Ada"]}}, 400, "team.invalid")
 	if status, _ := c.do("DELETE", "/team/secrets/SHOP_KEY", nil); status != http.StatusNoContent {
 		t.Fatalf("delete = %d", status)
 	}

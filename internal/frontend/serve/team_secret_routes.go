@@ -58,7 +58,7 @@ func secretsGuarded() bool {
 const secretBodyLimit = teamroster.MaxSecretBytes + 4<<10
 
 func (t *hubTeam) secrets(w http.ResponseWriter, _ *http.Request) {
-	book, err := t.store.Secrets()
+	book, err := t.store.SecretMetadata()
 	if err != nil {
 		teamError(w, err)
 		return

@@ -22,8 +22,9 @@ type Labeled struct{ Label, Value string }
 
 var registered struct {
 	sync.Mutex
-	held    map[Labeled]struct{}
-	sources map[string]func() []Labeled
+	held     map[Labeled]struct{}
+	sources  map[string]func() []Labeled
+	snapshot *Mask
 }
 
 // WatchValues adds a source read on every Masker call, so masking follows the
@@ -47,7 +48,11 @@ func hold(l Labeled) {
 	if registered.held == nil {
 		registered.held = map[Labeled]struct{}{}
 	}
+	if _, exists := registered.held[l]; exists {
+		return
+	}
 	registered.held[l] = struct{}{}
+	registered.snapshot = nil
 }
 
 // Mask is a snapshot of the registered values. A nil Mask masks nothing.
@@ -85,6 +90,9 @@ func Masker() *Mask {
 	if len(registered.held) == 0 {
 		return nil
 	}
+	if registered.snapshot != nil {
+		return registered.snapshot
+	}
 	byValue := map[string][]string{}
 	labels := map[string]bool{}
 	for l := range registered.held {
@@ -108,6 +116,7 @@ func Masker() *Mask {
 		names := slices.Sorted(slices.Values(byValue[v]))
 		m.values = append(m.values, spelled{mark: Mark(strings.Join(names, ",")), labels: names, forms: forms(v), short: len(v) < shortValue})
 	}
+	registered.snapshot = m
 	return m
 }
 

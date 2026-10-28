@@ -83,14 +83,19 @@ func (c *Controller) queueUserMessage(args string) string {
 	}
 	var to *teamroster.Agent
 	text := ""
+	if id, rest, ok := strings.Cut(args, " "); ok {
+		if agent, found := r.Agent(id); found {
+			to, text = agent, strings.TrimSpace(rest)
+		}
+	}
 	for i := range r.Agents {
+		if to != nil && strings.HasPrefix(args, to.ID+" ") {
+			break
+		}
 		a := &r.Agents[i]
 		prefix := strings.ToLower(a.Name) + " "
 		if strings.HasPrefix(strings.ToLower(args), prefix) && (to == nil || len(a.Name) > len(to.Name)) {
 			to, text = a, strings.TrimSpace(args[len(prefix):])
-		}
-		if id, rest, ok := strings.Cut(args, " "); ok && id == a.ID {
-			to, text = a, strings.TrimSpace(rest)
 		}
 	}
 	if to == nil {

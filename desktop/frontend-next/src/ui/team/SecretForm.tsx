@@ -12,35 +12,36 @@ function plainOverNetwork(): boolean {
 interface Scope {
   key: string;
   label: string;
-  agents?: string[];
+  agents: string[];
 }
 
 // Who a save gives the secret to. The asker alone comes first; a secret
 // already saved under the name keeps the agents it had, so answering one
 // agent never takes the secret from another unseen.
-function scopes(agent: string, current: TeamSecret | undefined, nameOf: (id: string) => string): { options: Scope[]; initial: string } {
+function scopes(agent: string, current: TeamSecret | undefined, nameOf: (id: string) => string, members: string[]): { options: Scope[]; initial: string } {
   const only = (ids: string[]) => t("只给 {name}", { name: ids.map(nameOf).join("、") });
   const options: Scope[] = [{ key: "agent", label: only([agent]), agents: [agent] }];
   const kept = current?.agents ? [...new Set([...current.agents, agent])] : undefined;
   if (kept && kept.length > 1) options.push({ key: "kept", label: only(kept), agents: kept });
-  options.push({ key: "all", label: t("所有 Agent") });
-  const initial = !current ? "agent" : !current.agents ? "all" : kept && kept.length > 1 ? "kept" : "agent";
+  if (members.length) options.push({ key: "all", label: t("当前团队成员（不包含以后新增的成员）"), agents: members });
+  const initial = kept && kept.length > 1 ? "kept" : "agent";
   return { options, initial };
 }
 
 // Filling in a secret an agent asked for. The value lives in this form only
 // until it is sent; nothing reads it back.
-export function SecretForm({ team, name, purpose, agent, current, guarded, nameOf, onDone }: {
+export function SecretForm({ team, name, purpose, agent, current, guarded, nameOf, members = [], onDone }: {
   team: TeamPort;
   name: string;
   purpose?: string;
   agent: string;
   current?: TeamSecret;
   guarded: boolean;
+  members?: string[];
   nameOf: (id: string) => string;
   onDone: (outcome: "saved" | "declined") => void;
 }) {
-  const { options, initial } = scopes(agent, current, nameOf);
+  const { options, initial } = scopes(agent, current, nameOf, members);
   const [value, setValue] = useState("");
   const [scope, setScope] = useState(initial);
   const [busy, setBusy] = useState(false);
@@ -73,6 +74,7 @@ export function SecretForm({ team, name, purpose, agent, current, guarded, nameO
         ))}
       </div>
       <p className="team-note">{t("命令以 ${env} 读到它；Reasonix 发给模型的内容里，它显示为 [secret:{name}]。命令能读出并转写它，所以只交给你信任的 Agent。", { name, env: `REASONIX_SECRET_${name}` })}</p>
+      <p className="team-note">{t("值保存在团队目录之外的本机凭据文件中，当前为未加密的 .env。同一系统用户下的其他程序仍可能读取；只授权可信成员。命令必须明确引用对应变量才会收到密钥。")}</p>
       {!guarded && <p className="team-error" role="alert">{t("这台机器上，Agent 的命令读得到存机密的文件（Windows，或沙箱没有开启）：保存在这里的值，任何 Agent 都可能读到。")}</p>}
       {plainOverNetwork() && <p className="team-error">{t("这个页面没有加密，密钥会以明文经过网络")}</p>}
       {error && <p className="team-error" role="alert">{error}</p>}

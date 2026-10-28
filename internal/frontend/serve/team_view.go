@@ -6,9 +6,7 @@ import (
 
 	"reasonix/internal/session/control"
 	"reasonix/internal/session/team"
-	"reasonix/internal/state/sessionstore"
 	"reasonix/internal/state/teamroster"
-	"reasonix/internal/state/usagereport"
 )
 
 // teamView is the team as the window draws it: the roster, and what each
@@ -110,10 +108,10 @@ func (t *hubTeam) view() (teamView, error) {
 		return teamView{}, err
 	}
 	out := teamView{Revision: r.Revision, ReadOnly: t.service() == nil, Agents: []teamAgentView{}, Groups: []teamGroupView{},
-		Prefs: teamPrefsView{MemoryReview: !r.Prefs.MemoryReviewOff}}
+		Prefs: teamPrefsView{MemoryReview: r.Prefs.MemoryReviewOn && !r.Prefs.MemoryReviewOff}}
 	for _, a := range r.Agents {
 		v := t.agentView(a, book)
-		v.Usage = agentUsage(r, a)
+		v.Usage = t.agentUsage(r, a)
 		out.Agents = append(out.Agents, v)
 	}
 	for _, g := range r.Groups {
@@ -137,7 +135,7 @@ func (t *hubTeam) agentView(a teamroster.Agent, book []teamroster.Exchange) team
 	if a.SessionPath != "" {
 		if info, err := os.Stat(a.SessionPath); err == nil {
 			v.LastActivityAt = info.ModTime().UnixMilli()
-			v.Preview = sessionstore.LatestPreview(a.SessionPath)
+			v.Preview = t.preview(a.SessionPath)
 		}
 	}
 	v.Activity = t.activity(a.ID, book)
@@ -213,7 +211,7 @@ func (t *hubTeam) groupView(g teamroster.Group) teamGroupView {
 }
 
 // agentUsage sums the usage reports of every conversation agent a has had.
-func agentUsage(r teamroster.Roster, a teamroster.Agent) teamUsageView {
+func (t *hubTeam) agentUsage(r teamroster.Roster, a teamroster.Agent) teamUsageView {
 	paths := []string{a.SessionPath}
 	for _, p := range a.Parts {
 		paths = append(paths, p.SessionPath)
@@ -226,7 +224,7 @@ func agentUsage(r teamroster.Roster, a teamroster.Agent) teamUsageView {
 		if p == "" {
 			continue
 		}
-		if rep, ok := usagereport.Load(p); ok {
+		if rep, ok := t.usage(p); ok {
 			u.PromptTokens += rep.Usage.PromptTokens
 			u.CompletionTokens += rep.Usage.CompletionTokens
 			u.CacheHitTokens += rep.Usage.CacheHitTokens

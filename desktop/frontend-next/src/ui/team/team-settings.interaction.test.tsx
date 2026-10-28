@@ -83,12 +83,12 @@ it("quiet motion leaves the reorder still", async () => {
   expect(animate).not.toHaveBeenCalled();
 });
 
-it("the memory review is on by default and switched off here", async () => {
+it("the memory review is off by default and requires opt-in", async () => {
   const { hub, team } = await seeded();
   render(<TeamSection hub={hub} />);
   const toggle = await screen.findByRole("switch", { name: "自动整理记忆" });
-  expect(toggle.getAttribute("aria-checked")).toBe("true");
+  expect(toggle.getAttribute("aria-checked")).toBe("false");
   await userEvent.click(toggle);
-  expect(team.calls.at(-1)).toEqual({ method: "setPrefs", args: [{ memoryReview: false }] });
-  await waitFor(() => expect(toggle.getAttribute("aria-checked")).toBe("false"));
+  expect(team.calls.at(-1)).toEqual({ method: "setPrefs", args: [{ memoryReview: true }] });
+  await waitFor(() => expect(toggle.getAttribute("aria-checked")).toBe("true"));
 });

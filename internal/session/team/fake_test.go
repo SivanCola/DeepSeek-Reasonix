@@ -93,7 +93,7 @@ type harness struct {
 // newHarness builds a team of the named agents; the first is the main agent.
 func newHarness(t *testing.T, names ...string) *harness {
 	t.Helper()
-	h := &harness{t: t, store: teamroster.Store{Dir: t.TempDir()}, panes: &fakePanes{}, clock: &clock{t: time.Date(2026, 10, 26, 9, 0, 0, 0, time.UTC)}, ids: map[string]string{}}
+	h := &harness{t: t, store: teamroster.Store{Dir: t.TempDir(), Credentials: &testSecretCredentials{values: map[string]string{}}}, panes: &fakePanes{}, clock: &clock{t: time.Date(2026, 10, 26, 9, 0, 0, 0, time.UTC)}, ids: map[string]string{}}
 	_, err := h.store.Update(context.Background(), func(r *teamroster.Roster) error {
 		for i, n := range names {
 			a := r.AddAgent(teamroster.Agent{Name: n, Main: i == 0, CreatedBy: teamroster.ByUser})

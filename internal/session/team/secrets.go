@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 
+	"reasonix/internal/base/fileutil"
 	"reasonix/internal/base/secrets"
 	"reasonix/internal/contract/hostframe"
 	"reasonix/internal/state/teamroster"
@@ -68,11 +70,11 @@ func countRequests(qs []teamroster.SecretRequest, agent string) int {
 }
 
 func allowed(sc teamroster.Secret, agent string) bool {
-	return sc.Agents == nil || slices.Contains(sc.Agents, agent)
+	return slices.Contains(sc.Agents, agent)
 }
 
-// UserSaveSecret keeps a value the user typed, for the agents named (nil is
-// every agent; an empty list names nobody and is refused). It closes every
+// UserSaveSecret keeps a value the user typed for an explicit, nonempty list
+// of agents. It closes every
 // open request for the name and tells each asker whether it was given the
 // secret and how to use it — never what it is. A replaced value is retired.
 func (s *Service) UserSaveSecret(ctx context.Context, name, value, purpose string, agents []string, requester string) error {
@@ -81,7 +83,7 @@ func (s *Service) UserSaveSecret(ctx context.Context, name, value, purpose strin
 	if n == "" {
 		return &teamroster.FieldError{Field: "name", Err: teamroster.ErrInvalid}
 	}
-	if agents != nil && len(agents) == 0 {
+	if len(agents) == 0 {
 		return &teamroster.FieldError{Field: "agents", Err: teamroster.ErrEmpty}
 	}
 	r, err := s.store.Load()
@@ -103,7 +105,7 @@ func (s *Service) UserSaveSecret(ctx context.Context, name, value, purpose strin
 		saved.CreatedAt, saved.UpdatedAt = now, now
 		if i := slices.IndexFunc(b.Secrets, func(x teamroster.Secret) bool { return x.Name == n }); i >= 0 {
 			if old := b.Secrets[i]; old.Value != value {
-				b.Retire(n, old.Value, now)
+				b.Retire(n, old.Value, now, old.Slot)
 			}
 			saved.CreatedAt = b.Secrets[i].CreatedAt
 			b.Secrets[i] = saved
@@ -157,7 +159,7 @@ func (s *Service) UserDeleteSecret(ctx context.Context, name string) error {
 		if i < 0 {
 			return teamroster.ErrUnknownSecret
 		}
-		b.Retire(name, b.Secrets[i].Value, s.now())
+		b.Retire(name, b.Secrets[i].Value, s.now(), b.Secrets[i].Slot)
 		b.Secrets = slices.Delete(b.Secrets, i, i+1)
 		return nil
 	})
@@ -167,10 +169,27 @@ func (s *Service) UserDeleteSecret(ctx context.Context, name string) error {
 // keeps masking what it already read until it exits.
 func (s *Service) UserForgetRetired(ctx context.Context) error {
 	defer s.changed()
-	return s.store.EditSecrets(ctx, func(b *teamroster.SecretBook) error {
+	var slots []string
+	err := s.store.EditSecrets(ctx, func(b *teamroster.SecretBook) error {
+		for _, r := range b.Retired {
+			if r.Slot != "" && !slices.ContainsFunc(b.Secrets, func(sc teamroster.Secret) bool { return sc.Slot == r.Slot }) {
+				slots = append(slots, r.Slot)
+			}
+		}
 		b.Retired = nil
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	if remover, ok := s.store.Credentials.(interface{ Remove(string) error }); ok {
+		var errs []error
+		for _, slot := range slices.Compact(slots) {
+			errs = append(errs, remover.Remove(slot))
+		}
+		return errors.Join(errs...)
+	}
+	return nil
 }
 
 // SecretEnv is what an agent's shell commands receive: one variable per secret
@@ -194,12 +213,15 @@ func (s *Service) SecretEnv(agent string) []string {
 // what this process masks: every value stored or retired there, read again on
 // each snapshot, so a value another process saved is masked here too.
 func WatchSecrets(store teamroster.Store) {
+	store = WithSecretCredentials(store)
 	secrets.RegisterHostSecretPath(store.SecretPath())
+	var cache fileutil.ReadCache[teamroster.SecretBook]
 	secrets.WatchValues(store.SecretPath(), func() []secrets.Labeled {
-		book, err := store.Secrets()
+		metadata, err := cache.Load(store.SecretPath(), func(string) (teamroster.SecretBook, error) { return store.SecretMetadata() })
 		if err != nil {
 			return nil
 		}
+		book, _ := store.ResolveSecretMetadata(metadata)
 		out := make([]secrets.Labeled, 0, len(book.Secrets)+len(book.Retired))
 		for _, sc := range book.Secrets {
 			out = append(out, secrets.Labeled{Label: sc.Name, Value: sc.Value})
@@ -209,6 +231,17 @@ func WatchSecrets(store teamroster.Store) {
 		}
 		return out
 	})
+	meta, err := store.SecretMetadata()
+	if err != nil {
+		return
+	}
+	legacy := slices.ContainsFunc(meta.Secrets, func(sc teamroster.Secret) bool { return sc.Value != "" && sc.Slot == "" }) || slices.ContainsFunc(meta.Retired, func(sc teamroster.RetiredSecret) bool { return sc.Value != "" && sc.Slot == "" })
+	if legacy {
+		_ = secrets.Masker()
+		if err := store.EditSecrets(context.Background(), func(*teamroster.SecretBook) error { return nil }); err != nil {
+			slog.Warn("team: credential migration did not complete; legacy values remain masked", "err", err)
+		}
+	}
 }
 
 func (s *Service) tellSecret(ctx context.Context, agent, name, status, note string) error {

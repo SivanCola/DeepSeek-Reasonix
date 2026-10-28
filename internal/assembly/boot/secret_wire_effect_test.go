@@ -16,6 +16,7 @@ import (
 	"reasonix/internal/contract/config"
 	"reasonix/internal/contract/provider"
 	_ "reasonix/internal/model/responses"
+	"reasonix/internal/session/team"
 	"reasonix/internal/state/teamroster"
 )
 
@@ -81,8 +82,9 @@ func TestEveryProviderKindMasksSecretsOnTheWire(t *testing.T) {
 // A process that reaches a model without building a session, as review does,
 // still masks what the team stored: building the provider is enough.
 func TestBuildingAProviderAloneMasksTheTeamsSecrets(t *testing.T) {
+	t.Setenv("REASONIX_HOME", t.TempDir())
 	const value = "sk-review-0123456789"
-	store := teamroster.Store{Dir: config.RootsForHome("").TeamDir()}
+	store := team.WithSecretCredentials(teamroster.Store{Dir: config.RootsForHome("").TeamDir()})
 	if err := os.MkdirAll(store.Dir, 0o700); err != nil {
 		t.Fatal(err)
 	}

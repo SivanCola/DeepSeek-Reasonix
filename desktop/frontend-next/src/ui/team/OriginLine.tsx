@@ -20,7 +20,8 @@ export function OriginLine({ origin, text }: { origin: MessageOrigin; text: stri
   const [open, setOpen] = useState(false);
   const name = useAgentName(origin.agent) ?? t("另一个 Agent");
   const label =
-    origin.kind === "schedule" ? t("定时任务")
+    origin.kind === "user_message" ? t("终端消息（来源未验证）")
+      : origin.kind === "schedule" ? t("定时任务")
       : origin.kind === "secret" ? t("你对机密请求的答复")
       : origin.kind === "group_turn" ? t("群聊轮到这个 Agent 发言")
         : origin.kind === "reply" ? t("{name} 的回复", { name }) : t("来自 {name} 的消息", { name });

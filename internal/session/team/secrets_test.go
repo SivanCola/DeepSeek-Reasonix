@@ -68,10 +68,10 @@ func TestADeletedOrReplacedValueIsRetiredNotUnmasked(t *testing.T) {
 	h := newHarness(t, "Chief", "Ada")
 	WatchSecrets(h.store)
 	ctx := context.Background()
-	if err := h.svc.UserSaveSecret(ctx, "ROTATED", "sk-rotate-old-0001", "", nil, ""); err != nil {
+	if err := h.svc.UserSaveSecret(ctx, "ROTATED", "sk-rotate-old-0001", "", []string{h.id("Ada")}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.svc.UserSaveSecret(ctx, "ROTATED", "sk-rotate-new-0002", "", nil, ""); err != nil {
+	if err := h.svc.UserSaveSecret(ctx, "ROTATED", "sk-rotate-new-0002", "", []string{h.id("Ada")}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.svc.UserDeleteSecret(ctx, "ROTATED"); err != nil {
@@ -129,7 +129,7 @@ func TestADeletedAgentsRequestClosesQuietly(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.svc.UserSaveSecret(ctx, "OLD_KEY", "sk-old-key-0123456789", "", nil, ""); err != nil {
+	if err := h.svc.UserSaveSecret(ctx, "OLD_KEY", "sk-old-key-0123456789", "", []string{h.id("Ada")}, ""); err != nil {
 		t.Fatalf("save = %v", err)
 	}
 	if book, _ := h.store.Secrets(); len(book.Requests) != 0 || len(book.Secrets) != 1 {
@@ -164,7 +164,7 @@ func TestARequestIsBoundedWhereItIsMade(t *testing.T) {
 	}
 	book, _ := h.store.Secrets()
 	clipped := book.Requests[1].Purpose
-	if err := h.svc.UserSaveSecret(ctx, "LONG", "sk-long-0123456789", clipped, nil, h.id("Ada")); err != nil {
+	if err := h.svc.UserSaveSecret(ctx, "LONG", "sk-long-0123456789", clipped, []string{h.id("Ada")}, h.id("Ada")); err != nil {
 		t.Fatalf("the clipped purpose a card carries back was refused: %v", err)
 	}
 	for i := range teamroster.MaxSecretRequests + 5 {
@@ -179,7 +179,7 @@ func TestARequestIsBoundedWhereItIsMade(t *testing.T) {
 	if !slices.ContainsFunc(book.Requests, func(q teamroster.SecretRequest) bool { return q.Agent == h.id("Ben") }) {
 		t.Fatal("Ada's requests evicted Ben's")
 	}
-	if err := h.svc.UserSaveSecret(ctx, "WHY", "sk-why-0123456789", strings.Repeat("why ", 400), nil, ""); err == nil {
+	if err := h.svc.UserSaveSecret(ctx, "WHY", "sk-why-0123456789", strings.Repeat("why ", 400), []string{h.id("Ada")}, ""); err == nil {
 		t.Fatal("an unbounded purpose was saved")
 	}
 }

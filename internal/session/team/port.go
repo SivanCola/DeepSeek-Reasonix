@@ -18,8 +18,7 @@ const (
 	DeliverGroupTurn DeliveryKind = "group_turn"
 	DeliverSchedule  DeliveryKind = "schedule"
 	DeliverSecret    DeliveryKind = "secret"
-	// DeliverUserMessage is the user's own words, sent from another window: a
-	// turn of theirs, not data the host frames.
+	// DeliverUserMessage is terminal outbox input whose disk source is not authenticated.
 	DeliverUserMessage DeliveryKind = "user_message"
 )
 

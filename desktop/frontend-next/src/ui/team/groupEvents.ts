@@ -6,6 +6,7 @@ import type { GroupLine } from "../../port/team";
 // the chat draws it in the log, the sidebar as the group's latest line.
 export function eventText(l: GroupLine, name: string): string {
   switch (l.event) {
+    case "memory": return l.text ?? t("共享记忆已更新");
     case "passed": return t("{name} 没有补充", { name });
     case "missed": return t("{name} 超时未回应，轮到下一位", { name });
     case "working": return t("{name} 转入后台继续工作", { name });

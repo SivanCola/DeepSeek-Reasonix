@@ -54,7 +54,7 @@ function GroupChat({ group, view, team, onAdoptPane, onSaved }: {
   const following = useRef(true);
   const anchor = useRef<number | null>(null);
   const agents = new Map(view.agents.map((a) => [a.id, a]));
-  const nameOf = (id: string) => (id === "user" ? t("你") : agents.get(id)?.name ?? t("另一个 Agent"));
+  const nameOf = (id: string) => (id === "user" ? t("你") : id === "scheduler" ? t("定时任务") : agents.get(id)?.name ?? t("另一个 Agent"));
   const members = group.members.map((m) => agents.get(m)).filter((a): a is TeamAgent => !!a);
   const lastSeq = lines.at(-1)?.seq ?? 0;
 

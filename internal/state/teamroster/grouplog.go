@@ -26,8 +26,9 @@ const MaxLineRunes = 20000
 type LineKind string
 
 const (
-	LinePost  LineKind = "post"
-	LineEvent LineKind = "event"
+	LinePost   LineKind = "post"
+	LineEvent  LineKind = "event"
+	BySchedule          = "scheduler"
 )
 
 // EventKind is what the host observed about a member or the round.
@@ -43,12 +44,13 @@ const (
 	EventResumed  EventKind = "resumed"
 	EventStopped  EventKind = "stopped"
 	EventCut      EventKind = "cut"
+	EventMemory   EventKind = "memory"
 )
 
 func (k EventKind) valid() bool {
 	switch k {
 	case EventPassed, EventMissed, EventWorking, EventFinished, EventFailed,
-		EventPaused, EventResumed, EventStopped, EventCut:
+		EventPaused, EventResumed, EventStopped, EventCut, EventMemory:
 		return true
 	}
 	return false
@@ -74,10 +76,10 @@ type GroupLine struct {
 }
 
 func (l *GroupLine) check() error {
-	if l.From != ByUser && !agentID.MatchString(l.From) {
+	if l.From != ByUser && l.From != BySchedule && !agentID.MatchString(l.From) {
 		return fieldErr("line.from", ErrInvalid)
 	}
-	if l.Schedule != "" && (l.From != ByUser || !scheduleID.MatchString(l.Schedule)) {
+	if l.Schedule != "" && (l.From != BySchedule || !scheduleID.MatchString(l.Schedule)) {
 		return fieldErr("line.schedule", ErrInvalid)
 	}
 	for _, m := range l.Mentions {
@@ -184,6 +186,9 @@ func readLines(path string, fn func(GroupLine)) error {
 		var l GroupLine
 		if err := json.Unmarshal(line, &l); err != nil {
 			return err
+		}
+		if l.Schedule != "" {
+			l.From = BySchedule
 		}
 		fn(l)
 		return nil

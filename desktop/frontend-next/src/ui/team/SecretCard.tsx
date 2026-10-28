@@ -45,13 +45,13 @@ export function SecretCard({ tool, running }: { tool: Tool; running: boolean }) 
     return (
       <div className="team-secret" role="group" aria-label={t("{agent} 需要 {name}", { agent: agentName(request.agent), name })}>
         <b>{t("{agent} 需要 {name}", { agent: agentName(request.agent), name })}</b>
-        <SecretForm team={team} name={name} purpose={request.purpose} agent={request.agent} current={saved} guarded={book.guarded} nameOf={agentName} onDone={setOutcome} />
+        <SecretForm team={team} name={name} purpose={request.purpose} agent={request.agent} current={saved} guarded={book.guarded} nameOf={agentName} members={view?.agents.map((a) => a.id)} onDone={setOutcome} />
       </div>
     );
   }
   if (saved && outcome !== "declined") {
-    const scope = saved.agents?.length ? t("只给 {name}", { name: saved.agents.map((a) => agentName(a)).join("、") }) : t("所有 Agent");
-    const given = !saved.agents || saved.agents.includes(seat);
+    const scope = saved.agents?.length ? t("只给 {name}", { name: saved.agents.map((a) => agentName(a)).join("、") }) : t("尚未授权任何成员");
+    const given = !!saved.agents?.includes(seat);
     return (
       <div className="team-secret" role="group" aria-label={name} data-state={given ? "saved" : "withheld"}>
         <span>{given ? t("已保存 {name} · {scope}", { name, scope }) : t("已保存 {name}，但没有给 {agent}", { name, agent: agentName(seat) })}</span>

@@ -86,11 +86,11 @@ it("settings list what was saved, never its value, and remove it with two presse
   const hub = new MockHub();
   const team = hub.team();
   await team.bootstrap("Chief");
-  await team.saveSecret({ name: "SHOP_KEY", value: "sk-shop-0123456789", purpose: "the shop" });
+  await team.saveSecret({ name: "SHOP_KEY", value: "sk-shop-0123456789", purpose: "the shop", agents:["a-chief"] });
   render(<TeamSection hub={hub} />);
   const list = await screen.findByRole("list", { name: "机密" });
   expect(within(list).getByText("SHOP_KEY")).toBeTruthy();
-  expect(within(list).getByText(/所有 Agent/)).toBeTruthy();
+  expect(within(list).getByText(/只给 Chief/)).toBeTruthy();
   expect(document.body.innerHTML).not.toContain("sk-shop");
   await userEvent.click(within(list).getByRole("button", { name: "删除 SHOP_KEY" }));
   expect(screen.getByText("删除后命令不再收到它；值会留在本机，只用来继续遮住已经出现过它的对话。")).toBeTruthy();

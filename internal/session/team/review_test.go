@@ -98,11 +98,11 @@ func TestAnUnreadableReplyChangesNothingAndSaysSo(t *testing.T) {
 func TestALongLineKeepsItsHeadAndTail(t *testing.T) {
 	s := reviewStore(t)
 	a := &askRecorder{reply: `{"changes":[]}`}
-	long := "HEAD" + strings.Repeat("m", 5000) + "TAIL"
+	long := "HEAD " + strings.Repeat("word ", 1000) + " TAIL"
 	if _, err := ReviewMemory(context.Background(), s, []ReviewLine{{From: "user", Text: long, User: true}}, a.ask); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(a.prompt, "HEAD") || !strings.Contains(a.prompt, "TAIL") || strings.Count(a.prompt, "m") > reviewUserChars {
+	if !strings.Contains(a.prompt, "HEAD") || !strings.Contains(a.prompt, "TAIL") || strings.Count(a.prompt, "word") > reviewUserChars/5 {
 		t.Fatalf("a long line reached the prompt as %d chars", len(a.prompt))
 	}
 }

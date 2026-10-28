@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"reasonix/internal/contract/tool"
+	"reasonix/internal/runtime/delegation"
 	"reasonix/internal/session/team"
 	"reasonix/internal/state/memory"
 	"reasonix/internal/state/teamroster"
@@ -84,6 +85,7 @@ func (c *Controller) currentTeamTurn() teamTurn {
 		}
 		x := env.Extra
 		switch team.DeliveryKind(x[team.ExtraKind]) {
+		case team.DeliverUserMessage, team.DeliverSchedule, team.DeliverSecret:
 		case team.DeliverMessage:
 			t.serving = append(t.serving, x[team.ExtraExchange])
 		case team.DeliverReply:
@@ -107,7 +109,10 @@ type teamDirectory struct{ c *Controller }
 
 var errTeamUnbound = tool.Refusal{Code: "team.disabled", Message: "this session is not an agent on the user's team"}
 
-func (d teamDirectory) caller() (*team.Service, team.Caller, error) {
+func (d teamDirectory) caller(ctx context.Context) (*team.Service, team.Caller, error) {
+	if err := team.CheckPlatform(); err != nil {
+		return nil, team.Caller{}, teamRefusal(err)
+	}
 	seat := d.c.team.bound()
 	if seat == nil {
 		return nil, team.Caller{}, errTeamUnbound
@@ -117,18 +122,25 @@ func (d teamDirectory) caller() (*team.Service, team.Caller, error) {
 		return nil, team.Caller{}, errTeamUnbound
 	}
 	t := d.c.currentTeamTurn()
+	if t.id == "" {
+		t.id = delegation.TurnIdentity(ctx)
+	}
 	var step string
 	if len(t.steps) > 0 {
 		step = t.steps[len(t.steps)-1]
 	}
+	ceiling := stricterApproval(d.c.effectiveApprovalMode(), t.ceiling)
+	if !d.c.PlanPhase().AdmitsSideEffects() {
+		ceiling = ToolApprovalReadOnly
+	}
 	return svc, team.Caller{
 		Agent: ref.Agent, Group: ref.Group, Turn: t.id, Step: step, Serving: t.serving,
-		Ceiling: stricterApproval(d.c.ToolApprovalMode(), t.ceiling),
+		Ceiling: ceiling,
 	}, nil
 }
 
-func (d teamDirectory) ListAgents(context.Context) (string, error) {
-	svc, c, err := d.caller()
+func (d teamDirectory) ListAgents(ctx context.Context) (string, error) {
+	svc, c, err := d.caller(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -137,7 +149,7 @@ func (d teamDirectory) ListAgents(context.Context) (string, error) {
 }
 
 func (d teamDirectory) MessageAgent(ctx context.Context, m tool.TeamMessage) (tool.TeamReceipt, error) {
-	svc, c, err := d.caller()
+	svc, c, err := d.caller(ctx)
 	if err != nil {
 		return tool.TeamReceipt{}, err
 	}
@@ -168,9 +180,12 @@ func agentView(a teamroster.Agent) tool.TeamAgentView {
 }
 
 func (d teamDirectory) CreateAgent(ctx context.Context, s tool.TeamAgentSpec) (tool.TeamAgentView, error) {
-	svc, c, err := d.caller()
+	svc, c, err := d.caller(ctx)
 	if err != nil {
 		return tool.TeamAgentView{}, err
+	}
+	if err := svc.CheckCreateAgent(c); err != nil {
+		return tool.TeamAgentView{}, teamRefusal(err)
 	}
 	if err := d.approveFolder(ctx, derefOr(s.Name, "new agent"), s.Folder); err != nil {
 		return tool.TeamAgentView{}, err
@@ -196,19 +211,27 @@ func derefOr(s *string, fallback string) string {
 }
 
 func (d teamDirectory) UpdateAgent(ctx context.Context, target string, s tool.TeamAgentSpec) (tool.TeamAgentView, error) {
-	svc, c, err := d.caller()
+	svc, c, err := d.caller(ctx)
 	if err != nil {
 		return tool.TeamAgentView{}, err
 	}
-	if err := d.approveFolder(ctx, derefOr(&target, "yourself"), s.Folder); err != nil {
-		return tool.TeamAgentView{}, err
+	a, err := svc.AgentForUpdate(c, target)
+	if err != nil {
+		return tool.TeamAgentView{}, teamRefusal(err)
 	}
-	a, err := svc.UpdateAgent(ctx, c, target, agentChange(s))
+	change := agentChange(s)
+	if change.RequiresApproval(a) {
+		if err := d.c.confirmTeamConfiguration(ctx, a.ID, a.Name, s); err != nil {
+			return tool.TeamAgentView{}, err
+		}
+		c.ConfigurationApproved = true
+	}
+	a, err = svc.UpdateAgent(ctx, c, a.ID, change)
 	return agentView(a), teamRefusal(err)
 }
 
-func (d teamDirectory) StopAgent(_ context.Context, target string) (bool, error) {
-	svc, c, err := d.caller()
+func (d teamDirectory) StopAgent(ctx context.Context, target string) (bool, error) {
+	svc, c, err := d.caller(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -217,7 +240,7 @@ func (d teamDirectory) StopAgent(_ context.Context, target string) (bool, error)
 }
 
 func (d teamDirectory) CreateGroup(ctx context.Context, s tool.TeamGroupSpec) (string, error) {
-	svc, c, err := d.caller()
+	svc, c, err := d.caller(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -226,7 +249,7 @@ func (d teamDirectory) CreateGroup(ctx context.Context, s tool.TeamGroupSpec) (s
 }
 
 func (d teamDirectory) UpdateGroup(ctx context.Context, group string, ch tool.TeamGroupChange) ([]string, error) {
-	svc, c, err := d.caller()
+	svc, c, err := d.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -244,7 +267,7 @@ func (d teamDirectory) UpdateGroup(ctx context.Context, group string, ch tool.Te
 }
 
 func (d teamDirectory) DeleteGroup(ctx context.Context, group string) error {
-	svc, c, err := d.caller()
+	svc, c, err := d.caller(ctx)
 	if err != nil {
 		return err
 	}
@@ -256,7 +279,7 @@ func (d teamDirectory) DeleteGroup(ctx context.Context, group string) error {
 }
 
 func (d teamDirectory) PostToGroup(ctx context.Context, group, text string, mentions []string) error {
-	svc, c, err := d.caller()
+	svc, c, err := d.caller(ctx)
 	if err != nil {
 		return err
 	}
@@ -268,24 +291,24 @@ func (d teamDirectory) PostToGroup(ctx context.Context, group, text string, ment
 	return teamRefusal(err)
 }
 
-func (d teamDirectory) PassTurn(context.Context) error {
-	svc, c, err := d.caller()
+func (d teamDirectory) PassTurn(ctx context.Context) error {
+	svc, c, err := d.caller(ctx)
 	if err != nil {
 		return err
 	}
 	return teamRefusal(svc.PassTurn(c))
 }
 
-func (d teamDirectory) HandTurn(_ context.Context, to []string) error {
-	svc, c, err := d.caller()
+func (d teamDirectory) HandTurn(ctx context.Context, to []string) error {
+	svc, c, err := d.caller(ctx)
 	if err != nil {
 		return err
 	}
 	return teamRefusal(svc.HandTurn(c, to))
 }
 
-func (d teamDirectory) ReadGroup(_ context.Context, group string, before int64, limit int) (string, error) {
-	svc, c, err := d.caller()
+func (d teamDirectory) ReadGroup(ctx context.Context, group string, before int64, limit int) (string, error) {
+	svc, c, err := d.caller(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -303,6 +326,11 @@ var teamCodes = []struct {
 	err  error
 	code string
 }{
+	{team.ErrUnsupportedPlatform, "team.disabled"},
+	{team.ErrConfigurationApproval, "team.approval_required"},
+	{teamroster.ErrAgentCapacity, "team.limit"},
+	{teamroster.ErrGroupCapacity, "team.limit"},
+	{teamroster.ErrSecretCredentials, "team.credentials_unavailable"},
 	{team.ErrSelf, "team.self"},
 	{team.ErrEmptyMessage, "team.invalid"},
 	{team.ErrMessageTooLong, "team.too_long"},
@@ -348,8 +376,8 @@ func teamRefusal(err error) error {
 	return err
 }
 
-func (d teamDirectory) SharedMemory(_ context.Context, tier, group string, write bool) (tool.Tool, error) {
-	svc, c, err := d.caller()
+func (d teamDirectory) SharedMemory(ctx context.Context, tier, group string, write bool) (tool.Tool, error) {
+	svc, c, err := d.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -358,13 +386,20 @@ func (d teamDirectory) SharedMemory(_ context.Context, tier, group string, write
 		return nil, teamRefusal(err)
 	}
 	if write {
-		return memory.NewRememberTool(store), nil
+		logGroup := c.Group
+		if tier == string(team.TierGroup) && group != "" {
+			logGroup, err = svc.GroupID(group)
+			if err != nil {
+				return nil, teamRefusal(err)
+			}
+		}
+		return teamMemoryWriter{Tool: memory.NewRememberTool(store), controller: d.c, service: svc, agent: c.Agent, group: logGroup}, nil
 	}
 	return memory.NewRecallTool(store), nil
 }
 
 func (d teamDirectory) RequestSecret(ctx context.Context, name, purpose string) (string, error) {
-	svc, c, err := d.caller()
+	svc, c, err := d.caller(ctx)
 	if err != nil {
 		return "", err
 	}

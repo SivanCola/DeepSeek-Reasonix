@@ -21,15 +21,16 @@ import (
 // teamApprovalHarness is a seated session whose approvals are answered by the
 // test, recording which cards were raised.
 type teamApprovalHarness struct {
-	t      *testing.T
-	ctrl   *control.Controller
-	store  teamroster.Store
-	prov   *teamScriptedProvider
-	mu     sync.Mutex
-	cards  []string
-	allow  bool
-	done   chan struct{}
-	ctrlMu sync.Mutex
+	t       *testing.T
+	ctrl    *control.Controller
+	store   teamroster.Store
+	prov    *teamScriptedProvider
+	mu      sync.Mutex
+	cards   []string
+	notices []string
+	allow   bool
+	done    chan struct{}
+	ctrlMu  sync.Mutex
 }
 
 func TestEffectSharedMemoryRequiresFreshApprovalInYolo(t *testing.T) {
@@ -51,6 +52,7 @@ func TestEffectSharedMemoryRequiresFreshApprovalInYolo(t *testing.T) {
 
 func newTeamApprovalHarness(t *testing.T, kind string, calls []provider.ToolCall) *teamApprovalHarness {
 	t.Helper()
+	requireTeamExecution(t)
 	h := &teamApprovalHarness{t: t, store: teamroster.Store{Dir: t.TempDir()}, prov: &teamScriptedProvider{calls: calls}, done: make(chan struct{}, 8)}
 	var chief string
 	if _, err := h.store.Update(context.Background(), func(r *teamroster.Roster) error {
@@ -69,6 +71,10 @@ func newTeamApprovalHarness(t *testing.T, kind string, calls []provider.ToolCall
 	approveWorkspace(t, dir)
 	sink := event.FuncSink(func(e event.Event) {
 		switch e.Kind {
+		case event.Notice:
+			h.mu.Lock()
+			h.notices = append(h.notices, e.Text)
+			h.mu.Unlock()
 		case event.ApprovalRequest:
 			h.mu.Lock()
 			h.cards = append(h.cards, e.Approval.Tool)
@@ -96,6 +102,24 @@ func newTeamApprovalHarness(t *testing.T, kind string, calls []provider.ToolCall
 	ctrl.EnableInteractiveApproval()
 	h.ctrl = ctrl
 	return h
+}
+
+func TestEffectApprovedSharedMemoryIsVisibleInTheConversation(t *testing.T) {
+	h := newTeamApprovalHarness(t, "team-shared-memory-notice", []provider.ToolCall{{ID: "shared", Name: "remember_shared", Arguments: `{"tier":"team","type":"user","description":"prefers tabs","body":"Use tabs for indentation"}`}})
+	h.allow = true
+	h.ctrl.SetToolApprovalMode(control.ToolApprovalYolo)
+	if err := h.ctrl.Run(t.Context(), "Remember the team preference"); err != nil {
+		t.Fatal(err)
+	}
+	facts, err := team.SharedStore(h.store.Dir, team.TierTeam, "").List()
+	if err != nil || len(facts) != 1 {
+		t.Fatalf("shared save: %+v, %v", facts, err)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !slices.ContainsFunc(h.notices, func(text string) bool { return strings.Contains(text, "Shared memory updated") }) {
+		t.Fatalf("shared write was invisible: %v", h.notices)
+	}
 }
 
 func (h *teamApprovalHarness) raised() []string {
@@ -157,7 +181,19 @@ func TestEffectATeamTurnIsHeldToTheCeilingItCarries(t *testing.T) {
 	h.prov.calls = []provider.ToolCall{write("held"), {}, write("own"), {}, write("forged"), {}}
 	h.allow = true
 	h.ctrl.SetToolApprovalMode(control.ToolApprovalYolo)
-	if err := h.ctrl.DeliverTeam(team.Delivery{Key: "team-x-1", Kind: team.DeliverMessage, From: "a-0123456789abcdef", Exchange: "x-0123456789abcdef", Text: "write the file", Ceiling: control.ToolApprovalAsk}); err != nil {
+	roster, err := h.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	open := func(text, ceiling string) teamroster.Exchange {
+		x, _, err := h.store.OpenExchange(t.Context(), teamroster.Exchange{From: "a-0123456789abcdef", To: roster.Agents[0].ID, ReplyTo: teamroster.ReplyToUser, Ceiling: ceiling}, text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return x
+	}
+	first := open("write the file", control.ToolApprovalAsk)
+	if err := h.ctrl.DeliverTeam(team.Delivery{Key: "team-x-1", Kind: team.DeliverMessage, From: first.From, Exchange: first.ID, Text: "write the file", Ceiling: control.ToolApprovalAsk}); err != nil {
 		t.Fatal(err)
 	}
 	h.waitTurn()
@@ -171,7 +207,8 @@ func TestEffectATeamTurnIsHeldToTheCeilingItCarries(t *testing.T) {
 		t.Fatalf("the ceiling outlived its turn: cards %v", cards)
 	}
 	h.ctrl.SetToolApprovalMode(control.ToolApprovalAsk)
-	if err := h.ctrl.DeliverTeam(team.Delivery{Key: "team-x-2", Kind: team.DeliverMessage, From: "a-0123456789abcdef", Exchange: "x-1123456789abcdef", Text: "write again", Ceiling: control.ToolApprovalYolo}); err != nil {
+	second := open("write again", control.ToolApprovalYolo)
+	if err := h.ctrl.DeliverTeam(team.Delivery{Key: "team-x-2", Kind: team.DeliverMessage, From: second.From, Exchange: second.ID, Text: "write again", Ceiling: control.ToolApprovalYolo}); err != nil {
 		t.Fatal(err)
 	}
 	h.waitTurn()

@@ -4,7 +4,7 @@
 // Who a turn the host ran was for, when it was not the person: another agent's
 // message, an agent's reply, or a member's turn in a group.
 export interface MessageOrigin {
-  kind: "message" | "reply" | "group_turn" | "schedule" | "secret";
+  kind: "message" | "reply" | "group_turn" | "schedule" | "secret" | "user_message";
   agent?: string;
   exchange?: string;
   group?: string;
@@ -106,7 +106,7 @@ export interface GroupLine {
   text?: string;
   length?: number;
   mentions?: string[];
-  event?: "passed" | "missed" | "working" | "finished" | "failed" | "paused" | "resumed" | "stopped" | "cut";
+  event?: "passed" | "missed" | "working" | "finished" | "failed" | "paused" | "resumed" | "stopped" | "cut" | "memory";
   count?: number;
   code?: string;
   late?: boolean;

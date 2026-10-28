@@ -27,6 +27,8 @@ const (
 
 // Group size and relay bounds.
 const (
+	MaxAgents     = 32
+	MaxGroups     = 16
 	MinMembers    = 2
 	MaxMembers    = 12
 	MaxRelayLimit = 200
@@ -119,7 +121,9 @@ type Roster struct {
 // Prefs are the user's choices for the whole team. Each zero value is the
 // default, so a roster written before a pref existed reads as choosing it.
 type Prefs struct {
-	// MemoryReviewOff stops folding finished turns into memory.
+	// MemoryReviewOn records explicit consent to automatic memory review.
+	MemoryReviewOn bool `json:"memoryReviewOn,omitempty"`
+	// MemoryReviewOff keeps an explicit opt-out readable by older builds.
 	MemoryReviewOff bool `json:"memoryReviewOff,omitempty"`
 }
 
@@ -196,6 +200,16 @@ func (r *Roster) normalize() {
 
 // Validate reports the first rule the roster breaks.
 func (r *Roster) Validate() error {
+	return r.validateWithin(MaxAgents, MaxGroups)
+}
+
+func (r *Roster) validateWithin(agents, groups int) error {
+	if len(r.Agents) > agents {
+		return ErrAgentCapacity
+	}
+	if len(r.Groups) > groups {
+		return ErrGroupCapacity
+	}
 	names := map[string]bool{}
 	ids := map[string]bool{}
 	mains := 0

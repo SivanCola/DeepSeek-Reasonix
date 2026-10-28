@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"reasonix/internal/base/testenv"
+	"reasonix/internal/contract/config"
 	"reasonix/internal/contract/provider"
 	"reasonix/internal/session/team"
 	"reasonix/internal/state/sessionstore"
@@ -20,6 +21,9 @@ func TestTheProjectTreeLeavesTheTeamOut(t *testing.T) {
 	h, ids := teamHub(t, "Chief", "Ada")
 	ctx := context.Background()
 	project := testenv.TempDir(t)
+	if err := config.NewProjectGrantStore(config.RootsForHome("").Home()).SetTrust(project, config.WorkspaceTrusted); err != nil {
+		t.Fatal(err)
+	}
 	if err := addRememberedWorkspace(ctx, project); err != nil {
 		t.Fatal(err)
 	}
