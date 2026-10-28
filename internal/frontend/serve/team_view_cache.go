@@ -6,12 +6,31 @@ import (
 
 	"reasonix/internal/base/fileutil"
 	"reasonix/internal/state/sessionstore"
+	"reasonix/internal/state/teamroster"
 	"reasonix/internal/state/usagereport"
 )
 
 type teamViewCache struct {
 	previews fileutil.ReadCache[string]
 	usage    fileutil.ReadCache[usagereport.Report]
+	lines    fileutil.ReadCache[[]teamroster.GroupLine]
+	rounds   fileutil.ReadCache[teamroster.RoundState]
+}
+
+func (t *hubTeam) lastGroupLine(group string) ([]teamroster.GroupLine, error) {
+	path, _, err := t.store.GroupPaths(group)
+	if err != nil {
+		return nil, err
+	}
+	return t.viewCache.lines.Load(path, func(string) ([]teamroster.GroupLine, error) { return t.store.LinesBefore(group, 0, 1) })
+}
+
+func (t *hubTeam) groupRound(group string) (teamroster.RoundState, error) {
+	_, path, err := t.store.GroupPaths(group)
+	if err != nil {
+		return teamroster.RoundState{}, err
+	}
+	return t.viewCache.rounds.Load(path, func(string) (teamroster.RoundState, error) { return t.store.Round(group) })
 }
 
 func (t *hubTeam) preview(path string) string {
