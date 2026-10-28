@@ -54,6 +54,7 @@ func (m *mixedPanes) Live(seat team.SeatRef) (team.Pane, bool) {
 // session, and when that turn ends its answer comes back to the sender on its
 // own, carried by nothing but the controller's settlement.
 func TestEffectAnAgentsMessageIsAnsweredThroughTheReceiversRealTurn(t *testing.T) {
+	requireTeamExecution(t)
 	store := teamroster.Store{Dir: t.TempDir()}
 	var ada, ben string
 	if _, err := store.Update(context.Background(), func(r *teamroster.Roster) error {

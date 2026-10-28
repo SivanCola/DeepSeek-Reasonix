@@ -27,6 +27,8 @@ const (
 
 // Group size and relay bounds.
 const (
+	MaxAgents     = 32
+	MaxGroups     = 16
 	MinMembers    = 2
 	MaxMembers    = 12
 	MaxRelayLimit = 200
@@ -188,6 +190,16 @@ func (r *Roster) normalize() {
 
 // Validate reports the first rule the roster breaks.
 func (r *Roster) Validate() error {
+	return r.validateWithin(MaxAgents, MaxGroups)
+}
+
+func (r *Roster) validateWithin(agents, groups int) error {
+	if len(r.Agents) > agents {
+		return ErrAgentCapacity
+	}
+	if len(r.Groups) > groups {
+		return ErrGroupCapacity
+	}
 	names := map[string]bool{}
 	ids := map[string]bool{}
 	mains := 0

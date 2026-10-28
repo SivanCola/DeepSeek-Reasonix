@@ -18,6 +18,9 @@ import (
 // host starts, recording what it is so the turn that runs it reports back.
 // The delivery's key makes a retry after a crash land once.
 func (c *Controller) DeliverTeam(d team.Delivery) error {
+	if err := team.CheckPlatform(); err != nil {
+		return teamRefusal(err)
+	}
 	extra := map[string]string{team.ExtraKind: string(d.Kind)}
 	for k, v := range map[string]string{
 		team.ExtraFrom: d.From, team.ExtraExchange: d.Exchange, team.ExtraServing: strings.Join(d.Serving, ","),
@@ -87,6 +90,9 @@ func turnFailureCode(err error) string {
 // settleTeamTurn reports a finished turn to the team, off the turn's own path:
 // what it settles may queue new turns, here or in another agent's session.
 func (c *Controller) settleTeamTurn(t teamTurn, err error, cancelled bool) {
+	if errors.Is(err, errTeamWorkSettled) {
+		return
+	}
 	seat := c.team.bound()
 	if seat == nil || (len(t.serving) == 0 && len(t.consumed) == 0 && len(t.steps) == 0) {
 		return

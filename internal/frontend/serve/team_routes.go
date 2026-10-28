@@ -63,6 +63,24 @@ func teamError(w http.ResponseWriter, err error) {
 		status int
 		code   string
 	}{
+		{team.ErrUnsupportedPlatform, http.StatusServiceUnavailable, "team.disabled"},
+		{team.ErrConfigurationApproval, http.StatusForbidden, "team.approval_required"},
+		{teamroster.ErrAgentCapacity, http.StatusConflict, "team.limit"},
+		{teamroster.ErrGroupCapacity, http.StatusConflict, "team.limit"},
+		{errTeamFolderUntrusted, http.StatusForbidden, "team.folder_untrusted"},
+		{team.ErrRateLimited, http.StatusTooManyRequests, "team.rate_limited"},
+		{team.ErrDepth, http.StatusBadRequest, "team.depth"},
+		{team.ErrOpenLimit, http.StatusConflict, "team.limit"},
+		{team.ErrCreateLimit, http.StatusConflict, "team.limit"},
+		{team.ErrNotMain, http.StatusForbidden, "team.not_main"},
+		{team.ErrSelfOnly, http.StatusForbidden, "team.self_only"},
+		{team.ErrNotAdmin, http.StatusForbidden, "team.not_admin"},
+		{team.ErrNotInGroup, http.StatusForbidden, "team.not_in_group"},
+		{team.ErrNotYourTurn, http.StatusConflict, "team.not_your_turn"},
+		{team.ErrHandSize, http.StatusBadRequest, "team.invalid"},
+		{team.ErrSelf, http.StatusBadRequest, "team.self"},
+		{team.ErrUpstream, http.StatusBadRequest, "team.upstream"},
+		{teamroster.ErrRequestReused, http.StatusConflict, "team.request_reused"},
 		{teamroster.ErrUnknownAgent, http.StatusNotFound, "team.unknown_agent"},
 		{teamroster.ErrUnknownGroup, http.StatusNotFound, "team.unknown_group"},
 		{teamroster.ErrNotMember, http.StatusBadRequest, "team.not_member"},
@@ -290,9 +308,12 @@ func (t *hubTeam) groupLog(w http.ResponseWriter, r *http.Request) {
 	after, _ := strconv.ParseInt(q.Get("after"), 10, 64)
 	before, _ := strconv.ParseInt(q.Get("before"), 10, 64)
 	limit, _ := strconv.Atoi(q.Get("limit"))
-	lines, err := t.store.Lines(r.PathValue("id"), after, 0)
+	var lines []teamroster.GroupLine
+	var err error
 	if before > 0 || (after == 0 && limit > 0) {
 		lines, err = t.store.LinesBefore(r.PathValue("id"), before, limit)
+	} else {
+		lines, err = t.store.Lines(r.PathValue("id"), after, 0)
 	}
 	if err != nil {
 		teamError(w, err)
