@@ -1507,6 +1507,9 @@ func ClearCleanupPending(sessionPath string) error {
 	if path == "" {
 		return nil
 	}
+	if err := preserveV4Removal(sessionPath); err != nil {
+		return err
+	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -1526,7 +1529,7 @@ func IsCleanupPending(sessionPath string) bool {
 // IsVisibleSession reports whether a persisted session should appear on normal
 // user/agent-facing list, restore, and retrieval surfaces.
 func IsVisibleSession(sessionPath string) bool {
-	return strings.TrimSpace(sessionPath) != "" && !IsCleanupPending(sessionPath)
+	return strings.TrimSpace(sessionPath) != "" && !IsCleanupPending(sessionPath) && !isV4SessionRemoved(sessionPath)
 }
 
 // ListCleanupPending returns delayed-cleanup markers left in dir. A missing
