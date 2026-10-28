@@ -23,6 +23,18 @@ Studio keeps a team of long-lived agents beside the user's projects.
 | T4 | How a turn ended is the host's word. A failed, stopped or interrupted turn answers with that status and its code. |
 | T5 | Permission modes, main agents, relay limits and deletion are the user's alone, through the window. No tool reaches them. |
 
+Rosters admit at most 32 agents and 16 groups. Older larger rosters remain readable
+and may shrink, but cannot grow further. Host frames escape the shared host-tag
+vocabulary in untrusted text.
+
+Persistent role, instruction, initial-model and
+nonempty folder changes require fresh human approval for the exact change;
+approval does not grant permission to edit another agent.
+
+名册最多新增至 32 个 Agent、16 个群组；旧的超限名册仍可读取和缩减，不能继续扩张。
+不可信文本中的宿主标签统一转义。持久角色、指令、初始模型及非空目录变更必须
+获得针对本次内容的人工批准；批准不代替对目标 Agent 的编辑权限。
+
 ## 2. Layers
 
 | Package | Role |
@@ -41,6 +53,11 @@ Studio keeps a team of long-lived agents beside the user's projects.
 | Refuse | Work handed upstream on its own branch (`team.upstream`), a chain six deep, sixteen unanswered, twelve a minute, eight in one turn. |
 | Answer | When the receiver's turn ends, the controller reports what it served and read. With work still out, the answer is held; otherwise `<agent-reply>` goes to the sender's seat. |
 | Read | A reply counts as returned only once the sender's turn has read it, so an answer never leaves before the replies it depends on. |
+
+On restart, queued, delivered and waiting-for-children exchanges are interrupted
+before seats resume. The controller must not replay work for settled exchanges.
+
+重启时，排队、已投递和等待子任务的交换均先结算为中断；会话不得重新执行已结算任务。
 
 ## 4. Group rounds
 

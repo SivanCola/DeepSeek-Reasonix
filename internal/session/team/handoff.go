@@ -267,9 +267,8 @@ func (s *Service) Stop(agent string) bool {
 	return ok
 }
 
-// Recover settles what a restart cut off: an exchange recorded but never
-// confirmed in its receiver's inbox is interrupted and its sender told, and a
-// group turn in flight is cut.
+// Recover interrupts unfinished exchanges and rounds before the host resumes
+// any seat. Durable inbox consumers must discard work for settled exchanges.
 func (s *Service) Recover(ctx context.Context) error {
 	defer s.changed()
 	r, err := s.store.Load()
@@ -281,17 +280,20 @@ func (s *Service) Recover(ctx context.Context) error {
 		return err
 	}
 	errs := []error{s.recoverRounds(ctx, r)}
+	var interrupted []teamroster.Exchange
 	for _, x := range book {
-		if x.State != teamroster.ExchangeQueued {
+		if x.State.Settled() {
 			continue
 		}
 		settled, err := s.store.SetExchangeState(ctx, x.ID, teamroster.ExchangeInterrupted, s.now())
-		if err == nil {
-			err = s.deliverReply(ctx, r, book, settled, Settlement{Outcome: OutcomeInterrupted, Code: "team.interrupted"})
-		}
 		if err != nil {
 			errs = append(errs, err)
+		} else {
+			interrupted = append(interrupted, settled)
 		}
+	}
+	for _, x := range interrupted {
+		errs = append(errs, s.deliverReply(ctx, r, book, x, Settlement{Outcome: OutcomeInterrupted, Code: "team.interrupted"}))
 	}
 	return errors.Join(errs...)
 }
