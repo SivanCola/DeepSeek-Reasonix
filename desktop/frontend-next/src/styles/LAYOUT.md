@@ -267,21 +267,22 @@ and selected states, while long titles truncate within the remaining width.
   that land", so the state is a chip on the row. The count and the byte total
   each refuse alone: a header showing one of them is wrong about the other
   exactly when it matters.
-- The number of entries is capped (64); their height is not. The head stays put
-  and the rows grow; total height comes from `.composeaux`, and the rule here
-  only says that the rows scroll rather than the head scrolling away with them.
-- `steer_consumed` means this turn has already read the line into its context:
-  it cannot be taken back, and `AckDequeue` removes it when the turn ends. It
-  stops being a card and becomes a record — still visible, because a crash before
-  the write has to leave it on screen, but no longer a card's height. Its border
-  goes transparent rather than away, or the column loses its alignment.
-- Its actions are quiet but present: a row of controls that exists only under the
-  pointer reads as a row that does nothing.
+- The queue is the upper half of the composer, sharing its surface and outer
+  frame. Transparent 38px rows have 12px horizontal padding and 2px gaps; only
+  status pills carry status colour. A quiet separator leads into the input.
+- The head stays put while roughly five rows fit before internal scrolling,
+  with edge fades. `.composeaux` still owns the shared height budget.
+- `steer_consumed` and `running` entries leave this pending strip: they have
+  already reached the transcript and are not input waiting to be sent.
+- Edit and withdraw use icons with unchanged accessible names and titles.
+  Withdraw restores input, never discards it. Move controls reveal on hover or
+  focus and remain visible on touch; their keyboard order is unchanged.
 - Everything stacked above the input shares one ceiling, `--aux-budget`, so a
   full queue scrolls inside it instead of taking the transcript.
-- The studio composer's chrome is taller than the one the budget was set
-  against, so studio lowers it (28vh, 19vh when short): with 64 queued lines the
-  transcript keeps 40% of the pane, which `perf/budget.mjs` holds.
+- Without notices, a queue gets a 44vh auxiliary budget (28vh when short),
+  capped at 420px (260px when short), so about five compact rows fit. Notices
+  restore the smaller 28vh/19vh budget to protect transcript space; the input
+  stays visible under the 64-entry pressure case in `perf/budget.mjs`.
 - The queued line is the only thing on screen that has not happened yet, so its
   cancel sits beside "queued" and stays visible. A cancel revealed on hover is no
   cancel.
@@ -342,6 +343,9 @@ and selected states, while long titles truncate within the remaining width.
   the pane's tab-row line so the two rows read as one: the strip is
   `--pane-bar-h` less the card's top inset and border. `perf/dock.mjs` holds
   the two lines together.
+- The file toolbar gives spare width to the truncated path; optional controls
+  and Save keep their intrinsic widths. Enabled Save uses accent foreground ink;
+  disabled Save uses opaque muted ink on a neutral surface.
 - The workbench is hidden, not unmounted. It holds the open files and a browser
   per tab, each with its own history, and a glance at the conversation must not
   cost them. `.scroll[data-pane="browser"][hidden]` was already written for it.

@@ -82,6 +82,9 @@ func v4SessionFor(path string) (sessionv4.Session, bool) {
 // conversation is imported there on first open, and brought up to date when
 // 1.x has continued it and this copy has not.
 func PrepareSessionPath(path string) error {
+	if v4RemovalPath(path) != "" && !IsVisibleSession(path) {
+		return &os.PathError{Op: "open", Path: path, Err: os.ErrNotExist}
+	}
 	s, ok := v4SessionFor(path)
 	if !ok {
 		return nil
@@ -288,7 +291,11 @@ func withV4Sessions(dir string, out []SessionInfo) []SessionInfo {
 	defer r.flush(context.Background(), dir, false)
 	for _, source := range sessionv4.List(root) {
 		id := source.Manifest.SessionID
-		if !isV4SessionID(id) || sessionArtifactExists(v4ImportPath(dir, id)) {
+		if !isV4SessionID(id) {
+			continue
+		}
+		path := v4ImportPath(dir, id)
+		if !IsVisibleSession(path) || sessionArtifactExists(path) {
 			continue
 		}
 		listing, err := r.resolve(context.Background(), dir, source, readLegacyTranscript)

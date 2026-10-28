@@ -7,6 +7,15 @@ reviewed: 2026-09-22
 
 # Reasonix Studio frontend
 
+## Feedback contact
+
+- Studio prefills new reports with the contact value from the last successful
+  submission, stored in this device's local browser storage.
+- The field stays editable; submitting it empty clears the remembered value.
+  Failed submissions do not replace it.
+- An unsent draft takes precedence while the page is open.
+- No feedback body or screenshots are persisted by this preference.
+
 ## Tests
 
 `pnpm test` runs one worker per test file on the threads pool. Threads rather

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { t } from "../i18n";
-import { UNCONFIGURED_REF } from "./ConnectNote";
 import { reason } from "../i18n/kernel";
 import { keepPasteAsFile, PasteKeep, type PasteChip } from "./pastekeep";
 import type { AgentPort, ChipCall, ModelEntry, SessionStatus, WorkspaceGit } from "../port/port";
@@ -11,7 +10,7 @@ import { WorktreeChip } from "./WorktreeChip";
 import { useWorktreeSetup, WorktreeSetupFailure } from "./useWorktreeSetup";
 import { WorktreeSetupPage } from "./WorktreeSetupPage";
 import { Policy } from "./Policy";
-import { chosenGroups, groupHeadings, modelMenu, modelTooltip, narrowToGroups } from "./modelmenu";
+import { chosenGroups, groupHeadings, modelLabel, modelMenu, modelTooltip, narrowToGroups } from "./modelmenu";
 import { ModelGroupChips } from "./ModelGroupChips";
 import { effortMenu, effortReading, effortsFor, forcesThinkingFor, routeEffortPick } from "./effort";
 import { CompletionMenu, useCompletion } from "./Completion";
@@ -44,6 +43,7 @@ interface Props {
   port: AgentPort;
   status: SessionStatus | null;
   running: boolean;
+  queued?: boolean;
   // Text a card asked to be quoted, and a counter that makes the same text
   // twice two requests. Quoting the same reply again is an ordinary thing to
   // do, and comparing the string alone would drop the second one.
@@ -79,7 +79,7 @@ interface Props {
   draftKey?: string;
 }
 
-export function Composer({ port, status, running, quote, restore, inject, focus, onSubmit, onChanged, onError, onSettings = () => {}, side = false, onSide, sidePanel, changeCount = 0, countElsewhere = false, git = null, onTreeChanged, pulse = 0, draftKey = "", fresh = false, worktreeTarget, onWorktreePhase }: Props) {
+export function Composer({ port, status, running, queued = false, quote, restore, inject, focus, onSubmit, onChanged, onError, onSettings = () => {}, side = false, onSide, sidePanel, changeCount = 0, countElsewhere = false, git = null, onTreeChanged, pulse = 0, draftKey = "", fresh = false, worktreeTarget, onWorktreePhase }: Props) {
   const touch = touchKeyboard();
   const providerOrder = useProviderOrder();
   const modelGroups = useModelFilter();
@@ -217,7 +217,7 @@ export function Composer({ port, status, running, quote, restore, inject, focus,
     pending.current = null;
   }, []);
   useFitHeight(box, text, placeCaret);
-  const placeholder = usePlaceholderFit(box, [t("描述任务、问题或要改的内容…"), t("描述任务…"), "…"]);
+  const placeholder = usePlaceholderFit(box, queued ? [t("继续输入以排队后续修改"), t("继续输入…"), "…"] : [t("描述任务、问题或要改的内容…"), t("描述任务…"), "…"]);
 
   // Attachments ride into the turn as path references, exactly as they do from
   // the CLI — the host saved the bytes, the turn parser resolves the token. A
@@ -389,9 +389,7 @@ export function Composer({ port, status, running, quote, restore, inject, focus,
   // composer answering for an endpoint that never spoke.
   const declared = efforts.length > 0;
   const forcedThinking = forcesThinkingFor(models, status?.modelRef);
-  const modelLb = status?.modelRef === UNCONFIGURED_REF ? t("未连接")
-    : models.find((m) => m.ref === status?.modelRef)?.modelAlias?.trim()
-    || (status?.modelRef?.replace(/^[^/]+\//, "") ?? status?.label ?? "—");
+  const modelLb = modelLabel(models, status);
   // A model switch rebuilds the runtime kernel-side; other controls here may
   // land at once. Each click needs its own pending state: greying the whole
   // shelf says nothing can change while only one control waits on the kernel.
