@@ -11,6 +11,9 @@ import (
 // file and none of them interact with the rest of the render.
 func renderDesktopSection(b *strings.Builder, c *Config) {
 	b.WriteString("[desktop]\n")
+	if c.Desktop.ProviderHealthChecks {
+		b.WriteString("provider_health_checks = true\n")
+	}
 	if lang := c.DesktopLanguage(); lang != "" {
 		fmt.Fprintf(b, "language = %q   # desktop UI language; empty/auto = browser/OS auto-detect\n", lang)
 	} else {

@@ -31,6 +31,8 @@ contextBridge.exposeInMainWorld("reasonixHost", {
   showTextContextMenu: (request) => ipcRenderer.invoke("text:context-menu", request),
   // What the shell's graphics are running as this launch.
   graphics: () => ipcRenderer.invoke("shell:graphics"),
+  globalShortcut: () => ipcRenderer.invoke("shell:global-shortcut"),
+  setGlobalShortcut: (binding) => ipcRenderer.invoke("shell:set-global-shortcut", binding),
   // The window's processes as type and two sizes, for the memory a report may carry.
   processMemory: () => ipcRenderer.invoke("shell:process-memory"),
   openExternal: (url) => ipcRenderer.invoke("shell:open-external", String(url)),

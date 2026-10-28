@@ -1,5 +1,5 @@
 "use strict";
-const { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, powerSaveBlocker, screen, session, shell } = require("electron");
+const { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeTheme, powerSaveBlocker, screen, session, shell } = require("electron");
 const { relaunchForOzonePlatform } = require("./ozone");
 
 // Before the instance lock: this process must hold nothing its relaunch needs.
@@ -31,7 +31,8 @@ const { BrowserProtocol } = require("./browserprotocol");
 const { BrowserViews } = require("./browserviews");
 const { startBrowserRelay } = require("./browserrelay");
 const { groundFor, themeSourceFor } = require("./ground");
-const { loadPrefs, pageSleepAfterMs, prefsFile, registerPrefs } = require("./prefs");
+const { loadPrefs, savePrefs, pageSleepAfterMs, prefsFile, registerPrefs } = require("./prefs");
+const { PREF_KEY: SHORTCUT_PREF, createGlobalShortcut, registerGlobalShortcutIPC } = require("./globalshortcut");
 const { stateFile, openWindow } = require("./windowstate");
 const { accelerationOff, shouldDisableGpu, graphicsHandler } = require("./graphics");
 const { processMemoryHandler } = require("./procmem");
@@ -90,6 +91,7 @@ let browserRelay = null;
 let reload = null;
 let powerGuard = null;
 let logs = null;
+let windowShortcut = null;
 let handshaken = false;
 
 let starting = null;
@@ -407,6 +409,7 @@ nativeTheme.on("updated", () => {
 });
 
 ipcMain.handle("shell:graphics", (event) => graphicsHandler(app, fromWindow, gpuLaunch)(event));
+registerGlobalShortcutIPC(ipcMain, fromWindow, () => windowShortcut);
 const showTextContextMenu = textContextMenuHandler(Menu, fromWindow, () => origin, uiLang);
 ipcMain.handle("text:context-menu", showTextContextMenu);
 ipcMain.handle("shell:process-memory", (event) => processMemoryHandler(app, fromWindow)(event));
@@ -554,7 +557,18 @@ if (!primary) {
 }
 
 app.whenReady().then(() => {
-  if (!primary) return;
+  if (!primary || quitting) return;
+  windowShortcut = createGlobalShortcut({
+    globalShortcut,
+    binding: savedPrefs[SHORTCUT_PREF] ?? "",
+    save: binding => {
+      const file = prefsFile(app.getPath("userData"));
+      savePrefs(file, { ...loadPrefs(file), [SHORTCUT_PREF]: binding });
+    },
+    windowOf: () => win,
+    showWindow,
+  });
+  windowShortcut.start();
   installApplicationMenu(uiLang);
   boot().catch((err) => {
     console.error("reasonix-studio:", err.message);
@@ -601,6 +615,7 @@ module.exports = { current: () => ({ win, tray, client, origin }) };
 const drainCua = createQuitGate(() => cua, () => app.quit(), error => logs.shell.line(`CUA cleanup: ${error.message}`));
 app.on("before-quit", event => {
   quitting = true;
+  windowShortcut?.close();
   logs.shell.line("shell: quitting");
   drainCua(event);
   browserRelay?.stop();

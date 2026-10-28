@@ -12,6 +12,10 @@ export interface ProviderEntry {
   baseUrl: string;
   models: string[];
   modelAliases?: Record<string, string>;
+  // Whether the prefix every model shares is left out of how they are drawn, and each
+  // model as it then reads; a model drawn as it is has no entry.
+  hideModelPrefix?: boolean;
+  modelShorts?: Record<string, string>;
   default: string;
   hasKey: boolean;
   keyEnv?: string;
@@ -249,6 +253,8 @@ export interface ProviderEdit {
   name: string;
   // Omitted preserves aliases; blank or missing values reset listed models.
   modelAliases?: Record<string, string>;
+  // Omitted leaves the choice alone.
+  hideModelPrefix?: boolean;
   // Omitted leaves the wire format alone.
   kind?: string;
   baseUrl?: string;

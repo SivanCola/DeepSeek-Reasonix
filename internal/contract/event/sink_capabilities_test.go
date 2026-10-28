@@ -2,6 +2,7 @@ package event
 
 import (
 	"reasonix/internal/contract/hostaudit"
+	"reasonix/internal/contract/pricing"
 	"reflect"
 	"testing"
 	"time"
@@ -15,6 +16,11 @@ type capturingSink struct {
 }
 
 func (s *capturingSink) Emit(e Event) { s.events = append(s.events, e) }
+
+func (s *capturingSink) QuoteUsage(e Event) *pricing.CostQuote {
+	s.recorded = append(s.recorded, "UsageQuote")
+	return EnsureCostQuote(e, nil)
+}
 
 func (s *capturingSink) RecordDelegationAudit(hostaudit.DelegationAudit) {
 	s.recorded = append(s.recorded, "DelegationAudit")
@@ -61,6 +67,7 @@ func (s *capturingSink) RecordVerificationContractDrift(VerificationContractDrif
 
 // recordAll drives every optional capability once through s.
 func recordAll(s Sink) {
+	QuoteUsage(s, Event{})
 	RecordDelegationAudit(s, hostaudit.DelegationAudit{})
 	RecordReadinessAudit(s, hostaudit.ReadinessAudit{})
 	RecordTurnCompletion(s)
@@ -115,7 +122,11 @@ func TestWrappersForwardEveryCapability(t *testing.T) {
 			}
 			inner.recorded = nil
 			recordAll(w)
-			if got, want := len(inner.recorded), len(CapabilityNames()); got != want {
+			want := len(CapabilityNames())
+			if _, quotes := w.(*CostQuoteSink); quotes {
+				want--
+			}
+			if got := len(inner.recorded); got != want {
 				t.Fatalf("%s delivered %d of %d capabilities: %v", name, got, want, inner.recorded)
 			}
 		})

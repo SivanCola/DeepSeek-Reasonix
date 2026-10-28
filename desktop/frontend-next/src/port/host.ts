@@ -24,6 +24,14 @@ export interface GraphicsInfo {
   compositing: string;
 }
 
+export interface GlobalShortcutInfo {
+  binding: string;
+  status: "disabled" | "registered" | "invalid" | "unavailable" | "unsupported";
+  error?: "invalid" | "unavailable" | "save" | "quitting";
+}
+
+const unsupportedShortcut: GlobalShortcutInfo = { binding: "", status: "unsupported" };
+
 export interface TextContextMenuRequest {
   editable: boolean;
   selected: boolean;
@@ -52,6 +60,8 @@ export interface HostPort {
   captureWindow(): Promise<Uint8Array | null>;
   /** How the shell draws this launch; null where it has no say, as in a tab. */
   graphics(): Promise<GraphicsInfo | null>;
+  globalShortcut(): Promise<GlobalShortcutInfo>;
+  setGlobalShortcut(binding: string): Promise<GlobalShortcutInfo>;
   /** The shell's own processes as a type and two sizes each, for the memory a
    *  report may carry; empty where there is no shell to ask, as in a tab. */
   processMemory(): Promise<FeedbackProcessMemory[]>;
@@ -181,6 +191,8 @@ interface ElectronBridge {
   closeWindow(): Promise<void>;
   captureWindow?(): Promise<Uint8Array | null>;
   graphics?(): Promise<GraphicsInfo | null>;
+  globalShortcut?(): Promise<GlobalShortcutInfo | null>;
+  setGlobalShortcut?(binding: string): Promise<GlobalShortcutInfo | null>;
   processMemory?(): Promise<unknown>;
   openExternal(url: string): Promise<void>;
   setUnreadBadge?(unread: boolean): Promise<void>;
@@ -249,6 +261,12 @@ class ElectronHost implements HostPort {
   }
   graphics() {
     return this.api.graphics?.().catch(() => null) ?? Promise.resolve(null);
+  }
+  globalShortcut() {
+    return this.api.globalShortcut?.().then(value => value ?? unsupportedShortcut) ?? Promise.resolve(unsupportedShortcut);
+  }
+  setGlobalShortcut(binding: string) {
+    return this.api.setGlobalShortcut?.(binding).then(value => value ?? unsupportedShortcut) ?? Promise.resolve(unsupportedShortcut);
   }
   processMemory() {
     return this.api.processMemory?.().then((rows: unknown) => (Array.isArray(rows) ? (rows as FeedbackProcessMemory[]) : [])).catch(() => []) ?? Promise.resolve([]);
@@ -357,6 +375,12 @@ class BrowserHost implements HostPort {
   }
   graphics() {
     return Promise.resolve(null);
+  }
+  globalShortcut() {
+    return Promise.resolve(unsupportedShortcut);
+  }
+  setGlobalShortcut() {
+    return Promise.resolve(unsupportedShortcut);
   }
   processMemory() {
     return Promise.resolve([]);
