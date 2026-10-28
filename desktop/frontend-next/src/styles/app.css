@@ -201,7 +201,7 @@
   .btn.sm { padding: 2.5px 8px; font-size: var(--fs-meta); }
 
   .picker { position: relative; flex: none }
-  .isolab { flex: none; white-space: nowrap; font: var(--w-med) var(--fs-micro) var(--mono); letter-spacing: var(--track-cap); color: var(--ok-ink); padding: 1.5px 6px; border-radius: var(--r-pill); background: color-mix(in srgb, var(--ok) 13%, transparent) }
+  .isolab { flex: none; white-space: nowrap; font: var(--w-med) var(--fs-micro) var(--ui); letter-spacing: var(--track-cap); color: var(--muted); padding: 1.5px 6px; border-radius: var(--r-pill); background: var(--overlay) }
   .isolab[hidden] { display: none }
 
   .hostlab { color: var(--net-ink); background: color-mix(in srgb, var(--net) 13%, transparent) }

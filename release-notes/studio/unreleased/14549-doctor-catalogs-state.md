@@ -1,0 +1,2 @@
+- 修复：`reasonix doctor catalogs` 不再对记录过失败的目录打印 `ok`，而是显示 `failed` 或 `degraded`，并给出失败数量与来源。关联 #14549。
+- Fixed: `reasonix doctor catalogs` no longer prints `ok` for a catalog that recorded a failure; it reports `failed` or `degraded` with the count and the failing source. Refs #14549.
