@@ -4,6 +4,7 @@ import { act, cleanup, render, screen } from "@testing-library/react";
 import "../testkit";
 import { boot, STORAGE } from "../../i18n";
 import { MockHub } from "../../port/mock_hub";
+import { MockPort } from "../../port/mock";
 import type { RuntimeView } from "../../port/hub";
 import { Chrome } from "../Chrome";
 import { closeGroupStage, openGroupStage } from "../../state/teamStage";
@@ -21,10 +22,10 @@ afterEach(() => {
   closeGroupStage();
 });
 
-function draw(hub: MockHub, seat?: RuntimeView["team"]) {
+function draw(hub: MockHub, seat?: RuntimeView["team"], port: MockPort | null = null) {
   render(
     <Chrome
-      port={null}
+      port={port}
       status={{ preset: "balanced", toolApprovalMode: "ask", workspaceRoot: "/home/u/Reasonix Team/a-chief", sessionPath: "/s.jsonl" } as never}
       title="会话" steer={0} account={null} theme="dark" onTheme={vi.fn()} onFind={vi.fn()}
       view="flow" rows={0} surfaces={0} onView={vi.fn()} hub={hub} seat={seat} onError={vi.fn()}
@@ -35,11 +36,13 @@ function draw(hub: MockHub, seat?: RuntimeView["team"]) {
 it("names the agent whose seat the pane holds, not its folder", async () => {
   const hub = new MockHub();
   await hub.team().bootstrap("Chief");
-  draw(hub, { agent: "a-chief" });
+  const port = new MockPort();
+  vi.spyOn(port, "workspaces").mockResolvedValue({ current: "/home/u/Reasonix Team/a-chief", isolated: true, canSwitch: true, canIsolate: true, recents: [] });
+  draw(hub, { agent: "a-chief" }, port);
   expect(await screen.findByText("Chief")).toBeTruthy();
   expect(screen.queryByText("a-chief")).toBeNull();
   expect(screen.queryByRole("button", { name: "打开项目文件夹" })).toBeNull();
-  expect(screen.queryByText("原目录")).toBeNull();
+  expect(screen.queryByText("独立工作树")).toBeNull();
 });
 
 it("names the group as well for a member's group conversation", async () => {
