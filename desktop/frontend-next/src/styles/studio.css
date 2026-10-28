@@ -2778,7 +2778,7 @@ button, input, select, textarea { font-size: calc(13.3333px * var(--fs-scale, 1)
   color: var(--text); background: var(--overlay); border-color: var(--muted);
 }
 .flow .call[data-approval] .apv-ft .btn:focus-visible { outline-offset: 3px; }
-.flow .call[data-approval] .apv-ft .btn[data-deny] { margin-left: 0; }
+.flow .call[data-approval] .apv-ft .btn[data-deny], .flow .call[data-approval] .apv-ft .btn[data-deny]:hover:not(:disabled) { margin-left: 0; color: var(--err-ink); border-color: color-mix(in srgb, var(--err) 58%, var(--surface)); }
 .flow .call[data-approval] .apv-ft .btn[data-primary] {
   background: var(--text); border-color: var(--text); color: var(--surface); box-shadow: none;
 }
