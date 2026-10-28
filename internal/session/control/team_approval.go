@@ -14,7 +14,7 @@ import (
 const TeamChangeApprovalTool = "team_change"
 
 // confirmTeamChange asks the person before an agent's working folder moves to
-// one a model chose. Approving it is the trust decision for that folder.
+// one a model chose. Repository trust requires a separate host decision.
 func (c *Controller) confirmTeamChange(ctx context.Context, agent, folder string) error {
 	args, _ := json.Marshal(map[string]string{"agent": agent, "field": "folder", "to": folder})
 	text := fmt.Sprintf("Let the agent %s read and write files in %s?", agent, folder)
