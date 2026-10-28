@@ -23,6 +23,9 @@ import (
 // first is a main agent.
 func teamHub(t *testing.T, names ...string) (*Hub, map[string]string) {
 	t.Helper()
+	if err := team.CheckPlatform(); err != nil {
+		t.Skip(err)
+	}
 	writeServeModelConfig(t)
 	closeSharedCatalogsOnCleanup(t)
 	opts := TeamHostOptions{Dir: testenv.TempDir(t), Workspace: testenv.TempDir(t)}

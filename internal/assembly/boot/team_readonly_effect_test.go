@@ -15,6 +15,7 @@ import (
 )
 
 func TestEffectReadOnlyChildCannotDispatchTeamWork(t *testing.T) {
+	requireTeamExecution(t)
 	for _, dynamic := range []bool{false, true} {
 		name := "direct"
 		if dynamic {

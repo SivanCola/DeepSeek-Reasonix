@@ -72,12 +72,9 @@ func (s *Service) CreateAgent(ctx context.Context, c Caller, ch AgentChange) (te
 	var out teamroster.Agent
 	charged := false
 	_, err := s.store.Update(ctx, func(r *teamroster.Roster) error {
-		self, err := s.caller(r, c)
+		self, err := authorizeCreate(r, c)
 		if err != nil {
 			return err
-		}
-		if !self.Main {
-			return ErrNotMain
 		}
 		if !charged && !s.chargeCreate(c.Turn) {
 			return ErrCreateLimit
@@ -149,19 +146,12 @@ func (s *Service) UpdateAgent(ctx context.Context, c Caller, target string, ch A
 	defer s.changed()
 	var out teamroster.Agent
 	_, err := s.store.Update(ctx, func(r *teamroster.Roster) error {
-		self, err := s.caller(r, c)
+		a, err := authorizeUpdate(r, c, target)
 		if err != nil {
 			return err
 		}
-		a := self
-		if target != "" {
-			var ok bool
-			if a, ok = agentByRef(r, target); !ok {
-				return teamroster.ErrUnknownAgent
-			}
-		}
-		if a.ID != self.ID && !self.Main {
-			return ErrSelfOnly
+		if ch.RequiresApproval(*a) && !c.ConfigurationApproved {
+			return ErrConfigurationApproval
 		}
 		applyAgent(a, ch)
 		out = *a

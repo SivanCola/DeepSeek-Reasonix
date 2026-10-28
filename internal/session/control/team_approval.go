@@ -18,14 +18,26 @@ const TeamChangeApprovalTool = "team_change"
 func (c *Controller) confirmTeamChange(ctx context.Context, agent, folder string) error {
 	args, _ := json.Marshal(map[string]string{"agent": agent, "field": "folder", "to": folder})
 	text := fmt.Sprintf("Let the agent %s read and write files in %s?", agent, folder)
+	return c.confirmTeamEdit(ctx, agent, args, text)
+}
+
+func (c *Controller) confirmTeamConfiguration(ctx context.Context, id, name string, change tool.TeamAgentSpec) error {
+	args, _ := json.Marshal(struct {
+		Agent   string             `json:"agent"`
+		Changes tool.TeamAgentSpec `json:"changes"`
+	}{id, change})
+	return c.confirmTeamEdit(ctx, name, args, "Apply these persistent instructions, role, model or folder changes to "+name+"?")
+}
+
+func (c *Controller) confirmTeamEdit(ctx context.Context, agent string, args json.RawMessage, text string) error {
 	reply, err := c.requestApprovalDecision(ctx, approvalRequest{tool: TeamChangeApprovalTool, subject: agent, args: args, reason: text, fresh: true})
 	switch {
 	case err != nil && ctx.Err() != nil:
 		return ctx.Err()
 	case err != nil:
-		return tool.Refusal{Code: "team.no_approver", Message: "Nobody answered the request to change " + agent + "'s working folder, so it was not changed."}
+		return tool.Refusal{Code: "team.no_approver", Message: "Nobody approved the persistent change to " + agent + "."}
 	case !reply.allow:
-		return tool.Refusal{Code: "team.declined", Message: "The user declined giving " + agent + " that folder; leave it as it is."}
+		return tool.Refusal{Code: "team.declined", Message: "The user declined the persistent change to " + agent + "."}
 	}
 	return nil
 }
