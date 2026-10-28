@@ -26,7 +26,7 @@ import { nextId } from "./ids";
 import { worked } from "./worked";
 import { chipLabel, IDLE, RUNNING } from "./chip";
 import { foldStall } from "./stall";
-import { nameQueued, withoutPendingRow } from "./queued";
+import { nameQueued, QUEUE_HELD, withoutPendingRow } from "./queued";
 import { capToolOutput } from "./outputcap";
 import { dropTool, foldProgress, foldTool, isSubagentProgress, mergeReads, notePhase, noteRan } from "./fold";
 import { rebuild } from "./rebuild";
@@ -225,6 +225,7 @@ export type SessionEvent =
   | { kind: "__decided"; id: string; verdict?: string; answers?: string[][]; values?: Record<string, unknown> }
   | { kind: "__forgot"; id: string }
   | { kind: "__runtime_seen"; id: string }
+  | { kind: "__queue_resumed" }
   // The transcript has drawn these cards, so their one entrance is spent.
   // Render says when, not the animation: a card can leave the document before
   // its animation ends, and reduced motion runs no animation at all.
@@ -242,6 +243,7 @@ function apply(s: SessionState, ev: SessionEvent): SessionState {
     return left.length === s.entranceOwed.length ? s : { ...s, entranceOwed: left };
   }
   if (ev.kind === "__runtime_seen") return { ...s, runtime: s.runtime.filter((n) => n.id !== ev.id) };
+  if (ev.kind === "__queue_resumed") return s.runtime.some((n) => n.code === QUEUE_HELD) ? { ...s, runtime: s.runtime.filter((n) => n.code !== QUEUE_HELD) } : s;
   if (ev.kind === "rewind_changed") return { ...s, rewindMoved: s.rewindMoved + 1 };
   if (ev.kind === "inbox_changed") return { ...s, queueMoved: s.queueMoved + 1 };
   if (ev.kind === "browser_tabs_changed") return { ...s, browserTabsMoved: s.browserTabsMoved + 1 };

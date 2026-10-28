@@ -337,6 +337,8 @@ var mirroredWireTypes = []wireMirror{
 	// reader's own size and wallpaper. A field one side cannot read is absent.
 	{"internal/frontend/serve/themes.go", "themeView", tsLookFile, "ThemePack"},
 	{"internal/ext/theme/theme.go", "Background", tsLookFile, "ThemeBackground"},
+	{"internal/ext/theme/theme.go", "SurfaceOpacities", tsLookFile, "ThemeSurfaceOpacities"},
+	{"internal/ext/theme/theme.go", "SurfaceOpacity", tsLookFile, "ThemeSurfaceOpacity"},
 	{"internal/ext/theme/theme.go", "Sky", tsLookFile, "ThemeSky"},
 	{"internal/ext/theme/theme.go", "Recipes", tsLookFile, "ThemeRecipes"},
 	{"internal/ext/theme/install.go", "Installed", tsLookFile, "ThemeImport"},
