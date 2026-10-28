@@ -724,8 +724,7 @@ func bump(ctx context.Context, tx *sql.Tx) (uint64, error) {
 func (c *Catalog) NoteFallback() { c.fallback.Add(1) }
 
 func (c *Catalog) refresh(ctx context.Context) {
-	var files, lag, corrupt int64
-	_ = c.db.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(MAX(size-indexed_offset,0)),0),COALESCE(SUM(corrupt_lines),0) FROM usage_files`).Scan(&files, &lag, &corrupt)
+	files, lag, corrupt := readStatusCounts(ctx, c.db)
 	c.statusMu.Lock()
 	c.status.Revision, c.status.IndexedFiles, c.status.LagBytes, c.status.CorruptLines = c.revision.Load(), files, lag, corrupt
 	c.status.Fallbacks = c.fallback.Load()
