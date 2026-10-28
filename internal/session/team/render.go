@@ -35,7 +35,7 @@ func renderIdentity(a teamroster.Agent) string {
 		b.WriteString(a.Instructions)
 		b.WriteString("\n")
 	}
-	return b.String()
+	return hostframe.Text(b.String()).String()
 }
 
 // renderRoster is the rest of the team as agent self sees it: every other
@@ -45,6 +45,10 @@ func renderRoster(r teamroster.Roster, self string) string {
 	b.WriteString("Other agents on the team (reach them with message_agent, by id or name):\n")
 	others := 0
 	for _, a := range r.Agents {
+		if others >= teamroster.MaxAgents {
+			b.WriteString("Additional legacy agents are omitted; reduce the roster in settings.\n")
+			break
+		}
 		if a.ID == self {
 			continue
 		}
@@ -63,6 +67,10 @@ func renderRoster(r teamroster.Roster, self string) string {
 	}
 	groups := 0
 	for _, g := range r.Groups {
+		if groups >= teamroster.MaxGroups {
+			b.WriteString("Additional legacy groups are omitted; reduce the roster in settings.\n")
+			break
+		}
 		if !g.IsMember(self) {
 			continue
 		}
@@ -80,7 +88,7 @@ func renderRoster(r teamroster.Roster, self string) string {
 		}
 		b.WriteString("\n")
 	}
-	return b.String()
+	return hostframe.Text(b.String()).String()
 }
 
 // renderMessage is a message as the receiver reads it.

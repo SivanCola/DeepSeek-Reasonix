@@ -6,6 +6,10 @@ import (
 )
 
 var (
+	// ErrAgentCapacity bounds the roster and the projection each agent receives.
+	ErrAgentCapacity = errors.New("the team has reached its agent capacity")
+	// ErrGroupCapacity bounds how many groups the team stores.
+	ErrGroupCapacity = errors.New("the team has reached its group capacity")
 	// ErrEmpty is a required field left blank.
 	ErrEmpty = errors.New("required field is empty")
 	// ErrTooLong is a field past its length limit.

@@ -18,6 +18,9 @@ import (
 // host starts, recording what it is so the turn that runs it reports back.
 // The delivery's key makes a retry after a crash land once.
 func (c *Controller) DeliverTeam(d team.Delivery) error {
+	if err := team.CheckPlatform(); err != nil {
+		return teamRefusal(err)
+	}
 	extra := map[string]string{team.ExtraKind: string(d.Kind)}
 	for k, v := range map[string]string{
 		team.ExtraFrom: d.From, team.ExtraExchange: d.Exchange, team.ExtraServing: strings.Join(d.Serving, ","),

@@ -54,6 +54,26 @@ func (c *Controller) RunInboxTurn(ctx context.Context, id string) error {
 // opens no checkpoint, starts no new recovery episode, and is not counted as
 // something the user said.
 func (c *Controller) prepareInboxRun(env sessioninbox.PromptEnvelope, origin sessioninbox.PromptOrigin) (func(context.Context) error, string, error) {
+	kind := team.DeliveryKind(env.Extra[team.ExtraKind])
+	if origin.IsHost() && (kind == team.DeliverMessage || kind == team.DeliverGroupTurn) {
+		if seat := c.team.bound(); seat != nil {
+			if svc, ref := seat.Team(); svc != nil {
+				var pending bool
+				var err error
+				if kind == team.DeliverMessage {
+					pending, err = svc.MessagePending(ref, env.Extra[team.ExtraExchange])
+				} else {
+					pending, err = svc.GroupTurnPending(ref, env.Extra[team.ExtraStep])
+				}
+				if err != nil {
+					return nil, "", err
+				}
+				if !pending {
+					return func(context.Context) error { return nil }, "", nil
+				}
+			}
+		}
+	}
 	submit, frozenImages, block, err := applyInboxReferences(env)
 	if err != nil || block != "" {
 		return nil, block, err

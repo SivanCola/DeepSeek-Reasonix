@@ -23,6 +23,18 @@ Studio keeps a team of long-lived agents beside the user's projects.
 | T4 | How a turn ended is the host's word. A failed, stopped or interrupted turn answers with that status and its code. |
 | T5 | Permission modes, main agents, relay limits and deletion are the user's alone, through the window. No tool reaches them. |
 
+Rosters admit at most 32 agents and 16 groups. Older larger rosters remain readable
+and may shrink, but cannot grow further. Host frames escape the shared host-tag
+vocabulary in untrusted text.
+
+Persistent role, instruction, initial-model and
+nonempty folder changes require fresh human approval for the exact change;
+approval does not grant permission to edit another agent.
+
+名册最多新增至 32 个 Agent、16 个群组；旧的超限名册仍可读取和缩减，不能继续扩张。
+不可信文本中的宿主标签统一转义。持久角色、指令、初始模型及非空目录变更必须
+获得针对本次内容的人工批准；批准不代替对目标 Agent 的编辑权限。
+
 ## 2. Layers
 
 | Package | Role |
@@ -42,6 +54,11 @@ Studio keeps a team of long-lived agents beside the user's projects.
 | Answer | When the receiver's turn ends, the controller reports what it served and read. With work still out, the answer is held; otherwise `<agent-reply>` goes to the sender's seat. |
 | Read | A reply counts as returned only once the sender's turn has read it, so an answer never leaves before the replies it depends on. |
 
+On restart, queued, delivered and waiting-for-children exchanges are interrupted
+before seats resume. The controller must not replay work for settled exchanges.
+
+重启时，排队、已投递和等待子任务的交换均先结算为中断；会话不得重新执行已结算任务。
+
 ## 4. Group rounds
 
 | Rule | Behaviour |
@@ -58,9 +75,18 @@ Studio keeps a team of long-lived agents beside the user's projects.
 | --- | --- |
 | A turn delivered by the team | Gated at the stricter of the session's mode and the chain's ceiling; a forged ceiling can only lower it. |
 | A model choosing an agent's folder | Fresh `team_change` card every time; no posture, grant, hook or rule answers it. |
+| A model changing role, instructions or an unused initial model | Fresh `team_change` card; Main/self authorization is checked before asking and again before writing. |
 | Main agent, permission, relay limit, deletion | User only, through `/team` routes. |
 
 ## 6. Known limits
+
+Team execution is disabled on Windows until disk-backed roster and inbox
+authority can be protected from child processes. Ordinary sessions remain
+available. Plan-mode delegation carries a read-only ceiling even when the
+receiver's persistent permission mode is YOLO.
+
+Windows 暂不运行团队会话，直到名册与 inbox 权限记录能隔离子进程修改；普通会话仍可使用。
+计划阶段的团队委派携带只读上限，不受接收方持久 YOLO 设置影响。
 
 | Limit | Note |
 | --- | --- |
