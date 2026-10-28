@@ -9,12 +9,13 @@ import { boot, STORAGE, t } from "../i18n";
 import { MockPort } from "../port/mock";
 import { MockHub } from "../port/mock_hub";
 import type { AgentPort, SessionStatus } from "../port/port";
+import { storageTotal } from "./storageTally";
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); localStorage.setItem(STORAGE, "zh"); boot(); });
 const language = (lang: string) => { localStorage.setItem(STORAGE, lang); boot(); };
 const block = (anchor: string) => document.querySelector<HTMLElement>(`[data-setting="${anchor}"]`);
 
-function draw() {
+async function draw() {
   const port = new MockPort();
   const calls: string[] = [];
   const watched = new Proxy(port, {
@@ -24,6 +25,8 @@ function draw() {
       return (...args: unknown[]) => { calls.push(key); return value.apply(own, args); };
     },
   }) as unknown as AgentPort;
+  // Search owns no storage work; cold-window timing has its own regression.
+  await storageTotal(watched);
   const onClose = vi.fn();
   render(<Settings
     hub={new MockHub() as never} port={watched}
@@ -41,7 +44,7 @@ it.each(["market", "plugins", "mcp", "skills", "ext-runtime", "hooks", "composit
   async (anchor) => {
     language("en");
     const entry = SETTING_AT(anchor)!;
-    const { find, calls } = draw();
+    const { find, calls } = await draw();
     await act(async () => {});
     expect(block(anchor)).toBeNull();
     const reads = [...calls];
@@ -66,7 +69,7 @@ it.each(["market", "plugins", "mcp", "skills", "ext-runtime", "hooks", "composit
 
 it("finds extension blocks by the displayed section name without mounting them", async () => {
   language("en");
-  const { find, calls, onClose } = draw();
+  const { find, calls, onClose } = await draw();
   await act(async () => {});
   const reads = [...calls];
   await userEvent.type(find(), "Extension");
