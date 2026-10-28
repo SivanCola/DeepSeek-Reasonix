@@ -10,6 +10,7 @@ import { ariaChord, chord } from "./keys";
 import { PhonePop } from "./PhonePop";
 import { ViewSwitch } from "./ViewSwitch";
 import { TooltipButton } from "./TooltipButton";
+import { workspaceDirectoryDescription } from "./workspaceDirectory";
 import { WindowControls, zoomOnTitleBar } from "./WindowControls";
 import type { PaneView } from "../state/paneview";
 
@@ -99,9 +100,9 @@ export function Chrome({ port, status, title, steer, account, host, theme, onThe
           <span className="crumb-proj" title={root}>
             {project}
           </span>
-          <span className="isolab" hidden={!ws || ws.current !== root} title={root}>
-            {ws?.isolated ? t("隔离目录") : t("原目录")}
-          </span>
+          {ws?.isolated && ws.current === root && <span className="isolab" title={`${workspaceDirectoryDescription(true)}\n${root}`}>
+            {t("独立工作树")}
+          </span>}
           <span className="isolab hostlab" hidden={!host}>
             {host}
           </span>

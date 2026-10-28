@@ -48,15 +48,19 @@ it("closes the project's worktree panes when removing the grouped project", asyn
   expect(removeWorkspace).toHaveBeenCalledWith(root);
 });
 
-it.each([[false, "原目录"], [true, "隔离目录"]])("identifies the conversation's directory when isolated=%s", async (isolated, label) => {
+it.each([false, true])("only shows a directory badge when isolated=%s", async (isolated) => {
   const port = new MockPort();
   const current = isolated ? copy : root;
   vi.spyOn(port, "workspaces").mockResolvedValue({ current, isolated, canSwitch: true, canIsolate: true, recents: [] });
-  render(<Chrome port={port} status={{ workspaceRoot: current, sessionPath: path } as never}
+  await act(async () => { render(<Chrome port={port} status={{ workspaceRoot: current, sessionPath: path } as never}
     title="工作" steer={0} account={null} theme="dark" onTheme={vi.fn()}
-    onFind={vi.fn()} view="flow" rows={0} surfaces={0} onView={vi.fn()} />);
-  expect(await screen.findByText(label)).toBeTruthy();
-  expect(screen.getByText(label).getAttribute("title")).toBe(current);
+    onFind={vi.fn()} view="flow" rows={0} surfaces={0} onView={vi.fn()} />); });
+  expect(screen.queryByText("项目目录")).toBeNull();
+  if (isolated) {
+    expect(screen.getByText("独立工作树").getAttribute("title")).toBe(`在单独的 Git 工作目录中修改代码；端口、数据库等运行资源仍可能共享。\n${current}`);
+  } else {
+    expect(screen.queryByText("独立工作树")).toBeNull();
+  }
 });
 
 it("ignores old checkout metadata when switching conversations before it arrives", async () => {
@@ -68,9 +72,8 @@ it("ignores old checkout metadata when switching conversations before it arrives
   const props = { title: "工作", steer: 0, account: null, theme: "dark" as const,
     onTheme: vi.fn(), onFind: vi.fn(), view: "flow" as const, rows: 0, surfaces: 0, onView: vi.fn() };
   const { rerender } = render(<Chrome {...props} port={old} status={{ workspaceRoot: copy } as never} />);
-  rerender(<Chrome {...props} port={next} status={{ workspaceRoot: root } as never} />);
-  expect(await screen.findByText("原目录")).toBeTruthy();
+  await act(async () => { rerender(<Chrome {...props} port={next} status={{ workspaceRoot: root } as never} />); });
   await act(async () => finish({ current: copy, isolated: true, canSwitch: true, canIsolate: true, recents: [] }));
-  expect(screen.getByText("原目录").hidden).toBe(false);
-  expect(screen.queryByText("隔离目录")).toBeNull();
+  expect(screen.queryByText("项目目录")).toBeNull();
+  expect(screen.queryByText("独立工作树")).toBeNull();
 });
