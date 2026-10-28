@@ -7,9 +7,13 @@ let group: string | null = null;
 const listeners = new Set<() => void>();
 
 function set(next: string | null) {
-  if (next === group) return;
   group = next;
   for (const l of listeners) l();
+}
+
+export function subscribeGroupStage(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
 }
 
 export const openGroupStage = (id: string) => set(id);
@@ -17,10 +21,7 @@ export const closeGroupStage = () => set(null);
 
 export function useGroupStage(): string | null {
   return useSyncExternalStore(
-    (l) => {
-      listeners.add(l);
-      return () => void listeners.delete(l);
-    },
+    subscribeGroupStage,
     () => group,
   );
 }
