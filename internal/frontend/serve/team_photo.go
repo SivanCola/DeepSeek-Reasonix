@@ -5,12 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
-	"log/slog"
 	"net/http"
 	"os"
 	"strings"
 
-	"reasonix/internal/session/team"
 	"reasonix/internal/state/teamroster"
 )
 
@@ -53,28 +51,19 @@ func (t *hubTeam) setPhoto(w http.ResponseWriter, r *http.Request) {
 		teamError(w, err)
 		return
 	}
-	name, err := t.store.SaveAvatar(data)
-	if err != nil {
-		teamError(w, err)
-		return
-	}
-	t.wearPhoto(w, r, name)
+	t.wearPhoto(w, r, data)
 }
 
-func (t *hubTeam) clearPhoto(w http.ResponseWriter, r *http.Request) { t.wearPhoto(w, r, "") }
+func (t *hubTeam) clearPhoto(w http.ResponseWriter, r *http.Request) { t.wearPhoto(w, r, nil) }
 
 // wearPhoto puts name on the agent, empty taking the photo off, and drops the
 // pictures nobody wears any more.
-func (t *hubTeam) wearPhoto(w http.ResponseWriter, r *http.Request, name string) {
-	if _, err := t.service().UserUpdateAgent(r.Context(), r.PathValue("id"), team.UserAgentChange{Photo: &name}); err != nil {
+func (t *hubTeam) wearPhoto(w http.ResponseWriter, r *http.Request, data []byte) {
+	if err := t.store.SetAgentPhoto(r.Context(), r.PathValue("id"), data); err != nil {
 		teamError(w, err)
 		return
 	}
-	if roster, err := t.store.Load(); err == nil {
-		if err := t.store.PruneAvatars(roster); err != nil {
-			slog.Warn("serve: prune team photos", "err", err)
-		}
-	}
+	t.changed()
 	t.writeView(w)
 }
 

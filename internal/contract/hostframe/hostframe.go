@@ -17,26 +17,50 @@ type Attr struct{ Name, Value string }
 
 var defusers sync.Map
 
+// hostTags is the complete vocabulary whose authority belongs to the team host.
+var hostTags = []string{"agent-message", "agent-reply", "group-turn", "line", "event", "agent-identity", "team-roster", "group-roster", "team-memory", "scheduled-task"}
+
 func defuser(tag string) *regexp.Regexp {
 	if re, ok := defusers.Load(tag); ok {
 		return re.(*regexp.Regexp)
 	}
-	re, _ := defusers.LoadOrStore(tag, regexp.MustCompile(`(?i)<(\s*/?\s*`+regexp.QuoteMeta(tag)+`)`))
+	tags := append([]string{}, hostTags...)
+	if tag != "" {
+		tags = append(tags, tag)
+	}
+	for i := range tags {
+		tags[i] = regexp.QuoteMeta(tags[i])
+	}
+	re, _ := defusers.LoadOrStore(tag, regexp.MustCompile(`(?i)<(\s*/?\s*(?:`+strings.Join(tags, "|")+`))\b`))
 	return re.(*regexp.Regexp)
 }
 
-// Block renders body as "<tag a="v">\nbody\n</tag>\n". Every opening or closing
-// of tag inside body has its '<' escaped as "<\".
+// Fragment is host framing or escaped data; its contents cannot be forged by callers.
+type Fragment struct{ text string }
+
+func (f Fragment) String() string { return f.text }
+
+// Text makes arbitrary content inert with respect to the host's vocabulary.
+func Text(body string) Fragment { return Fragment{defuser("").ReplaceAllString(body, `<\$1`)} }
+
+// Block frames arbitrary content, defusing every host tag rather than only its own.
 func Block(tag string, attrs []Attr, body string) string {
+	return Frame(tag, attrs, Fragment{defuser(tag).ReplaceAllString(body, `<\$1`)}).String()
+}
+
+// Frame composes already framed or escaped fragments without unescaping their leaves.
+func Frame(tag string, attrs []Attr, parts ...Fragment) Fragment {
 	var b strings.Builder
 	b.WriteString("<" + tag)
 	for _, a := range attrs {
 		fmt.Fprintf(&b, " %s=%q", a.Name, a.Value)
 	}
 	b.WriteString(">\n")
-	b.WriteString(defuser(tag).ReplaceAllString(body, `<\$1`))
+	for _, part := range parts {
+		b.WriteString(part.text)
+	}
 	b.WriteString("\n</" + tag + ">\n")
-	return b.String()
+	return Fragment{b.String()}
 }
 
 // Token reduces a name someone other than the host chose to at most limit

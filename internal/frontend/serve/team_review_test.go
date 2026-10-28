@@ -11,6 +11,7 @@ import (
 	"reasonix/internal/session/control"
 	"reasonix/internal/session/team"
 	"reasonix/internal/state/memory"
+	"reasonix/internal/state/teamroster"
 )
 
 type reviewCalls struct {
@@ -53,6 +54,9 @@ func waitFor(t *testing.T, what string, ok func() bool) {
 // team's switch stops it altogether.
 func TestATurnThePersonSpokeInIsFoldedIntoTheAgentsMemory(t *testing.T) {
 	h, ids := teamHub(t, "Chief", "Ada")
+	if err := h.team.service().UserSetMemoryReview(t.Context(), true); err != nil {
+		t.Fatal(err)
+	}
 	calls := &reviewCalls{}
 	h.team.reviews.delay, h.team.reviews.ask = time.Millisecond, calls.ask
 	seat := team.SeatRef{Agent: ids["Ada"]}
@@ -87,11 +91,21 @@ func TestATurnThePersonSpokeInIsFoldedIntoTheAgentsMemory(t *testing.T) {
 	}
 }
 
-// A new team reviews by default, as DS-Bot's does.
-func TestATeamReviewsMemoryByDefault(t *testing.T) {
-	h, _ := teamHub(t, "Chief")
-	if v := newTeamClient(t, h).view("GET", "/team", nil); !v.Prefs.MemoryReview {
+func TestATeamDoesNotReviewMemoryWithoutOptIn(t *testing.T) {
+	h, ids := teamHub(t, "Chief", "Ada")
+	if v := newTeamClient(t, h).view("GET", "/team", nil); v.Prefs.MemoryReview {
 		t.Fatalf("a new team's prefs = %+v", v.Prefs)
+	}
+	c := newTeamClient(t, h)
+	g := c.view("POST", "/team/groups", map[string]any{"members": []string{ids["Chief"], ids["Ada"]}}).Groups[0].ID
+	if _, err := h.team.store.AppendLine(t.Context(), g, teamroster.GroupLine{From: teamroster.ByUser, Kind: teamroster.LinePost, Text: "remember my preferences"}); err != nil {
+		t.Fatal(err)
+	}
+	calls := &reviewCalls{}
+	h.team.reviews.ask = calls.ask
+	h.team.reviews.review(team.SeatRef{Agent: ids["Chief"], Group: g})
+	if calls.count() != 0 {
+		t.Fatal("review transmitted conversation without opt-in")
 	}
 }
 
@@ -99,6 +113,9 @@ func TestATeamReviewsMemoryByDefault(t *testing.T) {
 // group's memory, each line once.
 func TestAGroupsLogIsFoldedIntoTheGroupsMemory(t *testing.T) {
 	h, ids := teamHub(t, "Chief", "Ada")
+	if err := h.team.service().UserSetMemoryReview(t.Context(), true); err != nil {
+		t.Fatal(err)
+	}
 	calls := &reviewCalls{}
 	h.team.reviews.ask = calls.ask
 	c := newTeamClient(t, h)
@@ -111,6 +128,19 @@ func TestAGroupsLogIsFoldedIntoTheGroupsMemory(t *testing.T) {
 	facts, _ := team.SharedStore(h.team.opts.Dir, team.TierGroup, g).List()
 	if len(facts) != 1 || !strings.Contains(calls.first(), "the launch is on Friday") {
 		t.Fatalf("group memory = %+v after %d calls", facts, calls.count())
+	}
+	log, err := h.team.store.Lines(g, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	visible := false
+	for _, line := range log {
+		if line.Event == teamroster.EventMemory && strings.Contains(line.Text, "1 added") {
+			visible = true
+		}
+	}
+	if !visible {
+		t.Fatal("automatic shared-memory change was not shown in the group log")
 	}
 	h.team.reviews.review(seat)
 	if calls.count() != 1 {

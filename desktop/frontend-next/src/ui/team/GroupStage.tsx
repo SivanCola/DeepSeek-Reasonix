@@ -16,6 +16,7 @@ const EVERYONE = "*";
 
 function eventText(l: GroupLine, name: string): string {
   switch (l.event) {
+    case "memory": return l.text ?? t("共享记忆已更新");
     case "passed": return t("{name} 没有补充", { name });
     case "missed": return t("{name} 超时未回应，轮到下一位", { name });
     case "working": return t("{name} 转入后台继续工作", { name });
@@ -64,7 +65,7 @@ function GroupChat({ group, view, team, onAdoptPane, onSaved }: {
   const [settings, setSettings] = useState(false);
   const end = useRef<HTMLDivElement>(null);
   const agents = new Map(view.agents.map((a) => [a.id, a]));
-  const nameOf = (id: string) => (id === "user" ? t("你") : agents.get(id)?.name ?? t("另一个 Agent"));
+  const nameOf = (id: string) => (id === "user" ? t("你") : id === "scheduler" ? t("定时任务") : agents.get(id)?.name ?? t("另一个 Agent"));
   const members = group.members.map((m) => agents.get(m)).filter((a): a is TeamAgent => !!a);
   const lastSeq = lines.at(-1)?.seq ?? 0;
 

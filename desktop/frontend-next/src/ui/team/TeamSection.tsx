@@ -44,7 +44,7 @@ export function TeamSection({ hub }: { hub: HubPort }) {
         </div>
       </Group>
       {view && team && (
-        <Group id="team-schedules" title={t("定时任务")} hint={t("到了设定的时间，把一段话发给某个 Agent 或群聊，就像你那时亲自发的一样。只在 Reasonix 开着时运行；关着时错过的时刻不会补发。")}>
+        <Group id="team-schedules" title={t("定时任务")} hint={t("到了设定的时间，把任务作为调度记录交给 Agent 或群聊，不视为你刚发出的消息；敏感操作仍需审批。只在 Reasonix 开着时运行，错过的时刻不会补发。")}>
           <ScheduleList team={team} view={view} />
         </Group>
       )}
@@ -53,10 +53,10 @@ export function TeamSection({ hub }: { hub: HubPort }) {
           <div className="lrow">
             <span className="tx">
               <span className="lb">{t("自动整理记忆")}</span>
-              <span className="ds">{t("默认开启；关闭后只有 Agent 自己调用 remember 时才会记下")}</span>
+              <span className="ds">{t("默认关闭；开启后会将你的新消息和已有记忆发送给标题模型（未配置时使用默认聊天模型），不发送 Agent 回复。整理结果会显示在对应会话或群聊中。")}</span>
             </span>
-            <Switch data-action="team.memory-review" on={view.prefs?.memoryReview ?? true} busy={!!view.readOnly} label={t("自动整理记忆")}
-              onClick={() => void team.setPrefs({ memoryReview: !(view.prefs?.memoryReview ?? true) }).then(shown, (e) => pushToast(reason(e)))} />
+            <Switch data-action="team.memory-review" on={view.prefs?.memoryReview ?? false} busy={!!view.readOnly} label={t("自动整理记忆")}
+              onClick={() => void team.setPrefs({ memoryReview: !(view.prefs?.memoryReview ?? false) }).then(shown, (e) => pushToast(reason(e)))} />
           </div>
         </Group>
       )}

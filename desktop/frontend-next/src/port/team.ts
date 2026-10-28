@@ -104,7 +104,7 @@ export interface GroupLine {
   text?: string;
   length?: number;
   mentions?: string[];
-  event?: "passed" | "missed" | "working" | "finished" | "failed" | "paused" | "resumed" | "stopped" | "cut";
+  event?: "passed" | "missed" | "working" | "finished" | "failed" | "paused" | "resumed" | "stopped" | "cut" | "memory";
   count?: number;
   code?: string;
   late?: boolean;

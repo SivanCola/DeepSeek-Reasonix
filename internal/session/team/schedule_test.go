@@ -85,7 +85,7 @@ func TestADueGroupTaskIsPostedAsTheUsersMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines, _ := h.store.Lines(g, 0, 0)
-	if len(lines) != 1 || lines[0].From != teamroster.ByUser || lines[0].Schedule != sc.ID || !strings.Contains(lines[0].Text, "plan the week") {
+	if len(lines) != 1 || lines[0].From != teamroster.BySchedule || lines[0].Schedule != sc.ID || !strings.Contains(lines[0].Text, "plan the week") {
 		t.Fatalf("group log = %+v", lines)
 	}
 	if rs, _ := h.store.Round(g); rs.Speaking == nil {

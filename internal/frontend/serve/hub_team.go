@@ -34,6 +34,9 @@ type TeamHostOptions struct {
 // outside Reasonix's directories so it can be trusted. Nil when either cannot
 // be resolved.
 func DefaultTeamHost() *TeamHostOptions {
+	if team.CheckPlatform() != nil {
+		return nil
+	}
 	dir := config.RootsForHome("").TeamDir()
 	home, err := os.UserHomeDir()
 	if dir == "" || err != nil || home == "" {
@@ -52,17 +55,18 @@ const (
 // hubTeam is the hub's side of the team: the service when this process holds
 // the team's writer lease, and the runtimes it keeps for agents' seats.
 type hubTeam struct {
-	h       *Hub
-	opts    TeamHostOptions
-	store   teamroster.Store
-	writer  atomic.Pointer[teamWriter]
-	reviews *teamReviews
-	stop    chan struct{}
-	done    chan struct{}
-	opening sync.Map
-	mu      sync.Mutex
-	seats   map[team.SeatRef]string
-	holds   map[string]*teamHold
+	reviews   *teamReviews
+	h         *Hub
+	opts      TeamHostOptions
+	store     teamroster.Store
+	writer    atomic.Pointer[teamWriter]
+	stop      chan struct{}
+	done      chan struct{}
+	opening   sync.Map
+	mu        sync.Mutex
+	seats     map[team.SeatRef]string
+	holds     map[string]*teamHold
+	viewCache teamViewCache
 }
 
 // teamWriter is what exists while this process holds the team's writer lease.
@@ -158,6 +162,9 @@ func (t *hubTeam) Live(seat team.SeatRef) (team.Pane, bool) {
 // Ensure implements team.Panes: the seat's runtime, opened behind the window
 // when it is not open yet. A seat opens once however many ask at a time.
 func (t *hubTeam) Ensure(ctx context.Context, seat team.SeatRef) (team.Pane, error) {
+	if err := team.CheckPlatform(); err != nil {
+		return nil, err
+	}
 	lock := t.seatLock(seat)
 	lock.Lock()
 	defer lock.Unlock()
@@ -219,7 +226,8 @@ func (t *hubTeam) open(ctx context.Context, seat team.SeatRef) (*Runtime, error)
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(root, 0o755); err != nil {
+	private, err := t.prepareTeamFolder(r, seat, root)
+	if err != nil {
 		return nil, fmt.Errorf("%w: %w", team.ErrUnavailable, err)
 	}
 	// A seat closed before its first turn has a recorded path and no transcript.
@@ -242,6 +250,10 @@ func (t *hubTeam) open(ctx context.Context, seat team.SeatRef) (*Runtime, error)
 		_ = t.h.closeRuntimeNow(rt.ID)
 		return nil, fmt.Errorf("%w: the user declined to trust %s", team.ErrUnavailable, root)
 	default:
+		if !private {
+			_ = t.h.closeRuntimeNow(rt.ID)
+			return nil, errTeamFolderUntrusted
+		}
 		if err := ctrl.DecideWorkspaceTrust(config.WorkspaceTrusted); err != nil {
 			_ = t.h.closeRuntimeNow(rt.ID)
 			return nil, fmt.Errorf("%w: %w", team.ErrUnavailable, err)

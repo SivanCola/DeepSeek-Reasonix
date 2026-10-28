@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"reasonix/internal/contract/hostframe"
 	"reasonix/internal/state/memory"
 	"reasonix/internal/state/teamroster"
 )
@@ -124,5 +125,5 @@ func (s *Service) renderMemory(seat SeatRef, inGroup bool) string {
 		return ""
 	}
 	b.WriteString("Read a memory in full with recall_shared; save or correct one with remember_shared. Your own memory stays with the memory and remember tools.")
-	return b.String()
+	return hostframe.Text(b.String()).String()
 }

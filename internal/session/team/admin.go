@@ -52,6 +52,7 @@ func (s *Service) Bootstrap(ctx context.Context, name, role string) (teamroster.
 func (s *Service) UserSetMemoryReview(ctx context.Context, on bool) error {
 	defer s.changed()
 	_, err := s.store.Update(ctx, func(r *teamroster.Roster) error {
+		r.Prefs.MemoryReviewOn = on
 		r.Prefs.MemoryReviewOff = !on
 		return nil
 	})
