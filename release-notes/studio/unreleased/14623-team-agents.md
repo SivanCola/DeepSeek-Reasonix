@@ -3,6 +3,7 @@
 ## 新增
 
 - 侧栏的团队区块：主 Agent（Chief）、你建的 Agent 和群聊，按最近活动排序。 #14623
+- 团队和项目可通过相同的标题/箭头折叠整个分区，保留筛选与各项目的展开状态；展开/收起所有项目移至项目的更多菜单。 #14623
 - 每个 Agent 有自己的名字、角色、指令、头像和长期对话，详情抽屉里看模型与用量。 #14623
 - Agent 之间用 message_agent 派活，回复自动回到发起方，对话里可以展开往来。 #14623
 - 群聊：点名、交给下一位、接力上限后暂停等你继续、停止某个成员、往前翻页。 #14623
@@ -19,6 +20,7 @@ Team: long-lived agents that hand work to each other and take turns in group cha
 ## New
 
 - A Team block in the sidebar: Chief, the agents you create and group chats, by latest activity. #14623
+- Team and Projects share a title/chevron to fold the whole section while preserving filters and individual project folds. Expand/collapse all projects lives in the Projects more menu. #14623
 - Each agent has a name, role, instructions, avatar and long-lived chat; a drawer shows model and usage. #14623
 - Agents hand work on with message_agent; replies return to the sender and expand in the chat. #14623
 - Group chats: mention, hand on, pause at the relay limit until you continue, stop a member, page back. #14623

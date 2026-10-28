@@ -6,6 +6,7 @@ import type { HubPort, RuntimeView } from "../../port/hub";
 import type { TeamAgent, TeamGroup, TeamView } from "../../port/team";
 import { useTeam } from "../../state/team";
 import { setTeamFolded, useTeamFolded } from "../../state/teamFold";
+import { RailSectionToggle } from "../RailSectionToggle";
 import { closeGroupStage, openGroupStage, useGroupStage } from "../../state/teamStage";
 import { isUnread, noteSeen, useTeamUnread } from "../../state/teamUnread";
 import { pushToast } from "../../state/toasts";
@@ -197,13 +198,8 @@ export function TeamRail({ hub, active, onAdoptPane }: { hub: HubPort; active: s
     <section className="team-rail" aria-label={t("团队")}>
       <div className="team-rail-head">
         <span className="team-rail-title">
-          <h2>{t("团队")}</h2>
-          {view.agents.length > 0 && (
-            <button type="button" className="team-rail-fold" data-action="team.fold" aria-expanded={!folded}
-              aria-label={folded ? t("展开团队") : t("收起团队")} title={folded ? t("展开团队") : t("收起团队")} onClick={() => setTeamFolded(!folded)}>
-              <StudioIcon name={folded ? "chevron" : "down"} />
-            </button>
-          )}
+          <RailSectionToggle title={t("团队")} label={folded ? t("展开团队") : t("收起团队")}
+            folded={folded} onToggle={() => setTeamFolded(!folded)} section="team" />
           {folded && waiting > 0 && <span className="team-rail-waiting">{t("{n} 个在等你", { n: waiting })}</span>}
         </span>
         {!readOnly && view.agents.length > 0 && (
@@ -230,8 +226,8 @@ export function TeamRail({ hub, active, onAdoptPane }: { hub: HubPort; active: s
         </div>,
         document.body,
       )}
-      {readOnly && <p className="team-note">{t("团队正在另一个 Reasonix 窗口中编辑，这里只能查看")}</p>}
-      {folded && view.agents.length > 0 ? null : view.agents.length === 0 ? (
+      {!folded && readOnly && <p className="team-note">{t("团队正在另一个 Reasonix 窗口中编辑，这里只能查看")}</p>}
+      {folded ? null : view.agents.length === 0 ? (
         !readOnly && (
           <div className="team-welcome">
             <h3>{t("组建你的团队")}</h3>

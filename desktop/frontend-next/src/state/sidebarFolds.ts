@@ -23,3 +23,17 @@ export function useSidebarFolds(): [Set<string>, (next: Set<string>) => void] {
   };
   return [folded, save];
 }
+
+/** Section visibility is independent of each project's remembered fold. */
+export function useProjectsFolded(): [boolean, (next: boolean) => void] {
+  const key = "rx-projects-folded";
+  const [folded, setFolded] = useState(() => {
+    try { return localStorage.getItem(key) === "1"; } catch { return false; }
+  });
+  return [folded, (next) => {
+    setFolded(next);
+    try { localStorage.setItem(key, next ? "1" : "0"); } catch {
+      // A private window still keeps the choice until the page closes.
+    }
+  }];
+}

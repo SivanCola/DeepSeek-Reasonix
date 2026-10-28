@@ -165,17 +165,22 @@ it("an agent's settings say what its conversations have spent", async () => {
 it("the team folds, stays folded, and counts who is waiting meanwhile", async () => {
   localStorage.removeItem("rx-team-folded");
   const { hub, team } = await seeded();
-  const view = render(<TeamRail hub={hub} active="" onAdoptPane={vi.fn()} />);
+  const adopt = vi.fn();
+  const view = render(<TeamRail hub={hub} active="team-a-chief" onAdoptPane={adopt} />);
   await screen.findByRole("button", { name: "Ada 写手" });
-  await userEvent.click(screen.getByRole("button", { name: "收起团队" }));
+  await userEvent.click(within(screen.getByRole("heading", { name: "团队" })).getByText("团队"));
   expect(screen.queryByRole("button", { name: "Ada 写手" })).toBeNull();
+  expect(screen.getByRole("button", { name: "新建 Agent" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "团队的更多操作" })).toBeTruthy();
+  expect(adopt).not.toHaveBeenCalled();
   act(() => team.setActivity("a-1", { state: "needs_you", runtime: "r9" }));
   expect(await screen.findByText("1 个在等你")).toBeTruthy();
   view.unmount();
   render(<TeamRail hub={hub} active="" onAdoptPane={vi.fn()} />);
   expect(await screen.findByRole("button", { name: "展开团队" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Ada 写手" })).toBeNull();
-  await userEvent.click(screen.getByRole("button", { name: "展开团队" }));
+  screen.getByRole("button", { name: "展开团队" }).focus();
+  await userEvent.keyboard(" ");
   expect(await screen.findByRole("button", { name: "Ada 等你处理" })).toBeTruthy();
 });
 

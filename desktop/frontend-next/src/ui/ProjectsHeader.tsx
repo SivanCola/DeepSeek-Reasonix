@@ -7,9 +7,12 @@ import { RailSlots } from "./railSlots";
 import { pinToViewport } from "./place";
 import { StudioIcon } from "./StudioIcon";
 import { workspaceMenuKeys } from "./WorkspaceOrder";
+import { RailSectionToggle } from "./RailSectionToggle";
 
-export function ProjectsHeader({ adder, canSelect, selecting, onSelect, onToggleAll, allFolded, canFold, searching }: {
+export function ProjectsHeader({ adder, folded, onFold, canSelect, selecting, onSelect, onToggleAll, allFolded, canFold, searching }: {
   adder: Adder;
+  folded: boolean;
+  onFold: (folded: boolean) => void;
   canSelect: boolean;
   selecting: boolean;
   onSelect: () => void;
@@ -37,14 +40,8 @@ export function ProjectsHeader({ adder, canSelect, selecting, onSelect, onToggle
     {lead}
     <div className="projects-header">
       <div className="projects-heading">
-        <span className="projects-heading-title">{t("项目")}
-          {onToggleAll && <button className="projects-toggle" data-action="workspace.fold-all"
-            disabled={!canFold || searching} aria-expanded={!allFolded}
-            title={t(searching ? "搜索时自动展开项目" : allFolded ? "展开所有项目" : "收起所有项目")}
-            aria-label={t(allFolded ? "展开所有项目" : "收起所有项目")} onClick={onToggleAll}>
-            <StudioIcon name={allFolded ? "expandAll" : "collapseAll"} />
-          </button>}
-        </span>
+        <RailSectionToggle title={t("项目")} label={folded ? t("展开项目") : t("收起项目")}
+          folded={folded} onToggle={() => onFold(!folded)} section="projects" />
         <span className="projects-heading-actions">
           <button className="projects-add" data-busy={adder.busy ? "" : undefined} disabled={adder.busy}
             title={t("打开项目")} aria-label={t("打开项目")} data-action="workspace.add" onClick={() => adder.add()}>
@@ -57,14 +54,20 @@ export function ProjectsHeader({ adder, canSelect, selecting, onSelect, onToggle
           </button>
         </span>
       </div>
-      {filters}
+      <div hidden={folded}>{filters}</div>
       {open && createPortal(
         <div ref={menu} className="session-pop" role="menu" aria-label={t("项目列表的更多操作")}
           data-action-keydown="machine.menu" onKeyDown={workspaceMenuKeys}>
           <div className="session-pop-head"><b>{t("项目")}</b></div>
           <div className="session-pop-group">
+            {onToggleAll && <button type="button" role="menuitem" data-action="workspace.fold-all"
+              disabled={!canFold || searching} title={searching ? t("搜索时自动展开项目") : undefined}
+              onClick={() => { close(); onToggleAll(); }}>
+              <StudioIcon name={allFolded ? "expandAll" : "collapseAll"} />
+              <span>{t(allFolded ? "展开所有项目" : "收起所有项目")}</span>
+            </button>}
             <button role="menuitem" data-action="session.selection" data-value="start"
-              disabled={!canSelect || selecting} onClick={() => { close(); onSelect(); }}>
+              disabled={!canSelect || selecting} onClick={() => { close(); onFold(false); onSelect(); }}>
               <StudioIcon name="check" /><span>{t("选择本机会话")}</span>
             </button>
           </div>
