@@ -170,6 +170,23 @@ jobs:
         shell: pwsh
         run: Get-CimInstance Win32_Processor | Select-Object -ExpandProperty Name
 
+      - name: test (Windows concurrency contracts)
+        if: env.RUN_STEPS == 'true' && runner.os == 'Windows' && github.event_name == 'pull_request'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          node --test scripts/windows-concurrency-tests.test.mjs
+          node scripts/windows-concurrency-tests.mjs "$RUNNER_TEMP/concurrency-windows.jsonl"
+
+      - name: upload Windows concurrency inventory
+        if: always() && env.RUN_STEPS == 'true' && runner.os == 'Windows' && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: concurrency-windows-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/concurrency-windows.jsonl
+          if-no-files-found: error
+          retention-days: 7
+
       - name: test
         if: env.RUN_STEPS == 'true' && runner.os != 'Windows'
         env:
