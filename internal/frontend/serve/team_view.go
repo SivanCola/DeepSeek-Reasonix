@@ -179,11 +179,11 @@ func (t *hubTeam) groupView(g teamroster.Group) teamGroupView {
 		Mode: string(g.Mode), RelayLimit: g.RelayLimit, Folder: g.Folder, Pinned: g.Pinned, Hidden: g.Hidden, Archived: g.Archived,
 		Round: teamRoundView{Queue: []string{}, Working: []string{}, Limit: team.RelayLimit(g)},
 	}
-	if lines, err := t.store.LinesBefore(g.ID, 0, 1); err == nil && len(lines) == 1 {
+	if lines, err := t.lastGroupLine(g.ID); err == nil && len(lines) == 1 {
 		v.LastSeq, v.LastActivityAt = lines[0].Seq, lines[0].At.UnixMilli()
 		v.Preview = strings.TrimSpace(lines[0].Text)
 	}
-	if rs, err := t.store.Round(g.ID); err == nil {
+	if rs, err := t.groupRound(g.ID); err == nil {
 		if rs.Speaking != nil {
 			v.Round.Speaking = rs.Speaking.Member
 		}

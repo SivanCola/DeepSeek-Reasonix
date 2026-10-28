@@ -71,6 +71,30 @@ func TestTeamViewCacheSeesNewHistoryAndUsageAfterRewriteAndRestart(t *testing.T)
 	}
 }
 
+func TestTeamGroupCacheTracksAppendAndRoundChanges(t *testing.T) {
+	h, ids := teamHub(t, "Chief", "Ada")
+	g, err := h.team.service().UserCreateGroup(t.Context(), team.UserGroupChange{Members: []string{ids["Chief"], ids["Ada"]}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{"first", "second"} {
+		if _, err := h.team.store.AppendLine(t.Context(), g.ID, teamroster.GroupLine{From: teamroster.ByUser, Kind: teamroster.LinePost, Text: text}); err != nil {
+			t.Fatal(err)
+		}
+		if got := h.team.groupView(g).Preview; got != text {
+			t.Fatalf("preview=%q want=%q", got, text)
+		}
+	}
+	for _, relays := range []int{1, 2} {
+		if err := h.team.store.SaveRound(t.Context(), g.ID, teamroster.RoundState{Relays: relays}); err != nil {
+			t.Fatal(err)
+		}
+		if got := h.team.groupView(g).Round.Relays; got != relays {
+			t.Fatalf("relays=%d want=%d", got, relays)
+		}
+	}
+}
+
 func TestNewHubSettlesPersistedDeliveredAndWaitingExchanges(t *testing.T) {
 	if err := team.CheckPlatform(); err != nil {
 		t.Skip(err)
