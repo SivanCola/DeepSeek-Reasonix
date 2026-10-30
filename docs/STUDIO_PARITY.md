@@ -2,7 +2,7 @@
 owner: @esengine
 backup: @SivanCola
 status: active
-reviewed: 2026-10-08
+reviewed: 2026-10-29
 ---
 
 # Studio parity with the 1.x desktop app
@@ -89,7 +89,7 @@ Checked against `studio` at `d779d89bc` on 2026-10-08.
 | Browser panel | Have | `ui/BrowserPanel.tsx` |
 | Integrated terminal panel | Unverified | `ui/Shell.tsx` only chooses the shell; no terminal view was found by name; no issue yet |
 | Worktree merge dialog | Unverified | Worktree handling exists in `ui/Workspaces.tsx`; the merge flow was not checked |
-| Scheduled tasks (heartbeat) | Missing | #11384 |
+| Scheduled tasks (heartbeat) | Have differently | Scheduled runs exist (`ui/ScheduledRuns.tsx` and the schedule API, with budgets, breakers and pause reasons); 1.x's separate heartbeat loop was not ported; #11384 |
 | Keyboard shortcuts cheat sheet | Unverified | Key handling is in `ui/keys.ts`, `ui/windowkeys.ts`; no cheat sheet found by name; no issue yet |
 | CSV and media preview in the workspace panel | Have differently | `ui/document`: CSV/TSV, PDF and still images render in the workbench; audio/video remain unsupported. CSV/TSV、PDF 和图片可直接阅读，音视频仍不支持内联预览。 |
 | File delivery cards / 文件交付卡片 | Have | `present_files` and `ui/document/DeliveryCard.tsx`: validated file references reopen in the shared workbench; auxiliary actions live in More. 已验证文件引用复用工作台标签，辅助操作位于“更多”。 |

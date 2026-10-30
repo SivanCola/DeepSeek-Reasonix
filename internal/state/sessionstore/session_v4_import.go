@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 
 	"reasonix/internal/contract/provider"
 	"reasonix/internal/state/sessionv4"
+	"reasonix/internal/state/store"
 )
 
 // ImportSource records that a session was brought over from a store this
@@ -280,6 +282,23 @@ func isMessagePrefixOf(copied, full []provider.Message) bool {
 	return err == nil && have == want
 }
 
+// v4CopyBegun reports whether an import has already put something of its own at
+// path: the transcript or any sidecar that is not a rebuildable index.
+func v4CopyBegun(path string) bool {
+	return sessionArtifactExistsExcept(path, store.SessionEventIndex(path), store.SessionDisplayIndex(path))
+}
+
+// removeOrphanIndexes drops the indexes of a transcript that is not there, so a
+// fresh copy is not mistaken for one already begun and the stale index is not
+// read as the new transcript's.
+func removeOrphanIndexes(path string) {
+	for _, index := range []string{store.SessionEventIndex(path), store.SessionDisplayIndex(path)} {
+		if err := os.Remove(index); err != nil && !os.IsNotExist(err) {
+			slog.Warn("session: stale index not removed before import", "path", index, "err", err)
+		}
+	}
+}
+
 // withV4Sessions adds the 1.x v4 conversations beside dir that have no import
 // yet; an imported one is already in the list as its own transcript.
 func withV4Sessions(dir string, out []SessionInfo) []SessionInfo {
@@ -295,7 +314,7 @@ func withV4Sessions(dir string, out []SessionInfo) []SessionInfo {
 			continue
 		}
 		path := v4ImportPath(dir, id)
-		if !IsVisibleSession(path) || sessionArtifactExists(path) {
+		if !IsVisibleSession(path) || v4CopyBegun(path) {
 			continue
 		}
 		listing, err := r.resolve(context.Background(), dir, source, readLegacyTranscript)
@@ -386,6 +405,9 @@ func ImportV4From(store fs.FS, dir string, route func(V4Origin) V4Placement, imp
 			}
 		}
 		path := v4ImportPath(target, id)
+		if !v4CopyBegun(path) {
+			removeOrphanIndexes(path)
+		}
 		if sessionArtifactExists(path) {
 			start := BranchMeta{}
 			if importedAs != nil {

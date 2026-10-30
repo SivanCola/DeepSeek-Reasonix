@@ -1152,6 +1152,30 @@ test("only the Studio window reads or writes the preferences", () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test("only the Studio main frame reports a validated resolved theme", () => {
+  const handlers = {};
+  const studio = { mainFrame: {} };
+  const browser = { mainFrame: {} };
+  const paints = [];
+  registerPrefs({ on: (name, fn) => (handlers[name] = fn) }, () => "", event => event.sender === studio,
+    () => {}, paint => paints.push(paint));
+  const send = (sender, senderFrame, paint) => handlers["prefs:theme"]({ sender, senderFrame }, paint);
+  send(browser, browser.mainFrame, { mode: "scheduled", scheme: "dark" });
+  send(studio, {}, { mode: "scheduled", scheme: "dark" });
+  send(studio, null, { mode: "scheduled", scheme: "dark" });
+  for (const paint of [null, [], "dark", { mode: "scheduled" }, { mode: "scheduled", scheme: "auto" },
+    { mode: "other", scheme: "dark" }, { mode: "light", scheme: "dark" }, { mode: "dark", scheme: "light" }]) {
+    send(studio, studio.mainFrame, paint);
+  }
+  assert.deepEqual(paints, []);
+  for (const mode of ["scheduled", "auto", "dark"]) send(studio, studio.mainFrame, { mode, scheme: "dark", extra: "discarded" });
+  send(studio, studio.mainFrame, { mode: "light", scheme: "light" });
+  assert.deepEqual(paints, [
+    { mode: "scheduled", scheme: "dark" }, { mode: "auto", scheme: "dark" },
+    { mode: "dark", scheme: "dark" }, { mode: "light", scheme: "light" },
+  ]);
+});
+
 function elf64(interpreter, machine = 62) {
   const phoff = 64, phentsize = 56, phnum = interpreter ? 2 : 1;
   const dataOffset = phoff + phnum * phentsize;
@@ -2181,6 +2205,31 @@ test("the window frame takes the stored theme, and auto follows the system", () 
   assert.equal(themeSourceFor({ "rx-theme": "auto" }), "system");
   assert.equal(themeSourceFor({ "rx-theme": "midnight" }), "system");
   assert.equal(themeSourceFor(undefined), "system");
+});
+
+test("scheduled grounds and frames follow the painted scheme rather than the opposite OS", () => {
+  const prefs = { "rx-theme": "scheduled" };
+  for (const [scheme, systemDark] of [["dark", false], ["light", true]]) {
+    const painted = { mode: "scheduled", scheme };
+    assert.equal(themeSourceFor(prefs, painted), scheme);
+    assert.equal(groundFor(prefs, systemDark, painted), GROUND[scheme]);
+    const saved = { ...prefs, "rx-theme-resolved": scheme };
+    assert.equal(themeSourceFor(saved), scheme);
+    assert.equal(groundFor(saved, systemDark), GROUND[scheme]);
+  }
+  assert.equal(themeSourceFor({ ...prefs, "rx-theme-resolved": "invalid" }), "system");
+});
+
+test("the latest painted mode wins over delayed preference saves without pinning Auto", () => {
+  const stale = { "rx-theme": "scheduled", "rx-theme-resolved": "dark" };
+  const auto = { mode: "auto", scheme: "dark" };
+  assert.equal(themeSourceFor(stale, auto), "system");
+  assert.equal(groundFor(stale, false, auto), GROUND.light);
+  assert.equal(groundFor(stale, true, auto), GROUND.dark);
+  const light = { mode: "light", scheme: "light" };
+  assert.equal(themeSourceFor(stale, light), "light");
+  assert.equal(groundFor(stale, true, light), GROUND.light);
+  assert.equal(themeSourceFor({ "rx-theme": "light" }, { mode: "scheduled", scheme: "dark" }), "dark");
 });
 
 const { accelerationOff, shouldDisableGpu, graphicsReport, graphicsHandler, PREF_KEY: GPU_PREF } = require("../src/graphics.js");

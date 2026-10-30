@@ -8,6 +8,8 @@ import { MockPort } from "../port/mock";
 import { HttpError } from "../port/port";
 import type { RuntimeView } from "../port/hub";
 import { draftKey } from "./drafts";
+import { RunningMessageSetting } from "./RunningMessageSetting";
+import { setRunningMessageIntent } from "../state/prefs";
 
 afterEach(() => { cleanup(); localStorage.clear(); vi.restoreAllMocks(); });
 
@@ -32,6 +34,43 @@ async function open(port = new MockPort()) {
 }
 
 describe("queued submission and withdrawal", () => {
+  it("changes running submission from steering to a follow-up through the shared setting", async () => {
+    const port = await open();
+    const steer = vi.spyOn(port, "steer");
+    const followup = vi.spyOn(port, "queueFollowup");
+    render(<RunningMessageSetting />);
+    fireEvent.click(screen.getByRole("radio", { name: "整轮结束后发送" }));
+    type(BODY);
+    expect(screen.getByText("Enter 排队 · Shift+Enter 换行")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "排队发送" }));
+    await screen.findByRole("button", { name: "取回" });
+    expect(followup).toHaveBeenCalledWith(BODY, undefined);
+    expect(steer).not.toHaveBeenCalled();
+    expect((await port.queue()).items[0].intent).toBe("followup");
+    fireEvent.click(screen.getByRole("button", { name: "取回" }));
+    await waitFor(() => expect(box().value).toBe(BODY));
+    fireEvent.click(screen.getByRole("radio", { name: "下个工具边界插话" }));
+    expect(screen.getByRole("button", { name: "插话" })).toBeTruthy();
+  });
+
+  it("holds a preferred follow-up while paused and restores it after reload", async () => {
+    setRunningMessageIntent("followup");
+    const port = new MockPort();
+    await port.setQueuePaused(true);
+    await open(port);
+    type(BODY);
+    fireEvent.click(screen.getByRole("button", { name: "排队发送" }));
+    await screen.findByText("待发送已暂停，这条消息已排入队列，点“继续派发”后才会发送");
+    expect(screen.queryByRole("button", { name: "立即发送" })).toBeNull();
+    cleanup();
+    render(<Pane {...props} port={port} />);
+    await screen.findByRole("button", { name: "取回" });
+    expect(box().value).toBe("");
+    expect((await port.queue()).items[0].intent).toBe("followup");
+    fireEvent.click(screen.getByRole("button", { name: "取回" }));
+    await waitFor(() => expect(box().value).toBe(BODY));
+  });
+
   it.each(["", "A new draft", BODY])("clears on submit and restores once beside %j", async (draft) => {
     const port = await open();
     vi.spyOn(port, "steer").mockImplementation((text) => port.queueFollowup(text));

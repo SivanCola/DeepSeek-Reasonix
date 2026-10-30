@@ -108,6 +108,8 @@ export const ACTIONS: UIAction[] = [
   { id: "appearance.live-stream-budget", kind: "view", target: "none", proof: "interaction" },
   { id: "appearance.session-quick-actions", kind: "view", target: "none", proof: "interaction" },
   { id: "appearance.new-answer-marker", kind: "view", target: "none", proof: "interaction" },
+  { id: "appearance.plan-progress", kind: "view", target: "none", proof: "interaction" },
+  { id: "appearance.composer-hint", kind: "view", target: "none", proof: "interaction" },
   { id: "appearance.graphics", kind: "view", target: "none", proof: "interaction" },
   { id: "window.global-shortcut", kind: "shell-native", target: "none", proof: "browser" },
   { id: "appearance.session-tabs", kind: "view", target: "none", proof: "interaction" },
@@ -124,6 +126,10 @@ export const ACTIONS: UIAction[] = [
   { id: "workspace.worktree-toggle", kind: "view", target: "none", proof: "interaction" },
   { id: "workspace.search", kind: "view", target: "none", proof: "interaction" },
   { id: "session.filter", kind: "view", target: "none", proof: "interaction" },
+  { id: "session.recent", kind: "view", target: "none", proof: "interaction" },
+  { id: "session.recent-environment", kind: "view", target: "none", proof: "interaction" },
+  { id: "session.recent-page", kind: "view", target: "none", proof: "interaction" },
+  { id: "session.recent-retry", kind: "repeatable", target: "none", proof: "interaction" },
   { id: "session.more", kind: "repeatable", target: "none", proof: "interaction" },
   { id: "session.selection", kind: "view", target: "optional", proof: "interaction" },
   { id: "session.batch-archive", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
@@ -148,6 +154,7 @@ export const ACTIONS: UIAction[] = [
   { id: "chrome.receipt-line", kind: "view", target: "none", proof: "interaction" },
   { id: "chrome.keep-awake", kind: "view", target: "none", proof: "interaction" },
   { id: "composer.send-shortcut", kind: "view", target: "none", proof: "interaction" },
+  { id: "composer.running-message-intent", kind: "view", target: "none", proof: "interaction" },
   { id: "transcript.fold", kind: "view", target: "none", proof: "interaction" },
   { id: "transcript.fold-preset", kind: "view", target: "none", proof: "interaction" },
   { id: "transcript.fold-preview", kind: "view", target: "none", proof: "interaction" },
@@ -511,6 +518,7 @@ export const ACTIONS: UIAction[] = [
   { id: "versions.notes", kind: "repeatable", target: "none", proof: "interaction" },
   { id: "versions.notes-retry", kind: "repeatable", target: "none", proof: "interaction" },
   { id: "versions.notes-close", kind: "view", target: "none", proof: "interaction" },
+  { id: "versions.full-installer", kind: "repeatable", target: "none", proof: "interaction" },
   { id: "versions.notes-lang", kind: "view", target: "none", proof: "interaction" },
   { id: "shell.executor", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
   { id: "shell.custom-path", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
@@ -562,11 +570,7 @@ export const ACTIONS: UIAction[] = [
   // different capability from changing its opacity, so the four sliders share
   // one id and say which parameter on data-value.
   //
-  // These stay apart on purpose. theme.activate installs a palette pack;
-  // appearance.scheme is light, dark or follow-the-system. wallpaper.change
-  // and wallpaper.remove decide which image there is; appearance.background is
-  // how the image that is already there is drawn. And weight and contrast are
-  // two different things a reader wants, however alike they look in CSS.
+  // A pack supplies colours; the scheme decides when its light or dark set is used.
   { id: "appearance.language", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
   { id: "appearance.zoom", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
   { id: "web-access.backend", kind: "kernel-mutation", target: "none", proof: "authority-effect" },
@@ -591,6 +595,7 @@ export const ACTIONS: UIAction[] = [
   // Kept where the window keeps them: these are this browser's, and no kernel
   // state moves.
   { id: "appearance.scheme", kind: "view", target: "none", proof: "browser" },
+  { id: "appearance.schedule", kind: "view", target: "entity", proof: "browser" },
   { id: "appearance.weight", kind: "view", target: "none", proof: "browser" },
   { id: "appearance.contrast", kind: "view", target: "none", proof: "browser" },
   { id: "appearance.effects", kind: "view", target: "none", proof: "browser" },
