@@ -93,6 +93,18 @@ describe("pages inside the appearance section", () => {
   });
 });
 
+describe("the shortcuts page", () => {
+  it("lists what stops or sends a turn together, before the key table", async () => {
+    draw("appearance");
+    await userEvent.click(await screen.findByRole("tab", { name: /快捷键/ }));
+    await waitFor(() => expect(shown("send-shortcut")).toBe(true));
+    const order = [...document.querySelectorAll<HTMLElement>("[data-setting]")]
+      .filter((el) => shown(el.dataset.setting ?? ""))
+      .map((el) => el.dataset.setting);
+    expect(order).toEqual(["send-shortcut", "running-message-intent", "esc-stop", "keys"]);
+  });
+});
+
 describe("what wraps a setting leaves with it", () => {
   it("hides the disclosure around a setting together with the setting", async () => {
     draw("appearance:navrail");

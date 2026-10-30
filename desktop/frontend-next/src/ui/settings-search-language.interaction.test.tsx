@@ -5,11 +5,11 @@ import userEvent from "@testing-library/user-event";
 import "./testkit";
 import { Settings } from "./Settings";
 import { SETTINGS, SECTION_NAME, SETTING_AT, settingMatches } from "./prefsnav";
+import { storageTotal } from "./storageTally";
 import { boot, STORAGE, t } from "../i18n";
 import { MockPort } from "../port/mock";
 import { MockHub } from "../port/mock_hub";
 import type { AgentPort, SessionStatus } from "../port/port";
-import { storageTotal } from "./storageTally";
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); localStorage.setItem(STORAGE, "zh"); boot(); });
 const language = (lang: string) => { localStorage.setItem(STORAGE, lang); boot(); };
@@ -28,6 +28,11 @@ async function draw() {
   // Search owns no storage work; cold-window timing has its own regression.
   await storageTotal(watched);
   const onClose = vi.fn();
+  // The pane tallies the disk usage a beat after it opens, and that walk reads
+  // the port. A known total means no walk is scheduled at all, so the search
+  // is measured against the port as it stood — not against a timer that fires
+  // midway through the search and reads the port on the way past.
+  await storageTotal(watched);
   render(<Settings
     hub={new MockHub() as never} port={watched}
     status={{ preset: "balanced", toolApprovalMode: "ask" } as SessionStatus}

@@ -16,6 +16,7 @@
     "smoke": "electron test/smoke.js",
     "browser-live": "electron test/browser_live.js",
     "shortcut-live": "electron test/globalshortcut_live.js",
+    "theme-live": "electron test/theme_live.js",
     "browser-resize-live": "electron test/browser_resize_live.js",
     "browser-fit-live": "electron test/browser_fit_live.js",
     "browser-fit-pages": "electron test/browser_fit_pages.js",
