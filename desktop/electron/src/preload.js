@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld("reasonixHost", {
   platform: process.platform,
   titleBar,
   setUnreadBadge: (unread) => ipcRenderer.invoke("window:unread-badge", unread),
+  syncTheme: (mode, scheme) => ipcRenderer.send("prefs:theme", { mode, scheme }),
   minimiseWindow: () => ipcRenderer.invoke("window:minimise"),
   toggleMaximiseWindow: () => ipcRenderer.invoke("window:toggle-maximise"),
   isWindowMaximised: () => ipcRenderer.invoke("window:is-maximised"),

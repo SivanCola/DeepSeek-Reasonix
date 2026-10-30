@@ -82,6 +82,7 @@ func recordAll(s Sink) {
 	RecordProjectCheckProbe(s, ProjectCheckProbe{})
 	RecordSubagentHandoff(s, SubagentHandoffAudit{})
 	RecordVerificationContractDrift(s, VerificationContractDrift{})
+	CaptureUsageScope(s)
 }
 
 // AuditForwarder is why a new capability does not have to be repeated at every
@@ -144,4 +145,9 @@ func TestSessionChainDeliversAudits(t *testing.T) {
 	if len(recorder.recorded) != 1 || recorder.recorded[0] != "ProtocolRecovery" {
 		t.Fatalf("protocol recovery never reached the recorder: %v", recorder.recorded)
 	}
+}
+
+func (s *capturingSink) CaptureUsageScope() any {
+	s.recorded = append(s.recorded, "UsageScope")
+	return s
 }

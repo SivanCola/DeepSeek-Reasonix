@@ -202,10 +202,20 @@ func (s *Session) withSessionSaveLocks(path string, fn func() error) error {
 }
 
 func sessionArtifactExists(path string) bool {
+	return sessionArtifactExistsExcept(path)
+}
+
+// sessionArtifactExistsExcept is sessionArtifactExists without the named
+// sidecars: an index is rebuilt from the transcript, so with no transcript
+// beside it, it says nothing about whether the conversation exists.
+func sessionArtifactExistsExcept(path string, ignore ...string) bool {
 	if _, err := os.Lstat(path); err == nil {
 		return true
 	}
 	for _, artifact := range store.SessionSidecarFiles(path) {
+		if slices.Contains(ignore, artifact) {
+			continue
+		}
 		// A legacy v0 event transcript can share the native
 		// `<id>.events.jsonl` name with the destination being imported. It is
 		// intentionally left in place, and must not make SaveIfAbsent believe

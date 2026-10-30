@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { t } from "../i18n";
 import { reason } from "../i18n/kernel";
 import { keepPasteAsFile, PasteKeep, type PasteChip } from "./pastekeep";
-import type { AgentPort, ChipCall, ModelEntry, SessionStatus, WorkspaceGit } from "../port/port";
+import type { AgentPort, ChipCall, ModelEntry, SessionStatus, WorkspaceGit, WorkspaceInfo } from "../port/port";
 import { Picker } from "./Menu";
 import { BranchChip } from "./BranchChip";
 import { WorktreeChip } from "./WorktreeChip";
@@ -18,7 +18,7 @@ import { ChipMirror, useSkillChips } from "./ChipMirror";
 import { useIme } from "./ime";
 import { usePlaceholderFit } from "./placeholderfit";
 import { useFitHeight } from "./fitHeight";
-import { useSendShortcut } from "../state/prefs";
+import { onComposerHintChange, showsComposerHint, useRunningMessageIntent, useSendShortcut } from "../state/prefs";
 import { sendAria, sendHint, sendsOnKey } from "./sendkey";
 import { countLines, pasteIsLong, planTone, planVerb } from "./intake";
 import { kindOf, nameOf, previewURL } from "./chipfile";
@@ -68,10 +68,10 @@ interface Props {
   sidePanel?: ReactNode;
   changeCount?: number;
   countElsewhere?: boolean;
-  // The work tree's Git state as git itself reports it, refreshed on the same
-  // path as changeCount (turn boundaries, writes). null is "not answered yet";
-  // repo:false is a workspace with no repository, and the two render apart.
+  // Git state follows changeCount's refresh path (turn boundaries and writes).
+  // null is unread; repo:false is a workspace without a repository.
   git?: WorkspaceGit | null;
+  workspace?: WorkspaceInfo | null;
   // The switch already answers with the workspace's Git state.
   onTreeChanged?: (git: WorkspaceGit) => void;
   // Bumped when settings change; a source edited there can change the ladder.
@@ -79,7 +79,7 @@ interface Props {
   draftKey?: string;
 }
 
-export function Composer({ port, status, running, queued = false, quote, restore, inject, focus, onSubmit, onChanged, onError, onSettings = () => {}, side = false, onSide, sidePanel, changeCount = 0, countElsewhere = false, git = null, onTreeChanged, pulse = 0, draftKey = "", fresh = false, worktreeTarget, onWorktreePhase }: Props) {
+export function Composer({ port, status, running, queued = false, quote, restore, inject, focus, onSubmit, onChanged, onError, onSettings = () => {}, side = false, onSide, sidePanel, changeCount = 0, countElsewhere = false, git = null, workspace = null, onTreeChanged, pulse = 0, draftKey = "", fresh = false, worktreeTarget, onWorktreePhase }: Props) {
   const touch = touchKeyboard();
   const providerOrder = useProviderOrder();
   const modelGroups = useModelFilter();
@@ -195,6 +195,7 @@ export function Composer({ port, status, running, queued = false, quote, restore
   }, chips, addSession);
   const ime = useIme();
   const sendShortcut = useSendShortcut();
+  const runningIntent = useRunningMessageIntent();
 
   // A counter, not a boolean: asking twice in a row has to move the cursor twice.
   useEffect(() => {
@@ -217,7 +218,9 @@ export function Composer({ port, status, running, queued = false, quote, restore
     pending.current = null;
   }, []);
   useFitHeight(box, text, placeCaret);
-  const placeholder = usePlaceholderFit(box, queued ? [t("继续输入以排队后续修改"), t("继续输入…"), "…"] : [t("描述任务、问题或要改的内容…"), t("描述任务…"), "…"]);
+  const showHint = useSyncExternalStore(onComposerHintChange, showsComposerHint, showsComposerHint);
+  const fittedPlaceholder = usePlaceholderFit(box, queued ? [t("继续输入以排队后续修改"), t("继续输入…"), "…"] : [t("描述任务、问题或要改的内容…"), t("描述任务…"), "…"]);
+  const placeholder = showHint ? fittedPlaceholder : "";
 
   // Attachments ride into the turn as path references, exactly as they do from
   // the CLI — the host saved the bytes, the turn parser resolves the token. A
@@ -637,7 +640,7 @@ export function Composer({ port, status, running, queued = false, quote, restore
               ? t("正在添加附件…")
               : failed
                 ? t("有附件添加失败，请重试或移除")
-                : sendHint(sendShortcut, running, touch)}
+                : sendHint(sendShortcut, running, touch, runningIntent)}
         </span>
         {showCount && <span className="fcount">{t("{n} 字 · {lines} 行", { n: text.length, lines })}</span>}
       </div>
@@ -691,7 +694,7 @@ export function Composer({ port, status, running, queued = false, quote, restore
             label={<><StudioIcon name="agent" /><span className="studio-sr-label">{t("计划")}</span><span>{status?.plan ? "Plan" : "Agent"}</span><StudioIcon name="down" /></>}
           />
         </div>
-        {git?.repo && (worktree.sources || status?.workspaceRoot) ? <WorktreeChip port={port} onChanged={onChanged} onSwitched={onTreeChanged} onError={onError} changeCount={countElsewhere ? 0 : changeCount} sources={worktree.sources ?? { available: false, sourceRoot: status?.workspaceRoot ?? "", sources: [] }} canCreate={fresh && !!worktree.sources?.available} selection={worktree.selection} branch={git.branch} busy={submitting || running} onSelect={worktree.setSelection} refresh={worktree.refresh} /> : <BranchChip port={port} git={git} changeCount={changeCount} countElsewhere={countElsewhere} onChanged={onChanged} onSwitched={onTreeChanged} onError={onError} />}
+        {git?.repo && (worktree.sources || status?.workspaceRoot) ? <WorktreeChip port={port} workspace={workspace} onChanged={onChanged} onSwitched={onTreeChanged} onError={onError} changeCount={countElsewhere ? 0 : changeCount} sources={worktree.sources ?? { available: false, sourceRoot: status?.workspaceRoot ?? "", sources: [] }} canCreate={fresh && !!worktree.sources?.available} selection={worktree.selection} branch={git.branch} busy={submitting || running} onSelect={worktree.setSelection} refresh={worktree.refresh} /> : <BranchChip port={port} git={git} changeCount={changeCount} countElsewhere={countElsewhere} onChanged={onChanged} onSwitched={onTreeChanged} onError={onError} />}
         {/* The toggle keeps its legacy meaning: it follows `plan`, which the
             kernel turns off the moment a plan is approved. The lifecycle is a
             separate reading — an approved plan is still running, and saying so
@@ -788,7 +791,7 @@ export function Composer({ port, status, running, queued = false, quote, restore
                 <path d="M8 12.8V3.4M4.2 7.2 8 3.4l3.8 3.8" />
               </svg>
             </span>
-            <span>{t(submitting ? "正在发送…" : running ? "插话" : "发送")}</span>
+            <span>{t(submitting ? "正在发送…" : running ? runningIntent === "followup" ? "排队发送" : "插话" : "发送")}</span>
           </button>}
         </span>
       </div>
