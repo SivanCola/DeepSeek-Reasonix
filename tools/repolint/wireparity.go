@@ -47,9 +47,13 @@ const tuiInboxFile = "internal/frontend/tui/client_inbox.go"
 // mirroredWireTypes are the Go types the desktop keeps a second, hand-written
 // copy of: the graph, whose consumers all fold the same deltas, and the sandbox
 // editor, which draws a security posture a field it cannot read would get
-// wrong. Declared and not inferred, for the reason the sensitive paths are: no
-// spelling tells a mirrored contract from a struct with json tags.
-var mirroredWireTypes = []wireMirror{
+// wrong. Declared and not inferred: no spelling tells a mirrored contract from
+// a struct with json tags. Two files only so neither outgrows the line ceiling.
+var mirroredWireTypes = slices.Concat(mirroredWireTypesHead, mirroredWireTypesTail)
+
+// mirroredWireTypesHead is the table's first half; wireparity_table.go holds
+// the rest.
+var mirroredWireTypesHead = []wireMirror{
 	{"internal/frontend/serve/workspace_files.go", "workspaceFile", tsWorkspaceFile, "WorkspaceFile"},
 	{"internal/base/workspacefile/file.go", "Ref", tsWorkspaceFile, "FileRef"},
 	{"internal/base/workspacefile/file.go", "Info", tsWorkspaceFile, "PreviewInfo"},
@@ -381,6 +385,11 @@ var partialWireMirrors = []partialWireMirror{
 	// reopened session shows the rewrite as the model's own.
 	{"internal/frontend/serve/history.go", "historyToolCall", "internal/frontend/tui/client.go", "HistoryToolCall",
 		[]string{"id", "name", "arguments", "argumentNormalization", "resolvedName", "capabilityId"}},
+	// The terminal's copy of /history's message. It draws no picture, but the
+	// count tells an image-only turn from host chrome, and via/modelRef are
+	// what a reload can no longer say once the reader drops them.
+	{"internal/frontend/serve/history.go", "historyMessage", "internal/frontend/tui/client.go", "HistoryMessage",
+		[]string{"images", "via", "modelRef"}},
 }
 
 // partialWireMirror is one declared subset: readerFile's readerType must carry

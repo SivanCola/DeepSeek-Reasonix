@@ -1731,7 +1731,7 @@
   .turntools > .picker:first-of-type .nm { flex: 1; min-width: 0 }
   .go { display: inline-flex; align-items: center; gap: 7px; flex: none }
 
-  .compose .row > * { position: relative; z-index: 1; animation: rowin var(--m-panel) both }
+  .compose .row > * { position: relative; z-index: 8; animation: rowin var(--m-panel) both }
   @keyframes rowin { from { opacity: 0; transform: translateY(4px) } to { opacity: 1; transform: none } }
 
   .compose .row [data-pending] { pointer-events: none; opacity: .5; transition: opacity var(--m-line) }
@@ -2470,7 +2470,7 @@
     margin: 0; flex: 1; min-width: 0; font: var(--w-reg) var(--fs-ui) var(--ui); color: var(--faint);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .prefs-hd .btn { flex: none; align-self: center }
+  .prefs-hd > .btn { flex: none; align-self: center; height: 32px; display: inline-flex; align-items: center; justify-content: center }
   .prefs-hd .esc { margin-left: 5px; font: var(--w-reg) var(--fs-micro) var(--mono); color: var(--ghost) }
 
   .prefs-body { flex: 1; display: grid; grid-template-columns: 240px minmax(0, 1fr); min-height: 0 }
@@ -2532,33 +2532,6 @@
   .prefs-col { max-width: 760px }
 
   .prefs-main[data-sec="ext"] .prefs-col { max-width: 980px }
-
-  .prefs-intro {
-    display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 13px;
-    margin-bottom: 20px; padding: 0 2px 17px; border-bottom: 1px solid var(--hair);
-  }
-
-  .prefs-intro-mark {
-    display: grid; place-items: center; width: 34px; height: 34px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-md); background: var(--overlay); color: var(--muted);
-  }
-  .prefs-intro-mark svg {
-    width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.45;
-    stroke-linecap: round; stroke-linejoin: round;
-  }
-  .prefs-intro-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0 }
-  .prefs-intro-overline {
-    font: var(--w-semi) var(--fs-micro) var(--ui); letter-spacing: .14em; text-transform: uppercase; color: var(--faint);
-  }
-  .prefs-intro h2 { margin: 0; font: var(--w-semi) var(--fs-title)/1.25 var(--ui); color: var(--text); letter-spacing: -.01em }
-  .prefs-intro-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; min-width: 0 }
-  .prefs-intro-meta strong {
-    max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    font: var(--w-med) var(--fs-ui) var(--mono); color: var(--muted);
-  }
-  .prefs-intro-meta > span { font: var(--w-reg) var(--fs-meta) var(--ui); color: var(--ghost) }
-  .prefs-intro-meta[data-danger] strong { color: var(--err-ink) }
 
   .grp {
     margin-bottom: 16px; padding: 19px 20px 17px; outline: 3px solid transparent; outline-offset: 2px;
@@ -2659,11 +2632,6 @@
     .prefs-find { grid-column: 1 / -1; grid-row: 2; width: 100%; max-width: none; margin-left: 0 }
     .prefs-found { right: 14px; width: calc(100% - 28px) }
     .prefs-main { --main-pad-b: 40px; padding: 20px 14px var(--main-pad-b) }
-    .prefs-intro { grid-template-columns: auto minmax(0, 1fr); gap: 11px; margin-bottom: 16px }
-    .prefs-intro-meta {
-      grid-column: 2; flex-direction: row; align-items: baseline; justify-content: space-between;
-    }
-    .prefs-intro-meta strong { max-width: 60% }
     .grp { padding: 17px 15px 15px }
     .advset { padding-inline: 15px }
   }
@@ -5059,6 +5027,8 @@
   }
   .fontown::placeholder { color: var(--ghost) }
   .fontown:focus-visible { outline: 2px solid var(--focus); outline-offset: -1px }
+  .fontown[type="time"] { color-scheme: light }
+  :root[data-theme="dark"] .fontown[type="time"] { color-scheme: dark }
 
   .fontsample {
     padding: 7px 10px; border-radius: var(--r-sm); background: var(--overlay);

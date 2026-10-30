@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"encoding/xml"
 	"os"
 	"path/filepath"
 	"slices"
@@ -87,4 +88,32 @@ func TestAMentionDoesNotEatAFileNamedLikeIt(t *testing.T) {
 	if len(errs) != 0 || !strings.Contains(block, "adam's notes") {
 		t.Fatalf("block = %q, errs = %v", block, errs)
 	}
+}
+
+func TestAgentReferenceNameIsOneXMLAttribute(t *testing.T) {
+	path, _ := savedConversation(t, testenv.TempDir(t), "question", "answer")
+	svc, chief, ada := seatedTeam(t, path)
+	name := `Ada "quoted" & <peer>`
+	if _, err := svc.UserUpdateAgent(t.Context(), ada, team.UserAgentChange{AgentChange: team.AgentChange{Name: &name}}); err != nil {
+		t.Fatal(err)
+	}
+	c := seatedController(t, svc, chief)
+	block, errs := c.ResolveScopedRefs(t.Context(), "@agent:"+ada)
+	if len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	token, err := xml.NewDecoder(strings.NewReader(strings.TrimSpace(block))).Token()
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, ok := token.(xml.StartElement)
+	if !ok || start.Name.Local != "agent-chat" || len(start.Attr) != 3 {
+		t.Fatalf("reference header = %#v", token)
+	}
+	for _, attr := range start.Attr {
+		if attr.Name.Local == "name" && attr.Value == name {
+			return
+		}
+	}
+	t.Fatal("agent name did not round-trip as one attribute")
 }

@@ -337,9 +337,12 @@ function fitted() {
 }
 
 const storedPrefs = () => loadPrefs(prefsFile(app.getPath("userData")));
-const ground = () => groundFor(storedPrefs(), nativeTheme.shouldUseDarkColors);
+let paintedTheme = null;
+const ground = () => groundFor(storedPrefs(), nativeTheme.shouldUseDarkColors, paintedTheme);
 const followTheme = () => {
-  nativeTheme.themeSource = themeSourceFor(storedPrefs());
+  const source = themeSourceFor(storedPrefs(), paintedTheme);
+  if (nativeTheme.themeSource !== source) nativeTheme.themeSource = source;
+  if (win && !win.isDestroyed()) win.setBackgroundColor(ground());
 };
 
 function createWindow() {
@@ -400,9 +403,11 @@ const uiLang = () => uiLanguage(loadPrefs(prefsFile(app.getPath("userData"))), a
 registerPrefs(ipcMain, () => prefsFile(app.getPath("userData")), fromWindow, () => {
   installApplicationMenu(uiLang);
   followTheme();
-  if (win && !win.isDestroyed()) win.setBackgroundColor(ground());
   void powerGuard?.refresh();
   browserViews?.setSleepAfterMs(pageSleepAfterMs(storedPrefs()));
+}, paint => {
+  paintedTheme = paint;
+  followTheme();
 });
 nativeTheme.on("updated", () => {
   if (win && !win.isDestroyed()) win.setBackgroundColor(ground());

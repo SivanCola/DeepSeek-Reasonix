@@ -72,6 +72,25 @@ go run ./cmd/reasonix serve                       # from the repository root
 cd desktop/frontend-next && pnpm install && pnpm dev   # :5273, proxies API paths
 ```
 
+## Messages sent during a run
+
+**Settings → Appearance → Keyboard shortcuts → Messages sent while running** chooses the default:
+
+- **Steer at the next tool boundary** (default) adds guidance to the current run.
+- **Send after the whole run** queues a new turn until the active run finishes.
+
+The choice is local to this device's browser profile, applies across projects,
+and survives reloads. It does not change idle sends or messages already queued.
+Skill invocations continue to use follow-up turns.
+
+The queue still supports hold/resume, editing, and taking a message back into
+the composer. **Send now** overrides the wait for a selected message by stopping
+the current response and starting that message as a new turn; it is unavailable
+while the queue is held.
+
+Guidance not delivered before a run ends still becomes a follow-up through the
+kernel's existing queue.
+
 ## Global show/hide shortcut
 
 In the desktop shell, **Settings → Appearance → Global show / hide shortcut**
