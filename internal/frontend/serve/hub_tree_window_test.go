@@ -91,7 +91,7 @@ func TestTreeRefusesAnUnreadableWindow(t *testing.T) {
 	hubRuntime(t, h, testenv.TempDir(t))
 	srv := httptest.NewServer(operatorHandler(h))
 	defer srv.Close()
-	for _, q := range []string{"?limit=-1", "?limit=many", "?limits=nope", `?limits=%7B%22a%22%3A-2%7D`} {
+	for _, q := range []string{"?limit=-1", "?limit=many", "?limits=nope", `?limits=%7B%22a%22%3A-2%7D`, "?order=unknown", "?offset=1", "?order=recent&offset=-1", "?order=recent&offset=9223372036854775807"} {
 		resp, err := http.Get(srv.URL + "/tree" + q)
 		if err != nil {
 			t.Fatal(err)

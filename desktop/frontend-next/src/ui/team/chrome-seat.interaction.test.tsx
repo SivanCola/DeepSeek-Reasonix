@@ -26,6 +26,7 @@ function draw(hub: MockHub, seat?: RuntimeView["team"], port: MockPort | null = 
   render(
     <Chrome
       port={port}
+      workspace={{ current: "/home/u/Reasonix Team/a-chief", isolated: true, canSwitch: true, canIsolate: true, recents: [] }}
       status={{ preset: "balanced", toolApprovalMode: "ask", workspaceRoot: "/home/u/Reasonix Team/a-chief", sessionPath: "/s.jsonl" } as never}
       title="会话" steer={0} account={null} theme="dark" onTheme={vi.fn()} onFind={vi.fn()}
       view="flow" rows={0} surfaces={0} onView={vi.fn()} hub={hub} seat={seat} onError={vi.fn()}

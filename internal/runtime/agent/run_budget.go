@@ -46,6 +46,7 @@ type runBudget struct {
 	requests     int
 	promptTokens int
 	outputTokens int
+	tokens       uint64
 	cost         runCost
 	// limit is configuration, not accumulation: it survives the reset that
 	// starts a new task.
@@ -59,6 +60,7 @@ type runBudget struct {
 // reads cheaper than the turn actually was.
 func (b *runBudget) observe(usage *provider.Usage, quote *pricing.CostQuote) {
 	b.rounds++
+	b.tokens = addBudgetTokens(b.tokens, budgetUsageTokens(usage))
 	b.cost.observe(usage, quote)
 	if usage == nil {
 		return
@@ -93,7 +95,7 @@ func (b *runBudget) totals() event.RunBudgetTotals {
 // usage or prices; unknown spend cannot erase a proven crossing.
 func (b *runBudget) exceeded(limit TaskBudget) (axis, detail string) {
 	if limit.Tokens > 0 {
-		if used := b.promptTokens + b.outputTokens; used >= limit.Tokens {
+		if used := b.tokens; used >= uint64(limit.Tokens) {
 			return "token", fmt.Sprintf("task used %d tokens, reaching the %d budget", used, limit.Tokens)
 		}
 	}
