@@ -28,6 +28,7 @@ interface Props {
   // controls that need a session simply do nothing until one is focused.
   port: AgentPort | null;
   status: SessionStatus | null;
+  workspace: WorkspaceInfo | null;
   title?: string;
   steer: number;
   account: AccountState | null;
@@ -44,7 +45,7 @@ interface Props {
   onError?: (e: unknown) => void;
 }
 
-export function Chrome({ port, status, title, steer, account, host, theme, onTheme, onFind, view, rows, surfaces, onView, hub, onError }: Props) {
+export function Chrome({ port, status, workspace: ws, title, steer, account, host, theme, onTheme, onFind, view, rows, surfaces, onView, hub, onError }: Props) {
   const root = status?.workspaceRoot || status?.cwd || "";
   const project = root ? base(root) : "—";
   // The folder mark opens the project itself. Only a shell that can enter a
@@ -56,13 +57,6 @@ export function Chrome({ port, status, title, steer, account, host, theme, onThe
   const openProject = () => {
     if (hub && root) void hub.openWorkspace(root).catch((e) => onError?.(e));
   };
-  const [ws, setWs] = useState<WorkspaceInfo | null>(null);
-  useEffect(() => {
-    let current = true;
-    setWs(null);
-    if (port) port.workspaces().then((value) => { if (current) setWs(value); }).catch(() => { if (current) setWs(null); });
-    return () => { current = false; };
-  }, [port, root]);
 
   const gathered = useFolded("bar");
   const [more, setMore] = useState(false);

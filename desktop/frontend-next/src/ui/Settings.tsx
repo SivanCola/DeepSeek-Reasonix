@@ -75,7 +75,6 @@ import { Storage } from "./Storage";
 import { Appearance, SCHEMES } from "./Appearance";
 import { ScopeBar } from "./CapabilityScope";
 import { savedNotApplied, reason } from "../i18n/kernel";
-import { SettingsHeading } from "./SettingsHeading";
 import type { SettingsProps as Props } from "./SettingsProps";
 import { APPROVALS, approvalName, approvalNote } from "./approvals";
 
@@ -425,7 +424,6 @@ export function Settings({ hub, onError, port, networkPort, localWorkspacePort, 
               and it is the one thing here whose mount really is the cause. */}
           <div className="prefs-col" key={at}>
           <SettingsPageStyle section={at} page={pageNow} />
-          <SettingsHeading section={at} value={nav[at]} danger={danger(at)} />
           {/* Every refused write on every page lands in one state, so it is
               said in one place. Copied onto the pages somebody remembered, it
               was missing from the third that writes it: 创建隔离副本 was

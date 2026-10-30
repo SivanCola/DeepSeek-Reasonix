@@ -103,6 +103,7 @@ function benchPack(): ThemePack | null {
 }
 
 class BenchPort extends MockPort {
+  private driverRunning: boolean | undefined;
   opensFiles() { return query.has("deliveries") || super.opensFiles(); }
   revealsFiles() { return query.has("deliveries") || super.revealsFiles(); }
   async account() {
@@ -344,6 +345,8 @@ class BenchPort extends MockPort {
   }
 
   feed(ev: WireEvent) {
+    if (ev.kind === "turn_started") this.driverRunning = true;
+    if (ev.kind === "turn_done") this.driverRunning = false;
     // The driver's frames are the fixture's own frames: a fed approval has to
     // move /status the way a scripted one does, or a guard reads a card sitting
     // over a status that still says the turn is running.
@@ -421,6 +424,7 @@ class BenchPort extends MockPort {
       ? { turnsUsed: 4, tokensUsed: 128_400, requestsUsed: 9, workDurationMs: 12 * 60_000, noProgressTurns: usage === "blocked" ? 2 : 0, ...(usage === "blocked" ? { stopCause: "goal_stuck", lastReason: "测试一直没有通过，改动没有让失败的数量减少" } : {}) }
       : undefined;
     const st = { ...(await super.status()), ...(query.has("running") ? { running: true } : {}), ...(query.has("goal") ? { goal: query.get("goal") ?? "" } : {}), ...(usage ? { goalStatus: usage, goalRuntime } : {}), ...(query.has("fullaccess") ? { toolApprovalMode: "yolo" as const } : {}), ...(query.has("effort") ? { effort: query.get("effort") ?? "" } : {}), ...(query.has("modelref") ? { modelRef: query.get("modelref") ?? "" } : {}), ...(query.has("trustpending") ? { toolApprovalMode: "ask" as const, approvalDefault: { defaulted: true, writesConfined: true, trust: "" as const, trustable: true } } : {}) };
+    st.running = this.driverRunning ?? st.running;
     if (STATUS_MS > 0) await new Promise((r) => setTimeout(r, STATUS_MS));
     if (!JOBS) return st;
     const jobs = Array.from({ length: JOBS }, (_, i) => ({
@@ -509,10 +513,13 @@ const TREE_AT = performance.now() + Number(query.get("treems") ?? 0);
 // ?panes=0 opens the window with no conversation open; ?panes=N opens N.
 // ?tree=none answers every tree read with no folders.
 const PANES = query.has("panes") ? Number(query.get("panes")) : 1;
-const NO_PANES = PANES === 0;
 
 class BenchHub extends MockHub {
   readonly feeds = new Map<string, BenchPort>();
+
+  constructor() {
+    super(PANES);
+  }
 
   // ?search=1 answers every query with two conversations that say it.
   async searchHistory(q: string) {
@@ -524,12 +531,6 @@ class BenchHub extends MockHub {
   }
 
   private readonly settingsPort = new BenchPort();
-  private opened = false;
-
-  async open(req: Parameters<MockHub["open"]>[0]) {
-    this.opened = true;
-    return super.open(req);
-  }
 
   machinePort(): AgentPort {
     return this.settingsPort;
@@ -539,20 +540,6 @@ class BenchHub extends MockHub {
     let port = this.feeds.get(rt.id);
     if (!port) this.feeds.set(rt.id, (port = new BenchPort()));
     return port;
-  }
-
-  runtimes(): Promise<RuntimeView[]> {
-    if (NO_PANES && !this.opened) return Promise.resolve([]);
-    if (PANES <= 1) return super.runtimes();
-    return Promise.resolve(
-      Array.from({ length: PANES }, (_, i) => ({
-        id: `r${i + 1}`,
-        base: i === 0 ? "" : `/rt/r${i + 1}`,
-        root: "~/projects/DeepSeek-Reasonix",
-        name: "DeepSeek-Reasonix",
-        sessionPath: `/sessions/pane-${i + 1}.jsonl`,
-      })),
-    );
   }
 
   async moveSessionTo(path: string, target: string) {
@@ -574,16 +561,11 @@ class BenchHub extends MockHub {
       return new Promise((resolve) => setTimeout(() => resolve(answer), archived ? slow : 0));
     }
     const wait = TREE_AT - performance.now();
-    if (wait > 0) return new Promise((resolve) => setTimeout(() => resolve(this.tree()), wait));
+    if (wait > 0) return new Promise((resolve) => setTimeout(() => resolve(this.tree(window)), wait));
     if (query.get("tree") === "none") return Promise.resolve([]);
-    if (!WORKSPACES && query.has("trustpending") && PANES > 1) {
-      return super.tree().then((all) => all.map((ws, i) => i > 0 ? ws : { ...ws, sessions: Array.from({ length: PANES }, (_, k) => ({
-        path: `/sessions/pane-${k + 1}.jsonl`, name: `pane-${k + 1}`, title: `并行会话 ${k + 1}`, turns: 3, runtimeId: `r${k + 1}`,
-      })) }));
-    }
-    if (!WORKSPACES) return super.tree();
-    return Promise.resolve(
-      Array.from({ length: WORKSPACES }, (_, w) => ({
+    if (!WORKSPACES) return super.tree(window);
+    return super.runtimes().then((runtimes) =>
+      this.recentTree(Array.from({ length: WORKSPACES }, (_, w) => ({
         root: `~/projects/workspace-${w}`,
         name: `workspace-${w}`,
         remembered: true,
@@ -593,12 +575,13 @@ class BenchHub extends MockHub {
           name: `w${w}-s${s}`,
           title: query.has("rows") ? ROW_TITLES[s % ROW_TITLES.length] : `第 ${s} 次会话，标题是内核起的一句话`,
           turns: (s % 40) + 1,
+          runtimeId: runtimes.find((runtime) => runtime.sessionPath === `/sessions/w${w}-s${s}.jsonl`)?.id,
           ...(query.has("rows") ? {
             lastActiveAt: Date.now() - (9 + s) * 86_400_000,
             versions: s % 2 === 1 ? [{ path: `/sessions/w${w}-s${s}-v1.jsonl`, name: `w${w}-s${s}-v1`, title: ROW_TITLES[s % ROW_TITLES.length], turns: 1 }] : undefined,
           } : {}),
         }))),
-      })),
+      })), window),
     );
   }
 }

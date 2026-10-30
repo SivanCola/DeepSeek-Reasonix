@@ -53,6 +53,7 @@ export interface HostPort {
   toggleMaximiseWindow(): void;
   isWindowMaximised(): Promise<boolean>;
   closeWindow(): void;
+  syncTheme(mode: string, scheme: "light" | "dark"): void;
   /** Whether this shell can hand back a picture of its own window. */
   capturesWindow(): boolean;
   /** A PNG of this window as drawn now; null when the shell cannot or the
@@ -189,6 +190,7 @@ interface ElectronBridge {
   toggleMaximiseWindow(): Promise<void>;
   isWindowMaximised(): Promise<boolean>;
   closeWindow(): Promise<void>;
+  syncTheme?(mode: string, scheme: "light" | "dark"): void;
   captureWindow?(): Promise<Uint8Array | null>;
   graphics?(): Promise<GraphicsInfo | null>;
   globalShortcut?(): Promise<GlobalShortcutInfo | null>;
@@ -249,6 +251,9 @@ class ElectronHost implements HostPort {
   }
   closeWindow() {
     void this.api.closeWindow();
+  }
+  syncTheme(mode: string, scheme: "light" | "dark") {
+    this.api.syncTheme?.(mode, scheme);
   }
   capturesWindow() {
     return typeof this.api.captureWindow === "function";
@@ -370,6 +375,7 @@ class BrowserHost implements HostPort {
   captureWindow() {
     return Promise.resolve(null);
   }
+  syncTheme() {}
   showTextContextMenu() {
     return Promise.resolve(null);
   }

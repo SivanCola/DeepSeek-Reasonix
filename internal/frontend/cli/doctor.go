@@ -238,7 +238,18 @@ func doctorRedactSessionsCommand(args []string) int {
 		}
 		fmt.Fprintf(os.Stdout, "session secret cleanup %s %d/%d files", action, res.FilesChanged, res.FilesScanned)
 		if res.FilesSkipped > 0 {
-			fmt.Fprintf(os.Stdout, " (%d skipped: active lease held)", res.FilesSkipped)
+			// Say which state kept each file from being rewritten. Only a proven
+			// holder may be reported as an active lease; a probe that could not
+			// decide is its own reason, never folded into that claim.
+			switch {
+			case res.FilesSkippedUnprovable == 0:
+				fmt.Fprintf(os.Stdout, " (%d skipped: active lease held)", res.FilesSkipped)
+			case res.FilesSkippedHeld == 0:
+				fmt.Fprintf(os.Stdout, " (%d skipped: could not prove the lease)", res.FilesSkipped)
+			default:
+				fmt.Fprintf(os.Stdout, " (%d skipped: %d active lease held, %d could not prove the lease)",
+					res.FilesSkipped, res.FilesSkippedHeld, res.FilesSkippedUnprovable)
+			}
 		}
 		fmt.Fprintln(os.Stdout)
 	}
