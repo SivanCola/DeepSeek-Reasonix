@@ -12,12 +12,12 @@ function draw(fresh = true, branch = "main", isolated = false) {
   const readSources = port.worktreeSources.bind(port);
   vi.spyOn(port, "worktreeSources").mockImplementation(async () => ({ ...await readSources(), sourceRoot: "/work/demo" }));
   vi.spyOn(port, "status").mockResolvedValue({ workspaceRoot: "~/projects/DeepSeek-Reasonix" } as SessionStatus);
-  vi.spyOn(port, "workspaces").mockResolvedValue({ current: "/work/demo", canSwitch: true, canIsolate: true, recents: [], isolated });
+  const workspace = { current: "/work/demo", canSwitch: true, canIsolate: true, recents: [], isolated };
   const isolate = vi.spyOn(port, "isolateWorkspace").mockResolvedValue();
   const submit = vi.fn(async () => true);
   const error = vi.fn();
   const status = { workspaceRoot: "/work/demo", modelRef: "deepseek/deepseek-v4-pro", preset: "balanced", toolApprovalMode: "ask", plan: false } as SessionStatus;
-  render(<Composer port={port} status={status} running={false} fresh={fresh} git={{ repo: true, name: "demo", branch, detached: false, added: 0, removed: 0, untracked: 0 }} onSubmit={submit} onChanged={vi.fn()} onTreeChanged={vi.fn()} onError={error} />);
+  render(<Composer port={port} workspace={workspace} status={status} running={false} fresh={fresh} git={{ repo: true, name: "demo", branch, detached: false, added: 0, removed: 0, untracked: 0 }} onSubmit={submit} onChanged={vi.fn()} onTreeChanged={vi.fn()} onError={error} />);
   return { port, isolate, submit, error };
 }
 

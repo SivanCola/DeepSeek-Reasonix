@@ -6,9 +6,10 @@ import "./testkit";
 import { Sidebar } from "./Sidebar";
 import { MockHub } from "../port/mock_hub";
 import { NO_PAGING } from "./treewindow";
+import { setProjectsFolded } from "../state/sidebarFolds";
 
 beforeEach(() => localStorage.clear());
-afterEach(() => { cleanup(); vi.restoreAllMocks(); localStorage.clear(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); setProjectsFolded(false); localStorage.clear(); });
 
 function draw(remote = false) {
   const noop = vi.fn();
@@ -94,6 +95,10 @@ it("keeps folding usable when storage cannot be written", async () => {
   expect(project().getAttribute("aria-expanded")).toBe("false");
   await userEvent.click(project());
   expect(project().getAttribute("aria-expanded")).toBe("true");
+  await userEvent.click(screen.getByRole("button", { name: "收起项目" }));
+  expect(screen.queryByRole("tree")).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "展开项目" }));
+  expect(screen.getByRole("tree")).toBeTruthy();
 });
 
 

@@ -9,13 +9,14 @@ import { StudioIcon } from "./StudioIcon";
 import { workspaceMenuKeys } from "./WorkspaceOrder";
 import { RailSectionToggle } from "./RailSectionToggle";
 
-export function ProjectsHeader({ adder, folded, onFold, canSelect, selecting, onSelect, onToggleAll, allFolded, canFold, searching }: {
+export function ProjectsHeader({ adder, folded, onFold, canSelect, selecting, onSelect, onRecent, onToggleAll, allFolded, canFold, searching }: {
   adder: Adder;
   folded: boolean;
   onFold: (folded: boolean) => void;
   canSelect: boolean;
   selecting: boolean;
   onSelect: () => void;
+  onRecent?: () => void;
   onToggleAll?: () => void;
   allFolded?: boolean;
   canFold?: boolean;
@@ -43,6 +44,10 @@ export function ProjectsHeader({ adder, folded, onFold, canSelect, selecting, on
         <RailSectionToggle title={t("项目")} label={folded ? t("展开项目") : t("收起项目")}
           folded={folded} onToggle={() => onFold(!folded)} section="projects" />
         <span className="projects-heading-actions">
+          {onRecent && <button className="projects-add projects-recent" data-action="session.recent"
+            title={t("最近的会话")} aria-label={t("最近的会话")} onClick={onRecent}>
+            <span>{t("最近")}</span>
+          </button>}
           <button className="projects-add" data-busy={adder.busy ? "" : undefined} disabled={adder.busy}
             title={t("打开项目")} aria-label={t("打开项目")} data-action="workspace.add" onClick={() => adder.add()}>
             <StudioIcon name="plus" />
