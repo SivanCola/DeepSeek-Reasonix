@@ -18,6 +18,11 @@ it("keeps the settings scope on two neutral text tiers and one emphasis weight",
   expect(scope).toMatch(/--w-med:\s*var\(--w-semi\)/);
 });
 
-it("only ever names a neutral text colour from the two tiers", () => {
-  for (const d of declarations.filter((x) => x.prop === "color")) expect(d.value).toMatch(/^var\(--(text|muted)\)$/);
+it("only ever names a neutral text colour from the two tiers, bar a primary action's paired foreground", () => {
+  for (const d of declarations.filter((x) => x.prop === "color" && x.value !== "var(--accent-fg)")) expect(d.value).toMatch(/^var\(--(text|muted)\)$/);
+});
+
+it("lets an enabled primary action keep the foreground its fill is paired with", () => {
+  const rule = css.match(/\.prefs-col :is\(\.btn, \.act\)\[data-primary\]:not\(:disabled\)\s*\{([^}]*)\}/)?.[1] ?? "";
+  expect(rule).toMatch(/color:\s*var\(--accent-fg\)/);
 });

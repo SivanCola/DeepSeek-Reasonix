@@ -216,6 +216,7 @@
   }
   :root[data-measure="full"], :root[data-measure="full-all"] { --doc: 100%; --wide: 100% }
   :root[data-measure="full-all"] { --column: 100% }
+  :root[data-measure="custom"] { --doc: var(--measure-width); --column: var(--measure-width); --wide: var(--measure-width) }
 
   :root[data-weight="heavy"] { --w-reg: 500; --w-med: 600; --w-semi: 700 }
 

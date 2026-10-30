@@ -52,7 +52,7 @@ function savePrefs(file, prefs) {
 // in the same process and must not reach this file.
 // fileOf is asked on each use: the profile directory is settled during boot,
 // after these handlers exist.
-function registerPrefs(ipcMain, fileOf, fromWindow, onSave = () => {}) {
+function registerPrefs(ipcMain, fileOf, fromWindow, onSave = () => {}, onTheme = () => {}) {
   ipcMain.on("prefs:load", (event) => {
     event.returnValue = fromWindow(event) ? pickPagePrefs(loadPrefs(fileOf())) : {};
   });
@@ -70,6 +70,15 @@ function registerPrefs(ipcMain, fileOf, fromWindow, onSave = () => {}) {
       }
     }
     event.returnValue = true;
+  });
+  ipcMain.on("prefs:theme", (event, paint) => {
+    if (!fromWindow(event) || !event.senderFrame || event.senderFrame !== event.sender.mainFrame) return;
+    if (!paint || typeof paint !== "object" || Array.isArray(paint)) return;
+    const { mode, scheme } = paint;
+    if (mode !== "auto" && mode !== "scheduled" && mode !== "light" && mode !== "dark") return;
+    if (scheme !== "light" && scheme !== "dark") return;
+    if ((mode === "light" || mode === "dark") && mode !== scheme) return;
+    onTheme({ mode, scheme });
   });
 }
 

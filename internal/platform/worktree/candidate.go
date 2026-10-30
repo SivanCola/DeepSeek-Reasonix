@@ -94,16 +94,16 @@ func CreateCandidate(ctx context.Context, snap Snapshot, managedRoot string) (Ca
 	// --no-checkout, then populate through gitcmd inside the new worktree: a
 	// checkout during add runs in a child whose gitdir is the new worktree,
 	// where the reset's driver listing sees an includeIf keyed on that gitdir.
-	if _, stderr, err := runGit(ctx, source, "worktree", "add", "--no-checkout", "--detach", root, snap.Commit); err != nil {
+	if _, stderr, err := runWorktree(ctx, source, "add", "--no-checkout", "--detach", root, snap.Commit); err != nil {
 		return Candidate{}, fmt.Errorf("create candidate worktree: %w%s", err, stderrSuffix(stderr))
 	}
 	repo, err := gitcmd.Open(ctx, root)
 	if err != nil {
-		_, _, _ = runGit(ctx, source, "worktree", "remove", "--force", root)
+		_, _, _ = runWorktree(ctx, source, "remove", "--force", root)
 		return Candidate{}, fmt.Errorf("resolve candidate worktree: %w", err)
 	}
 	if _, stderr, err := runGit(ctx, repo, "reset", "--hard", snap.Commit); err != nil {
-		_, _, _ = runGit(ctx, source, "worktree", "remove", "--force", root)
+		_, _, _ = runWorktree(ctx, source, "remove", "--force", root)
 		return Candidate{}, fmt.Errorf("populate candidate worktree: %w%s", err, stderrSuffix(stderr))
 	}
 	c := Candidate{WorkspaceRoot: root, WorktreeRoot: root, Repo: repo}
@@ -169,7 +169,7 @@ func RemoveCandidate(ctx context.Context, snap Snapshot, c Candidate) error {
 	if err != nil {
 		return err
 	}
-	if _, stderr, err := runGit(ctx, source, "worktree", "remove", "--force", c.WorktreeRoot); err != nil {
+	if _, stderr, err := runWorktree(ctx, source, "remove", "--force", c.WorktreeRoot); err != nil {
 		return fmt.Errorf("remove candidate worktree: %w%s", err, stderrSuffix(stderr))
 	}
 	_ = os.Remove(filepath.Dir(c.WorktreeRoot))

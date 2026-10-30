@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import "./testkit";
 import { Settings } from "./Settings";
 import { SETTINGS, SECTION_NAME, SETTING_AT, settingMatches } from "./prefsnav";
+import { storageTotal } from "./storageTally";
 import { boot, STORAGE, t } from "../i18n";
 import { MockPort } from "../port/mock";
 import { MockHub } from "../port/mock_hub";
@@ -14,7 +15,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); localStorage.setItem(STORAGE,
 const language = (lang: string) => { localStorage.setItem(STORAGE, lang); boot(); };
 const block = (anchor: string) => document.querySelector<HTMLElement>(`[data-setting="${anchor}"]`);
 
-function draw() {
+async function draw() {
   const port = new MockPort();
   const calls: string[] = [];
   const watched = new Proxy(port, {
@@ -25,6 +26,11 @@ function draw() {
     },
   }) as unknown as AgentPort;
   const onClose = vi.fn();
+  // The pane tallies the disk usage a beat after it opens, and that walk reads
+  // the port. A known total means no walk is scheduled at all, so the search
+  // is measured against the port as it stood — not against a timer that fires
+  // midway through the search and reads the port on the way past.
+  await storageTotal(watched);
   render(<Settings
     hub={new MockHub() as never} port={watched}
     status={{ preset: "balanced", toolApprovalMode: "ask" } as SessionStatus}
@@ -41,7 +47,7 @@ it.each(["market", "plugins", "mcp", "skills", "ext-runtime", "hooks", "composit
   async (anchor) => {
     language("en");
     const entry = SETTING_AT(anchor)!;
-    const { find, calls } = draw();
+    const { find, calls } = await draw();
     await act(async () => {});
     expect(block(anchor)).toBeNull();
     const reads = [...calls];
@@ -66,7 +72,7 @@ it.each(["market", "plugins", "mcp", "skills", "ext-runtime", "hooks", "composit
 
 it("finds extension blocks by the displayed section name without mounting them", async () => {
   language("en");
-  const { find, calls, onClose } = draw();
+  const { find, calls, onClose } = await draw();
   await act(async () => {});
   const reads = [...calls];
   await userEvent.type(find(), "Extension");
